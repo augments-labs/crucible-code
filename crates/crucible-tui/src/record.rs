@@ -28,14 +28,16 @@
 //! bar or an item's mark is folded under it: the bar is stood again and the
 //! words hang where the first row's began. A component whose source is still
 //! held is *responsive*: a prompt, a diff, or a command's answer drawn from
-//! figures it still holds is laid out again at the new width. A block of an
-//! answer is *drawn*: a table or a rule arrives as the source it was written
-//! as, which is kept beside what it was laid out as, and laid out again for a
-//! new width or a new glyph set; a new theme only paints the same rows in
-//! other colours. Both forms count against the ceiling, and a drawn block that
-//! falls off the top takes its source with it. The source is lent, not copied:
-//! [`Record::source_of`] answers for a row and [`Record::sources`] walks the
-//! blocks, so what copies a block and what lists it read the record itself.
+//! figures it still holds is laid out again at the new width, and one drawn in
+//! a glyph set, such as a tool's change, in a new glyph set too. A block of an
+//! answer is *drawn*: a table, a rule or the rule under a heading arrives as
+//! the source it was written as, which is kept beside what it was laid out as,
+//! and laid out again for a new width or a new glyph set; a new theme only
+//! paints the same rows in other colours. Both forms count against the
+//! ceiling, and a drawn block that falls off the top takes its source with it.
+//! The source is lent, not copied: [`Record::source_of`] answers for a row and
+//! [`Record::sources`] walks the blocks, so what copies a block and what lists
+//! it read the record itself.
 //! Everything else is *set*: a box laid out by something that is gone is
 //! clipped rather than pretending it can be rebuilt.
 //!
@@ -95,8 +97,11 @@ enum Line {
         prefix: Option<Subordinate>,
         /// How many ordinary record lines this retained source costs.
         weight: usize,
-        /// What lays the whole block out at a width.
-        lay: Box<dyn Fn(usize) -> Vec<Row>>,
+        /// What lays the whole block out at a width, in a glyph set.
+        lay: Box<dyn Fn(usize, Glyphs) -> Vec<Row>>,
+        /// The glyph set the rows were laid out in, for a block drawn in one;
+        /// none for a block whose rows no glyph set changes.
+        glyphs: Option<Glyphs>,
     },
     /// A block of an answer, kept with its source.
     Drawn(Drawn),
@@ -491,7 +496,29 @@ impl Record {
     pub(crate) fn responsive(&mut self, retained: usize, lay: Box<dyn Fn(usize) -> Vec<Row>>) {
         self.end();
         let rows = responsive_rows(lay(self.columns));
-        self.hold(rows, retained, lay);
+        self.hold(
+            rows,
+            retained,
+            Box::new(move |columns, _| lay(columns)),
+            None,
+        );
+    }
+
+    /// Lay down one block drawn in `glyphs` whose source remains available.
+    ///
+    /// As [`Self::responsive`], and laid out again in the glyph set a reader
+    /// switches to as well as at a new width: what is drawn in one set is a
+    /// component drawn again in the other, not a row left in characters the
+    /// reader turned away from.
+    pub(crate) fn responsive_in(
+        &mut self,
+        retained: usize,
+        glyphs: Glyphs,
+        lay: Box<dyn Fn(usize, Glyphs) -> Vec<Row>>,
+    ) {
+        self.end();
+        let rows = responsive_rows(lay(self.columns, glyphs));
+        self.hold(rows, retained, lay, Some(glyphs));
     }
 
     /// Lay down one block whose source is about the size of what it lays.
@@ -503,11 +530,23 @@ impl Record {
         self.end();
         let rows = responsive_rows(lay(self.columns));
         let retained = rows.iter().map(Row::bytes).sum();
-        self.hold(rows, retained, lay);
+        self.hold(
+            rows,
+            retained,
+            Box::new(move |columns, _| lay(columns)),
+            None,
+        );
     }
 
-    /// Keeps a responsive block as `rows`, with `retained` bytes of source.
-    fn hold(&mut self, rows: Vec<Row>, retained: usize, lay: Box<dyn Fn(usize) -> Vec<Row>>) {
+    /// Keeps a responsive block as `rows`, with `retained` bytes of source,
+    /// laid out in `glyphs` where it is drawn in a glyph set.
+    fn hold(
+        &mut self,
+        rows: Vec<Row>,
+        retained: usize,
+        lay: Box<dyn Fn(usize, Glyphs) -> Vec<Row>>,
+        glyphs: Option<Glyphs>,
+    ) {
         if !rows.is_empty() {
             let weight = rows.len().max(retained.div_ceil(RETAINED_ROW_BYTES)).max(1);
             self.put(Line::Responsive {
@@ -515,6 +554,7 @@ impl Record {
                 prefix: None,
                 weight,
                 lay,
+                glyphs,
             });
         }
     }
@@ -534,16 +574,21 @@ impl Record {
 
     /// Lays the record out for `columns`, `glyphs` and `theme`.
     ///
-    /// A block of an answer is laid out again where the width or the glyph
-    /// set it was laid for has changed; the theme changes only the colours
-    /// its rows are painted in, which is the drawing's business. A new width
-    /// is everything [`Self::resized`] does as well.
+    /// A block of an answer, and a responsive block drawn in a glyph set, is
+    /// laid out again where the width or the glyph set it was laid for has
+    /// changed; the theme changes only the colours its rows are painted in,
+    /// which is the drawing's business. A new width is everything
+    /// [`Self::resized`] does as well.
     pub(crate) fn relay(&mut self, columns: usize, glyphs: Glyphs, theme: Theme) {
-        if columns != self.columns {
+        if columns == self.columns {
+            let drawn = self.relay_drawn(columns, glyphs);
+            let responsive = self.relay_responsive(columns, glyphs, false);
+            if drawn || responsive {
+                self.remeasure_all();
+                self.spill();
+            }
+        } else {
             self.resized(columns, glyphs);
-        } else if self.relay_drawn(columns, glyphs) {
-            self.remeasure_all();
-            self.spill();
         }
         for line in &mut self.lines {
             if let Line::Drawn(drawn) = line {
@@ -642,6 +687,33 @@ impl Record {
         }
 
         self.opening = Some(Opening { lines, ..opening });
+    }
+
+    /// Takes the open line back, as if none of it had been written.
+    ///
+    /// For a line that turned out to be the first of a block laid out from its
+    /// source instead, or the title of a heading, which is written again. Only
+    /// the open line can go: a line that has ended may
+    /// already be in the terminal's own scrollback, and nothing takes it out,
+    /// which is why a line in doubt is kept open until it is settled.
+    pub(crate) fn retract(&mut self) {
+        if !self.open || !matches!(self.lines.back(), Some(Line::Flowed(_))) {
+            return;
+        }
+
+        self.open = false;
+        if let Some(line) = self.lines.pop_back() {
+            self.weight = self.weight.saturating_sub(line.weight());
+        }
+        let tall = self.tall.pop_back().unwrap_or(0);
+        self.ends.pop_back();
+        self.rows = self.rows.saturating_sub(usize::from(tall));
+        if self.top.line >= self.lines() {
+            self.top = Spot {
+                line: self.lines(),
+                into: 0,
+            };
+        }
     }
 
     /// Add `text` to the open line, opening one if none is.
@@ -1029,9 +1101,9 @@ impl Record {
                 edit(rows);
                 // Kept with what lays the block out, or the next width would
                 // lay it out as it was written.
-                let before = std::mem::replace(lay, Box::new(|_| Vec::new()));
-                *lay = Box::new(move |columns| {
-                    let mut laid = before(columns);
+                let before = std::mem::replace(lay, Box::new(|_, _| Vec::new()));
+                *lay = Box::new(move |columns, glyphs| {
+                    let mut laid = before(columns, glyphs);
                     edit(&mut laid);
                     laid
                 });
@@ -1583,7 +1655,7 @@ impl Record {
         }
         self.columns = columns;
         self.relay_opening(columns, glyphs);
-        self.relay_responsive(columns);
+        self.relay_responsive(columns, glyphs, true);
         self.relay_drawn(columns, glyphs);
         self.rows = 0;
         self.before = 0;
@@ -1675,19 +1747,34 @@ impl Record {
         }
     }
 
-    /// Rebuilds responsive blocks once for the new width.
-    fn relay_responsive(&mut self, columns: usize) {
+    /// Rebuilds responsive blocks for `columns` in `glyphs`: every one of them
+    /// for a new width, and for a new glyph set only those drawn in another,
+    /// answering whether any was.
+    fn relay_responsive(&mut self, columns: usize, glyphs: Glyphs, every: bool) -> bool {
+        let mut any = false;
         for line in &mut self.lines {
             if let Line::Responsive {
-                rows, prefix, lay, ..
+                rows,
+                prefix,
+                lay,
+                glyphs: laid,
+                ..
             } = line
             {
-                *rows = responsive_rows(lay(columns));
+                if !every && laid.is_none_or(|laid| laid == glyphs) {
+                    continue;
+                }
+                *rows = responsive_rows(lay(columns, glyphs));
                 if let Some(prefix) = prefix {
                     prefix.prefix(rows);
                 }
+                if laid.is_some() {
+                    *laid = Some(glyphs);
+                }
+                any = true;
             }
         }
+        any
     }
 
     /// A line as the display rows it comes to at the current width.

@@ -356,7 +356,7 @@ fn edited(
     }
 
     let output = ToolOutput::ok(format!("changed {requested}, {replaced} replacements"))
-        .showing(Diff::between(&before, &after));
+        .showing(Diff::between(&before, &after).in_file(requested));
 
     // The file is now held to what this edit made, so the next change needs
     // no read first. That holds for a file the session never read too: what

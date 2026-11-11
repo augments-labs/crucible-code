@@ -2141,11 +2141,17 @@ fn a_call_that_changed_a_file_in_colour() {
 /// cannot show. Both live and resumed previews must report the same omission.
 const REWRITTEN: usize = 40;
 
-/// The header that call leaves on the row answering it.
-const CHANGED: &str = "Added 40 lines, removed 40 lines";
+/// The header the box that call is drawn in opens with: the file the tool
+/// named and the counts of what moved in it.
+const CHANGED: &str = "\u{256D}\u{2500} notes.md +40 \u{2212}40";
 
-/// The omitted-line count on both the live and restored bounded preview.
-const UNSHOWN: &str = "16 of them not shown";
+/// The quiet row inside that box counting the lines the tool never kept, on
+/// both the live and the restored bounded preview.
+const UNSHOWN: &str = "16 lines not shown";
+
+/// The last line the tool kept. The box folds a change this long to its first
+/// and last rows, so this is the new text that stays in sight at its foot.
+const SHOWN: &str = "the line that is now here, number 24";
 
 /// Every line of one version of that file, each saying which version it is.
 fn spelling(tense: &str) -> String {
@@ -2193,17 +2199,14 @@ fn change_header_survives_resume() {
 
     assert!(live.contains(CHANGED), "the live header: {live}");
     assert!(live.contains(UNSHOWN), "the live header's tail: {live}");
-    assert!(
-        live.contains("the line that is now here, number 1"),
-        "the live block: {live}"
-    );
+    assert!(live.contains(SHOWN), "the live block: {live}");
 
     assert!(
         again.contains(CHANGED),
         "the resumed screen forgot what the call changed: {again}"
     );
     assert!(
-        again.contains("the line that is now here, number 1"),
+        again.contains(SHOWN),
         "the resumed screen lost the stored diff preview: {again}"
     );
     assert!(
@@ -2330,10 +2333,7 @@ fn a_resumed_session_says_what_the_reader_watched() {
     // only worth asserting if this is what the reader was actually shown.
     assert!(live.contains(CHANGED), "the live header: {live}");
     assert!(live.contains(UNSHOWN), "the live header's tail: {live}");
-    assert!(
-        live.contains("the line that is now here, number 1"),
-        "the live block: {live}"
-    );
+    assert!(live.contains(SHOWN), "the live block: {live}");
     assert!(
         live.contains(&top(1)),
         "the live row for the read that stood alone: {live}"
@@ -2376,7 +2376,7 @@ fn a_resumed_session_says_what_the_reader_watched() {
     // Stored display details and compaction notices survive alongside the
     // original results, even though the model context has pruned those results.
     assert!(
-        again.contains("the line that is now here, number 1"),
+        again.contains(SHOWN),
         "the resumed screen lost the stored diff preview: {again}"
     );
     assert!(
@@ -7513,7 +7513,7 @@ fn transcript_sources_80_fullscreen() {
     );
     window.types_until(transcript::ASK, transcript::END);
 
-    window.types_until("\x0f", "source 1 of 2");
+    window.types_until("\x0f", "source 1 of 3");
     let opened = window.picture();
     assert!(
         opened.contains("| region | owner | window | rows | scrollback | theme | glyphs | notes |"),
@@ -7522,7 +7522,16 @@ fn transcript_sources_80_fullscreen() {
     assert!(!opened.contains("alpha"), "{opened}");
     insta::assert_snapshot!("transcript_sources_80_fullscreen", opened);
 
-    window.types_until("\x1b[C", "source 2 of 2");
+    // The table written without its outer bars is a source of its own, kept
+    // as written: no bar is added to the lines the model left bare.
+    window.types_until("\x1b[C", "source 2 of 3");
+    let bare = window.picture();
+    assert!(bare.contains("name | what it does | since"), "{bare}");
+    assert!(bare.contains("--|--|--"), "{bare}");
+    assert!(!bare.contains("| name"), "{bare}");
+    insta::assert_snapshot!("transcript_sources_80_fullscreen_bare", bare);
+
+    window.types_until("\x1b[C", "source 3 of 3");
     let first = window.picture();
     assert!(first.contains("| --- | --- | --- |"), "{first}");
     assert!(
@@ -7533,7 +7542,7 @@ fn transcript_sources_80_fullscreen() {
 
     window.types("\x1b");
     let closed = window.picture();
-    assert!(!closed.contains("source 2 of 2"), "{closed}");
+    assert!(!closed.contains("source 3 of 3"), "{closed}");
     assert!(closed.contains(transcript::END), "{closed}");
 }
 
@@ -7553,7 +7562,7 @@ fn transcript_sources_80_native() {
     );
     window.types_until(transcript::ASK, transcript::END);
 
-    window.types_until("\x0f", "source 1 of 2");
+    window.types_until("\x0f", "source 1 of 3");
     let opened = window.picture();
     assert!(
         opened.contains("| region | owner | window | rows | scrollback | theme | glyphs | notes |"),
@@ -7561,13 +7570,20 @@ fn transcript_sources_80_native() {
     );
     insta::assert_snapshot!("transcript_sources_80_native", opened);
 
-    window.types_until("\x1b[C", "source 2 of 2");
+    window.types_until("\x1b[C", "source 2 of 3");
+    let bare = window.picture();
+    assert!(bare.contains("name | what it does | since"), "{bare}");
+    assert!(bare.contains("--|--|--"), "{bare}");
+    assert!(!bare.contains("| name"), "{bare}");
+    insta::assert_snapshot!("transcript_sources_80_native_bare", bare);
+
+    window.types_until("\x1b[C", "source 3 of 3");
     let first = window.picture();
     assert!(first.contains("| --- | --- | --- |"), "{first}");
     insta::assert_snapshot!("transcript_sources_80_native_second", first);
 
     window.types("\x1b");
     let closed = window.picture();
-    assert!(!closed.contains("source 2 of 2"), "{closed}");
+    assert!(!closed.contains("source 3 of 3"), "{closed}");
     window.assert_never_alternate();
 }

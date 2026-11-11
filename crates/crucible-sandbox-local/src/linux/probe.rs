@@ -107,7 +107,7 @@ impl Bwrap {
         Ok(Self {
             path,
             identity,
-            capabilities: capabilities(),
+            capabilities: capabilities(help_lists_size(&help_text)),
         })
     }
 
@@ -115,7 +115,8 @@ impl Bwrap {
     ///
     /// `build` reads only the path, and a test that asserts what goes into the
     /// argument list must not need a root-owned Bubblewrap on the machine
-    /// running it — that is the very thing it cannot assume.
+    /// running it — that is the very thing it cannot assume. It claims what a
+    /// Bubblewrap listing `--size` would, so a disk ceiling can be planned.
     #[cfg(test)]
     pub(super) fn unspawned(path: PathBuf) -> Result<Self, SandboxError> {
         let identity = SandboxBackendIdentity::new(
@@ -128,7 +129,7 @@ impl Bwrap {
         Ok(Self {
             path,
             identity,
-            capabilities: capabilities(),
+            capabilities: capabilities(true),
         })
     }
 
@@ -153,7 +154,9 @@ impl Bwrap {
 /// directory above it. What is left out is everything `find` learns by running
 /// it — its options, its version and whether it can make its namespaces here —
 /// so the first trusted candidate is the one reported, where `find` would pass
-/// over one that failed to run.
+/// over one that failed to run. The disk ceiling is claimed only where those
+/// options list `--size`, so it is claimed unsupported here; a preparation,
+/// which reads them, decides it.
 pub(super) fn locate(excluded: &[&Path]) -> Result<SandboxObservation, SandboxError> {
     let digest = first_trusted(excluded, |path| measured(&path))?;
     Ok(SandboxObservation::new(
@@ -163,7 +166,7 @@ pub(super) fn locate(excluded: &[&Path]) -> Result<SandboxObservation, SandboxEr
         ObservedVersion::Unverified(
             "reading it would start Bubblewrap, and inspecting starts nothing",
         ),
-        capabilities(),
+        capabilities(false),
     ))
 }
 
@@ -274,6 +277,16 @@ fn first_verified<T>(
     verify: impl FnMut(PathBuf) -> Option<T>,
 ) -> Option<T> {
     candidates.into_iter().find_map(verify)
+}
+
+/// Whether this Bubblewrap can size a tmpfs, which is what a disk ceiling is
+/// mounted with.
+///
+/// Read the way [`REQUIRED_OPTIONS`] are, one whitespace-separated word at a
+/// time, and kept apart from them: a Bubblewrap without it still holds every
+/// other boundary, so it costs the disk ceiling alone.
+fn help_lists_size(help: &str) -> bool {
+    help.split_ascii_whitespace().any(|token| token == "--size")
 }
 
 fn help_supports_required_options(help: &str) -> bool {
@@ -541,10 +554,21 @@ pub(super) fn process_limit() -> SandboxCapability {
     }
 }
 
-pub(super) fn capabilities() -> SandboxCapabilities {
+/// What this backend claims, given whether its Bubblewrap lists `--size`.
+///
+/// Two claims are the host's to decide: the process ceiling follows the
+/// kernel, and the disk ceiling follows `size`, since the one mount that holds
+/// a run's writes to a total is a sized tmpfs.
+pub(super) fn capabilities(size: bool) -> SandboxCapabilities {
     let enforced = SandboxCapability::Enforced;
+    let disk = if size {
+        enforced
+    } else {
+        SandboxCapability::Unsupported
+    };
     SandboxCapabilities::none()
         .with(SandboxFeature::ProcessLimit, process_limit())
+        .with(SandboxFeature::DiskLimit, disk)
         .with(SandboxFeature::Filesystem, enforced)
         .with(SandboxFeature::NetworkDeny, enforced)
         .with(SandboxFeature::NetworkAllowlist, enforced)
@@ -615,32 +639,113 @@ mod tests {
         }
     }
 
+    /// Every claim but the two a host decides, as the backend makes it on any
+    /// host: the disk ceiling follows Bubblewrap's `--help`, and the process
+    /// ceiling follows the kernel.
+    const FIXED_CLAIMS: &[(SandboxFeature, SandboxCapability)] = &[
+        (SandboxFeature::Filesystem, SandboxCapability::Enforced),
+        (SandboxFeature::NetworkDeny, SandboxCapability::Enforced),
+        (
+            SandboxFeature::NetworkAllowlist,
+            SandboxCapability::Enforced,
+        ),
+        (
+            SandboxFeature::DescriptorIsolation,
+            SandboxCapability::Enforced,
+        ),
+        (
+            SandboxFeature::ProcessIsolation,
+            SandboxCapability::Enforced,
+        ),
+        (SandboxFeature::KernelSurface, SandboxCapability::Enforced),
+        (
+            SandboxFeature::PrivilegeIsolation,
+            SandboxCapability::Enforced,
+        ),
+        (SandboxFeature::Materialization, SandboxCapability::Enforced),
+        (SandboxFeature::CpuLimit, SandboxCapability::Enforced),
+        (SandboxFeature::MemoryLimit, SandboxCapability::Enforced),
+        (SandboxFeature::OpenFileLimit, SandboxCapability::Enforced),
+        (
+            SandboxFeature::CommandTimeLimit,
+            SandboxCapability::Enforced,
+        ),
+        (
+            SandboxFeature::SessionTimeLimit,
+            SandboxCapability::Unsupported,
+        ),
+        (
+            SandboxFeature::OutboundByteLimit,
+            SandboxCapability::Unsupported,
+        ),
+        (SandboxFeature::OutputLimit, SandboxCapability::Enforced),
+        (
+            SandboxFeature::ConcurrencyLimit,
+            SandboxCapability::Enforced,
+        ),
+        (SandboxFeature::CostLimit, SandboxCapability::Unsupported),
+        (SandboxFeature::Pty, SandboxCapability::Unsupported),
+        (
+            SandboxFeature::FileOperations,
+            SandboxCapability::Unsupported,
+        ),
+        (SandboxFeature::Persistence, SandboxCapability::Unsupported),
+        (SandboxFeature::Snapshot, SandboxCapability::Unsupported),
+        (SandboxFeature::Resume, SandboxCapability::Unsupported),
+        (SandboxFeature::Audit, SandboxCapability::Enforced),
+        (SandboxFeature::Usage, SandboxCapability::Observed),
+    ];
+
+    /// Asserts every claim in `capabilities`: the fixed ones, the kernel's
+    /// process ceiling, and `disk` for the disk ceiling.
+    fn assert_claims(capabilities: &SandboxCapabilities, disk: SandboxCapability) {
+        for (feature, claim) in capabilities.iter() {
+            let expected = match feature {
+                SandboxFeature::DiskLimit => disk,
+                SandboxFeature::ProcessLimit => process_limit(),
+                fixed => FIXED_CLAIMS
+                    .iter()
+                    .find(|(listed, _)| *listed == fixed)
+                    .map_or_else(
+                        || panic!("{fixed:?} has no expected claim"),
+                        |(_, claim)| *claim,
+                    ),
+            };
+            assert_eq!(claim, expected, "{feature:?}");
+        }
+    }
+
     #[test]
     fn capability_snapshot_never_claims_unimplemented_limits_or_operations() {
-        let capabilities = capabilities();
-        assert_eq!(
-            capabilities.claim(SandboxFeature::NetworkAllowlist),
-            SandboxCapability::Enforced
+        assert_claims(&capabilities(true), SandboxCapability::Enforced);
+        assert_claims(&capabilities(false), SandboxCapability::Unsupported);
+    }
+
+    #[test]
+    fn the_disk_ceiling_is_claimed_exactly_when_bubblewrap_lists_size() {
+        // As Bubblewrap 0.11 prints them, and the same help with the one
+        // option a disk ceiling is mounted with taken out.
+        let listing = "usage: bwrap [OPTIONS...] [--] COMMAND [ARGS...]\n\n    \
+            --tmpfs DEST                 Mount new tmpfs on DEST\n    \
+            --size BYTES                 Set size of next argument (only for --tmpfs)\n    \
+            --chmod OCTAL PATH           Change permissions of PATH (must already exist)\n";
+        let missing = "usage: bwrap [OPTIONS...] [--] COMMAND [ARGS...]\n\n    \
+            --tmpfs DEST                 Mount new tmpfs on DEST\n    \
+            --chmod OCTAL PATH           Change permissions of PATH (must already exist)\n";
+        // A word that only begins like the option is not the option.
+        let lookalike = "    --size-limit BYTES  Not an option Bubblewrap has\n    --sizes\n";
+
+        assert_claims(
+            &capabilities(help_lists_size(listing)),
+            SandboxCapability::Enforced,
         );
-        assert_eq!(
-            capabilities.claim(SandboxFeature::MemoryLimit),
-            SandboxCapability::Enforced
+        assert_claims(
+            &capabilities(help_lists_size(missing)),
+            SandboxCapability::Unsupported,
         );
-        assert_eq!(
-            capabilities.claim(SandboxFeature::CpuLimit),
-            SandboxCapability::Enforced
-        );
-        assert_eq!(
-            capabilities.claim(SandboxFeature::OpenFileLimit),
-            SandboxCapability::Enforced
-        );
-        assert_eq!(
-            capabilities.claim(SandboxFeature::Snapshot),
-            SandboxCapability::Unsupported
-        );
-        assert_eq!(
-            capabilities.claim(SandboxFeature::Usage),
-            SandboxCapability::Observed
+        assert_claims(
+            &capabilities(help_lists_size(lookalike)),
+            SandboxCapability::Unsupported,
         );
     }
 

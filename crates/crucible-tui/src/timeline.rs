@@ -333,6 +333,19 @@ fn words(text: &str, room: usize, glyphs: Glyphs, forge: Option<&Forge>) -> Vec<
     rows
 }
 
+/// Adds `text` to the last of `lines`, starting a line at each line break in it.
+fn put(lines: &mut Vec<Spans>, slot: Slot, text: &str, link: Option<&str>) {
+    let mut parts = text.split('\n');
+    if let (Some(first), Some(last)) = (parts.next(), lines.last_mut()) {
+        last.push(slot, first, link);
+    }
+    for part in parts {
+        let mut next = Spans::default();
+        next.push(slot, part, link);
+        lines.push(next);
+    }
+}
+
 /// Reads one stretch of markdown into rows `room` wide, after `rows`.
 ///
 /// A stretch that follows a heading starts on the row under it; one that
@@ -344,17 +357,6 @@ fn read(segment: &str, room: usize, glyphs: Glyphs, forge: Option<&Forge>, rows:
     }
 
     let mut lines: Vec<Spans> = vec![Spans::default()];
-    let mut say = |slot: Slot, text: &str, link: Option<&str>| {
-        let mut parts = text.split('\n');
-        if let (Some(first), Some(line)) = (parts.next(), lines.last_mut()) {
-            line.push(slot, first, link);
-        }
-        for part in parts {
-            let mut line = Spans::default();
-            line.push(slot, part, link);
-            lines.push(line);
-        }
-    };
     // A block is told in the runs the record lays one out of, at this width
     // and linking what the runs around it link, and they follow the runs
     // before it: a page printed once has no later width to keep its source
@@ -364,17 +366,24 @@ fn read(segment: &str, room: usize, glyphs: Glyphs, forge: Option<&Forge>, rows:
         files: None,
     };
     let mut said = |said: Said<'_>| match said {
-        Said::Run { slot, text, link } => say(slot, text, link),
+        Said::Run { slot, text, link } => put(&mut lines, slot, text, link),
         Said::Block(block) => {
             let mut open = false;
             markdown::tell(&block, room, glyphs, &linking, &mut |slot, text, link| {
                 if let Some(last) = text.chars().last() {
                     open = last != '\n';
                 }
-                say(slot, text, link);
+                put(&mut lines, slot, text, link);
             });
             if open {
-                say(Slot::Plain, "\n", None);
+                put(&mut lines, Slot::Plain, "\n", None);
+            }
+        }
+        // The line being written is the header of the table that follows, or
+        // the title of the heading that follows.
+        Said::Retract => {
+            if let Some(line) = lines.last_mut() {
+                *line = Spans::default();
             }
         }
     };

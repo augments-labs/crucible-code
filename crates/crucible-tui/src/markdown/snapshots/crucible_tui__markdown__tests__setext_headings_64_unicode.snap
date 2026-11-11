@@ -1,0 +1,11 @@
+---
+source: crates/crucible-tui/src/markdown/tests.rs
+expression: "corpus_pictures::picture(SETEXT_HEADINGS, 64, Glyphs::Unicode)"
+---
+<Heading>One</>                                                             
+<Quiet>━</><Quiet>━</><Quiet>━</>                                                             
+                                                                
+<Heading>Two</>                                                             
+<Quiet>─</><Quiet>─</><Quiet>─</>                                                             
+                                                                
+A paragraph under them.

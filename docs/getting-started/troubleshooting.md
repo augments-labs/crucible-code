@@ -568,6 +568,39 @@ not carrying long lines on; `reset`, or `printf '\e[?7h'`, turns it back on.
 Only the screen is cut: the session file keeps the whole row. A terminal or font
 that draws these symbols one column wide shows all of it.
 
+### `kitty · not available` on the `/settings` Images row
+
+The protocol the Images row names is not one the terminal support table draws
+where this session runs, so the session draws text. `not available in native
+mode`, or `in fullscreen mode`, means the other screen mode draws it, and
+`output.screen` is read only at start. A bare `not available` means neither
+mode does: the terminal is not one the table names, or the table draws the
+other protocol on it; crucible is inside `screen` or Zellij, inside tmux that
+has not said it passes sequences through, or inside a multiplexer reached over
+SSH; it is reached over SSH from anything but WezTerm or iTerm2; or it runs on
+a system other than Linux and macOS, Windows and FreeBSD among them, where
+every picture is text. `sixel` is never drawn. Once tmux has answered `off`,
+crucible does not ask it again, so after `set -g allow-passthrough on` in tmux,
+start crucible again. tmux reached over SSH is never asked, so the row says
+`not available` there whatever tmux is set to. See [Where pictures are
+drawn](../configuration/configuration.md#where-pictures-are-drawn).
+
+### Characters appear in the prompt as crucible starts
+
+With `output.images` at `auto`, on a terminal the support table names,
+crucible may ask the terminal whether it draws pictures before it reads a key.
+It reads every answer that arrives while it waits, and whatever you type then,
+so none of it reaches the prompt; a first answer too late for the 8 ms it
+decides in is still read, for up to 2 seconds after the question. What arrives
+after crucible has stopped waiting can be read as typing instead: a first
+answer more than 2 seconds late, whatever a terminal that answered sends more
+than 2 seconds after the picture question, its answer to that question among
+it, and the answer to the picture question more than 8 ms after the answer
+meant to follow it. Delete it; to stop the question being asked, set
+`output.images` to `off`, or to the protocol the terminal draws, which is used
+without asking the terminal. See [Where pictures
+are drawn](../configuration/configuration.md#where-pictures-are-drawn).
+
 ### `crucible: what you typed is longer than 1 MiB; no prompt was accepted`
 
 A line of redirected input was longer than 1 MiB, which is as much as one

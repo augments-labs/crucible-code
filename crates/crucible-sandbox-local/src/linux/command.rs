@@ -1,4 +1,18 @@
 //! Exact Bubblewrap filesystem/namespace command planning.
+//!
+//! A disk ceiling is one total across everything a run can write. It is held by
+//! sizing the tmpfs Bubblewrap makes the root with and making `/tmp` and the
+//! home as directories inside it, with `/dev`, the one other tmpfs Bubblewrap
+//! makes, remounted read-only. tmpfs counts that size in whole pages and rounds
+//! it up, so the size is rounded down to the host's page instead, and a ceiling
+//! under one page, which would round to a size tmpfs reads as none, is refused.
+//! tmpfs charges an extended attribute's value to its inodes, not to that size,
+//! so under a ceiling the broker is told to refuse every call that sets one,
+//! `io_uring` among them. A run with a writable host root, through a filesystem
+//! rule or a manifest mount, writes either to the host's own filesystem or into
+//! the overlay Bubblewrap lays over that root, which is sized by nothing this
+//! plan mounts. Neither is reached by the root's size, so such a run cannot be
+//! held to a ceiling and a request for one is refused before anything starts.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ffi::{OsStr, OsString};
@@ -225,8 +239,15 @@ pub(super) fn prepare(request: &SandboxRequest) -> Result<View, SandboxError> {
             feature: SandboxFeature::ProcessLimit,
         });
     }
+    if let Some(bytes) = limits.disk_bytes {
+        if writes_reach_the_host(request) {
+            return Err(SandboxError::Unsupported {
+                feature: SandboxFeature::DiskLimit,
+            });
+        }
+        whole_pages(bytes)?;
+    }
     for (present, feature) in [
-        (limits.disk_bytes.is_some(), SandboxFeature::DiskLimit),
         (
             limits.session_time.is_some(),
             SandboxFeature::SessionTimeLimit,
@@ -387,6 +408,53 @@ pub(super) fn prepare(request: &SandboxRequest) -> Result<View, SandboxError> {
     })
 }
 
+/// Whether a run under `request` can write anywhere but its own root: through a
+/// writable filesystem rule or a writable manifest mount.
+///
+/// A disk ceiling is held by sizing the one tmpfs a run's own writes land in,
+/// and such a write lands outside it — on the host, or in an overlay nobody
+/// sized — so a request that has one cannot be held to the ceiling at all.
+fn writes_reach_the_host(request: &SandboxRequest) -> bool {
+    request
+        .policy()
+        .filesystem()
+        .iter()
+        .any(|rule| rule.access() == SandboxFilesystemAccess::ReadWrite)
+        || request
+            .manifest()
+            .entries()
+            .iter()
+            .any(|entry| entry.access() == Some(SandboxFilesystemAccess::ReadWrite))
+}
+
+/// The size the root is mounted with under `request`'s disk ceiling, if it has
+/// one.
+fn root_size(request: &SandboxRequest) -> Result<Option<u64>, SandboxError> {
+    request
+        .policy()
+        .limits()
+        .disk_bytes
+        .map(whole_pages)
+        .transpose()
+}
+
+/// The size a disk ceiling of `bytes` mounts the root with: the whole pages
+/// under it.
+///
+/// tmpfs rounds the size it is given up to a whole page, which would let a run
+/// hold up to a page less one byte past its ceiling, and it reads a size of zero
+/// as no size at all. A ceiling under one page therefore cannot be held, and is
+/// refused by name.
+fn whole_pages(bytes: u64) -> Result<u64, SandboxError> {
+    let page = u64::try_from(rustix::param::page_size()).unwrap_or(u64::MAX);
+    match bytes.checked_rem(page).map(|part| bytes - part) {
+        Some(held) if held > 0 => Ok(held),
+        _ => Err(SandboxError::Unsupported {
+            feature: SandboxFeature::DiskLimit,
+        }),
+    }
+}
+
 fn validate_host(rules: &[SandboxFilesystemRule]) -> Result<(), SandboxError> {
     validate_host_for(rules, linux_host())
 }
@@ -482,6 +550,7 @@ pub(super) fn build(plan: Plan<'_>) -> Result<Command, SandboxError> {
     } = plan;
     let runtime = runtime_mounts();
     let directories = mount_directories(&runtime, view, materialization.is_some());
+    let disk_bytes = root_size(request)?;
 
     let mut process = Command::new(backend.path());
     process.env_clear().args([
@@ -494,18 +563,31 @@ pub(super) fn build(plan: Plan<'_>) -> Result<Command, SandboxError> {
         "--unshare-uts",
         "--disable-userns",
         "--as-pid-1",
-        "--tmpfs",
-        "/",
     ]);
+    if let Some(bytes) = disk_bytes {
+        process.arg("--size").arg(bytes.to_string());
+    }
+    process.args(["--tmpfs", "/"]);
 
     for directory in directories {
         process.arg("--dir").arg(directory);
     }
-    process.args(["--dev", "/dev", "--proc", "/proc"]);
+    process.args(["--dev", "/dev"]);
+    if disk_bytes.is_some() {
+        process.args(["--remount-ro", "/dev"]);
+    }
+    process.args(["--proc", "/proc"]);
+    // Under a disk ceiling the scratch places are directories in the sized
+    // root, so they share its one total rather than each holding their own.
+    let scratch = if disk_bytes.is_some() {
+        "--dir"
+    } else {
+        "--tmpfs"
+    };
     process
-        .args(["--tmpfs", "/tmp", "--chmod", "1777", "/tmp"])
+        .args([scratch, "/tmp", "--chmod", "1777", "/tmp"])
         .args([
-            "--tmpfs",
+            scratch,
             "/crucible-home",
             "--chmod",
             "0700",
@@ -646,6 +728,11 @@ pub(super) fn build(plan: Plan<'_>) -> Result<Command, SandboxError> {
     if matches!(request.policy().network(), SandboxNetworkPolicy::Domains(policy) if policy.allow_local_binding())
     {
         process.arg("--allow-local-binding");
+    }
+    // An extended attribute's value is charged to the root's inodes, not to the
+    // size it is mounted with, so under a ceiling the broker refuses setting one.
+    if disk_bytes.is_some() {
+        process.arg("--refuse-xattr-writes");
     }
     process
         .arg("--")

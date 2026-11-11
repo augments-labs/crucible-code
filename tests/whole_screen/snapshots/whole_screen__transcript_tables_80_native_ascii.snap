@@ -30,10 +30,10 @@ expression: window.picture()
 |                                                                                |
 |A table may be written without its outer bars:                                  |
 |                                                                                |
-|name | what it does | since                                                     |
-|--|--|--                                                                        |
-|delta | draws a rule across the window | 0.4                                    |
-|epsilon | folds a long cell | 0.5                                               |
+|name    | what it does                   | since                                |
+|--------+--------------------------------+------                                |
+|delta   | draws a rule across the window | 0.4                                  |
+|epsilon | folds a long cell              | 0.5                                  |
 |                                                                                |
 |And one with more columns than a window can hold:                               |
 |                                                                                |
