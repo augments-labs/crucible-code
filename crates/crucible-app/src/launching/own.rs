@@ -75,9 +75,9 @@ impl Launcher<'_> {
     /// confined, once it is held to its probe record where it is started as
     /// the agent. Its directory is judged, at its launch and at the probe a
     /// change since its probe brings, against the user's own home: the one
-    /// this launcher was told of, else this process's. A home the child is
-    /// started with is never that, since an entry can set its own; where no
-    /// home of the user's is known it is not started.
+    /// this launcher was told of where that is absolute, else this process's.
+    /// A home the child is started with is never that, since an entry can set
+    /// its own; where no home of the user's is known it is not started.
     ///
     /// # Errors
     ///
@@ -91,6 +91,7 @@ impl Launcher<'_> {
         let Some(home) = self
             .home
             .clone()
+            .filter(|home| home.is_absolute())
             .or_else(std::env::home_dir)
             .filter(|home| home.is_absolute())
         else {
