@@ -1914,9 +1914,10 @@ fn nothing_having_ended_asks_for_no_turn() {
 
 #[test]
 fn a_command_that_ended_asks_for_the_turn_nobody_typed() {
-    let Some(Asked::Woke(said)) = woken(&[ended(1, Some(0))], &Aside::new()) else {
+    let Some(Asked::Woke(woke)) = woken(&[ended(1, Some(0))], &Aside::new()) else {
         panic!("an ending to ask for a turn");
     };
+    let (said, _) = woke.into_parts();
 
     // The number is how the model refers to it and how the panel lists it, the
     // command is what it was, and the exit is the half a reader cannot go back
@@ -1927,16 +1928,33 @@ fn a_command_that_ended_asks_for_the_turn_nobody_typed() {
 }
 
 #[test]
+fn a_turn_nobody_typed_is_the_applications_and_never_the_persons() {
+    // What wakes the model is made of what commands printed, so it is hostile
+    // to whoever reads it as somebody's request. Sent as the person's, it would
+    // be kept as their task and told back to the model as what they asked for.
+    let aside = Aside::new();
+    aside.say("crucible, not the developer: #1 finished".to_owned());
+
+    let Some(Asked::Woke(woke)) = woken(&[ended(2, Some(0))], &aside) else {
+        panic!("an ending to ask for a turn");
+    };
+
+    let (_, author) = woke.into_parts();
+    assert_eq!(author, Author::Application);
+}
+
+#[test]
 fn every_command_that_ended_is_in_the_one_turn_they_ask_for() {
     // Two servers falling over between one turn and the next is one turn about
     // both of them. A turn each would be the second one arriving after the
     // model had already answered about the first.
-    let Some(Asked::Woke(said)) = woken(
+    let Some(Asked::Woke(woke)) = woken(
         &[ended(1, Some(0)), ended(2, Some(2)), ended(3, None)],
         &Aside::new(),
     ) else {
         panic!("the endings to ask for a turn");
     };
+    let (said, _) = woke.into_parts();
 
     assert!(said.contains("#1"), "{said}");
     assert!(said.contains("exit status 2"), "{said}");
@@ -1952,9 +1970,10 @@ fn a_note_the_last_turn_never_took_still_asks_for_a_turn() {
     let aside = Aside::new();
     aside.say("crucible, not the developer: #1 finished".to_owned());
 
-    let Some(Asked::Woke(said)) = woken(&[], &aside) else {
+    let Some(Asked::Woke(woke)) = woken(&[], &aside) else {
         panic!("a note nobody took to ask for a turn");
     };
+    let (said, _) = woke.into_parts();
 
     assert!(said.contains("#1 finished"), "{said}");
     assert!(!aside.any(), "the note was taken, not copied");
@@ -1967,9 +1986,10 @@ fn a_note_and_an_ending_are_one_turn_rather_than_two() {
     let aside = Aside::new();
     aside.say("crucible, not the developer: #1 finished".to_owned());
 
-    let Some(Asked::Woke(said)) = woken(&[ended(2, Some(2))], &aside) else {
+    let Some(Asked::Woke(woke)) = woken(&[ended(2, Some(2))], &aside) else {
         panic!("both to ask for one turn");
     };
+    let (said, _) = woke.into_parts();
 
     assert!(said.contains("#1 finished"), "{said}");
     assert!(said.contains("exit status 2"), "{said}");

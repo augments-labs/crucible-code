@@ -823,7 +823,10 @@ fn conversing<T: Terminal>(
                 let (prompt, local) = said.into_parts();
                 (prompt, local, Author::Person)
             }
-            Asked::Woke(said) => (said, false, Author::Application),
+            Asked::Woke(woke) => {
+                let (note, author) = woke.into_parts();
+                (note, false, author)
+            }
             Asked::Ended => break,
 
             // The dock's answers, sent as the turn that delivers them.
