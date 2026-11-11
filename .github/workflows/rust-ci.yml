@@ -135,9 +135,9 @@ jobs:
       # is on D:, beside the checkout, and the tests ran faster with TEMP
       # there; on windows-11-arm both are on C:, so the step does not run.
       # D: makes no short 8.3 names, so the folder is given one and TEMP
-      # names it by it: the tests that a path reached through a short name
-      # is resolved before use rely on TEMP holding one, as RUNNER~1 does in
-      # the C: profile path.
+      # names it by it, as RUNNER~1 does in the C: profile path. Tests that
+      # a path reached through a short name is resolved before use catch a
+      # path left unresolved only when TEMP holds one.
       - if: ${{ runner.os == 'Windows' && runner.arch == 'X64' }}
         name: Keep temporary files on the disk the checkout is on
         shell: pwsh
