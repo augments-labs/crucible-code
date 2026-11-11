@@ -96,9 +96,10 @@ const PROVIDERS: [Served; 12] = [
         reviewed: "2026-11-05",
         models: &[
             // DeepSeek's pricing page names the version behind each id, and
-            // `deepseek-flash` follows each Flash upgrade.
-            Model::shown("deepseek-flash", "DeepSeek-V4.1-Flash-1017", LOW_HIGH_MAX),
-            Model::shown("deepseek-v4-pro", "DeepSeek-V4-Pro-0813", LOW_HIGH_MAX),
+            // `deepseek-flash` follows each Flash upgrade, so each row is
+            // listed by the version it answers with now.
+            Model::versioned("deepseek-flash", "deepseek-v4.1-flash-1017", LOW_HIGH_MAX),
+            Model::versioned("deepseek-v4-pro", "deepseek-v4-pro-0813", LOW_HIGH_MAX),
         ],
     },
     Served {
@@ -961,9 +962,15 @@ pub struct Model {
     /// What `--model` and `/model` name it, spelled the way the vendor spells
     /// it, because it is the vendor that has to recognise it.
     pub name: &'static str,
-    /// What a picker row calls it, where the product name differs from the wire
-    /// identifier a configuration or command must carry.
+    /// What it is called beside the name it is typed by, where the product
+    /// name differs from the wire identifier a configuration or command must
+    /// carry: in the list `/model` prints where no shelf fits, the question
+    /// asked before a switch, and the usage a client is told about.
     pub shown: &'static str,
+    /// What a row of the `/model` shelf lists it by. Its wire name, so a row
+    /// reads as what is typed to ask for it, except where that name names no
+    /// version: there the row names the version behind it, which is `shown`.
+    pub listed: &'static str,
     /// The rungs of [`Effort`] this model serves, weakest first, as its
     /// vendor's documentation had them when this was built.
     ///
@@ -982,13 +989,34 @@ impl Model {
         Self {
             name,
             shown: name,
+            listed: name,
             rungs,
         }
     }
 
     /// One entry whose product name and wire identifier differ.
     const fn shown(name: &'static str, shown: &'static str, rungs: &'static [Effort]) -> Self {
-        Self { name, shown, rungs }
+        Self {
+            name,
+            shown,
+            listed: name,
+            rungs,
+        }
+    }
+
+    /// One entry whose wire identifier names no version, shown and listed by
+    /// the version behind it.
+    const fn versioned(
+        name: &'static str,
+        version: &'static str,
+        rungs: &'static [Effort],
+    ) -> Self {
+        Self {
+            name,
+            shown: version,
+            listed: version,
+            rungs,
+        }
     }
 }
 

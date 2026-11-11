@@ -754,6 +754,91 @@ fn a_window_with_no_shelf_lists_what_the_credential_serves_and_says_trains() {
 }
 
 #[test]
+fn deepseek_shelf_rows_are_listed_by_the_version_behind_each_name() {
+    // `deepseek-flash` names no version, so its row names the one behind it.
+    // Every other model is listed by the name it is typed by, the ones with a
+    // product name of their own included.
+    let providers = catalogue();
+    let mut deepseek = Vec::new();
+    for one in super::narrowing::every(&providers) {
+        let row = super::stocked(&one, "", "", false, None);
+        if one.provider.name == "deepseek" {
+            deepseek.push(row.name);
+        } else {
+            assert_eq!(row.name, one.model.name, "{}", one.provider.name);
+        }
+    }
+
+    assert_eq!(
+        deepseek,
+        ["deepseek-v4.1-flash-1017", "deepseek-v4-pro-0813"]
+    );
+}
+
+#[test]
+fn deepseek_lines_keep_the_typed_name_and_show_the_version_beside_it() {
+    // The command is typed back, so it keeps the name DeepSeek's API takes.
+    let providers = catalogue();
+    let deepseek: Vec<Selected> = super::narrowing::every(&providers)
+        .into_iter()
+        .filter(|one| one.provider.name == "deepseek")
+        .collect();
+    let routes = crucible_app::content_use::Routes::production();
+
+    let lines = super::lines(deepseek, &using(&[]), &routes, Glyphs::Unicode);
+
+    assert_eq!(
+        lines,
+        [
+            "/model deepseek/deepseek-flash \u{2014} deepseek-v4.1-flash-1017",
+            "/model deepseek/deepseek-v4-pro \u{2014} deepseek-v4-pro-0813",
+        ]
+    );
+}
+
+#[test]
+fn picking_a_deepseek_row_selects_the_name_its_api_takes() {
+    // Whichever name it is found by, the one row it leaves is taken as the
+    // name DeepSeek's API takes. Each row is matched whole: the second row's
+    // text holds the second model's typed name.
+    let providers = catalogue();
+    let all = super::narrowing::every(&providers);
+    let left = |query: &str| -> Vec<Selected> { super::narrowing::shelved(&all, query, None) };
+    let rows = |shelf: &[Selected]| -> Vec<&str> {
+        shelf
+            .iter()
+            .map(|one| super::stocked(one, "", "", false, None).name)
+            .collect()
+    };
+    assert_eq!(rows(&left("deepseek-flash")), ["deepseek-v4.1-flash-1017"]);
+    assert_eq!(rows(&left("deepseek-v4.1")), ["deepseek-v4.1-flash-1017"]);
+    assert_eq!(rows(&left("deepseek-v4-pro")), ["deepseek-v4-pro-0813"]);
+
+    for (query, wire) in [
+        ("deepseek-v4.1", "deepseek-flash"),
+        ("deepseek-v4-pro", "deepseek-v4-pro"),
+    ] {
+        let sample = Sample::new(&format!("model-deepseek-{wire}"));
+        let mut terms = keeping(&sample);
+        terms.serving = Box::new(|_, _| {
+            Ok(crucible_app::providers::Resolved {
+                provider: Box::new(Script::new(Vec::new())),
+                source: crucible_app::providers::CredentialSource::StoredKey,
+            })
+        });
+        let mut conversation = asking();
+        let mut renderer = Renderer::new(Recording::new(100, 24));
+        let selected = left(query).first().copied().expect("one row left");
+
+        applied(selected, Some(0), &mut renderer, &mut conversation, &terms)
+            .expect("the row to be taken");
+
+        assert_eq!(conversation.serving(), Some("deepseek"));
+        assert_eq!(conversation.settled().model(), wire);
+    }
+}
+
+#[test]
 fn a_narrow_window_with_no_shelf_folds_a_line_rather_than_cut_its_note() {
     let sample = Sample::new("model-listed-narrow");
     let terms = keeping(&sample);
