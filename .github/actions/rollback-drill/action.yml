@@ -30,7 +30,8 @@ runs:
           sleep "$pause"
         done
     # The previous binary depends on nothing but the tag and the platform, so
-    # it is restored from the cache once a run on `dev` has saved it.
+    # it is restored from the cache once a push or a manual run has saved it. A
+    # pull request saves none, for the reason rust-ci.yml gives.
     - name: Restore the previous release binary
       id: prior
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -67,7 +68,7 @@ runs:
           exit 1
         }
     - name: Cache the previous release binary
-      if: ${{ steps.prior.outputs.cache-hit != 'true' }}
+      if: ${{ steps.prior.outputs.cache-hit != 'true' && github.event_name != 'pull_request' }}
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/prior-bin

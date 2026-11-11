@@ -32,6 +32,18 @@ env:
 # the suite is chosen by hashing each test's name, so a test added lands in one
 # part without anyone listing it, and a section added to the Rust gate is run
 # by the job that names only what it leaves out.
+#
+# Only a push to dev or main, or a manual run, saves the Rust build caches
+# here; a pull request reads them and saves none. A pull request reads the
+# caches of the branch it merges into, and failing those main's. A push to a
+# feature branch builds nothing, so a manual run on one is what gives its pull
+# requests caches to read. The repository keeps 10 GB of caches in all,
+# dropping the least recently used: while every pull request saved its own
+# copy, those copies pushed out the ones on dev and most runs started from
+# nothing. A run saves only when no cache has its key yet, after a change to
+# the toolchain, a manifest, Cargo.lock or the build environment, or once the
+# one it had was evicted or went a week unread. The FreeBSD image is cached by
+# its own action, which saves it from whichever run misses it.
 jobs:
   linux-tests:
     name: Linux tests ${{ matrix.shard }}/4
@@ -49,7 +61,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: tests-ubuntu-latest
-          save-if: ${{ matrix.shard == 1 }}
+          save-if: ${{ github.event_name != 'pull_request' && matrix.shard == 1 }}
       # A prebuilt cargo-nextest, checked against its published checksum, in
       # seconds rather than the minutes building it would take.
       - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
@@ -96,6 +108,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: checks-ubuntu-latest
+          save-if: ${{ github.event_name != 'pull_request' }}
       - run: scripts/sh/rust-checks.sh --skip tests,examples,required
       - uses: ./.github/actions/check-clean-worktree
 
@@ -133,7 +146,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: tests-${{ matrix.os }}
-          save-if: ${{ matrix.shard == 1 }}
+          save-if: ${{ github.event_name != 'pull_request' && matrix.shard == 1 }}
       # A prebuilt cargo-nextest, checked against its published checksum, in
       # seconds rather than the minutes building it would take.
       - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
@@ -202,6 +215,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: ${{ matrix.drill && 'checks-drill' || 'checks' }}-${{ matrix.os }}
+          save-if: ${{ github.event_name != 'pull_request' }}
       # First, so its steps meet the job as they would in the drill's own job,
       # and every check after it runs whatever it found.
       - if: ${{ matrix.drill }}
@@ -274,7 +288,10 @@ jobs:
 
   # Windows ARM64 cannot be cross-built from Linux, so a pull request that
   # leaves its tests to dev still compiles every target there. It starts from
-  # the cache the full run on dev saves.
+  # the cache the full checks save, and saves none: a manual run that leaves
+  # out the other platforms runs it too, and what it saved first under the key
+  # those checks use would be an exact hit for them, so they would never save
+  # their own.
   windows-arm64-build:
     name: Windows ARM64 build
     if: ${{ !inputs.all-platforms && !inputs.docs-only }}
@@ -287,6 +304,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: checks-windows-11-arm
+          save-if: false
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - uses: ./.github/actions/check-clean-worktree
 
@@ -312,6 +330,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
       - uses: ./.github/actions/rollback-drill
       # A check whose only value is as a check, like the drill's self-test.
       - uses: ./.github/actions/check-clean-worktree
