@@ -1208,7 +1208,7 @@ pub struct Source<'a> {
     /// The line it is held as, numbered as the record numbers its lines.
     pub line: usize,
     /// What the block is called: `table`, `math`, `mermaid diagram`, `diff`;
-    /// or [`ADDRESS`].
+    /// or `address`, for an address drawn shorter than it was written.
     pub word: &'static str,
     /// The text it was written as.
     pub text: &'a str,

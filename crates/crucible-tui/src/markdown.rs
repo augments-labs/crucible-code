@@ -123,7 +123,7 @@
 //! a space, an opening bracket or a mark of emphasis, is a link to the `https://`
 //! address that begins with it. What any link is drawn as, a forge address
 //! as its reference, words followed by their quiet address, or an image as
-//! its words, is the [`links`] module's to decide, in a paragraph and in a
+//! its words, is the `links` module's to decide, in a paragraph and in a
 //! table's cell alike.
 //!
 //! Six tags, `<details>`, `<summary>`, `<br>`, `<kbd>`, `<sub>` and `<sup>`, in
