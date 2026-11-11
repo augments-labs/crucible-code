@@ -876,18 +876,42 @@ fn picture_of_a_cut_line_and_a_summary_of_one_line_a_side_and_of_one_side() {
 
 #[test]
 fn the_caps_the_user_docs_state_are_the_ones_a_change_is_drawn_to() {
-    // The caps a tool's edit reaches; a diff the model writes in a reply is
-    // not drawn in a box yet, so the caps only it reaches are not stated.
-    use crate::{PAIRS, SYNTAX_BYTES, SYNTAX_LINES, TOKENS};
-    let documented = include_str!("../../../docs/tools/files.md");
-    let documented = documented.split_whitespace().collect::<Vec<_>>().join(" ");
-    for stated in [
-        format!("reads at most {SYNTAX_LINES} of its lines, and {SYNTAX_BYTES} bytes of them"),
-        format!("in at most {PAIRS} replaced lines, each of at most {TOKENS} words"),
+    // The caps a tool's edit reaches are stated beside the tools, and the
+    // ones only a diff written in a reply reaches beside the transcript.
+    use crate::{FOLD, PAIRS, SYNTAX_BYTES, SYNTAX_LINES, TOKENS};
+    let spaced = |page: &str| page.split_whitespace().collect::<Vec<_>>().join(" ");
+    let files = spaced(include_str!("../../../docs/tools/files.md"));
+    let transcript = spaced(include_str!("../../../docs/sessions/transcript.md"));
+    for (page, documented, stated) in [
+        (
+            "docs/tools/files.md",
+            &files,
+            format!("reads at most {SYNTAX_LINES} of its lines, and {SYNTAX_BYTES} bytes of them"),
+        ),
+        (
+            "docs/tools/files.md",
+            &files,
+            format!("in at most {PAIRS} replaced lines, each of at most {TOKENS} words"),
+        ),
+        (
+            "docs/tools/files.md",
+            &files,
+            format!("names more than {MOST_FILES} files is shown as the model wrote it"),
+        ),
+        (
+            "docs/sessions/transcript.md",
+            &transcript,
+            format!("names more than {MOST_FILES} files or runs to {MOST_LINES} lines or more"),
+        ),
+        (
+            "docs/sessions/transcript.md",
+            &transcript,
+            format!("A file of more than {FOLD} rows is folded"),
+        ),
     ] {
         assert!(
             documented.contains(&stated),
-            "docs/tools/files.md does not say {stated:?}"
+            "{page} does not say {stated:?}"
         );
     }
 }
@@ -1396,7 +1420,7 @@ fn a_diff_is_read_up_to_each_of_its_caps_and_refused_one_past_it() {
 }
 
 #[test]
-fn a_fence_of_fewer_lines_than_a_file_keeps_is_drawn_and_one_of_more_is_shown_as_written() {
+fn a_fence_of_fewer_lines_than_a_file_keeps_is_drawn_and_one_of_as_many_is_shown_as_written() {
     let under = answered(
         &[&fenced("diff", &of_lines(MOST_LINES - 1))],
         &changes(),
@@ -1406,6 +1430,15 @@ fn a_fence_of_fewer_lines_than_a_file_keeps_is_drawn_and_one_of_more_is_shown_as
         opening(&under),
         format!("╭─ x · Added {} lines", MOST_LINES - 4)
     );
+    // Every line of a fence is ended, so the one that reaches the count is
+    // already past it; each is shown as written, every line between its edges.
+    let at = answered(
+        &[&fenced("diff", &of_lines(MOST_LINES))],
+        &changes(),
+        room(64, UNICODE),
+    );
+    assert_eq!(opening(&at), PAST);
+    assert_eq!(at.len(), MOST_LINES + 2);
     let past = answered(
         &[&fenced("diff", &of_lines(MOST_LINES + 1))],
         &changes(),

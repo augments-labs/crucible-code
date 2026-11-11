@@ -54,9 +54,9 @@
 //! A call that changed a file is shown as the change itself, and what is held
 //! for it is the change written out, every line the tool kept, by the crate
 //! that draws it: held where the box folded its middle or the call's line was
-//! cut, under the same ceiling as any result. The log holds the sentence the
-//! model was sent and not the change, so one let go of under the ceiling is
-//! read back as that sentence.
+//! cut, under the same ceiling as any result. What is read back from the log
+//! is the sentence the model was sent and not the change, so one let go of
+//! under the ceiling is read back as that sentence.
 //!
 //! One kind of cut is not here and cannot be. A change too long to keep is cut
 //! down where the change is built rather than where it is drawn — those lines

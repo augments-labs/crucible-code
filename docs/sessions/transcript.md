@@ -96,17 +96,18 @@ first, after any cut results, and then every
 
 ## Drawn again at every width
 
-A table, a rule and the rule under a heading are kept as the text the model
-wrote, beside the rows they were drawn as. When the window changes width, or
-you change the glyph set, each is laid out again from that text for the window
-it is in now, so a table drawn in a narrow window and then widened is the table
-a window that wide would have drawn. A change of theme repaints the same rows
+A table, a diff, a rule and the rule under a heading are kept as the text the
+model wrote, beside the rows they were drawn as. When the window changes width,
+or you change the glyph set, each is laid out again from that text for the
+window it is in now, so a table drawn in a narrow window and then widened is
+the table a window that wide would have drawn, and a diff's grounds reach the
+new edge. A change of theme repaints the same rows
 in the new colours. In native mode this happens when the terminal's scrollback
 is written again, once the window has kept its new size.
 
-What the transcript keeps is bounded, and a table counts against that bound by
-both its text and its rows. When the oldest of the transcript is dropped, a
-table goes with its text. The [session log](sessions.md) still holds every
+What the transcript keeps is bounded, and a table or a diff counts against that
+bound by both its text and its rows. When the oldest of the transcript is
+dropped, a table or a diff goes with its text. The [session log](sessions.md) still holds every
 answer.
 
 ## Code blocks
@@ -144,6 +145,37 @@ line that wrapped copies as the one line it was written as, with no line break
 where it wrapped. In the native screen, or with <kbd>Shift</kbd> held while you
 drag, your terminal copies what it shows. When the window changes width the
 rows are cut again from the line.
+
+## Diffs
+
+A fence named `diff` or `patch` that holds a unified diff is drawn as the
+change it describes, in the box a tool's edit is shown in:
+
+```text
+╭─ src/parse.rs · Added 1 line, removed 1 line
+│   40 -     tree
+│   40 +     tree.finish()
+├─ README.md · Added 1 line
+│    1   # parse
+│    2 + A small parser.
+╰─
+```
+
+Each file of the diff opens with a row naming it and counting its lines, and
+everything said of the box under
+[What a change leaves on screen](../tools/files.md#what-a-change-leaves-on-screen)
+holds here: the grounds, the raised words, the colours of the file's language
+and the fold. A file of more than 32 rows is folded around a row such as
+`⋯  36 lines folded · ctrl+o to expand  ⋯`, and <kbd>Ctrl+O</kbd> lists the
+diff as the model wrote it, every line of it: see
+[The source of a table, formula, diagram or diff](#the-source-of-a-table-formula-diagram-or-diff).
+
+A fence under either name that is not a unified diff is shown as written, in
+the frame of a [code block](#code-blocks). So is a diff past what a change
+holds, one that names more than 8 files or runs to 2048 lines or more, and its
+top edge says why: `┌─ diff · longer than this can hold · shown as written`.
+A fence is [held](#what-is-shown-as-written) for 16 KiB at most, so a diff
+longer than that is shown the same way.
 
 ## Lists and quotes that wrap
 
@@ -290,8 +322,9 @@ is drawn as it is in prose, an address as its reference included, but with
 nothing after its words: the whole of it is in the table's source, and
 <kbd>Ctrl+O</kbd> lists it whenever it would list the same link in prose.
 
-A link in code, a key, a fence, a mermaid diagram or a diff is drawn as the
-model wrote it, and one in display math as its words alone, as before. Every
+A link in code, a key, a fence or a mermaid diagram is drawn as the model wrote
+it, one in a line of a diff is that line's text and links nothing, and one in
+display math is drawn as its words alone, as before. Every
 link and image in output with no colour, including output that is not a
 terminal, is written as the model wrote it.
 
@@ -426,8 +459,11 @@ Some text is drawn exactly as the model wrote it, rather than as a block:
 - **A fence or display math the answer never closes.** It is drawn as
   written when the answer ends. A table the answer ends in is still drawn as
   a table: its last row is where it stops.
-- **Display math, mermaid diagrams and diffs.** They are held so they arrive
-  whole, and are then shown as written.
+- **Display math and mermaid diagrams.** They are held so they arrive whole,
+  and are then shown as written.
+- **A diff crucible will not draw as a change.** A fence named `diff` or
+  `patch` that is not a unified diff, and one past what a change holds: see
+  [Diffs](#diffs).
 - **A table without its outer bars.** A line such as `name | since` over a
   delimiter row such as `--|--` with the same number of cells is a table. Its
   rows are the lines after them up to the first blank line, or inside
