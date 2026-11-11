@@ -51,7 +51,7 @@ use super::{Failed, Nobody, Script, Tree, saying};
 #[path = "external/catalog_hold.rs"]
 mod catalog_hold;
 #[path = "external/choosing.rs"]
-mod choosing;
+pub(crate) mod choosing;
 #[path = "external/refusing.rs"]
 mod refusing;
 #[path = "external/routing.rs"]
@@ -257,9 +257,19 @@ fn launching_on(
 /// instance finds the peer installed in `peer` on the `PATH`, as a bare
 /// `claude` would be found.
 fn steps(launching: &Launching, peer: &std::path::Path) -> Steps {
+    steps_confined(launching, peer, (false, false))
+}
+
+/// [`steps`], under the sandbox where `chosen` holds, or a project requires
+/// it where `required` does.
+fn steps_confined(
+    launching: &Launching,
+    peer: &std::path::Path,
+    (chosen, required): (bool, bool),
+) -> Steps {
     Steps::new(
         launching.launcher(),
-        Arc::new(SandboxEnablement::new(false, false)),
+        Arc::new(SandboxEnablement::new(chosen, required)),
         Box::leak(Box::new(Registry::new(std::slice::from_ref(launching.row)))),
         Some(peer.to_path_buf().into_os_string()),
     )

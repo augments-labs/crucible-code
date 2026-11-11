@@ -2324,17 +2324,20 @@ fn signed_out(
     (note, started): (Option<&str>, Started),
     platform: Platform,
 ) -> (Confirmation, Vec<AgentAction>) {
-    let _ = platform;
     let name = agent.name();
+    let own = crate::own_program::told(row, started, platform);
     let told = match row {
         AgentRow::Built(row) => (row.sign_in)(agent.profile().map(Path::new)),
         AgentRow::Catalog(_) => None,
     };
-    let how = match told {
-        Some(command) => {
+    let how = match (own.how, told) {
+        (Some(own), _) => own,
+        (None, Some(command)) => {
             format!("Sign in: run `{command}` in a terminal, then choose Check again.")
         }
-        None => "Sign in: open the agent and sign in there, then choose Check again.".to_owned(),
+        (None, None) => {
+            "Sign in: open the agent and sign in there, then choose Check again.".to_owned()
+        }
     };
     let mut facts = vec![
         format!("Agent: {name}, run as {}.", agent.executable()),
@@ -2342,6 +2345,7 @@ fn signed_out(
     ];
     facts.extend(note.map(str::to_owned));
     facts.push(how);
+    facts.extend(own.more);
     let methods = written.map_or_else(Vec::new, |_| row.methods(started));
     let (offered, more) = match written {
         Some(true) => sign_ins(agent, methods, &[CHECK_AGAIN, "Cancel"]),

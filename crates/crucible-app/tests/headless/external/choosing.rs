@@ -476,6 +476,73 @@ fn antigravity_row() -> Result<&'static Row, Failed> {
 /// a yes to it written into the user file a connect is asked with; and that
 /// file, naming the instance.
 fn signed_out_antigravity(tree: &Tree, runs: usize) -> Result<(Conversation, String), Failed> {
+    antigravity_started(tree, runs, Started::Profiled)
+}
+
+/// How [`antigravity_started`] starts the instance.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Started {
+    /// With the sandbox off and a profile directory.
+    Profiled,
+    /// As the user's own program under the sandbox, with no profile
+    /// directory, the user file turning the sandbox on.
+    Sandboxed,
+    /// As [`Started::Sandboxed`], the sandbox required by a project.
+    Required,
+}
+
+/// A connect's outcome, the choices of each account question it put, and each
+/// written out as [`written_out`] writes it.
+pub(crate) type Connected = (Outcome, Vec<Vec<String>>, Vec<String>);
+
+/// What a connect to the instance `space` of the user's own Antigravity,
+/// started as `started` says and read signed out, puts to a client that
+/// claims every capability, accepts the route and then cancels: the outcome,
+/// the choices of each account question, and each written out as
+/// [`written_out`] writes it.
+pub(crate) fn own_agy_connected(tree: &Tree, started: Started) -> Result<Connected, Failed> {
+    let (mut conversation, before) = antigravity_started(tree, 1, started)?;
+    let mut picking = Picking::of([Some("Accept"), Some("Cancel")]);
+    let (outcome, _) = connecting_on(
+        tree,
+        &mut conversation,
+        (&before, Some("space")),
+        Asking::every(),
+        &mut picking,
+    )?;
+    let choices = offered(&picking.put)
+        .into_iter()
+        .map(|one| one.into_iter().map(str::to_owned).collect())
+        .collect();
+    Ok((outcome, choices, written_out(&picking.put, tree)))
+}
+
+/// What a connect naming `instance`, asked in `conversation` by a client that
+/// claims every capability and cancels at the first account question, the
+/// user file holding `file` first, ends with, and each account question
+/// written out as [`written_out`] writes it.
+pub(crate) fn connect_cancelled(
+    tree: &Tree,
+    conversation: &mut Conversation,
+    (file, instance): (&str, &str),
+) -> Result<(Outcome, Vec<String>), Failed> {
+    let mut picking = Picking::of([Some("Cancel")]);
+    let (outcome, _) = connecting_on(
+        tree,
+        conversation,
+        (file, Some(instance)),
+        Asking::every(),
+        &mut picking,
+    )?;
+    Ok((outcome, written_out(&picking.put, tree)))
+}
+
+/// [`signed_out_antigravity`], its instance started as `started` says.
+fn antigravity_started(
+    tree: &Tree,
+    runs: usize,
+    started: Started,
+) -> Result<(Conversation, String), Failed> {
     use crucible_external_harnesses::acp::SignIn;
     use crucible_external_harnesses::antigravity::Manifest;
     use crucible_external_harnesses::fake_peer::scripts::acp;
@@ -493,7 +560,15 @@ fn signed_out_antigravity(tree: &Tree, runs: usize) -> Result<(Conversation, Str
         .say(acp::sign_in_required(1))
         .hear_out();
     let peer = tree.0.join("peer");
-    let program = fake_peer::install(&peer, "antigravity", &Peer::of(vec![signed_out; runs]))?;
+    let sandboxed = matches!(started, Started::Sandboxed | Started::Required);
+    // A confined peer cannot count its starts in its read-only directory, so
+    // it plays the one reply at every start.
+    let script = if sandboxed {
+        Peer::once(signed_out)
+    } else {
+        Peer::of(vec![signed_out; runs])
+    };
+    let program = fake_peer::install(&peer, "antigravity", &script)?;
     let row = antigravity_row()?;
     let consent = Consent::new(Routes::production());
     consent.keeps_in(crate::Desk::new(tree, &[])?.choosing);
@@ -517,9 +592,15 @@ fn signed_out_antigravity(tree: &Tree, runs: usize) -> Result<(Conversation, Str
     let launching = Launching {
         sandbox,
         runtime,
-        policy: SandboxPolicy::standard(&tree.workspace()?)?.with_enabled(false),
+        policy: SandboxPolicy::standard(&tree.workspace()?)?.with_enabled(sandboxed),
         consent: consent.clone(),
-        state: tree.0.join("state"),
+        // Under the sandbox, crucible's home is the tree's own, which the
+        // peer lies outside; it holds the whole tree otherwise.
+        state: if sandboxed {
+            catalog_fetch::state_in(tree.home()?.path())
+        } else {
+            tree.0.join("state")
+        },
         sessions: tree.sessions(),
         agent,
         row,
@@ -527,18 +608,31 @@ fn signed_out_antigravity(tree: &Tree, runs: usize) -> Result<(Conversation, Str
     };
     let conversation = crate::conversation(tree, Script::new(Vec::new()), false)?
         .consenting(consent)
-        .stepping(super::steps(&launching, &peer));
-    let profile = tree.home()?.path().join("agy");
-    let file = serde_json::to_string_pretty(&json!({
-        "externalAgents": {
-            "space": {
-                "driver": "antigravity",
-                "executable": executable,
-                "profileDir": profile.to_string_lossy(),
+        .stepping(super::steps_confined(
+            &launching,
+            &peer,
+            (sandboxed, started == Started::Required),
+        ));
+    let file = if sandboxed {
+        json!({
+            "sandbox": {"enabled": true},
+            "externalAgents": {
+                "space": {"driver": "antigravity", "executable": executable}
             }
-        }
-    }))?;
-    Ok((conversation, file))
+        })
+    } else {
+        let profile = tree.home()?.path().join("agy");
+        json!({
+            "externalAgents": {
+                "space": {
+                    "driver": "antigravity",
+                    "executable": executable,
+                    "profileDir": profile.to_string_lossy(),
+                }
+            }
+        })
+    };
+    Ok((conversation, serde_json::to_string_pretty(&file)?))
 }
 
 /// An agent read signed out offers a client that claims the install

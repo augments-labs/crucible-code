@@ -712,6 +712,14 @@ pub struct Started {
 }
 
 impl Started {
+    /// Whether it is the user's own program started under the sandbox with
+    /// no profile directory, which reaches no sign-in it keeps in the user's
+    /// home and keeps none it makes.
+    #[must_use]
+    pub const fn homeless(self) -> bool {
+        matches!(self.origin, crate::launching::Origin::Own) && self.sandbox.on && !self.profiled
+    }
+
     /// A release from crucible's install store, which signs in by every
     /// method its row gives wherever it is started.
     pub const STORED: Self = Self {
@@ -795,15 +803,18 @@ impl AgentRow {
     }
 
     /// The methods its agent signs in by, started as `started` says, in the
-    /// order offered: a catalog agent's entry's, and Antigravity's own four;
-    /// none for Claude Code, which signs in at its own command. This is the
-    /// one place that decides them: the question a person is put, the agents
-    /// door and the keys a start is given all read it.
+    /// order offered: a catalog agent's entry's, and Antigravity's own four,
+    /// none of which the user's own Antigravity is offered where it is
+    /// [`homeless`](Started::homeless), since it cannot reach the sign-in it
+    /// keeps in `~/.gemini` and one made there is not kept; none for Claude
+    /// Code, which signs in at its own command. This is the one place that
+    /// decides them: the question a person is put, the agents door and the
+    /// keys a start is given all read it.
     #[must_use]
     pub fn methods(&self, started: Started) -> Vec<AuthMethod> {
-        let _ = started;
         match self {
             Self::Built(row) => match row.driver {
+                Driver::Antigravity if started.homeless() => Vec::new(),
                 Driver::Antigravity => antigravity::methods(),
                 Driver::Claude | Driver::Catalog => Vec::new(),
             },

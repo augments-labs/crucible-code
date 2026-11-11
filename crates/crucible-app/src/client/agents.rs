@@ -187,8 +187,11 @@
 //! stopped is. The runs are known only to the conversation that made
 //! them, through the steps it lent, so a launcher lent with none is refused as
 //! no conversation. A sign-in link the agent prints is told to
-//! [`Watching::link`] as the agent's wire passed it. A method the agent runs
-//! as a command with no real terminal is started only where the front end lent
+//! [`Watching::link`] as the agent's wire passed it. The user's own program
+//! is run by no sign-in command at all ([`Unpiped::OwnProgram`]), refused
+//! before anything is asked or started with its entry's description, since
+//! that command is its own and not a program of a version crucible installed.
+//! A method the agent runs as a command with no real terminal is started only where the front end lent
 //! [`Watching::sign_in`], since someone must read what it says and answer it:
 //! with nothing lent it is refused saying a terminal is needed, before the
 //! route is asked or anything started. A method that needs a real terminal is
@@ -986,6 +989,18 @@ struct Door<'a> {
     /// stands in for the yes to an update of a release the catalog offers.
     /// Every check that can refuse the release still runs.
     standing: bool,
+}
+
+/// Refuses `method`'s command for the user's own program, which runs its
+/// sign-in command itself in a terminal: none is run for it, since it is no
+/// program of a version crucible installed.
+fn unrun_for_own(row: &AgentRow, method: &AuthMethod) -> Result<(), AgentsError> {
+    match (row, &method.method) {
+        (AgentRow::Catalog(catalog), Method::Terminal { .. }) if catalog.is_own() => {
+            Err(AgentsError::Piped(Unpiped::own_program(method)))
+        }
+        _ => Ok(()),
+    }
 }
 
 impl Door<'_> {
@@ -2227,6 +2242,7 @@ impl Door<'_> {
                 by,
             })
         };
+        unrun_for_own(&row, &found)?;
         let (launcher, by, billed, channel, handover) = match &found.method {
             Method::EnvVar { .. } => {
                 let rows = Rows::production();
@@ -2717,14 +2733,15 @@ fn signing_row(
     here: &Here<'_>,
 ) -> Result<(AgentRow, AgentKey, Started), AgentsError> {
     // The user's own program of a catalog agent signs in by what its probe
-    // record answered, as a launch of it is believed.
+    // record answered, as a launch of it is believed. One with no record yet
+    // signs in as any program outside the store does, below: belief never
+    // probes, and its launch is refused until it is tried.
     if let (Driver::Catalog, Some(key)) = (instance.driver(), instance.agent()) {
         let state = catalog_fetch::state_in(here.home.path());
-        if let Some(own) =
-            crate::own_program::believed(instance, key, &state, |name| std::env::var_os(name))
-        {
-            let (row, _) = own.map_err(Unlaunched::from)?;
-            return here.named(AgentRow::Catalog(row), instance);
+        match crate::own_program::believed(instance, key, &state, |name| std::env::var_os(name)) {
+            Some(Ok((row, _))) => return here.named(AgentRow::Catalog(row), instance),
+            Some(Err(Unbelieved::OwnUnprobed { .. })) | None => {}
+            Some(Err(why)) => return Err(Unlaunched::from(why).into()),
         }
     }
     let row = match instance.driver() {

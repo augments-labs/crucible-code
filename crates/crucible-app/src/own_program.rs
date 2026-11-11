@@ -36,6 +36,7 @@ use crucible_external_harnesses::acp::Initialized;
 use crucible_external_harnesses::catalog::registry::platform;
 use crucible_external_harnesses::catalog::{AuthMethod, Method, Route, Variable};
 use crucible_external_harnesses::catalog::{Entry, OwnEntry, Trust};
+use crucible_external_harnesses::store::Source as ReleaseSource;
 use crucible_external_harnesses::{
     Account, Control, Dialect, Discovery, Held, Host, Launch, Program, Reading, Refusal, Shape,
 };
@@ -49,7 +50,7 @@ use tokio::runtime::Handle;
 
 use crucible_tools::Mode;
 
-use crate::backends::{AgentRow, CatalogRow, Sandboxing, Unbelieved, Wire, kept_word};
+use crate::backends::{AgentRow, CatalogRow, Sandboxing, Started, Unbelieved, Wire, kept_word};
 use crate::launching::discovery::{Origin, discover};
 use crate::launching::{
     Guarded, Overlap, PROBING, Reach, Sandbox, beneath, guarded, is_beneath, overlap, read_only,
@@ -127,6 +128,88 @@ impl Platform {
                 ))
             }
             Self::MacOs | Self::Windows | Self::Linux | Self::Other => None,
+        }
+    }
+}
+
+/// What a person reading `row`'s agent signed out is told of signing it in,
+/// where it runs the user's own program, as it is started where `started`
+/// says on `platform`.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct Told {
+    /// The line saying how to sign it in, in place of the one a release is
+    /// told, where it differs.
+    pub(crate) how: Option<String>,
+    /// What is said after that line.
+    pub(crate) more: Vec<String>,
+}
+
+/// What [`Told`] says of `row`'s agent started as `started` on `platform`.
+///
+/// The user's own Antigravity started [`homeless`](Started::homeless) is
+/// told, in place of signing in at the agent, the two ways it can be signed
+/// in, and on Linux alone, whose sandbox gives it a private home of its own,
+/// that a sign-in made there is gone when that start ends. A catalog agent's
+/// own program is told what reaches it of a sign-in: under the sandbox only
+/// the places its entry names, which a registry entry names none of; with the
+/// sandbox off, no variable the user exported, and on Linux no desktop
+/// keyring and no relocated configuration or data directory, since it is
+/// given neither the session bus nor those variables. A release is told
+/// nothing more.
+pub(crate) fn told(row: &AgentRow, started: Started, platform: Platform) -> Told {
+    if started.origin != Origin::Own {
+        return Told::default();
+    }
+    match row {
+        AgentRow::Built(built) if built.driver == crucible_config::Driver::Antigravity => {
+            if !started.homeless() {
+                return Told::default();
+            }
+            let more = match platform {
+                Platform::Linux => vec![
+                    "A sign-in made under the sandbox lives on the sandbox's private home and is \
+                     gone when that start ends."
+                        .to_owned(),
+                ],
+                Platform::MacOs | Platform::Windows | Platform::Other => Vec::new(),
+            };
+            Told {
+                how: Some(format!(
+                    "Sign in: under the sandbox your own Antigravity cannot reach the sign-in it \
+                     keeps in ~/.gemini. {}",
+                    crucible_external_harnesses::antigravity::own_ways(started.sandbox.required)
+                )),
+                more,
+            }
+        }
+        AgentRow::Built(_) => Told::default(),
+        AgentRow::Catalog(catalog) if !catalog.is_own() => Told::default(),
+        AgentRow::Catalog(catalog) if started.sandbox.on => Told {
+            how: None,
+            more: vec![match catalog.source() {
+                ReleaseSource::Registry => "Under the sandbox your own program starts signed \
+                                            out: its registry entry names no place it keeps a \
+                                            sign-in in, so none is given to it."
+                    .to_owned(),
+                ReleaseSource::Catalog => "Under the sandbox your own program keeps a sign-in \
+                                           only in the places its catalog entry names."
+                    .to_owned(),
+            }],
+        },
+        AgentRow::Catalog(_) => {
+            let mut more = vec![
+                "Your own program is given only the variables Crucible passes on and its \
+                 entry's own, so a sign-in kept in a variable you exported is not seen."
+                    .to_owned(),
+            ];
+            if platform == Platform::Linux {
+                more.push(
+                    "Nor is one kept in a desktop keyring or under a relocated XDG_CONFIG_HOME \
+                     or XDG_DATA_HOME."
+                        .to_owned(),
+                );
+            }
+            Told { how: None, more }
         }
     }
 }

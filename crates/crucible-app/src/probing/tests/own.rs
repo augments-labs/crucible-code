@@ -14,7 +14,7 @@ use crate::backends::REGISTRY;
 use crate::launching::{Sandbox, guarded};
 use crate::own_program::{
     DID_NOT_SAY, EMPTY_PROVENANCE, Empty, HOME_SEARCH, Instance, Places, Platform, RECORDS, Root,
-    Unowned, admit, decided, dialect, forget, launch_policy, probe_policy, read, root,
+    Unowned, admit, decided, dialect, forget, launch_policy, probe_policy, read, root, told,
 };
 use crate::sample::Sample;
 
@@ -593,4 +593,69 @@ fn the_own_program_records_are_kept_to_64_and_go_with_their_instance() {
     forget(&crucible, last).expect("forgotten");
     assert!(read(&crucible, &instance(last, "gemini", &[])).is_none());
     forget(&crucible, last).expect("forgetting twice is nothing");
+}
+
+/// The user's own Antigravity started under the sandbox with no profile is
+/// told that it cannot reach the sign-in it keeps in `~/.gemini` on every
+/// platform, and that a sign-in made under the sandbox is gone when that
+/// start ends only on Linux, the one platform whose sandbox is known to give
+/// it a private home of its own; the same start with a profile, or with the
+/// sandbox off, is told neither.
+#[test]
+fn the_lost_sign_in_sentence_is_shown_on_linux_only() {
+    use crate::backends::{AgentRow, Sandboxing, Started};
+    use crate::launching::Origin;
+
+    let Some(built) = REGISTRY.built(Driver::Antigravity) else {
+        panic!("Antigravity has no row");
+    };
+    let row = AgentRow::Built(built);
+    let unreachable = Started {
+        origin: Origin::Own,
+        sandbox: Sandboxing {
+            on: true,
+            required: false,
+        },
+        profiled: false,
+    };
+    let lost = "is gone when that start ends";
+    for platform in [
+        Platform::Linux,
+        Platform::MacOs,
+        Platform::Windows,
+        Platform::Other,
+    ] {
+        let told = told(&row, unreachable, platform);
+        let how = told.how.unwrap_or_default();
+        assert!(how.contains("~/.gemini"), "{platform:?}: {how}");
+        let said = told.more.iter().any(|line| line.contains(lost));
+        assert_eq!(
+            said,
+            platform == Platform::Linux,
+            "{platform:?}: {:?}",
+            told.more
+        );
+    }
+    for started in [
+        Started {
+            profiled: true,
+            ..unreachable
+        },
+        Started {
+            sandbox: Sandboxing::default(),
+            ..unreachable
+        },
+        Started {
+            origin: Origin::Stored,
+            ..unreachable
+        },
+    ] {
+        let told = told(&row, started, Platform::Linux);
+        assert_eq!(told.how, None, "{started:?}");
+        assert!(
+            !told.more.iter().any(|line| line.contains(lost)),
+            "{started:?}: {:?}",
+            told.more
+        );
+    }
 }

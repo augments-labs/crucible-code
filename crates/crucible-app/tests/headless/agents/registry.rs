@@ -1709,3 +1709,262 @@ fn an_own_program_is_not_probed_where_the_sandbox_cannot_close_the_network() -> 
     );
     Ok(())
 }
+
+/// The user's own Antigravity under the sandbox with no profile directory
+/// cannot reach the sign-in it keeps in `~/.gemini`, and one made there is
+/// not kept, so it is offered no Google account or key to sign in by: not
+/// as a move of the signed-out question, not by the door's list, and a
+/// sign-in by one named anyway is refused as no method of the agent's.
+#[test]
+fn an_own_agy_under_the_sandbox_is_offered_no_key_method() -> Result<(), Failed> {
+    use crate::external::choosing::{Started, own_agy_connected};
+    use crucible_app::client::accounts::CHECK_AGAIN;
+
+    let tree = crate::Tree::new("registry-own-agy-no-key")?;
+    let (_, choices, _) = own_agy_connected(&tree, Started::Sandboxed)?;
+
+    assert_eq!(choices, [vec![CHECK_AGAIN, "Cancel"]]);
+    let home = tree.home()?;
+    assert_eq!(sign_in_methods(&home, "space")?, Vec::<Box<str>>::new());
+    for method in ["gemini-api-key", "oauth-personal"] {
+        match runs_a_command(&home, "space", method) {
+            Err(AgentsError::NoMethod {
+                method: refused, ..
+            }) => {
+                assert!(refused.contains(method), "{refused}");
+            }
+            other => panic!("{method} was not refused: {other:?}"),
+        }
+    }
+    Ok(())
+}
+
+/// The user's own Antigravity under the sandbox with no profile directory is
+/// read signed out and offered no Google account to sign in by, since a
+/// sign-in made where it cannot reach `~/.gemini` would be lost. In place of
+/// the line telling the user to sign in at the agent, it is told the two ways
+/// it can be signed in: turning the sandbox off, with what that costs every
+/// command and agent, and the store release; where a project requires the
+/// sandbox, only the store release.
+#[test]
+fn an_own_agy_under_the_sandbox_is_offered_no_sign_in_it_would_lose() -> Result<(), Failed> {
+    use crate::external::choosing::{Started, own_agy_connected};
+    use crucible_app::client::accounts::CHECK_AGAIN;
+
+    let tree = crate::Tree::new("registry-own-agy-would-lose")?;
+    let (_, choices, written) = own_agy_connected(&tree, Started::Sandboxed)?;
+    assert_eq!(choices, [vec![CHECK_AGAIN, "Cancel"]]);
+    let screen = written.join("\n");
+    assert!(
+        !screen.contains("open the agent and sign in there"),
+        "{screen}"
+    );
+    let how = screen
+        .lines()
+        .find(|line| line.starts_with("fact: Sign in:"))
+        .ok_or("no line says how to sign in")?;
+    for said in [
+        "~/.gemini",
+        "turn the sandbox off",
+        "docs/security/sandboxing.md",
+        "removes confinement from every command and agent",
+        "store release",
+    ] {
+        assert!(how.contains(said), "{said} is not said: {how}");
+    }
+    let lost = "is gone when that start ends";
+    assert_eq!(
+        screen.contains(lost),
+        cfg!(target_os = "linux"),
+        "the lost sign-in is said where the sandbox gives a private home alone: {screen}"
+    );
+
+    let tree = crate::Tree::new("registry-own-agy-would-lose-required")?;
+    let (_, choices, written) = own_agy_connected(&tree, Started::Required)?;
+    assert_eq!(choices, [vec![CHECK_AGAIN, "Cancel"]]);
+    let how = written
+        .iter()
+        .flat_map(|question| question.lines())
+        .find(|line| line.starts_with("fact: Sign in:"))
+        .ok_or("no line says how to sign in")?;
+    assert!(!how.contains("turn the sandbox off"), "{how}");
+    assert!(how.contains("store release"), "{how}");
+    Ok(())
+}
+
+/// Caches the registry listing `goose`, puts the user's own `goose` in a
+/// directory of its own, answering `initialize` at every start with
+/// `methods` to sign in by, configures the instance `work` to start it by
+/// its whole path, and probes it as `crucible agents try` does: that
+/// directory, the program and the instance.
+fn own_probed(bench: &Bench, methods: &Value) -> Result<(PathBuf, PathBuf, ExternalAgent), Failed> {
+    use crucible_external_harnesses::fake_peer::scripts::acp;
+    use crucible_external_harnesses::fake_peer::{Reply as Said, Script};
+
+    own_probed_with(
+        bench,
+        &Script::once(
+            Said::new()
+                .hear(1)
+                .say(acp::offering("goose-acp", "1.2.3", methods)),
+        ),
+    )
+}
+
+/// [`own_probed`], the program playing `script`.
+fn own_probed_with(
+    bench: &Bench,
+    script: &crucible_external_harnesses::fake_peer::Script,
+) -> Result<(PathBuf, PathBuf, ExternalAgent), Failed> {
+    use crucible_app::own_program::{self, Places};
+
+    cache(&bench.home, &registry_json("1.0.0"));
+    let tools = bench.tree.0.join("tools");
+    let program = fake_peer::install(&tools, "goose", script)?;
+    configure_command(&bench.home, &program.to_string_lossy())?;
+    let configured = instance(&bench.home, "work")?;
+    let user = bench.tree.0.join("user");
+    own_program::tried(
+        &Places {
+            home: &user,
+            crucible: bench.home.path(),
+            sessions: bench.home.sessions(),
+        },
+        &configured,
+        &["work"],
+        |_| None,
+        &crucible_app::probing::local,
+        Duration::from_secs(20),
+    )
+    .map_err(|why| why.to_string())?;
+    Ok((tools, program, configured))
+}
+
+/// No sign-in command is run for the user's own program: a terminal method
+/// its answer offers is refused before anything is asked or started, saying
+/// to sign in with the program itself in a terminal and quoting what the
+/// method says of itself with its control characters escaped.
+#[test]
+fn an_own_program_is_never_signed_in_by_a_command() -> Result<(), Failed> {
+    let bench = Bench::new("registry-own-no-command")?;
+    let methods = json!([{
+        "type": "terminal",
+        "id": "login",
+        "name": "Log in",
+        "description": "Run goose login\u{1b}[2J at a terminal",
+        "command": "goose",
+        "args": ["login"],
+    }]);
+    let (tools, _, _) = own_probed(&bench, &methods)?;
+    let mut front = Recording {
+        choice: Some("Yes"),
+        facts: Vec::new(),
+    };
+
+    let outcome = door(
+        &bench,
+        &mut front,
+        Command::SignInAgent {
+            instance: name("work")?,
+            method: name("login")?,
+        },
+    )?;
+
+    let refused = match outcome {
+        Err(AgentsError::Piped(why)) => why.to_string(),
+        other => panic!("the own program's command was not refused: {other:?}"),
+    };
+    assert!(refused.contains("your own program"), "{refused}");
+    assert!(refused.contains("in a terminal"), "{refused}");
+    assert!(refused.contains("Run goose login"), "{refused}");
+    assert!(!refused.contains('\u{1b}'), "{refused}");
+    assert!(front.facts.is_empty(), "something was asked");
+    assert_eq!(fake_peer::played(&tools), 0, "something started");
+    Ok(())
+}
+
+/// What a connect to the instance `work` of the user's own `goose`, probed
+/// and read signed out at its status check, tells a person, with the
+/// sandbox on where `sandboxed` holds and the user file as it is: each
+/// account question written out.
+fn own_signed_out_screen(bench: &Bench, sandboxed: bool) -> Result<Vec<String>, Failed> {
+    use crucible_app::launching::{Launcher, Steps};
+    use crucible_external_harnesses::fake_peer::scripts::acp;
+    use crucible_external_harnesses::fake_peer::{Reply as Said, Script};
+    use crucible_sandbox::{SandboxEnablement, SandboxPolicy};
+
+    // Read-only under the sandbox, the peer plays the one reply at every
+    // start: the probe hears `initialize` alone, a status check opens a
+    // session too and is told it is signed out.
+    let answer = acp::offering(
+        "goose-acp",
+        "1.2.3",
+        &json!([{"id": "browser", "name": "Browser"}]),
+    );
+    let reply = Said::new()
+        .hear(1)
+        .say(answer.as_str())
+        .hear(1)
+        .say(acp::sign_in_required(1))
+        .hear_out();
+    let (_, _, configured) = own_probed_with(bench, &Script::once(reply))?;
+    let runtime = super::runtime()?;
+    let state = catalog_fetch::state_in(bench.home.path());
+    let believed = Agent::believing(&configured, &REGISTRY, &state, |_| None)
+        .map_err(|why| why.to_string())?;
+    let consent = super::shipped_hold::shipped_given(believed.row().route())?;
+    let policy = SandboxPolicy::standard(&bench.tree.workspace()?)?.with_enabled(sandboxed);
+    let steps = Steps::new(
+        Launcher::new(
+            crucible_app::probing::local(runtime.handle().clone()),
+            runtime.handle().clone(),
+            &policy,
+            &consent,
+            &state,
+            bench.home.sessions(),
+        ),
+        std::sync::Arc::new(SandboxEnablement::new(sandboxed, false)),
+        &REGISTRY,
+        None,
+    );
+    let mut conversation =
+        crate::conversation(&bench.tree, crate::Script::new(Vec::new()), false)?.stepping(steps);
+    let file = fs::read_to_string(bench.user())?;
+    let (_, written) = crate::external::choosing::connect_cancelled(
+        &bench.tree,
+        &mut conversation,
+        (&file, "work"),
+    )?;
+    Ok(written)
+}
+
+/// The user's own program of a registry agent is told, read signed out,
+/// what reaches it of a sign-in: under the sandbox, that it starts signed out
+/// since its registry entry names no place it keeps one in; with the sandbox
+/// off, that a sign-in in a variable the user exported is not seen, and on
+/// Linux that one in a desktop keyring or a relocated `XDG_CONFIG_HOME` or
+/// `XDG_DATA_HOME` is not either.
+#[test]
+fn an_own_program_under_the_sandbox_is_told_it_starts_signed_out() -> Result<(), Failed> {
+    let bench = Bench::new("registry-own-signed-out")?;
+    let screen = own_signed_out_screen(&bench, true)?.join("\n");
+    assert!(screen.contains("is not signed in."), "{screen}");
+    assert!(
+        screen.contains("starts signed out") && screen.contains("registry entry"),
+        "{screen}"
+    );
+
+    let bench = Bench::new("registry-own-signed-out-unconfined")?;
+    let screen = own_signed_out_screen(&bench, false)?.join("\n");
+    assert!(!screen.contains("starts signed out"), "{screen}");
+    assert!(
+        screen.contains("a variable you exported is not seen"),
+        "{screen}"
+    );
+    assert_eq!(
+        screen.contains("desktop keyring") && screen.contains("XDG_CONFIG_HOME"),
+        cfg!(target_os = "linux"),
+        "{screen}"
+    );
+    Ok(())
+}

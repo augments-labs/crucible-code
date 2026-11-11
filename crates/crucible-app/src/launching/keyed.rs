@@ -3,8 +3,8 @@
 
 use std::path::Path;
 
-use crucible_external_harnesses::catalog::Method;
 use crucible_external_harnesses::Request;
+use crucible_external_harnesses::catalog::Method;
 use crucible_types::AgentKey;
 
 use crate::backends::{AgentRow, Started};
@@ -15,7 +15,12 @@ use crate::providers;
 /// still signs in by that method as it is `started`, and that variable taken
 /// off the ones whose value may be shown, so its value is withheld from what
 /// the agent says.
-pub(crate) fn keyed(mut request: Request, row: &AgentRow, home: &Path, started: Started) -> Request {
+pub(crate) fn keyed(
+    mut request: Request,
+    row: &AgentRow,
+    home: &Path,
+    started: Started,
+) -> Request {
     let methods = row.methods(started);
     let variables: Vec<(&str, &str)> = methods
         .iter()

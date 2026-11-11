@@ -309,8 +309,8 @@ mod terminal;
 
 use discovery::stored_under;
 pub use discovery::{Origin, discover};
-pub(crate) use keyed::keyed;
 pub(crate) use discovery::{looked_for, renamed, unfound};
+pub(crate) use keyed::keyed;
 
 /// Why nothing was started.
 #[derive(Debug, thiserror::Error)]
@@ -536,6 +536,14 @@ pub enum Unpiped {
     /// The agent is not a release in crucible's install store.
     #[error("a sign-in run as a command is run only from a catalog agent's installed version")]
     Unstored,
+    /// The agent is the user's own program, whose sign-in command is its own
+    /// to run: it is named by its description, or its name where it has none.
+    #[error(
+        "a sign-in run as a command is run only from a catalog agent's installed version, and \
+         this is your own program: sign it in yourself in a terminal as its entry says ({0}), \
+         then choose Check again"
+    )]
+    OwnProgram(String),
     /// What the catalog records lies outside the version installed.
     #[error("the sign-in command {0} is not a program in the version installed")]
     Outside(String),
@@ -562,6 +570,15 @@ pub enum Unpiped {
     /// What it started could not be confirmed to have stopped.
     #[error(transparent)]
     Unstopped(#[from] Unstopped),
+}
+
+impl Unpiped {
+    /// Why the user's own program is not signed in by `method`'s command.
+    pub(crate) fn own_program(method: &AuthMethod) -> Self {
+        Self::OwnProgram(quoted(
+            method.description.as_deref().unwrap_or(&method.name),
+        ))
+    }
 }
 
 /// Why what a pinned interpreter or a pinned Node runs cannot be given to it.
@@ -3078,6 +3095,9 @@ impl<'a> Launcher<'a> {
         let AgentRow::Catalog(catalog) = &agent.row else {
             return Err(Unpiped::Unstored);
         };
+        if catalog.is_own() {
+            return Err(Unpiped::own_program(signing));
+        }
         let Method::Terminal {
             command,
             args,
@@ -3177,6 +3197,9 @@ impl<'a> Launcher<'a> {
         let AgentRow::Catalog(catalog) = &agent.row else {
             return Err(Unpiped::Unstored);
         };
+        if catalog.is_own() {
+            return Err(Unpiped::own_program(signing));
+        }
         let Method::Terminal {
             command,
             args,
@@ -4896,16 +4919,15 @@ impl Steps {
         };
         // The releases on offer as they are now, which the agent is admitted as.
         let trust = Trust::load(&self.state, SystemTime::now());
-        let mut dialect =
-            match chosen.dialect(
-                Mode::default(),
-                &trust,
-                &programs_beside(&self.state),
-                self.sandboxing(),
-            ) {
-                Ok(dialect) => dialect,
-                Err(refused) => return Reading::Unreadable(refused),
-            };
+        let mut dialect = match chosen.dialect(
+            Mode::default(),
+            &trust,
+            &programs_beside(&self.state),
+            self.sandboxing(),
+        ) {
+            Ok(dialect) => dialect,
+            Err(refused) => return Reading::Unreadable(refused),
+        };
         drop(trust);
         if self.controls.unstopped(agent.name()) {
             return unreadable(&Refusal::Unstopped.to_string());
