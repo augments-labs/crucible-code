@@ -275,12 +275,13 @@ pub(super) fn unanswered(warned: &Warned) -> Box<str> {
 /// The warned route `work` would go on with no yes: the one a send to the
 /// conversation's provider is held by, or on an installed agent's route, the
 /// agent's own where the turn would start it. Room is not made on an agent's
-/// route, so nothing is started for it. The dock's answers that reach this
-/// are asked about as a turn would be, and the check that spares a turn the
-/// question when it would be refused before it started the agent is not made
-/// for them: what it reads first is the turn's attachments, and an answer
-/// carries none. Ones with nothing left to settle were refused before it. Both are read from the yes the question writes to, so a
-/// route answered here is not asked again.
+/// route, so nothing is started for it. Either route is read from the yes the
+/// question writes to, so a route answered here is not asked again. The dock's
+/// answers that reach this are asked about as a turn would be, and always:
+/// the check that spares a turn the question when it would be refused before
+/// it started the agent is made in `held` for a turn alone, so an answer is
+/// asked about whatever its launch would do. Ones with nothing left to settle
+/// were refused before it.
 fn unsent(conversation: &Conversation, terms: &Terms, work: &Work) -> Option<Warned> {
     match conversation.serving() {
         Some(provider) => terms

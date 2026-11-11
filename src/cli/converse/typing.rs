@@ -1114,8 +1114,8 @@ pub(super) fn under(settled: Settled<'_>) -> Says {
 /// stop, Tab crosses to the dock where it is open, Ctrl+O stands the whole of
 /// what the results so far were cut down to, a click on a row that offered to
 /// expand stands that one result, Ctrl+T opens the whole of the plan above the
-/// box or bounds it again, and Ctrl+Enter and Ctrl+S stop the turn to send the queue
-/// now, as [`queueing`] says. Ctrl-C is the line's own: in raw mode the
+/// box or bounds it again, and Ctrl+Enter and Ctrl+S stop the turn to send the
+/// queue now, as [`queueing`] says. Ctrl-C is the line's own: in raw mode the
 /// terminal sends it rather than raising a signal, so it reaches the editor
 /// here exactly as it does at the prompt. The rest edit the line. While that
 /// view stands it has all of them: it takes the rows the box has, so the box is
