@@ -201,6 +201,18 @@ impl Glyphs {
         }
     }
 
+    /// The square corners a box closes with on its right: top, then bottom.
+    ///
+    /// The other side of [`Glyphs::square`], for a frame drawn whole, as the
+    /// box holding an answer's specimen is.
+    #[must_use]
+    pub fn square_closed(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Unicode => ("┐", "┘"),
+            Self::Ascii => ("+", "+"),
+        }
+    }
+
     /// The mark in front of a row of code that carries on the one above it,
     /// where a line wrapped.
     ///
@@ -699,13 +711,16 @@ mod tests {
         // one in either set, and the ascii set draws nothing else.
         for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
             let (top, bottom) = glyphs.square();
-            for mark in [top, bottom, glyphs.continued()] {
+            let (closed_top, closed_bottom) = glyphs.square_closed();
+            for mark in [top, bottom, closed_top, closed_bottom, glyphs.continued()] {
                 assert_eq!(columns(mark), 1, "{glyphs:?} {mark:?}");
             }
         }
         for mark in [
             Glyphs::Ascii.square().0,
             Glyphs::Ascii.square().1,
+            Glyphs::Ascii.square_closed().0,
+            Glyphs::Ascii.square_closed().1,
             Glyphs::Ascii.continued(),
         ] {
             assert!(mark.is_ascii(), "{mark:?}");
