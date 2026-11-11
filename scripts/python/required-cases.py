@@ -35,12 +35,16 @@ A case is rerun by exact name in the test binary the selection built, from its
 package's directory as cargo would run it, so the rerun is the code the suite
 ran and costs no build. Asking cargo for one package instead would resolve that
 package's features alone and build it again, different from what was tested.
+The binaries are rerun at once, as nextest runs them, except that those holding
+a case of one of `.config/nextest.toml`'s test groups take turns.
 
     scripts/python/required-cases.py <artifacts> <doc-list> <doc-ignored-list> <selection>...
     scripts/python/required-cases.py --self-test  prove the source reader reads,
-                                                  and what a rerun runs
+                                                  what a rerun runs, and which
+                                                  reruns take turns
 """
 
+import fnmatch
 import hashlib
 import json
 import os
@@ -48,8 +52,11 @@ import re
 import subprocess
 import sys
 import tempfile
+import tomllib
+from concurrent.futures import ThreadPoolExecutor
 
 MANIFEST = "scripts/required-cases.json"
+NEXTEST = ".config/nextest.toml"
 
 PLATFORM = {"linux": "linux", "darwin": "macos", "win32": "windows"}.get(
     sys.platform, sys.platform
@@ -58,6 +65,15 @@ PLATFORM = {"linux": "linux", "darwin": "macos", "win32": "windows"}.get(
 DOCTEST = re.compile(r"^(?P<source>.+?) - (?P<case>\S+) \(line (?P<line>\d+)\): test$")
 
 DEFINITION = re.compile(r"^(\s*)(?:pub\s+)?(?:async\s+)?fn\s+([^\s(<]+)\s*[(<]")
+
+FILTER = re.compile(
+    r"\s*(?:(?P<operator>[&|()])"
+    r"|(?P<predicate>[a-z_]+)\((?P<matcher>/(?:\\.|[^/\\])*/|[^()]*)\))"
+)
+
+# The predicates a test group may be written with, in the order selector() is
+# given a test's fields, each with the matcher nextest uses when none is written.
+PREDICATES = {"package": "#", "binary": "#", "test": "~"}
 
 
 def slashed(path):
@@ -218,6 +234,103 @@ def self_test():
         print("    FAIL a rerun of the examples would not ask for the selection the suite ran")
         return 1
 
+    picks = selector(
+        "package(crucible-sandbox-local)\n"
+        "| (package(crucible-builtins) & test(/^bash::tests::/))\n"
+        "| (package(crucible-app) & binary(hosted_server))\n"
+    )
+    for test, expected in (
+        (("crucible-sandbox-local", "linux_network", "admits_one"), True),
+        (("crucible-sandbox-local-extra", "linux_network", "admits_one"), False),
+        (("crucible-builtins", "crucible_builtins", "bash::tests::runs_one"), True),
+        (("crucible-builtins", "crucible_builtins", "grep::tests::bash::tests::one"), False),
+        (("crucible-app", "hosted_server", "serves"), True),
+        (("crucible-app", "crucible_app", "serves"), False),
+    ):
+        if picks(*test) != expected:
+            verb = "missed" if expected else "also picked"
+            print(f"    FAIL the nextest filter reader {verb} {test}")
+            return 1
+    for expression, test, expected in (
+        ("test(=one)", ("a", "a", "one"), True),
+        ("test(=one)", ("a", "a", "one_more"), False),
+        ("test(~ne_m)", ("a", "a", "one_more"), True),
+        ("test(ne_m)", ("a", "a", "one_more"), True),
+        ("binary(#host*)", ("a", "hosted_server", "t"), True),
+        ("binary(host*)", ("a", "a_hosted_server", "t"), False),
+        ("package(=a) & (test(x) | test(y))", ("a", "a", "y"), True),
+        ("package(=a) & (test(x) | test(y))", ("b", "b", "y"), False),
+    ):
+        if selector(expression)(*test) != expected:
+            print(f"    FAIL the nextest filter reader read {expression} wrongly for {test}")
+            return 1
+    for expression in (
+        "not package(a)",
+        "package(a) - package(b)",
+        "kind(lib)",
+        "package(a) &",
+        "(package(a)",
+    ):
+        try:
+            selector(expression)
+        except ValueError:
+            continue
+        print(f"    FAIL the nextest filter reader guessed at {expression} instead of refusing it")
+        return 1
+
+    with tempfile.TemporaryDirectory() as root:
+        path = os.path.join(root, "nextest.toml")
+        with open(path, "w", encoding="utf-8") as file:
+            file.write(
+                "[test-groups]\nconfined = { max-threads = 1 }\n\n"
+                "[[profile.default.overrides]]\nfilter = 'package(a)'\ntest-group = 'confined'\n\n"
+                "[[profile.ci.overrides]]\nfilter = 'binary(b)'\ntest-group = 'confined'\n\n"
+                "[[profile.default.overrides]]\nfilter = 'package(z)'\nslow-timeout = '60s'\n"
+            )
+        groups = confining(path)
+        if sorted(groups) != ["confined"]:
+            print(f"    FAIL the nextest group reader found {sorted(groups)}, not confined alone")
+            return 1
+        for test, expected in (
+            (("a", "x", "t"), True),
+            (("y", "b", "t"), True),
+            (("z", "z", "t"), False),
+        ):
+            if groups["confined"](*test) != expected:
+                verb = "missed" if expected else "also picked"
+                print(f"    FAIL the nextest group reader {verb} {test}")
+                return 1
+        if confining(os.path.join(root, "absent.toml")) != {}:
+            print("    FAIL a checkout with no nextest configuration read as grouping tests")
+            return 1
+
+    jobs = schedule(
+        {
+            ("a", "lib", "a"): ["one"],
+            ("b", "lib", "b"): ["one"],
+            ("c", "lib", "c"): ["one"],
+            ("d", "lib", "d"): ["one"],
+            ("e", "lib", "e"): ["one"],
+            ("f", "lib", "f"): ["one"],
+            ("g", "lib", "g"): ["plain", "bash::tests::one"],
+            ("h", "lib", "h"): ["plain"],
+        },
+        {
+            "first": lambda package, binary, test: (
+                package in ("a", "d", "e") or test.startswith("bash::")
+            ),
+            "second": lambda package, binary, test: package in ("b", "c", "e"),
+        },
+    )
+    if sorted(sorted(job) for job in jobs) != [
+        [("a", "lib", "a"), ("b", "lib", "b"), ("c", "lib", "c")]
+        + [("d", "lib", "d"), ("e", "lib", "e"), ("g", "lib", "g")],
+        [("f", "lib", "f")],
+        [("h", "lib", "h")],
+    ]:
+        print(f"    FAIL reruns of one nextest group would run beside one another: {jobs}")
+        return 1
+
     with tempfile.TemporaryDirectory() as root:
         for where in ("tests", os.path.join(".worktrees", "other", "tests")):
             os.makedirs(os.path.join(root, where))
@@ -367,6 +480,130 @@ def ran(built, names):
     )
 
 
+def selector(expression):
+    """The tests a nextest filter picks, as a predicate on (package, binary, test name).
+
+    Only the forms a test group here is written in are read: `package()`,
+    `binary()` and `test()`, joined by `&` and `|` and grouped in parentheses,
+    each with nextest's own matchers. Any other form is refused rather than
+    guessed at, since a guess could let two binaries of one group run at once.
+    """
+    text = expression.strip()
+    tokens = []
+    at = 0
+    while at < len(text):
+        token = FILTER.match(text, at)
+        if not token:
+            raise ValueError(f"cannot read {text[at:].strip()!r}")
+        tokens.append(token)
+        at = token.end()
+    position = 0
+
+    def operator():
+        return tokens[position].group("operator") if position < len(tokens) else None
+
+    def either():
+        nonlocal position
+        alternatives = [both()]
+        while operator() == "|":
+            position += 1
+            alternatives.append(both())
+        return lambda *test: any(alternative(*test) for alternative in alternatives)
+
+    def both():
+        nonlocal position
+        parts = [one()]
+        while operator() == "&":
+            position += 1
+            parts.append(one())
+        return lambda *test: all(part(*test) for part in parts)
+
+    def one():
+        nonlocal position
+        if position == len(tokens):
+            raise ValueError(f"{text!r} ends where a test was expected")
+        token = tokens[position]
+        position += 1
+        if token.group("operator") == "(":
+            inner = either()
+            if operator() != ")":
+                raise ValueError(f"{text!r} leaves a parenthesis open")
+            position += 1
+            return inner
+        if token.group("operator") or token.group("predicate") not in PREDICATES:
+            raise ValueError(f"cannot read {token.group(0).strip()!r}")
+        field = list(PREDICATES).index(token.group("predicate"))
+        matches = name_matcher(token.group("matcher").strip(), PREDICATES[token.group("predicate")])
+        return lambda *test: matches(test[field])
+
+    picks = either()
+    if position != len(tokens):
+        raise ValueError(f"cannot read {tokens[position].group(0).strip()!r}")
+    return picks
+
+
+def name_matcher(text, default):
+    """nextest's `=` equal, `~` contains, `#` glob and `/regex/`, or the predicate's own."""
+    if len(text) > 1 and text.startswith("/") and text.endswith("/"):
+        pattern = re.compile(text[1:-1])
+        return lambda value: pattern.search(value) is not None
+    form, body = (text[0], text[1:]) if text[:1] in ("=", "~", "#") else (default, text)
+    if form == "=":
+        return lambda value: value == body
+    if form == "~":
+        return lambda value: body in value
+    return lambda value: fnmatch.fnmatchcase(value, body)
+
+
+def confining(path):
+    """nextest's test groups, each as a test of which cases belong to it.
+
+    A group is read from the overrides of every profile, since a test that one
+    profile groups cannot be told apart here from one it does not. A checkout
+    with no nextest configuration groups nothing, as it does for nextest.
+    """
+    try:
+        source = open(path, "rb")
+    except FileNotFoundError:
+        return {}
+    with source:
+        config = tomllib.load(source)
+    picked = {}
+    for profile in config.get("profile", {}).values():
+        for override in profile.get("overrides", []):
+            if "test-group" in override and "filter" in override:
+                picked.setdefault(override["test-group"], []).append(selector(override["filter"]))
+    return {
+        group: (lambda *test, picks=picks: any(pick(*test) for pick in picks))
+        for group, picks in picked.items()
+    }
+
+
+def schedule(reruns, groups):
+    """The binary reruns that may go at once, each a list taken in turn.
+
+    nextest runs no more of a group's tests at once than the group allows,
+    while a binary here runs every case it is asked for at once. So a binary
+    holding a case of a group takes its turn with every other binary that does,
+    as strictly as a group of one, and two groups that share a binary share
+    their turns. Every other binary goes beside them, as nextest runs it.
+    """
+    jobs = []
+    for key, names in sorted(reruns.items()):
+        package, _, binary = key
+        shared = {
+            group
+            for group, picks in groups.items()
+            if any(picks(package, binary, name) for name in names)
+        }
+        joined = [job for job in jobs if job[0] & shared]
+        for job in joined:
+            jobs.remove(job)
+            shared |= job[0]
+        jobs.append((shared, sorted([key, *(one for job in joined for one in job[1])])))
+    return [keys for _, keys in jobs]
+
+
 def reported(printed, source, name, line):
     """Whether that output says this one example ran and passed.
 
@@ -391,6 +628,14 @@ def check(stream, listing, silenced, selection):
     built = executables(stream)
     if not built:
         print("    FAIL the test selection built no test binary; this check measured nothing")
+        return 1
+    try:
+        groups = confining(NEXTEST)
+    except ValueError as error:
+        print(
+            f"    FAIL {NEXTEST} does not read as test groups here ({error});"
+            " teach selector() the form, so a group's reruns still take turns"
+        )
         return 1
     documented = doctests(listing)
     ignored_examples = doctests(silenced)
@@ -516,12 +761,19 @@ def check(stream, listing, silenced, selection):
             print("    FAIL the run of the required examples failed; rerun it and read the first failure")
             failed = 1
 
-    for key, cases in sorted(run.items()):
+    reruns = {key: [name for _, name, _ in cases] for key, cases in run.items() if key[1] != "doc"}
+    with ThreadPoolExecutor() as pool:
+        passed = dict(
+            pair
+            for job in pool.map(
+                lambda keys: [(key, ran(built[key], reruns[key])) for key in keys],
+                schedule(reruns, groups),
+            )
+            for pair in job
+        )
+    for key, names in sorted(reruns.items()):
         package, kind, target = key
-        if kind == "doc":
-            continue
-        names = [name for _, name, _ in cases]
-        if ran(built[key], names) != len(names):
+        if passed[key] != len(names):
             print(
                 f"    FAIL {len(names)} required cases in {package} {kind} {target} did not all pass;"
                 " rerun that target and read the assertion"
