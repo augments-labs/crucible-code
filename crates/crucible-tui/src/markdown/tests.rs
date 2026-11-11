@@ -59,6 +59,9 @@ fn runs(
             }
         }
         Said::Retract => say(Slot::Plain, RETRACTED, None),
+        // Drawn as the record draws it: quiet, and going nowhere.
+        Said::Aside(text) => say(Slot::Quiet, text, None),
+        Said::Shortened(_) => {}
     }
 }
 
@@ -468,15 +471,16 @@ fn pointing(answer: &str) -> Vec<(Slot, String, Option<String>)> {
 }
 
 #[test]
-fn a_link_is_its_words_carrying_the_address_rather_than_showing_it() {
-    // The sentence reads as the sentence the answer wrote. The address is not
-    // lost for that: it rides on the words, for a terminal that opens links.
+fn a_link_is_its_words_carrying_the_address_and_a_quiet_address_after_them() {
+    // The sentence reads as the sentence the answer wrote. The address rides
+    // on the words, for a terminal that opens links, and a quiet copy of it
+    // follows them for one that does not.
     let said = pointing("see [the guide](https://example.com/guide) for more");
 
-    assert_eq!(wrote(&said), "see the guide for more");
+    assert_eq!(wrote(&said), "see the guide (example.com/guide) for more");
     assert_eq!(
         said.iter().map(|(slot, ..)| *slot).collect::<Vec<_>>(),
-        [Slot::Plain, Slot::Link, Slot::Plain]
+        [Slot::Plain, Slot::Link, Slot::Quiet, Slot::Plain]
     );
     assert_eq!(points(&said), [("the guide", "https://example.com/guide")]);
 }
@@ -501,7 +505,7 @@ fn a_link_with_no_words_is_its_address() {
 fn the_title_after_an_address_is_not_part_of_it() {
     let said = pointing("[a](<https://example.com> \"The title\")");
 
-    assert_eq!(wrote(&said), "a");
+    assert_eq!(wrote(&said), "a (example.com)");
     assert_eq!(points(&said), [("a", "https://example.com")]);
 }
 
@@ -521,7 +525,7 @@ fn a_bracket_that_was_never_a_link_is_left_exactly_as_it_was() {
 fn a_bracket_inside_a_span_of_code_is_an_index() {
     let said = whole("`arr[0](x)` and arr[1](y)");
 
-    assert_eq!(drawn(&said), "arr[0](x) and arr1");
+    assert_eq!(drawn(&said), "arr[0](x) and arr1 (y)");
 }
 
 #[test]
@@ -540,7 +544,11 @@ fn a_link_split_across_deltas_is_still_one_link() {
             said.push((slot, text.to_owned()));
         });
 
-        assert_eq!(drawn(&said), "see the guide now", "split at {at}");
+        assert_eq!(
+            drawn(&said),
+            "see the guide (example.com) now",
+            "split at {at}"
+        );
     }
 }
 
@@ -987,7 +995,7 @@ fn a_box_that_does_not_open_an_item_is_the_brackets_somebody_wrote() {
 fn a_link_that_opens_an_item_still_gets_its_bullet() {
     let said = whole("- [the page](https://example.invalid)\n");
 
-    assert_eq!(drawn(&said), "• the page\n");
+    assert_eq!(drawn(&said), "• the page (example.invalid)\n");
 }
 
 #[test]
@@ -1241,7 +1249,7 @@ fn an_address_inside_a_code_span_is_code_like_the_rest_of_it() {
 fn an_address_a_link_names_is_still_the_link_it_names() {
     let said = pointing("[the docs](https://example.com)");
 
-    assert_eq!(wrote(&said), "the docs");
+    assert_eq!(wrote(&said), "the docs (example.com)");
     assert_eq!(points(&said), [("the docs", "https://example.com")]);
 }
 
@@ -1393,11 +1401,15 @@ fn opened(answer: &str) -> Vec<(Slot, String, Option<String>)> {
 fn a_link_to_a_path_points_at_the_file_in_the_checkout() {
     // A terminal opens an address, and `src/a.rs:3` is not one until it is
     // read against the directory the session is in. The words are what the
-    // answer wrote; only where they point changes.
+    // answer wrote, and the quiet address after them is the one written;
+    // only where they point changes.
     let said =
         opened("see [a](src/a.rs:3), [g](docs/My%20Guide.md) and [docs](https://example.test/d)");
 
-    assert_eq!(wrote(&said), "see a, g and docs");
+    assert_eq!(
+        wrote(&said),
+        "see a (src/a.rs:3), g (docs/My%20Guide.md) and docs (example.test/d)"
+    );
     assert_eq!(
         points(&said),
         [
@@ -1718,7 +1730,7 @@ fn what_an_answer_names_takes_the_slot_for_its_kind() {
     assert_eq!(kind_of(&said, "641"), Some(Slot::Figure), "{said:?}");
     assert_eq!(
         drawn(&said),
-        "See the pull request and https://example.test/2, then src/cli/draw.rs: \
+        "See the pull request (example.test/1) and https://example.test/2, then src/cli/draw.rs: \
          it ships in 0.45.0 as 3436980f, and 641 passed.\n"
     );
 }
@@ -1856,9 +1868,10 @@ fn blocks(answer: &str) -> (Vec<Block>, String) {
     let mut blocks = Vec::new();
     let mut runs = String::new();
     let mut say = |said: Said<'_>| match said {
-        Said::Run { text, .. } => runs.push_str(text),
+        Said::Run { text, .. } | Said::Aside(text) => runs.push_str(text),
         Said::Block(block) => blocks.push(block),
         Said::Retract => runs.push_str(RETRACTED),
+        Said::Shortened(_) => {}
     };
     markdown.read(answer, ROOM, &mut say);
     markdown.finish(ROOM, &mut say);
@@ -2290,6 +2303,8 @@ fn told(answer: &str) -> Vec<String> {
         Said::Run { text, .. } => told.push(format!("run {text}")),
         Said::Retract => told.push("retract".to_owned()),
         Said::Block(_) => told.push("block".to_owned()),
+        Said::Aside(text) => told.push(format!("aside {text}")),
+        Said::Shortened(address) => told.push(format!("shortened {address}")),
     };
     for (at, character) in answer.char_indices() {
         let piece = answer
@@ -3574,7 +3589,7 @@ fn a_quote_with_an_unknown_kind_or_more_on_its_line_stays_a_quote() {
 fn a_marker_with_an_address_after_it_is_the_link_it_was() {
     let said = ended("> [!NOTE](https://example.com)\n");
 
-    assert_eq!(drawn(&said), "│ !NOTE\n");
+    assert_eq!(drawn(&said), "│ !NOTE (example.com)\n");
 }
 
 #[test]
@@ -3768,6 +3783,7 @@ fn the_words_of_an_alert_keep_what_the_answer_gave_them() {
             Slot::Code,
             Slot::Plain,
             Slot::Link,
+            Slot::Quiet,
             Slot::Plain
         ]
     );
@@ -4111,7 +4127,7 @@ fn a_bracket_that_is_almost_a_footnote_is_shown_as_written() {
 
     // A link's words that open with a caret are still a link's.
     let said = ended_as(Glyphs::Unicode, &["a [^1](https://example.test/) b\n"]);
-    assert_eq!(drawn(&said), "a ^1 b\n");
+    assert_eq!(drawn(&said), "a ^1 (example.test/) b\n");
     assert_eq!(worn(&said, "^1"), [Slot::Link]);
 }
 
@@ -4529,7 +4545,8 @@ fn a_reference_link_defined_earlier_reads_as_its_words() {
 
     assert_eq!(
         wrote(&said),
-        "https://example.test/d\nsee the guide, docs and Docs.\n"
+        "https://example.test/d\nsee the guide (example.test/d), docs (example.test/d) \
+         and Docs (example.test/d).\n"
     );
     assert_eq!(
         points(&said),
@@ -4546,7 +4563,10 @@ fn a_reference_link_defined_earlier_reads_as_its_words() {
 fn a_reference_link_is_read_in_a_quote_a_list_item_and_emphasis() {
     let said = pointing("[d]: https://example.test/d\n> a [d]\n- a *[d][d]*\n");
 
-    assert_eq!(wrote(&said), "https://example.test/d\n│ a d\n• a d\n");
+    assert_eq!(
+        wrote(&said),
+        "https://example.test/d\n│ a d (example.test/d)\n• a d (example.test/d)\n"
+    );
     assert_eq!(
         points(&said)
             .iter()
@@ -4560,7 +4580,10 @@ fn a_reference_link_is_read_in_a_quote_a_list_item_and_emphasis() {
 fn the_first_definition_of_a_label_wins() {
     let said = pointing("[a]: https://one.test\n[A]: https://two.test\nsee [a]\n");
 
-    assert_eq!(wrote(&said), "https://one.test\nhttps://two.test\nsee a\n");
+    assert_eq!(
+        wrote(&said),
+        "https://one.test\nhttps://two.test\nsee a (one.test)\n"
+    );
     assert_eq!(
         points(&said),
         [
@@ -4608,7 +4631,7 @@ fn a_label_nobody_defined_stays_written_beside_one_somebody_did() {
 
     assert_eq!(
         wrote(&said),
-        "https://example.test/a\nsee [b] and b and [a][b]\n"
+        "https://example.test/a\nsee [b] and b (example.test/a) and [a][b]\n"
     );
 }
 
@@ -4628,7 +4651,10 @@ fn a_definition_that_is_no_single_address_is_shown_as_written() {
 
     // The same line with its blanks only is one.
     let said = pointing("[a]:   https://example.test/a  \t\nsee [a]\n");
-    assert_eq!(wrote(&said), "https://example.test/a\nsee a\n");
+    assert_eq!(
+        wrote(&said),
+        "https://example.test/a\nsee a (example.test/a)\n"
+    );
 }
 
 #[test]
@@ -4669,7 +4695,9 @@ fn a_definition_past_the_definition_cap_links_nothing_and_is_shown_as_written() 
     let last = format!("[l{DEFINITION_CAP}]: https://example.test/{DEFINITION_CAP}\n");
     assert!(wrote(&said).contains(&last), "{said:?}");
     assert!(
-        wrote(&said).ends_with(&format!("see l0 and [l{DEFINITION_CAP}]\n")),
+        wrote(&said).ends_with(&format!(
+            "see l0 (example.test/0) and [l{DEFINITION_CAP}]\n"
+        )),
         "{said:?}"
     );
     assert!(
@@ -4701,7 +4729,11 @@ fn definitions_past_the_byte_cap_link_nothing_and_are_shown_as_written() {
         "past the cap it is written out"
     );
     assert!(
-        wrote(&said).ends_with(&format!("see b0 and [b{}]\n", each - 1)),
+        wrote(&said).ends_with(&format!(
+            "see b0 (example.test/{}…) and [b{}]\n",
+            "p".repeat(11),
+            each - 1
+        )),
         "the first is tied and the last is not"
     );
 }
@@ -4878,9 +4910,10 @@ fn headed_in(deltas: &[&str]) -> (Vec<Block>, String) {
     let mut markdown = Markdown::default();
     let (mut blocks, mut runs) = (Vec::new(), String::new());
     let mut say = |said: Said<'_>| match said {
-        Said::Run { text, .. } => runs.push_str(text),
+        Said::Run { text, .. } | Said::Aside(text) => runs.push_str(text),
         Said::Block(block) => blocks.push(block),
         Said::Retract => runs.push_str(RETRACTED),
+        Said::Shortened(_) => {}
     };
     for delta in deltas {
         markdown.read(delta, ROOM, &mut say);

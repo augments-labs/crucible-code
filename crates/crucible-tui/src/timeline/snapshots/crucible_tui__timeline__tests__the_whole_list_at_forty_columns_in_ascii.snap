@@ -62,7 +62,8 @@ expression: "pictured(40, Glyphs::Ascii)"
 <Accent>* </><Strong>0.41.1</><Quiet> - 2026-09-29</>                   
 <Quiet>|</>                                       
 <Quiet>|  </><Quiet>Fixed</>                                
-<Quiet>|  </><Bullet>-</><Quiet> </><Bold>A link.</> See <Link>the notes</> for more.    
+<Quiet>|  </><Bullet>-</><Quiet> </><Bold>A link.</> See <Link>the notes</>              
+<Quiet>|  </>  <Quiet>(example.invalid/notes)</> for more.  
 <Quiet>|</>                                       
 <Quiet>|</>                                       
 <Accent>* </><Strong>0.42.0</><Quiet> - 2026-09-29</>                   

@@ -1296,11 +1296,14 @@ impl<T: Terminal> Renderer<T> {
     }
 
     /// The source of every block drawn in the transcript that has one to read
-    /// whole, newest first, lent from the record that holds it.
+    /// whole, newest first, lent from the record that holds it; then the
+    /// whole of every address an answer was drawn with shorter than it was
+    /// written, newest first.
     ///
     /// A table, display math, a diagram or a diff; not a rule, which draws all
-    /// there is of it. The record is the only copy, so what lists these reads
-    /// it where it stands.
+    /// there is of it. An address cut short in its quiet form, or drawn as a
+    /// forge's reference; not a reference the answer wrote short itself. The
+    /// record is the only copy, so what lists these reads it where it stands.
     pub fn sources(&self) -> impl Iterator<Item = Source<'_>> + '_ {
         self.record.sources()
     }
@@ -1310,10 +1313,7 @@ impl<T: Terminal> Renderer<T> {
     /// so that blocks drawn after it do not slide in under a reader.
     #[must_use]
     pub fn sourced(&self) -> usize {
-        self.record
-            .sources()
-            .next()
-            .map_or(0, |source| source.line.saturating_add(1))
+        self.record.sourced()
     }
 
     /// How many rows one wheel notch moves in any scrollable view.
@@ -2760,6 +2760,14 @@ impl<T: Terminal> Taking<'_, T> {
                 self.take(slot, text, link);
                 Ok(())
             }
+            Said::Aside(text) => {
+                self.aside(text);
+                Ok(())
+            }
+            Said::Shortened(address) => {
+                self.record.shortened(address);
+                Ok(())
+            }
             Said::Block(block) => self.block(block),
             Said::Retract => {
                 self.record.retract();
@@ -2806,15 +2814,7 @@ impl<T: Terminal> Taking<'_, T> {
     /// palette, and a byte of a redirected run's output is one this program
     /// meant to write.
     fn take(&mut self, slot: Slot, text: &str, link: Option<&str>) {
-        let escapes = &mut *self.escapes;
-        self.free.clear();
-        // A format character goes with the escapes: it would reorder or hide
-        // the text around it in a terminal and in a file read in one later.
-        self.free.extend(
-            text.chars()
-                .filter(|character| !escapes.holds(*character) && !width::unshown(*character)),
-        );
-
+        self.clean(text);
         self.record.write(slot, self.free, link);
 
         // The address never reaches a redirected run. What that run is written
@@ -2823,6 +2823,30 @@ impl<T: Terminal> Taking<'_, T> {
         if self.out.is_some() {
             self.unwritten.push_str(self.free);
         }
+    }
+
+    /// Add the quiet address the reader put after a link's words, which a
+    /// drag does not copy: cleaned as a run is, since it is made of an
+    /// address a model chose.
+    fn aside(&mut self, text: &str) {
+        self.clean(text);
+        self.record.aside(self.free);
+        if self.out.is_some() {
+            self.unwritten.push_str(self.free);
+        }
+    }
+
+    /// `text` into [`Self::free`] with its escape bytes taken out.
+    ///
+    /// A format character goes with the escapes: it would reorder or hide the
+    /// text around it in a terminal and in a file read in one later.
+    fn clean(&mut self, text: &str) {
+        let escapes = &mut *self.escapes;
+        self.free.clear();
+        self.free.extend(
+            text.chars()
+                .filter(|character| !escapes.holds(*character) && !width::unshown(*character)),
+        );
     }
 }
 

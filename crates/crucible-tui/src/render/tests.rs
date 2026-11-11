@@ -3714,6 +3714,7 @@ fn a_rule_narrowed_is_still_one_row() {
 
 mod escapes;
 mod headings;
+mod links;
 mod notes;
 mod strikes;
 

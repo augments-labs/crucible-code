@@ -524,7 +524,7 @@ fn an_entity_is_drawn_where_a_heading_a_quote_a_item_and_a_link_say_it() {
         ("> a &amp; b\n", "│ a & b\n"),
         ("- a &amp; b\n", "• a & b\n"),
         ("*a &amp; b*\n", "a & b\n"),
-        ("[a &amp; b](https://x.test)\n", "a & b\n"),
+        ("[a &amp; b](https://x.test)\n", "a & b (x.test)\n"),
         ("a &amp; b\n---\n", "a & b\n"),
     ] {
         let said = drawn(&standing(ended(written)));
@@ -558,7 +558,7 @@ fn what_an_entity_names_is_text_and_is_never_read_again() {
         // Nor does one tie a reference to its definition.
         (
             "[x]: https://x.test\n&#91;x&#93; and [x]\n",
-            "https://x.test\n[x] and x\n",
+            "https://x.test\n[x] and x (x.test)\n",
         ),
         // Nor a code span is opened by the marks that make one.
         ("&#96;not code&#96;", "`not code`"),
@@ -570,7 +570,8 @@ fn what_an_entity_names_is_text_and_is_never_read_again() {
             said.iter()
                 .skip(first)
                 .filter(|(_, text)| !text.is_empty())
-                .all(|(slot, _)| matches!(slot, Slot::Plain | Slot::Link)),
+                // The quiet address after a link's words is the one other run.
+                .all(|(slot, _)| matches!(slot, Slot::Plain | Slot::Link | Slot::Quiet)),
             "{written:?} was read again: {said:?}"
         );
     }

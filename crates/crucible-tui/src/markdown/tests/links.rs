@@ -22,3 +22,327 @@ fn a_number_on_a_later_line_is_counted_against_the_same_repository() {
     let opened = opened("one\nsee [a](src/a.rs:3)\n");
     assert_eq!(points(&opened), [("a", "file:///repo/src/a.rs#3")]);
 }
+
+/// What `answer` hands on, read against `forge`, with where each run points;
+/// a quiet address as the record draws it, quiet and pointing nowhere.
+fn linked(answer: &str, forge: Option<Forge>) -> Vec<(Slot, String, Option<String>)> {
+    let mut markdown = Markdown::default().counting(forge);
+    let mut said = Vec::new();
+    let mut into = |slot, text: &str, link: Option<&str>| {
+        said.push((slot, text.to_owned(), link.map(str::to_owned)));
+    };
+    markdown.read_runs(answer, ROOM, &mut into);
+    markdown.finish_runs(ROOM, &mut into);
+    said
+}
+
+/// The quiet runs of one of those answers.
+fn quiet(said: &[(Slot, String, Option<String>)]) -> Vec<&str> {
+    said.iter()
+        .filter(|(slot, _, _)| *slot == Slot::Quiet)
+        .map(|(_, text, _)| text.as_str())
+        .collect()
+}
+
+#[test]
+fn a_link_whose_words_are_not_its_address_is_followed_by_its_quiet_address() {
+    let cases = [
+        (
+            "see [the guide](https://example.com/docs/guide/intro) now",
+            "see the guide (example.com/docs/…) now",
+            ("the guide", "https://example.com/docs/guide/intro"),
+        ),
+        (
+            "see [the site](https://example.com) now",
+            "see the site (example.com) now",
+            ("the site", "https://example.com"),
+        ),
+        (
+            "see [the docs](http://example.com/docs) now",
+            "see the docs (example.com/docs) now",
+            ("the docs", "http://example.com/docs"),
+        ),
+        (
+            "see [the search](https://example.com/find?q=1) now",
+            "see the search (example.com/find?q=1) now",
+            ("the search", "https://example.com/find?q=1"),
+        ),
+        (
+            "see [a](src/a.rs:3) now",
+            "see a (src/a.rs:3) now",
+            ("a", "src/a.rs:3"),
+        ),
+        (
+            "see [write](mailto:someone@example.com) now",
+            "see write (someone@example.com) now",
+            ("write", "mailto:someone@example.com"),
+        ),
+    ];
+    for (answer, drawn, pointed) in cases {
+        let said = linked(answer, None);
+        assert_eq!(wrote(&said), drawn, "{answer:?}");
+        assert_eq!(points(&said), [pointed], "{answer:?}");
+        let aside = drawn
+            .strip_prefix(&format!("see {}", pointed.0))
+            .and_then(|rest| rest.strip_suffix(" now"))
+            .unwrap_or_default();
+        assert_eq!(quiet(&said), [aside], "{answer:?}");
+    }
+}
+
+#[test]
+fn an_address_drawn_as_its_own_words_has_nothing_after_it() {
+    let cases = [
+        (
+            "see https://example.com/a/b now",
+            "see https://example.com/a/b now",
+        ),
+        (
+            "see <https://example.com/a/b> now",
+            "see https://example.com/a/b now",
+        ),
+        (
+            "see <someone@example.com> now",
+            "see someone@example.com now",
+        ),
+        ("see www.example.com/a/b now", "see www.example.com/a/b now"),
+        (
+            "see [https://example.com/a/b](https://example.com/a/b) now",
+            "see https://example.com/a/b now",
+        ),
+        (
+            "see [example.com/a/b](https://example.com/a/b) now",
+            "see example.com/a/b now",
+        ),
+        (
+            "see [someone@example.com](mailto:someone@example.com) now",
+            "see someone@example.com now",
+        ),
+        (
+            "see [](https://example.com/a/b) now",
+            "see https://example.com/a/b now",
+        ),
+    ];
+    for (answer, drawn) in cases {
+        let said = linked(answer, None);
+        assert_eq!(wrote(&said), drawn, "{answer:?}");
+        assert_eq!(quiet(&said), Vec::<&str>::new(), "{answer:?}");
+        assert_eq!(points(&said).len(), 1, "{answer:?}");
+    }
+}
+
+#[test]
+fn a_quiet_address_stops_at_twenty_four_columns() {
+    // An address of twenty-four columns or fewer, once its scheme is gone, is
+    // shown whole. A longer one keeps its host and first segment, and what
+    // stands before the ellipsis is never wider than the bound: a host or
+    // segment past it is cut there, and a wide character that would straddle
+    // the bound is left out rather than cut in half.
+    let host = |columns: usize| format!("{}.io", "h".repeat(columns - 3));
+    let segment = |columns: usize| "s".repeat(columns);
+    let cases = [
+        (format!("https://{}", host(23)), format!(" ({})", host(23))),
+        (format!("https://{}", host(24)), format!(" ({})", host(24))),
+        (
+            format!("https://{}", host(25)),
+            format!(" ({}…)", "h".repeat(22) + ".i"),
+        ),
+        (
+            format!("https://{}/a", host(22)),
+            format!(" ({}/a)", host(22)),
+        ),
+        (
+            format!("https://{}/a", host(23)),
+            format!(" ({}/…)", host(23)),
+        ),
+        (
+            format!("https://x/{}/z", segment(20)),
+            format!(" (x/{}/z)", segment(20)),
+        ),
+        (
+            format!("https://x/{}/z", segment(21)),
+            format!(" (x/{}/…)", segment(21)),
+        ),
+        (
+            format!("https://x/{}/z", segment(22)),
+            format!(" (x/{}…)", segment(22)),
+        ),
+        (
+            format!("https://x/{}", segment(22)),
+            format!(" (x/{})", segment(22)),
+        ),
+        (
+            format!("https://x/{}", segment(23)),
+            format!(" (x/{}…)", segment(22)),
+        ),
+        (
+            format!("https://{}漢/a", "h".repeat(23)),
+            format!(" ({}…)", "h".repeat(23)),
+        ),
+        (
+            "src/a/b/c/d/e/f/g/h/ij.rs".to_owned(),
+            " (src/a/b/c/d/e/f/g/h/ij.r…)".to_owned(),
+        ),
+        (
+            "src/a/b/c/d/e/f/g/h/i.rs".to_owned(),
+            " (src/a/b/c/d/e/f/g/h/i.rs)".to_owned(),
+        ),
+        (
+            "mailto:someone.with.a.long.name@example.com".to_owned(),
+            " (someone.with.a.long.name…)".to_owned(),
+        ),
+    ];
+    for (address, aside) in cases {
+        let said = linked(&format!("[words]({address})"), None);
+        assert_eq!(quiet(&said), [aside.as_str()], "{address:?}");
+        assert_eq!(points(&said), [("words", address.as_str())], "{address:?}");
+    }
+}
+
+#[test]
+fn a_quiet_address_is_cut_with_the_glyph_sets_ellipsis() {
+    let mut markdown = Markdown::new(Glyphs::Ascii);
+    let mut said = Vec::new();
+    markdown.read_runs(
+        "[the guide](https://example.com/docs/guide/intro)",
+        ROOM,
+        &mut |slot, text, _| said.push((slot, text.to_owned())),
+    );
+    markdown.finish_runs(ROOM, &mut |slot, text, _| {
+        said.push((slot, text.to_owned()));
+    });
+
+    assert_eq!(
+        said.iter()
+            .filter(|(slot, _)| *slot == Slot::Quiet)
+            .map(|(_, text)| text.as_str())
+            .collect::<Vec<_>>(),
+        [" (example.com/docs/...)"]
+    );
+}
+
+#[test]
+fn a_forge_address_drawn_as_its_own_words_is_drawn_as_its_reference() {
+    let here = "https://github.com/augments-labs/crucible-code";
+    let cases = [
+        (
+            format!("see {here}/pull/1324 now"),
+            "#1324",
+            format!("{here}/pull/1324"),
+        ),
+        (
+            format!("see <{here}/issues/7> now"),
+            "#7",
+            format!("{here}/issues/7"),
+        ),
+        (
+            format!("see [{here}/commit/abcdef1234]({here}/commit/abcdef1234) now"),
+            "abcdef1",
+            format!("{here}/commit/abcdef1234"),
+        ),
+        (
+            "see https://github.com/someone/else/pull/12/ now".to_owned(),
+            "someone/else#12",
+            "https://github.com/someone/else/pull/12/".to_owned(),
+        ),
+        (
+            "see https://github.com/someone/else/commit/abcdef1234 now".to_owned(),
+            "someone/else@abcdef1",
+            "https://github.com/someone/else/commit/abcdef1234".to_owned(),
+        ),
+        (
+            "see https://gitlab.com/group/sub/repo/-/merge_requests/3 now".to_owned(),
+            "group/sub/repo!3",
+            "https://gitlab.com/group/sub/repo/-/merge_requests/3".to_owned(),
+        ),
+        (
+            "see https://gitlab.com/group/repo/-/issues/3 now".to_owned(),
+            "group/repo#3",
+            "https://gitlab.com/group/repo/-/issues/3".to_owned(),
+        ),
+        (
+            // The same repository on another host is another repository.
+            "see https://gitlab.com/augments-labs/crucible-code/-/issues/5 now".to_owned(),
+            "augments-labs/crucible-code#5",
+            "https://gitlab.com/augments-labs/crucible-code/-/issues/5".to_owned(),
+        ),
+    ];
+    for (answer, short, address) in cases {
+        let said = linked(&answer, Some(forge()));
+        assert_eq!(wrote(&said), format!("see {short} now"), "{answer:?}");
+        assert_eq!(points(&said), [(short, address.as_str())], "{answer:?}");
+        assert_eq!(quiet(&said), Vec::<&str>::new(), "{answer:?}");
+    }
+
+    // With no repository in hand, every reference names its own.
+    let said = linked(&format!("see {here}/pull/1324 now"), None);
+    assert_eq!(wrote(&said), "see augments-labs/crucible-code#1324 now");
+}
+
+#[test]
+fn a_worded_forge_link_keeps_its_words_and_is_followed_by_its_reference() {
+    let here = "https://github.com/augments-labs/crucible-code";
+    let said = linked(
+        &format!("see [the fix]({here}/pull/1324) now"),
+        Some(forge()),
+    );
+    assert_eq!(wrote(&said), "see the fix (#1324) now");
+    assert_eq!(
+        points(&said),
+        [("the fix", format!("{here}/pull/1324").as_str())]
+    );
+    assert_eq!(quiet(&said), [" (#1324)"]);
+
+    let said = linked(
+        "see [the fix](https://gitlab.com/group/repo/-/merge_requests/9) now",
+        Some(forge()),
+    );
+    assert_eq!(wrote(&said), "see the fix (group/repo!9) now");
+}
+
+#[test]
+fn an_address_past_the_item_or_off_https_is_an_ordinary_link() {
+    let here = "https://github.com/augments-labs/crucible-code";
+    for address in [
+        format!("{here}/pull/1324/files"),
+        format!("{here}/pull/1324?w=1"),
+        format!("{here}/pull/1324#issuecomment-1"),
+        "http://github.com/augments-labs/crucible-code/pull/1324".to_owned(),
+        "https://example.com/augments-labs/crucible-code/pull/1324".to_owned(),
+    ] {
+        let said = linked(&format!("see {address} now"), Some(forge()));
+        assert_eq!(wrote(&said), format!("see {address} now"), "{address:?}");
+    }
+}
+
+/// What the reader told while `answer` was read, as `told` sets it out, the
+/// whole addresses it drew shorter and nothing else.
+fn shortened(answer: &str, forge: Option<Forge>) -> Vec<String> {
+    let mut markdown = Markdown::default().counting(forge);
+    let mut told = Vec::new();
+    let mut say = |said: Said<'_>| {
+        if let Said::Shortened(address) = said {
+            told.push(address.to_owned());
+        }
+    };
+    markdown.read(answer, ROOM, &mut say);
+    markdown.finish(ROOM, &mut say);
+    told
+}
+
+#[test]
+fn every_address_drawn_shorter_than_written_is_told_whole_and_no_other() {
+    let here = "https://github.com/augments-labs/crucible-code";
+    let answer = format!(
+        "a {here}/pull/1 b [w]({here}/issues/2) c [d](https://example.com/docs/guide/intro) \
+         e [f](https://example.com/docs/guide) g #3 h https://example.com/x/y\n"
+    );
+    assert_eq!(
+        shortened(&answer, Some(forge())),
+        [
+            format!("{here}/pull/1"),
+            format!("{here}/issues/2"),
+            "https://example.com/docs/guide/intro".to_owned(),
+        ]
+    );
+}

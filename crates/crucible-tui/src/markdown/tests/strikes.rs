@@ -161,8 +161,9 @@ fn a_single_tilde_changes_nothing_where_text_is_drawn_as_written() {
         ("a <kbd>~b~</kbd> c\n", "a ~b~ c\n"),
         ("a <sub>~b~</sub> c\n", "a ~b~ c\n"),
         ("a <sup>~b~</sup> c\n", "a ~b~ c\n"),
-        ("a [x](https://h/~b~) c\n", "a x c\n"),
-        ("[~b~](https://h) c\n", "~b~ c\n"),
+        // The quiet address is text, and is read as no markdown either.
+        ("a [x](https://h/~b~) c\n", "a x (h/~b~) c\n"),
+        ("[~b~](https://h) c\n", "~b~ (h) c\n"),
         ("a <https://h/~b~> c\n", "a https://h/~b~ c\n"),
         ("a https://h/~b~ c\n", "a https://h/~b~ c\n"),
         ("a www.h.com/~b~ c\n", "a www.h.com/~b~ c\n"),

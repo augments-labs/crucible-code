@@ -86,6 +86,13 @@ const RETAINED_ROW_BYTES: usize = 80;
 /// are let go, so the oldest stretch of a very long session goes unmarked.
 const MOST_LANDMARKS: usize = 256;
 
+/// The most addresses drawn shorter than written that the record keeps whole.
+///
+/// The reader's own bound, so one answer's list and the record's are the same
+/// list: past it the oldest are let go, and an address that went is still in
+/// the session log as the answer wrote it.
+const MOST_SHORTENED: usize = markdown::SHORTENED_CAP;
+
 /// One line of the record, and whether a narrower window may re-fold it.
 enum Line {
     /// Text that was written as text. Folded at whatever the window is now.
@@ -348,6 +355,14 @@ pub(crate) struct Record {
     /// to mark across a long transcript, not one allocation for every prompt
     /// in it.
     landmarks: VecDeque<usize>,
+    /// The whole of every address an answer was drawn with shorter than it was
+    /// written, newest last, each with the line it was drawn on, at most
+    /// [`MOST_SHORTENED`] of them and none twice.
+    ///
+    /// Beside the lines rather than in them, because what lists them reads
+    /// them whole and the rows hold them cut; let go of with the lines they
+    /// were drawn on.
+    shortened: VecDeque<(usize, Box<str>)>,
     /// The prompt a press on its rail mark last landed on, as one of
     /// [`Self::landmarks`].
     ///
@@ -436,6 +451,7 @@ impl Record {
             following: true,
             opening: None,
             landmarks: VecDeque::new(),
+            shortened: VecDeque::new(),
             landed: None,
             parted_before: true,
             parting: None,
@@ -480,6 +496,39 @@ impl Record {
         if !rest.is_empty() {
             self.extend(slot, rest, link);
         }
+    }
+
+    /// Append the quiet address the reader put after a link's words, which
+    /// flows with them and is left out of what a drag copies.
+    pub(crate) fn aside(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if let (true, Some(Line::Flowed(row))) = (self.open, self.lines.back_mut()) {
+            row.push_structural(Slot::Quiet, text);
+            self.remeasure();
+            return;
+        }
+
+        let mut row = Row::new();
+        row.push_structural(Slot::Quiet, text);
+        self.put(Line::Flowed(row));
+        self.open = true;
+    }
+
+    /// Keeps the whole of `address`, which the line being written drew
+    /// shorter, for [`Self::sources`] to list.
+    ///
+    /// Kept once: drawn again, it moves to the newest, which is where a
+    /// reader looking for it last saw it.
+    pub(crate) fn shortened(&mut self, address: &str) {
+        let line = self.lines().saturating_sub(1);
+        self.shortened.retain(|(_, kept)| **kept != *address);
+        self.shortened.push_back((line, address.into()));
+        while self.shortened.len() > MOST_SHORTENED {
+            self.shortened.pop_front();
+        }
+        self.forget_shortened();
     }
 
     /// Append rows a component laid out, which are set.
@@ -771,6 +820,7 @@ impl Record {
             self.drop_oldest();
         }
         self.forget_landmarks();
+        self.forget_shortened();
     }
 
     /// Drops the oldest line held, counting it as gone.
@@ -789,6 +839,17 @@ impl Record {
     fn forget_landmarks(&mut self) {
         while self.landmarks.front().is_some_and(|line| *line < self.gone) {
             self.landmarks.pop_front();
+        }
+    }
+
+    /// Lets go of the addresses kept whole whose lines have gone.
+    fn forget_shortened(&mut self) {
+        while self
+            .shortened
+            .front()
+            .is_some_and(|(line, _)| *line < self.gone)
+        {
+            self.shortened.pop_front();
         }
     }
 
@@ -1136,12 +1197,18 @@ impl Record {
     }
 }
 
-/// A drawn block's source, borrowed from the record that keeps it.
+/// What an address drawn shorter than it was written is called where it is
+/// listed whole.
+pub(crate) const ADDRESS: &str = "address";
+
+/// A drawn block's source, or the whole of an address drawn shorter than it
+/// was written, borrowed from the record that keeps it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Source<'a> {
     /// The line it is held as, numbered as the record numbers its lines.
     pub line: usize,
-    /// What the block is called: `table`, `math`, `mermaid diagram`, `diff`.
+    /// What the block is called: `table`, `math`, `mermaid diagram`, `diff`;
+    /// or [`ADDRESS`].
     pub word: &'static str,
     /// The text it was written as.
     pub text: &'a str,
@@ -1170,16 +1237,48 @@ impl Record {
         }
     }
 
-    /// Every drawn block held that has a source to read, newest first.
+    /// Every drawn block held that has a source to read, newest first, and
+    /// then the whole of every address drawn shorter than it was written that
+    /// is still held, newest first, each called [`ADDRESS`].
     pub(crate) fn sources(&self) -> impl Iterator<Item = Source<'_>> + '_ {
-        self.lines
+        let blocks = self
+            .lines
             .iter()
             .enumerate()
             .rev()
             .filter_map(|(held, line)| match line {
                 Line::Drawn(drawn) => drawn.source(self.gone + held),
                 _ => None,
-            })
+            });
+        let addresses = self
+            .shortened
+            .iter()
+            .rev()
+            .filter(|(line, _)| *line >= self.gone)
+            .map(|(line, address)| Source {
+                line: *line,
+                word: ADDRESS,
+                text: address,
+            });
+        blocks.chain(addresses)
+    }
+
+    /// One past the line of the newest of [`Self::sources`], block or address,
+    /// and zero where there is none.
+    pub(crate) fn sourced(&self) -> usize {
+        let block = self
+            .sources()
+            .next()
+            .filter(|source| source.word != ADDRESS);
+        let address = self
+            .shortened
+            .back()
+            .filter(|(line, _)| *line >= self.gone)
+            .map(|(line, _)| *line);
+        block
+            .map(|source| source.line)
+            .max(address)
+            .map_or(0, |line| line.saturating_add(1))
     }
 
     /// The first line held that has not gone out, numbered as

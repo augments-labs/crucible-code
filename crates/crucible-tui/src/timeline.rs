@@ -367,6 +367,10 @@ fn read(segment: &str, room: usize, glyphs: Glyphs, forge: Option<&Forge>, rows:
     };
     let mut said = |said: Said<'_>| match said {
         Said::Run { slot, text, link } => put(&mut lines, slot, text, link),
+        // A page printed once is read, never dragged across.
+        Said::Aside(text) => put(&mut lines, Slot::Quiet, text, None),
+        // Nothing on a page printed once lists addresses to read whole.
+        Said::Shortened(_) => {}
         Said::Block(block) => {
             let mut open = false;
             markdown::tell(&block, room, glyphs, &linking, &mut |slot, text, link| {

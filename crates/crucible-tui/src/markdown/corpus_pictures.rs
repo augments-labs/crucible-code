@@ -71,6 +71,15 @@ pub(crate) fn laid(answer: &str, columns: usize, glyphs: Glyphs) -> Vec<Row> {
             record.drawn(block, glyphs, Theme::Dark);
         }
         Said::Retract => record.retract(),
+        Said::Aside(text) => {
+            free.clear();
+            free.extend(
+                text.chars()
+                    .filter(|character| !escapes.holds(*character) && !width::unshown(*character)),
+            );
+            record.aside(&free);
+        }
+        Said::Shortened(address) => record.shortened(address),
     };
 
     markdown.read(answer, columns, &mut write);

@@ -141,7 +141,11 @@ impl Reference {
         };
         let segments = slug.split('/').count();
         let fits = if nested { segments >= 2 } else { segments == 2 };
-        if !fits || slug.split('/').any(|part| part.is_empty() || !part.chars().all(named)) {
+        if !fits
+            || slug
+                .split('/')
+                .any(|part| part.is_empty() || !part.chars().all(named))
+        {
             return None;
         }
 
@@ -151,7 +155,8 @@ impl Reference {
             id: id.into(),
             nested,
         };
-        let numbered = !id.is_empty() && id.len() <= DIGITS && id.bytes().all(|b| b.is_ascii_digit());
+        let numbered =
+            !id.is_empty() && id.len() <= DIGITS && id.bytes().all(|b| b.is_ascii_digit());
         let hashed = (HASH_SHORT..=HASH_LONG).contains(&id.len())
             && id.bytes().all(|b| b.is_ascii_hexdigit());
         match (kind, nested) {
@@ -179,7 +184,8 @@ impl Reference {
             Self::Commit(_) => item.id.get(..HASH_SHORT).unwrap_or(&item.id),
             _ => &item.id,
         };
-        let home = forge.is_some_and(|forge| forge.origin == item.origin && forge.slug == item.slug);
+        let home =
+            forge.is_some_and(|forge| forge.origin == item.origin && forge.slug == item.slug);
         match (self, home) {
             (Self::Commit(_), true) => id.to_owned(),
             (_, true) => format!("{mark}{id}"),
@@ -254,8 +260,14 @@ mod tests {
         let forge = here("https://github.com", "/issues/");
         let at = "https://github.com/augments-labs/crucible-code";
 
-        assert_eq!(drawn(&format!("{at}/pull/1324"), Some(&forge)).as_deref(), Some("#1324"));
-        assert_eq!(drawn(&format!("{at}/issues/1288/"), Some(&forge)).as_deref(), Some("#1288"));
+        assert_eq!(
+            drawn(&format!("{at}/pull/1324"), Some(&forge)).as_deref(),
+            Some("#1324")
+        );
+        assert_eq!(
+            drawn(&format!("{at}/issues/1288/"), Some(&forge)).as_deref(),
+            Some("#1288")
+        );
         assert_eq!(
             drawn(&format!("{at}/commit/58ed227aa01"), Some(&forge)).as_deref(),
             Some("58ed227")
@@ -271,7 +283,11 @@ mod tests {
             Some("ratatui/ratatui#2101")
         );
         assert_eq!(
-            drawn("https://github.com/augments-labs/crucible-code/pull/1324", None).as_deref(),
+            drawn(
+                "https://github.com/augments-labs/crucible-code/pull/1324",
+                None
+            )
+            .as_deref(),
             Some("augments-labs/crucible-code#1324")
         );
         assert_eq!(
@@ -285,8 +301,11 @@ mod tests {
         let forge = here("https://github.com", "/issues/");
 
         assert_eq!(
-            drawn("https://gitlab.com/augments-labs/crucible-code/-/issues/7", Some(&forge))
-                .as_deref(),
+            drawn(
+                "https://gitlab.com/augments-labs/crucible-code/-/issues/7",
+                Some(&forge)
+            )
+            .as_deref(),
             Some("augments-labs/crucible-code#7")
         );
     }
@@ -296,15 +315,28 @@ mod tests {
         let forge = here("https://gitlab.com", "/-/issues/");
         let at = "https://gitlab.com/augments-labs/crucible-code";
 
-        assert_eq!(drawn(&format!("{at}/-/merge_requests/12"), Some(&forge)).as_deref(), Some("!12"));
-        assert_eq!(drawn(&format!("{at}/-/issues/12"), Some(&forge)).as_deref(), Some("#12"));
         assert_eq!(
-            drawn("https://gitlab.com/group/sub/repo/-/merge_requests/3", Some(&forge)).as_deref(),
+            drawn(&format!("{at}/-/merge_requests/12"), Some(&forge)).as_deref(),
+            Some("!12")
+        );
+        assert_eq!(
+            drawn(&format!("{at}/-/issues/12"), Some(&forge)).as_deref(),
+            Some("#12")
+        );
+        assert_eq!(
+            drawn(
+                "https://gitlab.com/group/sub/repo/-/merge_requests/3",
+                Some(&forge)
+            )
+            .as_deref(),
             Some("group/sub/repo!3")
         );
         // GitLab's spelling on GitHub, and GitHub's on GitLab, name nothing.
         assert_eq!(drawn("https://gitlab.com/o/r/pull/3", Some(&forge)), None);
-        assert_eq!(drawn("https://github.com/o/r/-/merge_requests/3", None), None);
+        assert_eq!(
+            drawn("https://github.com/o/r/-/merge_requests/3", None),
+            None
+        );
     }
 
     #[test]
@@ -344,8 +376,11 @@ mod tests {
         assert!(drawn("https://github.com/o/r/pull/123456789012", None).is_some());
         assert!(drawn("https://github.com/o/r/commit/abcdef1", None).is_some());
         assert!(
-            drawn("https://github.com/o/r/commit/0123456789012345678901234567890123456789", None)
-                .is_some()
+            drawn(
+                "https://github.com/o/r/commit/0123456789012345678901234567890123456789",
+                None
+            )
+            .is_some()
         );
     }
 }
