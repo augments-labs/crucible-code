@@ -506,6 +506,35 @@ fn every_address_drawn_shorter_than_written_is_told_whole_and_no_other() {
 }
 
 #[test]
+fn a_cell_tells_the_addresses_it_draws_shorter_as_a_paragraph_does() {
+    let here = "https://github.com/augments-labs/crucible-code";
+    let first = format!("{here}/pull/1324 [w]({here}/issues/2)");
+    let second = "[x](https://example.com/a) [g](https://example.com/docs/guide/intro)";
+    let table = format!("| a | b |\n|---|---|\n| {first} | {second} |\n\nafter\n");
+    let paragraph = shortened(&format!("{first} {second}\n"), Some(forge()));
+    let told = [
+        format!("{here}/pull/1324"),
+        format!("{here}/issues/2"),
+        "https://example.com/docs/guide/intro".to_owned(),
+    ];
+
+    assert_eq!(paragraph, told);
+    assert_eq!(shortened(&table, Some(forge())), told, "held as a block");
+
+    // Drawn as it streams, by a reader holding no block.
+    let mut markdown = Markdown::default().counting(Some(forge())).as_written();
+    let mut streamed = Vec::new();
+    let mut say = |said: Said<'_>| {
+        if let Said::Shortened(address) = said {
+            streamed.push(address.to_owned());
+        }
+    };
+    markdown.read(&table, ROOM, &mut say);
+    markdown.finish(ROOM, &mut say);
+    assert_eq!(streamed, told, "drawn as it streams");
+}
+
+#[test]
 fn an_image_is_its_alt_words_in_brackets_and_its_quiet_address() {
     // Nothing is fetched: what a terminal can show of a picture is what the
     // answer said it was, and where it is.

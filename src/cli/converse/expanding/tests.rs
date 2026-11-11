@@ -1878,6 +1878,47 @@ fn ctrl_o_lists_the_whole_of_every_address_drawn_shorter_after_the_blocks() {
 }
 
 #[test]
+fn ctrl_o_lists_an_address_a_table_cell_draws_shorter_newest_first() {
+    let here = "https://github.com/augments-labs/crucible-code";
+    let mut render = Renderer::new(Recording::new(100, 24));
+    render.wears(Style::coloured().palette());
+    render.counts(Some(crucible_tui::Forge::new(
+        "https://github.com",
+        "augments-labs/crucible-code",
+        "/issues/",
+    )));
+    render
+        .stream(&format!(
+            "a {here}/pull/1\n\n| a | b |\n|---|---|\n| {here}/pull/2 | {here}/pull/3 |\n\nafter\n"
+        ))
+        .expect("a recording cannot fail");
+    render.settle().expect("a recording cannot fail");
+
+    let sources: Vec<Source<'_>> = render.sources().collect();
+    let kept = Kept::default();
+    let mut standing = Standing::default();
+    standing.open(&kept, render.sourced());
+    let rows = frame_of(&kept, &sources, &mut standing, 60);
+
+    let at = |wanted: &str| {
+        rows.iter()
+            .position(|row| row == wanted)
+            .unwrap_or_else(|| panic!("no row {wanted:?} in {rows:#?}"))
+    };
+    let order = [
+        at(&format!("{here}/pull/3")),
+        at(&format!("{here}/pull/2")),
+        at(&format!("{here}/pull/1")),
+    ];
+    assert!(
+        order
+            .windows(2)
+            .all(|pair| matches!(pair, [before, after] if before < after)),
+        "{rows:#?}"
+    );
+}
+
+#[test]
 fn ctrl_o_opens_for_an_address_drawn_shorter_with_nothing_else_to_stand() {
     let mut render = Renderer::new(Recording::new(100, 24));
     render.wears(Style::coloured().palette());

@@ -2192,7 +2192,14 @@ impl Markdown {
         }
         if let Some(block) = self.ready.take() {
             kinds.flush(&mut |slot, text, link| say(links::said(slot, text, link)));
+            let table = (block.kind == Kind::Table).then(|| Table::of(&block.source));
             say(Said::Block(block));
+            // After the table, so the record keeps them against its line.
+            if let Some(table) = table {
+                table.shortened(self.glyphs, self.forge.as_ref(), &mut |address| {
+                    say(Said::Shortened(address));
+                });
+            }
         }
     }
 
@@ -3315,6 +3322,10 @@ impl Markdown {
     /// Lets go of a table that has ended: as a block where blocks are held
     /// and it has the delimiter row that makes it one, and drawn as it stands
     /// otherwise.
+    ///
+    /// Either way, the whole of every address its cells draw shorter is told
+    /// once the table is: here where it is drawn, and as it is handed on where
+    /// it is held.
     fn lays(&mut self, table: &Table, room: usize, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         if self.holds() && table.delimited() {
             self.ready = Some(Block {
@@ -3324,6 +3335,11 @@ impl Markdown {
             });
         } else {
             table.laid(self.glyphs, self.forge.as_ref(), room, say);
+            if table.delimited() {
+                table.shortened(self.glyphs, self.forge.as_ref(), &mut |address| {
+                    say(Slot::Link, address, Some(links::UNLINKED));
+                });
+            }
         }
     }
 

@@ -23,7 +23,8 @@
 //! - A link in a table's cell is drawn as the paragraph around the table
 //!   would draw it, against the same forge, but with no quiet address after
 //!   it: a column has no room to spare, and the whole address stays in the
-//!   table's source.
+//!   table's source. What a cell draws shorter is told as the paragraph would
+//!   tell it, once the table is handed on or drawn.
 //!
 //! Invariants:
 //!

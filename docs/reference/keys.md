@@ -477,7 +477,8 @@ block is all there is to show.
 After the sources the view stands the whole of each address the transcript drew
 shorter than it was written, newest first, each under the word `address`: a
 pull request, issue or commit drawn as its reference, and a quiet address cut
-with an ellipsis. See
+with an ellipsis. A link in a table's cell is listed whenever the same link in
+prose would be. See
 [The address after a link's words](../sessions/transcript.md#the-address-after-a-links-words).
 The view opens when such an address is all there is to show. It is the same in both
 [`output.screen`](../configuration/configuration.md#output) modes.

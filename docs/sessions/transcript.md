@@ -287,7 +287,8 @@ as itself, and so is one after a backslash, which stays in front of it:
 address written as its own words, bare or between angle brackets, has nothing
 after it. In a table's cell a link
 is drawn as it is in prose, an address as its reference included, but with
-nothing after its words: the whole of it is in the table's source.
+nothing after its words: the whole of it is in the table's source, and
+<kbd>Ctrl+O</kbd> lists it whenever it would list the same link in prose.
 
 A link in code, a key, a fence, a mermaid diagram or a diff is drawn as the
 model wrote it, and one in display math as its words alone, as before. Every
@@ -296,7 +297,8 @@ terminal, is written as the model wrote it.
 
 <kbd>Ctrl+O</kbd> lists the whole of every address drawn shorter than it was
 written, a reference or a quiet address cut with an ellipsis, newest first, each
-under the word `address`, after the cut results and the drawn blocks. It
+under the word `address`, after the cut results and the drawn blocks. A link in
+a table's cell is listed whenever the same link in prose would be. It
 keeps the newest 64; an older one is still in the
 [session log](sessions.md) as the answer wrote it. A bare number such as `#7`
 is not among them, since it was written that short.
