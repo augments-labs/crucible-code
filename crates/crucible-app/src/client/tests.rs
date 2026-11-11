@@ -735,16 +735,19 @@ fn a_refused_claim_leaves_the_holders_claim_set() {
     // A refusal must not undo the claim it lost to: if it did, the next
     // claim would succeed while the first holder still holds the handle.
     let questions = super::Questions::new();
-    let hold = questions.clone().claim().expect("the first claim is taken");
+    let hold = questions
+        .clone()
+        .claim(None)
+        .expect("the first claim is taken");
     for attempt in 1..=3 {
         assert!(
-            questions.clone().claim().is_none(),
+            questions.clone().claim(None).is_none(),
             "claim {attempt} after the holder's was taken while the holder lives"
         );
     }
     drop(hold);
     assert!(
-        questions.clone().claim().is_some(),
+        questions.clone().claim(None).is_some(),
         "the handle stayed claimed after its holder let go"
     );
 }

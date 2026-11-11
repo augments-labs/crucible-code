@@ -64,8 +64,8 @@ pub enum Command {
     /// The batch is named by the era and the id
     /// [`Progress::Waiting`](crate::Progress::Waiting) reported it under, and
     /// takes one reply for each of its questions, in order. A batch that is
-    /// not waiting, or one of a session the conversation has left, is refused
-    /// as
+    /// not waiting, one of a session the conversation has left, or any batch
+    /// once no conversation is left to deliver it, is refused as
     /// [`StaleQuestions`](crate::ErrorCode::StaleQuestions), and replies it
     /// cannot take as [`InvalidAnswer`](crate::ErrorCode::InvalidAnswer); either
     /// way nothing is settled and the batch still waits. An answer settles
