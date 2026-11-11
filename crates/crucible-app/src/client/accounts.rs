@@ -1815,10 +1815,10 @@ async fn instance(
         Running::Either { stored, own, note } => {
             let question = either(agent, &stored, &own, note);
             let answer = confirmed(capabilities, front, &question).await?;
-            let Some(agent) = answered(home, row, &stored, answer)? else {
-                return Some(None);
-            };
-            agent
+            match answered(home, row, &stored, answer)? {
+                Answered::Written(agent) => agent,
+                Answered::Back => return Some(None),
+            }
         }
     };
     Some(Some((agent, false)))
@@ -1827,20 +1827,29 @@ async fn instance(
 /// The instance of `row`'s agent written beside the user file in `home` for
 /// `answer`, the choice taken of [`either`]'s question over crucible's release
 /// at `stored`: the release, or the user's own program named by its command;
-/// `Some(None)` where the person went back, and nothing where no instance can
-/// be written.
+/// [`Answered::Back`] where the person went back, and nothing where no
+/// instance can be written.
 fn answered(
     home: &Path,
     row: &'static crate::backends::Row,
     stored: &Path,
     answer: usize,
-) -> Option<Option<ExternalAgent>> {
+) -> Option<Answered> {
     let (executable, own) = match answer {
         0 => (stored.to_str()?.to_owned(), false),
         1 => (AgentRow::Built(row).command(), true),
-        _ => return Some(None),
+        _ => return Some(Answered::Back),
     };
-    unwritten(home, row, &executable, own).map(Some)
+    unwritten(home, row, &executable, own).map(Answered::Written)
+}
+
+/// What an answer to [`either`]'s question comes to.
+#[derive(Debug)]
+enum Answered {
+    /// The instance the chosen program is run as, not yet written.
+    Written(ExternalAgent),
+    /// The person went back, so nothing is written.
+    Back,
 }
 
 /// The program a new instance of a built-in row's agent is run as.
@@ -2687,7 +2696,7 @@ mod tests {
         let question = either("Antigravity", &stored, &own, None);
         let profile = home.join("agents/antigravity");
 
-        let written: Vec<(&str, Option<Option<ExternalAgent>>)> = question
+        let written: Vec<(&str, Option<Answered>)> = question
             .choices
             .iter()
             .enumerate()
@@ -2700,9 +2709,9 @@ mod tests {
             .collect();
 
         let [
-            (release, Some(Some(release_instance))),
-            (mine, Some(Some(own_instance))),
-            (back, Some(None)),
+            (release, Some(Answered::Written(release_instance))),
+            (mine, Some(Answered::Written(own_instance))),
+            (back, Some(Answered::Back)),
         ] = written.as_slice()
         else {
             panic!("{written:?}");
