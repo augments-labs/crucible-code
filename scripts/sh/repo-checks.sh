@@ -1255,7 +1255,9 @@ done <<<"$sandbox_state"
 
 section "a drawer's test helpers stay out of a release"
 # `crucible-tui`'s `testing` feature carries the fit sweep's widths and rooms,
-# `dump` and the fit check, which a drawer crate's tests check a drawing with.
+# `dump` and the fit check, and the corpus of answers with the helpers that
+# read one through the reader, which a drawer crate's tests check a drawing
+# with.
 # What ships draws through the contract alone, so no table Cargo resolves for a
 # build that ships may turn the feature on: not a normal or build dependency,
 # under any target, not the workspace table a member inherits from, and not a
