@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 const SOON: Duration = Duration::from_secs(5);
 
 /// The decode slot is the process's, and the tests of one binary share a
-/// process: a test that holds it, or that times how long it is held, must not
-/// run beside another that takes it.
+/// process: a test that holds it, times how long it is held, or counts how far
+/// a drawing went, must not run beside another that takes it.
 fn alone() -> MutexGuard<'static, ()> {
     static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
     ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner)
@@ -1281,12 +1281,17 @@ fn nested_uses(levels: u32) -> String {
     nested_uses_of(levels, levels)
 }
 
-/// Longer than counting the copies of any file takes, and shorter than
-/// making those of the files counted here: 100 ms.
-const SOON_REFUSED: Duration = Duration::from_millis(100);
+/// How far a drawing went before it said what it comes to: judged alone,
+/// its tree built, or its pixels begun.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reached {
+    Judged,
+    Built,
+    Drawn,
+}
 
-/// What drawing `svg` 100 wide comes to, and how long it took to say so.
-fn refused_in(svg: &str) -> (Result<Pixels, Refused>, Duration) {
+/// What drawing `svg` 100 wide comes to, and how far it went to say so.
+fn refused_in(svg: &str) -> (Result<Pixels, Refused>, Reached) {
     refused_in_at(svg, 100)
 }
 
@@ -1297,18 +1302,19 @@ fn the_copies_uses_would_make_are_counted_before_any_is_made() {
     // the parser's own count of what it will make: both are refused before a
     // copy is made, in a moment however many there would be.
     for levels in [5, 6] {
-        let (drawn, took) = refused_in(&nested_uses(levels));
+        let (drawn, reached) = refused_in(&nested_uses(levels));
         assert_eq!(drawn, Err(Refused::TooLarge), "{levels} levels");
-        assert!(
-            took < SOON_REFUSED,
-            "{levels} levels were copied before they were refused: {took:?}"
+        assert_eq!(
+            reached,
+            Reached::Judged,
+            "{levels} levels were copied before they were refused"
         );
     }
     // A use in the definitions is copied whether or not anything draws it:
     // five levels defined and the second used are refused too.
-    let (drawn, took) = refused_in(&nested_uses_of(5, 2));
+    let (drawn, reached) = refused_in(&nested_uses_of(5, 2));
     assert_eq!(drawn, Err(Refused::TooLarge), "five defined, two used");
-    assert!(took < SOON_REFUSED, "copied first: {took:?}");
+    assert_eq!(reached, Reached::Judged, "copied first");
     // Three levels are 1 110 copies, and drawn.
     assert!(rasterise(nested_uses(3).as_bytes(), 100, &[]).is_ok());
 }
@@ -1331,9 +1337,9 @@ fn a_copy_is_counted_by_the_text_and_the_attributes_it_copies() {
         r#"<text id="copied" font-size="10">{}</text>"#,
         "x".repeat(1_000)
     );
-    let (drawn, took) = refused_in(&copied(&letters, 100));
+    let (drawn, reached) = refused_in(&copied(&letters, 100));
     assert_eq!(drawn, Err(Refused::TooLarge), "a hundred copies of text");
-    assert!(took < SOON_REFUSED, "shaped first: {took:?}");
+    assert_eq!(reached, Reached::Judged, "shaped first");
     assert!(rasterise(copied(&letters, 1).as_bytes(), 100, &[]).is_ok());
     // A path's data is read again for every copy of it: a hundred copies of
     // 2 000 segments are refused, and one is drawn.
@@ -1342,9 +1348,9 @@ fn a_copy_is_counted_by_the_text_and_the_attributes_it_copies() {
         let _ = write!(data, "L{} {}", at % 100, at * 7 % 100);
     }
     let path = format!(r#"<path id="copied" d="{data}"/>"#);
-    let (drawn, took) = refused_in(&copied(&path, 100));
+    let (drawn, reached) = refused_in(&copied(&path, 100));
     assert_eq!(drawn, Err(Refused::TooLarge), "a hundred copies of a path");
-    assert!(took < SOON_REFUSED, "read first: {took:?}");
+    assert_eq!(reached, Reached::Judged, "read first");
     assert!(rasterise(copied(&path, 1).as_bytes(), 100, &[]).is_ok());
 }
 
@@ -1484,17 +1490,31 @@ fn a_gradient_costs_its_pixels_and_its_stops_together() {
     // Each paint of 32 stops over the 40 000 pixels of the page is 2 500
     // steps by its pixels and 2 500 by its stops; neither alone is past the
     // ceiling for 52 of them, and together they are. Two stops are drawn.
-    let (drawn, took) = refused_in_at(&painted(52, 32), 200);
+    let (drawn, reached) = refused_in_at(&painted(52, 32), 200);
     assert_eq!(drawn, Err(Refused::TooLarge));
-    assert!(took < SOON_REFUSED, "drawn first: {took:?}");
+    assert_ne!(reached, Reached::Drawn, "drawn first");
     assert!(rasterise(painted(52, 2).as_bytes(), 200, &[]).is_ok());
 }
 
-/// What drawing `svg` `width` wide comes to, and how long it took to say so.
-fn refused_in_at(svg: &str, width: u32) -> (Result<Pixels, Refused>, Duration) {
-    let began = Instant::now();
-    let drawn = rasterise(svg.as_bytes(), width, &[]);
-    (drawn, began.elapsed())
+/// What drawing `svg` `width` wide comes to, and how far it went to say so.
+fn refused_in_at(svg: &str, width: u32) -> (Result<Pixels, Refused>, Reached) {
+    reached(|| rasterise(svg.as_bytes(), width, &[]))
+}
+
+/// What `draw` comes to, and how far the drawing it asks for went. The counts
+/// are the process's, so the caller holds [`alone`].
+fn reached<T>(draw: impl FnOnce() -> T) -> (T, Reached) {
+    let built = BUILT.load(Ordering::Relaxed);
+    let drawn = DRAWN.load(Ordering::Relaxed);
+    let result = draw();
+    let reached = if DRAWN.load(Ordering::Relaxed) != drawn {
+        Reached::Drawn
+    } else if BUILT.load(Ordering::Relaxed) != built {
+        Reached::Built
+    } else {
+        Reached::Judged
+    };
+    (result, reached)
 }
 
 /// A page `segments` fifths of a pixel wide and one row tall, stroked five
@@ -1531,9 +1551,9 @@ fn edges_of_a_stroke_crowded_along_a_row_are_counted_by_the_pixels_each_can_walk
     // drawn, and 6 000 across one 1 212 wide are drawn.
     let (wide, width) = crowded_stroke(7_000);
     assert_eq!(width, 1_414);
-    let (drawn, took) = refused_in_at(&wide, width);
+    let (drawn, reached) = refused_in_at(&wide, width);
     assert_eq!(drawn, Err(Refused::TooLarge));
-    assert!(took < SOON_REFUSED, "drawn first: {took:?}");
+    assert_ne!(reached, Reached::Drawn, "drawn first");
     let (narrower, width) = crowded_stroke(6_000);
     assert_eq!(width, 1_212);
     assert!(rasterise(narrower.as_bytes(), width, &[]).is_ok());
@@ -1696,9 +1716,9 @@ fn a_marker_drawn_inside_a_marker_is_refused_before_the_tree_is_built() {
         let svg = page(&format!(
             r##"<defs>{inner}</defs>{outer}<path d="M0 0L5 5L10 0" stroke="#000" marker-mid="url(#m1)"/>"##
         ));
-        let (drawn, took) = refused_in(&svg);
+        let (drawn, reached) = refused_in(&svg);
         assert_eq!(drawn, Err(Refused::TooLarge), "{name}");
-        assert!(took < SOON_REFUSED, "{name}: built first: {took:?}");
+        assert_eq!(reached, Reached::Judged, "{name}: built first");
     }
     // Two markers on one shape, and one on many, are drawn.
     let beside = page(&format!(
@@ -1735,9 +1755,9 @@ fn a_clip_or_filter_inside_a_clip_is_refused_before_the_tree_is_built() {
         let svg = page(&format!(
             r#"<defs>{inner}</defs>{outer}<rect width="20" height="20" clip-path="url(#c1)"/>"#
         ));
-        let (drawn, took) = refused_in(&svg);
+        let (drawn, reached) = refused_in(&svg);
         assert_eq!(drawn, Err(Refused::TooLarge), "{name}");
-        assert!(took < SOON_REFUSED, "{name}: built first: {took:?}");
+        assert_eq!(reached, Reached::Judged, "{name}: built first");
     }
     // A clip clipped by another as a whole, and one clip on many shapes, are
     // drawn.
@@ -1785,21 +1805,21 @@ fn the_copies_markers_clips_and_text_ask_for_are_counted_before_any_is_made() {
     let _alone = alone();
     // A marker is copied at every vertex it marks: a thousand rectangles on a
     // thousand vertices are refused, and ten on ten are drawn.
-    let (drawn, took) = refused_in(&marked(1_000, 1_000));
+    let (drawn, reached) = refused_in(&marked(1_000, 1_000));
     assert_eq!(drawn, Err(Refused::TooLarge), "a marker's copies");
-    assert!(took < SOON_REFUSED, "copied first: {took:?}");
+    assert_eq!(reached, Reached::Judged, "copied first");
     assert!(rasterise(marked(10, 10).as_bytes(), 100, &[]).is_ok());
     // A clip sized to what it clips is made again for each shape: 300
     // rectangles clipping 300 are refused, and ten clipping ten drawn.
-    let (drawn, took) = refused_in(&boxed(300, 300));
+    let (drawn, reached) = refused_in(&boxed(300, 300));
     assert_eq!(drawn, Err(Refused::TooLarge), "a clip's copies");
-    assert!(took < SOON_REFUSED, "copied first: {took:?}");
+    assert_eq!(reached, Reached::Judged, "copied first");
     assert!(rasterise(boxed(10, 10).as_bytes(), 100, &[]).is_ok());
     // Letters are copied with the text that holds them though nothing draws
     // them: 250 copies of 50 000 are refused, and 2 000 of two are drawn.
-    let (drawn, took) = refused_in(&undrawn(50_000, 250));
+    let (drawn, reached) = refused_in(&undrawn(50_000, 250));
     assert_eq!(drawn, Err(Refused::TooLarge), "letters not drawn");
-    assert!(took < SOON_REFUSED, "copied first: {took:?}");
+    assert_eq!(reached, Reached::Judged, "copied first");
     assert!(rasterise(undrawn(2, 2_000).as_bytes(), 100, &[]).is_ok());
     // Each copy is matched against the rule of every ink: three levels of ten
     // uses with two thousand inks are refused, and drawn with none, and two
@@ -2125,9 +2145,9 @@ fn a_stroke_reaching_past_a_million_pixels_from_the_origin_is_refused() {
     // Small numbers under transforms that compound them: the renderer outlines
     // the stroke at a tolerance it cannot resolve that far out.
     let far = r##"<g transform="scale(1e5)"><g transform="scale(100)"><circle r="1" fill="none" stroke="#000" stroke-width="1"/></g></g>"##;
-    let (drawn, took) = refused_in_at(&page(far), 20);
+    let (drawn, reached) = refused_in_at(&page(far), 20);
     assert_eq!(drawn, Err(Refused::TooLarge), "a stroke far out");
-    assert!(took < SOON_REFUSED, "drawn first: {took:?}");
+    assert_ne!(reached, Reached::Drawn, "drawn first");
     // The same circle filled is drawn, and so is the stroke nearer in.
     let filled = far.replace(r##"fill="none" stroke="#000" stroke-width="1""##, "");
     assert!(on_page(&filled).is_ok(), "a fill far out");
@@ -2225,9 +2245,9 @@ fn the_stops_of_a_gradient_in_its_shapes_units_are_counted_copied_for_each_shape
     );
     let _alone = alone();
     let svg = used_graded_shapes(70, 70, 500, "objectBoundingBox");
-    let (drawn, took) = refused_in_at(&svg, 100);
+    let (drawn, reached) = refused_in_at(&svg, 100);
     assert_eq!(drawn, Err(Refused::TooLarge), "stops copied");
-    assert!(took < SOON_REFUSED, "copied first: {took:?}");
+    assert_eq!(reached, Reached::Judged, "copied first");
 }
 
 #[test]
@@ -2236,9 +2256,9 @@ fn every_stop_of_a_gradient_is_set_up_again_for_each_shape_it_paints() {
     // The renderer makes the stops of a gradient again for every shape it
     // paints, however few pixels the shape reaches: two thousand shapes a pixel
     // square of 400 stops are refused, and a thousand drawn.
-    let (drawn, took) = refused_in_at(&used_graded_shapes(40, 50, 400, "userSpaceOnUse"), 100);
+    let (drawn, reached) = refused_in_at(&used_graded_shapes(40, 50, 400, "userSpaceOnUse"), 100);
     assert_eq!(drawn, Err(Refused::TooLarge), "stops set up");
-    assert!(took < SOON_REFUSED, "drawn first: {took:?}");
+    assert_ne!(reached, Reached::Drawn, "drawn first");
     let drawn = rasterise(
         used_graded_shapes(40, 25, 400, "userSpaceOnUse").as_bytes(),
         100,
@@ -2511,9 +2531,9 @@ fn a_stroked_shape_the_page_turns_past_the_largest_size_measured_is_refused_befo
             r#"<circle r="100"/>"#.repeat(40)
         )
     };
-    let (result, took) = refused_in_at(&page(&circles("rotate(30) scale(1e5)")), 20);
+    let (result, reached) = refused_in_at(&page(&circles("rotate(30) scale(1e5)")), 20);
     assert_eq!(result, Err(Refused::TooLarge));
-    assert!(took < SOON_REFUSED, "built first: {took:?}");
+    assert_eq!(reached, Reached::Judged, "built first");
     let result = rasterise(page(&circles("rotate(30)")).as_bytes(), 20, &[]);
     assert!(result.is_ok(), "turned at its own size: {result:?}");
 }
@@ -2594,12 +2614,9 @@ fn shapes_whose_outlines_take_longer_to_build_than_the_parser_may_are_refused_be
     );
     for (shape, refused, drawn) in [(&stroked, 10, 5), (&filled, 14, 5)] {
         let named = shape.get(..40).unwrap_or(shape);
-        let (result, took) = refused_in_at(&page(&shape.repeat(refused)), 20);
+        let (result, reached) = refused_in_at(&page(&shape.repeat(refused)), 20);
         assert_eq!(result, Err(Refused::TooLarge), "{refused} of {named}");
-        assert!(
-            took < SOON_REFUSED,
-            "{refused} of {named} built first: {took:?}"
-        );
+        assert_eq!(reached, Reached::Judged, "{refused} of {named} built first");
         let result = rasterise(page(&shape.repeat(drawn)).as_bytes(), 20, &[]);
         assert!(result.is_ok(), "{drawn} of {named}: {result:?}");
     }
@@ -2634,4 +2651,171 @@ fn a_percentage_is_taken_of_the_view_the_outermost_svg_or_a_use_of_a_symbol_size
     );
     let drawn = rasterise(used("1e3").as_bytes(), 20, &[]);
     assert!(drawn.is_ok(), "a symbol used 1 000 wide: {drawn:?}");
+}
+
+/// The hostile corpus the integration tests draw.
+const CORPUS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus");
+
+/// The files of the corpus refused before the renderer or the parser does the
+/// work they ask for, each by a price, a count, a size or an element the
+/// renderer or the parser would otherwise have reached long after the
+/// ceiling, with how far the drawing goes before it is refused: judged alone,
+/// or its tree built and its price counted before a pixel is drawn.
+const REFUSED_SOON: &[(&str, Refused, Reached)] = &[
+    (
+        "svg/work-gradient-crossover.svg",
+        Refused::TooLarge,
+        Reached::Built,
+    ),
+    (
+        "svg/probe-arc-huge.svg",
+        Refused::NotAnImage,
+        Reached::Judged,
+    ),
+    (
+        "svg/probe-box-clips.svg",
+        Refused::TooLarge,
+        Reached::Judged,
+    ),
+    (
+        "svg/probe-circles-huge.svg",
+        Refused::NotAnImage,
+        Reached::Judged,
+    ),
+    (
+        "svg/probe-em-compounded.svg",
+        Refused::NotAnImage,
+        Reached::Judged,
+    ),
+    (
+        "svg/probe-feimage-chain.svg",
+        Refused::NotAnImage,
+        Reached::Judged,
+    ),
+    (
+        "svg/probe-feimage-text.svg",
+        Refused::NotAnImage,
+        Reached::Judged,
+    ),
+    (
+        "svg/probe-gradient-chain.svg",
+        Refused::NotAnImage,
+        Reached::Judged,
+    ),
+    (
+        "svg/probe-inherit-compounded.svg",
+        Refused::NotAnImage,
+        Reached::Judged,
+    ),
+    (
+        "svg/probe-marker-copies.svg",
+        Refused::TooLarge,
+        Reached::Judged,
+    ),
+    (
+        "svg/probe-nested-clips.svg",
+        Refused::TooLarge,
+        Reached::Judged,
+    ),
+    (
+        "svg/probe-nested-markers.svg",
+        Refused::TooLarge,
+        Reached::Judged,
+    ),
+    (
+        "svg/probe-nested-masks.svg",
+        Refused::NotAnImage,
+        Reached::Judged,
+    ),
+    (
+        "svg/probe-percent-root.svg",
+        Refused::NotAnImage,
+        Reached::Judged,
+    ),
+    (
+        "svg/probe-percent-svg-chain.svg",
+        Refused::NotAnImage,
+        Reached::Judged,
+    ),
+    (
+        "svg/probe-percent-symbol-chain.svg",
+        Refused::NotAnImage,
+        Reached::Judged,
+    ),
+    (
+        "svg/probe-percent-use-symbol.svg",
+        Refused::NotAnImage,
+        Reached::Judged,
+    ),
+    (
+        "svg/probe-scaled-stroke.svg",
+        Refused::TooLarge,
+        Reached::Built,
+    ),
+    (
+        "svg/probe-stops-object-box.svg",
+        Refused::TooLarge,
+        Reached::Judged,
+    ),
+    (
+        "svg/probe-stops-user-space.svg",
+        Refused::TooLarge,
+        Reached::Built,
+    ),
+    (
+        "svg/probe-stroked-circles-each.svg",
+        Refused::TooLarge,
+        Reached::Judged,
+    ),
+    (
+        "svg/probe-stroked-circles-most.svg",
+        Refused::TooLarge,
+        Reached::Judged,
+    ),
+    (
+        "svg/probe-stroked-circles-turned.svg",
+        Refused::TooLarge,
+        Reached::Judged,
+    ),
+    (
+        "svg/probe-stroked-circles.svg",
+        Refused::TooLarge,
+        Reached::Judged,
+    ),
+    (
+        "svg/probe-style-copies.svg",
+        Refused::NotAnImage,
+        Reached::Judged,
+    ),
+    (
+        "svg/probe-svg-image.svg",
+        Refused::NotAnImage,
+        Reached::Judged,
+    ),
+    ("svg/probe-tref.svg", Refused::NotAnImage, Reached::Judged),
+    (
+        "svg/probe-twice-given-id.svg",
+        Refused::NotAnImage,
+        Reached::Judged,
+    ),
+    (
+        "svg/probe-undrawn-letters.svg",
+        Refused::TooLarge,
+        Reached::Judged,
+    ),
+    (
+        "svg/probe-useloop-feimage.svg",
+        Refused::NotAnImage,
+        Reached::Judged,
+    ),
+];
+
+#[test]
+fn a_file_refused_for_its_work_is_refused_before_the_work_is_done() {
+    let _alone = alone();
+    for (name, refused, before) in REFUSED_SOON {
+        let bytes = std::fs::read(std::path::Path::new(CORPUS).join(name)).expect("a corpus file");
+        let (drawn, reached) = reached(|| rasterise(&bytes, 200, &[("ink", [20, 40, 60])]));
+        assert_eq!((drawn, reached), (Err(*refused), *before), "{name}");
+    }
 }
