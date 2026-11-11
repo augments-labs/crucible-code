@@ -4729,6 +4729,10 @@ impl Markdown {
             fenced: self.fenced,
             syntax,
             glyphs: self.glyphs,
+            // Nor where the session is: the repository a number counts
+            // against and the checkout a path is read in.
+            forge: self.forge.take(),
+            files: self.files.take(),
             unheld: self.unheld,
             unescaped: self.unescaped,
             retract: self.retract,
