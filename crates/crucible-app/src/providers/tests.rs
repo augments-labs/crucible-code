@@ -270,7 +270,9 @@ fn every_offered_openai_model_is_priced_or_says_why_not() {
 
     assert_eq!(
         unpriced, excused,
-        "offered with no price on the published API, and not listed with why"
+        "offered with no price on the published API on the newest day in \
+         `PRICES_REVIEWED`: give the model a record in force on that day, or list \
+         it in `UNPRICED_OPENAI` with why"
     );
 }
 

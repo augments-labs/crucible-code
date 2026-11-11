@@ -391,7 +391,7 @@ fn prompt_cache(route: Serving, model: &str) -> PromptCacheCapabilities {
 }
 
 /// The day `model`'s price was read from OpenAI's pages, with the versions of
-/// its records below and above 272K input tokens.
+/// its records for up to and including 272K input tokens and for more.
 fn price_review(model: &str) -> (PricingDate, &'static str, &'static str) {
     match model {
         ASTRA => (

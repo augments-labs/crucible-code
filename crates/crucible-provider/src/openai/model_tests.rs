@@ -171,7 +171,8 @@ fn terra_prices_the_published_rates_and_doubles_input_and_cache_over_272k() {
 #[test]
 fn sol_and_luna_price_their_published_rates_and_double_input_and_cache_over_272k() {
     // Input, cached input, a 30-minute cache write and output, per million
-    // tokens, as each model's page states them below 272K input tokens.
+    // tokens, as each model's page states them for up to and including 272K
+    // input tokens.
     let reviewed = PricingDate::new(2026, 11, 11);
     let (keyed, _) = provider(VENDOR, "");
     let (plan, _) = provider(SUBSCRIPTION, "");
