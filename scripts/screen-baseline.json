@@ -954,7 +954,7 @@
         "Vendor::answering(IN_MARKDOWN)",
         "Watched::in_colour(\"answered-markdown\", 80, 32, &vendor)"
       ],
-      "sha256": "601d45a93d94e2cac6bf73dd9c8f42c6c0b0517ec0312ba5ed67ae95456883ed"
+      "sha256": "be1cc6c7eadfcff42ae03ebdbb4b1e92523b2f563edba111df3dbb3e3f982c30"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__an_environment_authenticated_session_never_claims_logout_removed_it.snap",
