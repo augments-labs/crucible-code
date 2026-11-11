@@ -61,7 +61,7 @@ const DIFF: [Slot; 6] = [
 /// The `match` below is what keeps this list honest: a slot added to the enum
 /// stops it compiling until it has been given a place here, which is to say
 /// until its colour has been checked against both grounds.
-fn all() -> [Slot; 42] {
+fn all() -> [Slot; 44] {
     /// Where a slot sits in the list.
     fn place(slot: Slot) -> usize {
         match slot {
@@ -107,6 +107,8 @@ fn all() -> [Slot; 42] {
             Slot::ArgumentCommand => 39,
             Slot::RemovedWord => 40,
             Slot::AddedWord => 41,
+            Slot::RemovedCount => 42,
+            Slot::AddedCount => 43,
         }
     }
 
@@ -153,6 +155,8 @@ fn all() -> [Slot; 42] {
         Slot::ArgumentCommand,
         Slot::RemovedWord,
         Slot::AddedWord,
+        Slot::RemovedCount,
+        Slot::AddedCount,
     ];
 
     for (index, slot) in slots.into_iter().enumerate() {
@@ -1126,4 +1130,60 @@ fn a_word_a_change_raised_wears_its_lines_ground_in_weight_and_underline() {
     let off = wearing(Depth::Off, Theme::Dark, None);
     assert_eq!(off.open(Slot::RemovedWord).as_str(), "");
     assert_eq!(off.open(Slot::AddedWord).as_str(), "");
+}
+
+#[test]
+fn a_count_in_a_summary_of_a_change_is_bold_in_its_sides_hue_on_no_ground() {
+    // The summary a change opens on counts each side in that side's colour,
+    // among plain words on the reader's own ground: so no ground, weight at
+    // every rung, and never one ink for both sides.
+    let bold = |sequence: &str| sequence.replacen("\x1b[", "\x1b[1;", 1);
+
+    for theme in THEMES {
+        let tones = theme.tones();
+        for depth in [Depth::Exact, Depth::Indexed, Depth::Basic] {
+            let palette = wearing(depth, theme, None);
+            let (added, removed) = (
+                palette.open(Slot::AddedCount),
+                palette.open(Slot::RemovedCount),
+            );
+            let (added, removed) = (added.as_str(), removed.as_str());
+            assert_ne!(added, removed, "{theme:?} at {depth:?}: one ink for both");
+
+            // The hue is one the table already spends on that side: the
+            // number's where it clears the ground with no ground of its own
+            // under it, and the table's green and its trouble where it does
+            // not, which is Dark, the table a light terminal can be handed,
+            // and the sixteen, whose numbers are white on a ground.
+            let own = theme == Theme::Dark || depth == Depth::Basic;
+            for (count, number, hue) in [
+                (added, Slot::AddedNumber, tones.green),
+                (removed, Slot::RemovedNumber, tones.trouble),
+            ] {
+                let (ink, ground) = sets(count);
+                assert_eq!(ground, Sets::Nothing, "{theme:?} at {depth:?}: {count:?}");
+                assert!(
+                    count.starts_with("\x1b[1;"),
+                    "{theme:?} at {depth:?}: {count:?} is not bold"
+                );
+                if own {
+                    let hue = match depth {
+                        Depth::Exact => hue.exact,
+                        Depth::Indexed => hue.indexed,
+                        Depth::Basic | Depth::Off => hue.basic,
+                    };
+                    assert_eq!(count, bold(hue), "{theme:?} at {depth:?}");
+                } else {
+                    assert_eq!(
+                        ink,
+                        sets(palette.open(number).as_str()).0,
+                        "{theme:?} at {depth:?}: {count:?} left its number's hue"
+                    );
+                }
+            }
+        }
+    }
+    let off = wearing(Depth::Off, Theme::Dark, None);
+    assert_eq!(off.open(Slot::AddedCount).as_str(), "");
+    assert_eq!(off.open(Slot::RemovedCount).as_str(), "");
 }
