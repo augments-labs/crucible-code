@@ -8677,7 +8677,7 @@
     {
       "id": "CASE-TRANSCRIPT-BACKSLASH-BREAK-OPENER",
       "family": "transcript-blocks",
-      "obligation": "A backslash before a line that opens a block is drawn as written and the block opens as it does without the backslash, for every kind of opener.",
+      "obligation": "A backslash before each of these lines is drawn as written and the block opens as it does without the backslash: a heading, a bullet, a nested bullet, a numbered item, a fence, a quote, a rule, a table, display math and a details block, with a row of dashes or equals under a line keeping the backslash in the title.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
@@ -8686,6 +8686,42 @@
       "case": "markdown::tests::escapes::a_backslash_before_a_line_that_opens_a_block_is_kept_and_the_block_opens",
       "source": "crates/crucible-tui/src/markdown/tests/escapes.rs",
       "body_sha256": "ac49a1085d72d151661084074beb5aaae765d2eb5150f6911c3536c48eaaf980",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BACKSLASH-BREAK-OPENER-AGREEMENT",
+      "family": "transcript-blocks",
+      "obligation": "A backslash before a line is kept exactly when the reader opens a block there, for each line in the listed set of openers and near-openers (numbered items with a stop, tab or line end, bullets, headings, underlines, rows of bars and delimiter rows, quotes, fences, rules, display math, details and plain prose), the line whole, cut between the backslash and its break, cut after it, and a character at a time.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::escapes::a_backslash_is_kept_exactly_where_the_reader_opens_a_block",
+      "source": "crates/crucible-tui/src/markdown/tests/escapes.rs",
+      "body_sha256": "d44557a48650037527e3312ab432765fb82c72b03d53215e8f65d6d214d563c9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BACKSLASH-BREAK-HOLD-BOUND",
+      "family": "transcript-blocks",
+      "obligation": "A backslash hold ends where the reader ends what it reads: a line of bars, a header and a tag are held no longer than the reader holds them, and no other line is held past its start.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::escapes::a_backslash_hold_ends_where_the_reader_ends_what_it_reads",
+      "source": "crates/crucible-tui/src/markdown/tests/escapes.rs",
+      "body_sha256": "500373065860fce56090851e35387ac4218ef69e662edf567b63cb5cd0122eb7",
       "platforms": [
         "linux",
         "macos",
@@ -8703,7 +8739,7 @@
       },
       "case": "markdown::tests::escapes::a_backslash_before_a_line_the_answer_ends_in_the_middle_of_is_drawn_as_the_line_is",
       "source": "crates/crucible-tui/src/markdown/tests/escapes.rs",
-      "body_sha256": "605147579e98cd4e3bba67aa3fbc12b902e97840ccfbfbec7fd0cfe4a90b8a52",
+      "body_sha256": "a2829822f94de1cc567743bd2b9f24df33d4f114fdc4c90c48c5d3c3f48b1a04",
       "platforms": [
         "linux",
         "macos",
