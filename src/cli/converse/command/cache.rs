@@ -5,7 +5,7 @@ use crucible_app::client::Performed;
 use crucible_app::switching::Retained;
 use crucible_client_api::Command;
 use crucible_tui::{Renderer, Row, Terminal, fold};
-use crucible_types::PromptCacheResourceError;
+use crucible_types::{PromptCacheResourceError, ProviderUsage};
 
 use crate::cli::Fatal;
 use crate::cli::client::astray;
@@ -81,19 +81,7 @@ fn inspect<T: Terminal>(
             ),
         )?;
         if let Some(usage) = &attempt.usage {
-            reply(
-                renderer,
-                &format!(
-                    "normalized usage: input total={}, uncached={}, cache read={}, cache write={}, output={}, reasoning={}, storage token-hours={}",
-                    number(usage.input.total),
-                    number(usage.input.uncached),
-                    number(usage.input.cache_read),
-                    number(usage.input.cache_write_or_creation),
-                    number(usage.output),
-                    number(usage.reasoning),
-                    number(usage.storage_token_hours),
-                ),
-            )?;
+            reply(renderer, &normalized(usage))?;
         } else {
             reply(renderer, "normalized usage: unreported")?;
         }
@@ -229,6 +217,22 @@ fn reply_at<T: Terminal>(renderer: &mut Renderer<T>, laid: Laid, said: &str) -> 
     Ok(renderer.present(&rows)?)
 }
 
+/// The line naming each count of the last attempt's usage, unknown where the
+/// provider did not report it.
+fn normalized(usage: &ProviderUsage) -> String {
+    format!(
+        "normalized usage: input total={}, uncached={}, cache read={}, cache write={}, kept longer={}, output={}, reasoning={}, storage token-hours={}",
+        number(usage.input.total),
+        number(usage.input.uncached),
+        number(usage.input.cache_read),
+        number(usage.input.cache_write_or_creation),
+        number(usage.input.cache_write_extended),
+        number(usage.output),
+        number(usage.reasoning),
+        number(usage.storage_token_hours),
+    )
+}
+
 fn number(value: Option<u64>) -> String {
     value.map_or_else(|| "unknown".to_owned(), |value| value.to_string())
 }
@@ -237,13 +241,42 @@ fn number(value: Option<u64>) -> String {
 mod tests {
     use super::*;
     use crucible_tui::{Glyphs, Recording, ScreenMode};
-    use crucible_types::PromptCacheResourceState;
+    use crucible_types::{InputTokenUsage, PromptCacheResourceState};
 
     #[test]
     fn unknown_numbers_are_not_rendered_as_zero() {
         assert_eq!(number(None), "unknown");
         assert_eq!(number(Some(0)), "0");
         assert_ne!(PromptCacheResourceState::Ready.as_str(), "[redacted]");
+    }
+
+    /// A usage of 1200 input tokens, 700 read from the cache and 100 written
+    /// to it, 70 of those kept for the longer retention class where `kept`
+    /// says so.
+    fn written(kept: Option<u64>) -> ProviderUsage {
+        let input =
+            InputTokenUsage::inclusive_read_write(Some(1_200), Some(700), Some(100)).unwrap();
+        let input = match kept {
+            Some(kept) => input.with_cache_write_extended(kept).unwrap(),
+            None => input,
+        };
+        ProviderUsage::new(input, Some(58), None, None, &[]).unwrap()
+    }
+
+    #[test]
+    fn the_normalized_usage_names_the_part_of_the_cache_write_kept_longer() {
+        assert_eq!(
+            normalized(&written(Some(70))),
+            "normalized usage: input total=1200, uncached=400, cache read=700, cache write=100, kept longer=70, output=58, reasoning=unknown, storage token-hours=unknown"
+        );
+    }
+
+    #[test]
+    fn the_normalized_usage_says_unknown_where_no_part_kept_longer_was_reported() {
+        assert_eq!(
+            normalized(&written(None)),
+            "normalized usage: input total=1200, uncached=400, cache read=700, cache write=100, kept longer=unknown, output=58, reasoning=unknown, storage token-hours=unknown"
+        );
     }
 
     /// The rows a window forty columns wide drawn in `mode` shows once `said`
