@@ -33,7 +33,6 @@
 
 use crucible_context::{
     ContextSection, Live, Questions, QuestionsSection, Task, TaskSection, asked, assemble,
-    continue_numbering,
 };
 use crucible_tools::Deferred;
 use crucible_types::{Ancestry, Message};
@@ -79,13 +78,13 @@ impl Runner {
             {
                 let empty = held.waiting().is_empty() && !held.any_settled();
                 if !empty {
-                    continue_numbering(held, saved);
+                    held.continue_from(saved);
                 } else if held.restore(saved).is_err() {
                     // A state this build cannot read is told to the model as
                     // lapsed, as it would be to a runner holding none, and
                     // the empty state recorded in its place.
                     questions = Questions::Unheld;
-                    continue_numbering(held, saved);
+                    held.continue_from(saved);
                 }
             }
         }

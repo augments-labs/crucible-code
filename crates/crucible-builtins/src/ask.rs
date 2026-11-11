@@ -42,8 +42,9 @@ use std::sync::{Arc, LazyLock};
 
 use crucible_runtime::BoxFuture;
 use crucible_tools::{
-    Approved, Deferred, DescribeTool, FEWEST_ANSWERS, MOST_ANSWERS, MOST_QUESTIONS, MOST_SHOWS,
-    Put, Sensitivity, Summary, Target, Tool, ToolContext, ToolError, ToolOutput,
+    Approved, Deferred, DescribeTool, FEWEST_ANSWERS, MOST_ANSWERS, MOST_HEADING_BYTES,
+    MOST_QUESTIONS, MOST_SHOWS, MOST_TEXT_BYTES, Put, Sensitivity, Summary, Target, Tool,
+    ToolContext, ToolError, ToolOutput, is_one_line,
 };
 use crucible_types::{Answer, Answered, Question, ToolArgs};
 
@@ -75,10 +76,10 @@ const DEFERRED: &str = "deferred";
 /// Both, as the schema offers them and the parse accepts them.
 const MODES: &[&str] = &[BLOCKING, DEFERRED];
 
-// How many questions one call may put, how many answers each may offer and how
-// many rows a specimen may show are `crucible_tools`'s: a question that waits
-// for its answer is held there to the same bounds, so what this accepts is what
-// may wait.
+// How many questions one call may put, how many answers each may offer, how
+// many rows a specimen may show and how long each text may be are
+// `crucible_tools`'s: a question that waits for its answer is held there to the
+// same bounds, so what this accepts is what may wait.
 //
 // Four questions is already more than anybody wants to answer in a row before
 // the work carries on. Past it the call has stopped being a question and become
@@ -90,27 +91,6 @@ const MODES: &[&str] = &[BLOCKING, DEFERRED];
 // they are the way out rather than answers to what was asked. And the panel
 // draws ten rows of a specimen and no more, so a call that sent more would be
 // writing rows nobody will ever see.
-
-/// How long a heading may be, in bytes.
-///
-/// Every heading is drawn on one row across the top of the panel, so what
-/// bounds this is not what a heading needs but what the row can hold: four of
-/// them at eighty columns leaves about fifteen each, marks and gaps included.
-/// Past this the row gives way to a count, and a heading nobody ever sees is a
-/// heading the model spent tokens on for nothing.
-const HEADING_SHORT: usize = 24;
-
-/// How long an answer, its one-line meaning or a row of a specimen may be, in
-/// bytes.
-///
-/// The same length a question gets: an answer is folded across the panel the
-/// way the question above it is, so what bounds it is the reader's patience
-/// rather than a row — and a specimen row past the panel's width is clipped,
-/// which its own description says.
-const SHORT: usize = 500;
-
-/// How long a question may be, in bytes.
-const LONG: usize = 500;
 
 /// The root `description` is the tool's own; everything below it describes the
 /// arguments. Every bound is spelled by the constant the code refuses with,
@@ -137,7 +117,7 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
                         name: HEADING,
                         about: format!(
                             "Two or three words naming the question, in one row with the others. \
-                             At most {HEADING_SHORT} bytes."
+                             At most {MOST_HEADING_BYTES} bytes."
                         ),
                         needed: true,
                         shape: Shape::Text,
@@ -145,7 +125,7 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
                     Field {
                         name: QUESTION,
                         about: format!(
-                            "The question, written to be answered. At most {LONG} bytes."
+                            "The question, written to be answered. At most {MOST_TEXT_BYTES} bytes."
                         ),
                         needed: true,
                         shape: Shape::Text,
@@ -170,7 +150,7 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
                                 Field {
                                     name: ANSWER,
                                     about: format!(
-                                        "The answer's name, in a few words. At most {SHORT} \
+                                        "The answer's name, in a few words. At most {MOST_TEXT_BYTES} \
                                          bytes."
                                     ),
                                     needed: true,
@@ -197,7 +177,7 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
                                     about: format!(
                                         "For an answer that is a shape, such as a layout, a \
                                          format or a line of output: its rows, drawn as given \
-                                         under it. At most {MOST_SHOWS} rows of {SHORT} bytes."
+                                         under it. At most {MOST_SHOWS} rows of {MOST_TEXT_BYTES} bytes."
                                     ),
                                     needed: false,
                                     shape: Shape::List {
@@ -402,8 +382,8 @@ fn questions(args: &Args) -> Result<Vec<Question>, ToolError> {
 fn question(args: &Args) -> Result<Question, ToolError> {
     args.only(&[HEADING, QUESTION, SEVERAL, ANSWERS])?;
 
-    let heading = bounded(args, HEADING, args.text(HEADING)?, HEADING_SHORT)?;
-    let asked = bounded(args, QUESTION, args.text(QUESTION)?, LONG)?;
+    let heading = label(args, HEADING, args.text(HEADING)?, MOST_HEADING_BYTES)?;
+    let asked = bounded(args, QUESTION, args.text(QUESTION)?, MOST_TEXT_BYTES)?;
 
     let Some(written) = args.list(ANSWERS)? else {
         return Err(args.wrong(format!("{ANSWERS} is required and must be a list")));
@@ -458,11 +438,11 @@ fn question(args: &Args) -> Result<Question, ToolError> {
 fn answer(args: &Args) -> Result<Answer, ToolError> {
     args.only(&[ANSWER, SAYS, SHOWS, RECOMMENDED])?;
 
-    let name = bounded(args, ANSWER, args.text(ANSWER)?, SHORT)?;
+    let name = label(args, ANSWER, args.text(ANSWER)?, MOST_TEXT_BYTES)?;
     let mut answer = Answer::new(name);
 
     if let Some(says) = args.optional_text(SAYS)? {
-        answer = answer.saying(bounded(args, SAYS, says, SHORT)?);
+        answer = answer.saying(bounded(args, SAYS, says, MOST_TEXT_BYTES)?);
     }
 
     if args.flag(RECOMMENDED, false)? {
@@ -478,7 +458,7 @@ fn answer(args: &Args) -> Result<Answer, ToolError> {
             )));
         }
         for row in &shows {
-            bounded(args, SHOWS, row, SHORT)?;
+            bounded(args, SHOWS, row, MOST_TEXT_BYTES)?;
         }
         answer = answer.showing(shows);
     }
@@ -492,7 +472,8 @@ fn answer(args: &Args) -> Result<Answer, ToolError> {
 /// request pays for and what a panel has to lay out, and the first of those is
 /// counted in bytes.
 ///
-/// Length and nothing else. Whether a field may be blank is already answered
+/// Length and nothing else; whether a label stays on its line is [`label`]'s.
+/// Whether a field may be blank is already answered
 /// where it is read — a heading and a question are required and a blank one is
 /// a missing one, while **a blank row of a specimen is a blank line in what the
 /// answer would look like**, which is a row somebody wrote on purpose.
@@ -501,6 +482,24 @@ fn bounded<'a>(args: &Args, field: &str, text: &'a str, most: usize) -> Result<&
         return Err(args.wrong(format!(
             "{field} is {} bytes, and at most {most} are allowed",
             text.len()
+        )));
+    }
+
+    Ok(text)
+}
+
+/// `text`, bounded as [`bounded`] bounds it, or a refusal where it breaks its
+/// line or holds a control character.
+///
+/// For a heading and an answer, which the answer is said under as labels, each
+/// on a line of its own: one carrying a line of its own could read there as
+/// something the person wrote. A question and what an answer says or shows
+/// are not labels, and may break their lines.
+fn label<'a>(args: &Args, field: &str, text: &'a str, most: usize) -> Result<&'a str, ToolError> {
+    let text = bounded(args, field, text, most)?;
+    if !is_one_line(text) {
+        return Err(args.wrong(format!(
+            "{field} must stay on one line, with no line break or control character"
         )));
     }
 

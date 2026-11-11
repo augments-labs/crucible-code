@@ -52,7 +52,7 @@ pub const MOST_REPLY_BYTES: usize = 4 * 1024;
 
 /// The most questions one batch asks.
 ///
-/// This and the three bounds below are the shape of a batch a person can be
+/// This and the five bounds below are the shape of a batch a person can be
 /// asked. A tool that parses questions holds its caller to these same values,
 /// so that what it accepts is what may be held.
 pub const MOST_QUESTIONS: usize = 4;
@@ -65,6 +65,19 @@ pub const MOST_ANSWERS: usize = 8;
 
 /// The most rows one answer shows.
 pub const MOST_SHOWS: usize = 10;
+
+/// The most bytes one heading may be.
+pub const MOST_HEADING_BYTES: usize = 24;
+
+/// The most bytes a question, an answer, what it says or one row it shows may
+/// be.
+pub const MOST_TEXT_BYTES: usize = 500;
+
+/// The keys of the saved form: the number of the next batch, the batches
+/// waiting, and each batch's id. Written and read here alone.
+const NEXT: &str = "next";
+const WAITING: &str = "waiting";
+const ID: &str = "id";
 
 /// Questions asked without waiting for the answer, held until it is delivered.
 ///
@@ -192,6 +205,26 @@ pub enum Misshapen {
     RepeatedQuestion {
         /// The second time it is asked, counted from one.
         question: usize,
+    },
+    /// Some of a question's text is longer than it may be.
+    #[error("question {question}'s {field} is {bytes} bytes, and at most {most} are allowed")]
+    TooLong {
+        /// The question, counted from one.
+        question: usize,
+        /// Which of its texts.
+        field: &'static str,
+        /// How long it is.
+        bytes: usize,
+        /// How long it may be.
+        most: usize,
+    },
+    /// A heading or an answer holds a control character or breaks its line.
+    #[error("question {question}'s {field} breaks its line or holds a control character")]
+    Control {
+        /// The question, counted from one.
+        question: usize,
+        /// Which of its texts.
+        field: &'static str,
     },
 }
 
@@ -390,7 +423,7 @@ impl Deferred {
             .collect();
         batches.sort_by_key(|batch| batch.id());
         let waiting: Vec<Value> = batches.into_iter().map(saved_batch).collect();
-        json!({ "next": held.next, "waiting": waiting })
+        Self::saved(held.next, &waiting)
     }
 
     /// Replaces the waiting batches with those `state` saved.
@@ -406,14 +439,11 @@ impl Deferred {
     ///
     /// [`Unrestored`] saying why nothing was restored.
     pub fn restore(&self, state: &Value) -> Result<(), Unrestored> {
-        let next = state
-            .get("next")
-            .and_then(Value::as_u64)
-            .ok_or(Unrestored::Malformed(
-                "there is no number for the next batch",
-            ))?;
+        let next = Self::saved_next(state).ok_or(Unrestored::Malformed(
+            "there is no number for the next batch",
+        ))?;
         let restored = state
-            .get("waiting")
+            .get(WAITING)
             .and_then(Value::as_array)
             .ok_or(Unrestored::Malformed("there is no list of waiting batches"))?
             .iter()
@@ -466,6 +496,56 @@ impl Deferred {
         held.waiting = restored;
         held.changed();
         Ok(())
+    }
+
+    /// Hands out no id below the next one `saved`, a state some registry
+    /// saved, numbers: an answer naming an id that state spent would
+    /// otherwise settle a batch it was never meant for.
+    ///
+    /// Everything held stays as it is, and ids already handed out are its
+    /// own. A state that numbers nothing this build can read, or numbers no
+    /// further than this one already does, changes nothing; a raise is a
+    /// change, and moves [`Deferred::revision`]. Under the one lock every
+    /// other change takes, so a batch registered meanwhile is never lost.
+    pub fn continue_from(&self, saved: &Value) {
+        let Some(next) = Self::saved_next(saved) else {
+            return;
+        };
+        let mut held = self.held();
+        if held.next < next {
+            held.next = next;
+            held.changed();
+        }
+    }
+
+    /// A saved state numbering its next batch `next`, with `waiting` as its
+    /// batches in the form [`Deferred::state`] writes each: the one place
+    /// the saved form is put together.
+    #[must_use]
+    pub fn saved(next: u64, waiting: &[Value]) -> Value {
+        json!({ NEXT: next, WAITING: waiting })
+    }
+
+    /// The number a saved state gives its next batch, where it gives one.
+    #[must_use]
+    pub fn saved_next(state: &Value) -> Option<u64> {
+        state.get(NEXT).and_then(Value::as_u64)
+    }
+
+    /// The batches a saved state lists as waiting, oldest first, each as it
+    /// was saved; none where it lists none this build can read.
+    #[must_use]
+    pub fn saved_waiting(state: &Value) -> &[Value] {
+        state
+            .get(WAITING)
+            .and_then(Value::as_array)
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// The id one batch [`Deferred::saved_waiting`] lists was saved under.
+    #[must_use]
+    pub fn saved_id(batch: &Value) -> Option<&str> {
+        batch.get(ID).and_then(Value::as_str)
     }
 
     /// Forgets every batch, waiting or settled.
@@ -550,8 +630,9 @@ fn text_bytes(questions: &[Question]) -> usize {
 /// Whether `questions` are a batch a person can be asked, naming the first way
 /// they are not.
 ///
-/// The text is bounded in bytes where it is held; this bounds the rest, so that
-/// a batch of empty strings is no cheaper to hold than it is to show.
+/// Each text is bounded here, and the batches' text together where they are
+/// held; the counts are bounded too, so that a batch of empty strings is no
+/// cheaper to hold than it is to show.
 fn shape(questions: &[Question]) -> Result<(), Misshapen> {
     if questions.is_empty() {
         return Err(Misshapen::Empty);
@@ -562,6 +643,7 @@ fn shape(questions: &[Question]) -> Result<(), Misshapen> {
 
     for (at, question) in questions.iter().enumerate() {
         let at = at + 1;
+        texts(at, question)?;
         let given = question.answers().len();
         if !(FEWEST_ANSWERS..=MOST_ANSWERS).contains(&given) {
             return Err(Misshapen::Answers {
@@ -593,6 +675,54 @@ fn shape(questions: &[Question]) -> Result<(), Misshapen> {
         return Err(Misshapen::RepeatedQuestion { question: at + 1 });
     }
     Ok(())
+}
+
+/// Whether the text of `question`, the `at`th, is within its bounds, and its
+/// heading and answers, which the answer message quotes as labels, each stay
+/// on one line.
+fn texts(at: usize, question: &Question) -> Result<(), Misshapen> {
+    let long = |field: &'static str, text: &str, most: usize| {
+        if text.len() > most {
+            return Err(Misshapen::TooLong {
+                question: at,
+                field,
+                bytes: text.len(),
+                most,
+            });
+        }
+        Ok(())
+    };
+    let label = |field: &'static str, text: &str| {
+        if !is_one_line(text) {
+            return Err(Misshapen::Control {
+                question: at,
+                field,
+            });
+        }
+        Ok(())
+    };
+
+    long("heading", question.heading(), MOST_HEADING_BYTES)?;
+    label("heading", question.heading())?;
+    long("question", question.question(), MOST_TEXT_BYTES)?;
+    for answer in question.answers() {
+        long("answer", answer.answer(), MOST_TEXT_BYTES)?;
+        label("answer", answer.answer())?;
+        long("says", answer.says(), MOST_TEXT_BYTES)?;
+        for row in answer.shows() {
+            long("shows", row, MOST_TEXT_BYTES)?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether `text` holds no control character, nor the line and paragraph
+/// separators that break a line as one does without being one.
+#[must_use]
+pub fn is_one_line(text: &str) -> bool {
+    !text
+        .chars()
+        .any(|one| one.is_control() || matches!(one, '\u{2028}' | '\u{2029}'))
 }
 
 /// Whether any of `texts` appears twice.
@@ -655,10 +785,7 @@ fn words(question: usize, part: Part, text: &str) -> Result<(), Unsettled> {
             bytes: text.len(),
         });
     }
-    if text
-        .chars()
-        .any(|one| one.is_control() || matches!(one, '\u{2028}' | '\u{2029}'))
-    {
+    if !is_one_line(text) {
         return Err(Unsettled::Control { question, part });
     }
     Ok(())
@@ -689,13 +816,13 @@ fn saved_batch(batch: &Batch) -> Value {
             })
         })
         .collect();
-    json!({ "id": batch.id().to_string(), "questions": questions })
+    json!({ ID: batch.id().to_string(), "questions": questions })
 }
 
 /// One waiting batch read back from what [`saved_batch`] wrote, or `None`
 /// where it is not that.
 fn read_batch(saved: &Value) -> Option<Batch> {
-    let id = QuestionId::parse(saved.get("id")?.as_str()?)?;
+    let id = QuestionId::parse(Deferred::saved_id(saved)?)?;
     let questions = saved
         .get("questions")?
         .as_array()?

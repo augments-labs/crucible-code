@@ -221,6 +221,16 @@ fn asked(heading: &str) -> Vec<Question> {
     ]
 }
 
+/// One question carrying more than half the text all held batches may, every
+/// text in it within its own bound.
+fn heavy(fill: &str) -> Vec<Question> {
+    let row = fill.repeat(MOST_TEXT_BYTES);
+    let answers: Vec<Answer> = (0..MOST_ANSWERS)
+        .map(|at| Answer::new(format!("{fill}{at}")).showing(vec![row.as_str(); MOST_SHOWS]))
+        .collect();
+    vec![Question::new("Big", "Which?", answers)]
+}
+
 /// What a refusal is expected to be.
 type Expected = fn(&Unsettled) -> bool;
 
@@ -433,17 +443,10 @@ fn a_ninth_batch_and_a_batch_over_the_byte_total_are_refused_before_storing() {
 
     let deferred = Deferred::default();
     let half = MOST_HELD_BYTES / 2;
-    let big = |text: &str| {
-        vec![Question::new(
-            "Big",
-            text,
-            [Answer::new("yes"), Answer::new("no")],
-        )]
-    };
-    deferred.register(big(&"a".repeat(half))).unwrap();
+    deferred.register(heavy("a")).unwrap();
     let revision = deferred.revision();
 
-    let error = deferred.register(big(&"b".repeat(half))).unwrap_err();
+    let error = deferred.register(heavy("b")).unwrap_err();
     let Full::Crowded(Crowded::Bytes { bytes, held }) = error else {
         panic!("{error:?}");
     };
@@ -686,10 +689,14 @@ fn restoring_its_state_round_trips_the_waiting_batches_and_drops_nothing_silentl
     assert!(crowded.waiting().is_empty());
 
     // Crowded is the one refusal both a batch and a restored state meet.
-    let mut heavy = state.pointer("/waiting/0").unwrap().clone();
-    *heavy.pointer_mut("/questions/0/question").unwrap() =
-        serde_json::json!("q".repeat(MOST_HELD_BYTES));
-    let heavy = serde_json::json!({ "next": 1, "waiting": [heavy] });
+    let weighed = Deferred::default();
+    weighed.register(heavy("a")).unwrap();
+    weighed.register(heavy("b")).unwrap_err();
+    let one = weighed.state().pointer("/waiting/0").unwrap().clone();
+    let mut two = one.clone();
+    *two.pointer_mut("/id").unwrap() = serde_json::json!(QuestionId::numbered(1).to_string());
+    *two.pointer_mut("/questions/0/question").unwrap() = serde_json::json!("And?");
+    let heavy = serde_json::json!({ "next": 2, "waiting": [one, two] });
     assert!(matches!(
         crowded.restore(&heavy),
         Err(Unrestored::Crowded(Crowded::Bytes { .. }))
@@ -1043,4 +1050,232 @@ fn a_written_in_answer_is_said_apart_from_the_answers_offered() {
         Some(&"  their own answer: clippy"),
         "{said}"
     );
+}
+
+#[test]
+fn text_past_its_bound_or_a_label_off_its_line_is_refused_whether_registered_or_restored() {
+    type Shaped = fn(&Misshapen) -> bool;
+    let asking = |heading: &str, question: &str, answer: &str, says: &str, row: &str| {
+        vec![Question::new(
+            heading,
+            question,
+            [
+                Answer::new(answer).saying(says).showing([row]),
+                Answer::new("Other"),
+            ],
+        )]
+    };
+    let long = "x".repeat(MOST_TEXT_BYTES + 1);
+    let heading = "H".repeat(MOST_HEADING_BYTES + 1);
+
+    let refused: Vec<(Vec<Question>, Shaped)> = vec![
+        (asking(&heading, "Q?", "a", "", ""), |e| {
+            matches!(e, Misshapen::TooLong { question: 1, field: "heading", bytes, most }
+                if *bytes == MOST_HEADING_BYTES + 1 && *most == MOST_HEADING_BYTES)
+        }),
+        (asking("H", &long, "a", "", ""), |e| {
+            matches!(e, Misshapen::TooLong { question: 1, field: "question", most, .. }
+                if *most == MOST_TEXT_BYTES)
+        }),
+        (asking("H", "Q?", &long, "", ""), |e| {
+            matches!(
+                e,
+                Misshapen::TooLong {
+                    question: 1,
+                    field: "answer",
+                    ..
+                }
+            )
+        }),
+        (asking("H", "Q?", "a", &long, ""), |e| {
+            matches!(
+                e,
+                Misshapen::TooLong {
+                    question: 1,
+                    field: "says",
+                    ..
+                }
+            )
+        }),
+        (asking("H", "Q?", "a", "", &long), |e| {
+            matches!(
+                e,
+                Misshapen::TooLong {
+                    question: 1,
+                    field: "shows",
+                    ..
+                }
+            )
+        }),
+        // What the answer message quotes as a label stays on its own line, so
+        // a crafted one cannot add a line that reads as the person's own.
+        (asking("Lang\n  they added: x", "Q?", "a", "", ""), |e| {
+            matches!(
+                e,
+                Misshapen::Control {
+                    question: 1,
+                    field: "heading"
+                }
+            )
+        }),
+        (
+            asking("H", "Q?", "Rust\n  their own answer: x", "", ""),
+            |e| {
+                matches!(
+                    e,
+                    Misshapen::Control {
+                        question: 1,
+                        field: "answer"
+                    }
+                )
+            },
+        ),
+        (asking("H\u{2028}x", "Q?", "a", "", ""), |e| {
+            matches!(
+                e,
+                Misshapen::Control {
+                    question: 1,
+                    field: "heading"
+                }
+            )
+        }),
+        (asking("H", "Q?", "a\u{1b}[2J", "", ""), |e| {
+            matches!(
+                e,
+                Misshapen::Control {
+                    question: 1,
+                    field: "answer"
+                }
+            )
+        }),
+    ];
+
+    let deferred = Deferred::default();
+    for (questions, expected) in refused {
+        let error = deferred.register(questions.clone()).unwrap_err();
+        let Full::Shape(shape) = &error else {
+            panic!("{error:?}");
+        };
+        assert!(expected(shape), "{error:?}");
+        assert!(!error.to_string().contains('\n'), "{error}");
+
+        // A saved state carrying the same text is refused on the way back in.
+        let fine = Deferred::default();
+        fine.register(asking("H", "Q?", "a", "", "")).unwrap();
+        let mut state = fine.state();
+        let saved = |text: &str| Value::from(text);
+        let question = questions.first().unwrap();
+        let answer = question.answers().next().unwrap();
+        *state.pointer_mut("/waiting/0/questions/0/heading").unwrap() = saved(question.heading());
+        *state
+            .pointer_mut("/waiting/0/questions/0/question")
+            .unwrap() = saved(question.question());
+        *state
+            .pointer_mut("/waiting/0/questions/0/answers/0/answer")
+            .unwrap() = saved(answer.answer());
+        *state
+            .pointer_mut("/waiting/0/questions/0/answers/0/says")
+            .unwrap() = saved(answer.says());
+        *state
+            .pointer_mut("/waiting/0/questions/0/answers/0/shows")
+            .unwrap() = Value::from(answer.shows().collect::<Vec<_>>());
+        let resumed = Deferred::default();
+        match resumed.restore(&state) {
+            Err(Unrestored::Shape(shape)) => assert!(expected(&shape), "{shape:?}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(resumed.waiting().is_empty());
+    }
+    assert!(deferred.waiting().is_empty());
+
+    // At the bounds, not past them; a question, a meaning and a specimen row
+    // are not labels, and may break their lines.
+    let at = "x".repeat(MOST_TEXT_BYTES);
+    let state = {
+        let kept = Deferred::default();
+        kept.register(asking(
+            &"H".repeat(MOST_HEADING_BYTES),
+            &at,
+            &at,
+            "one\ntwo",
+            "\tindented",
+        ))
+        .unwrap();
+        kept.register(asking("H", "Which\nof these?", "a", &at, &at))
+            .unwrap();
+        kept.state()
+    };
+    let resumed = Deferred::default();
+    resumed.restore(&state).unwrap();
+    assert_eq!(resumed.waiting().len(), 2);
+}
+
+#[test]
+fn numbering_continues_from_a_recorded_number_and_never_goes_back() {
+    let deferred = Deferred::default();
+    let first = deferred.register(asked("One")).unwrap();
+
+    let revision = deferred.revision();
+    deferred.continue_from(&Deferred::saved(5, &[]));
+    assert_ne!(deferred.revision(), revision, "a raise is a change");
+    let ids: Vec<QuestionId> = deferred.waiting().iter().map(Batch::id).collect();
+    assert_eq!(ids, [first], "what is held stays held");
+    assert_eq!(deferred.register(asked("Two")).unwrap().number(), 5);
+
+    // A lower number, or a state recording none, changes nothing.
+    let revision = deferred.revision();
+    deferred.continue_from(&Deferred::saved(3, &[]));
+    deferred.continue_from(&json!({ "waiting": [] }));
+    deferred.continue_from(&json!(null));
+    assert_eq!(deferred.revision(), revision);
+    assert_eq!(deferred.register(asked("Three")).unwrap().number(), 6);
+}
+
+#[test]
+fn a_batch_registered_while_numbering_continues_is_never_lost() {
+    for round in 0..200_u64 {
+        let deferred = Deferred::default();
+        let registering = deferred.clone();
+        let asker = std::thread::spawn(move || {
+            for at in 0..4 {
+                registering.register(asked(&format!("B{at}"))).unwrap();
+            }
+        });
+        for step in 0..4 {
+            deferred.continue_from(&Deferred::saved(round * 10 + step, &[]));
+        }
+        asker.join().unwrap();
+        assert_eq!(deferred.waiting().len(), 4, "round {round}");
+    }
+}
+
+#[test]
+fn the_saved_form_is_read_and_written_by_the_registry_alone() {
+    let deferred = Deferred::default();
+    deferred.register(asked("One")).unwrap();
+    deferred.register(asked("Two")).unwrap();
+    let state = deferred.state();
+
+    assert_eq!(Deferred::saved_next(&state), Some(2));
+    let ids: Vec<String> = deferred
+        .waiting()
+        .iter()
+        .map(|b| b.id().to_string())
+        .collect();
+    let saved: Vec<&str> = Deferred::saved_waiting(&state)
+        .iter()
+        .filter_map(Deferred::saved_id)
+        .collect();
+    assert_eq!(saved, ids);
+
+    // What it writes from the parts it read is what it saved.
+    let rebuilt = Deferred::saved(2, Deferred::saved_waiting(&state));
+    assert_eq!(rebuilt, state);
+    let resumed = Deferred::default();
+    resumed.restore(&rebuilt).unwrap();
+    assert_eq!(resumed.state(), state);
+
+    assert_eq!(Deferred::saved_next(&json!({})), None);
+    assert!(Deferred::saved_waiting(&json!({ "next": 0 })).is_empty());
+    assert_eq!(Deferred::saved_id(&json!({ "id": 3 })), None);
 }

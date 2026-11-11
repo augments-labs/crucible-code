@@ -58,7 +58,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map, Value, json};
 
 use crucible_models::Effort;
-use crucible_tools::{Deferred, MOST_HELD, Permission, ToolSnapshot};
+use crucible_tools::{Deferred, Permission, ToolSnapshot};
 use crucible_types::{Batch, Fragment, Seen, Tone};
 
 use crate::ContextSection;
@@ -708,7 +708,7 @@ impl<'a> QuestionsSection<'a> {
                 (telling(state, told), waiting)
             }
             Questions::Unheld => (
-                nothing_waiting(recorded.and_then(recorded_next).unwrap_or(0)),
+                nothing_waiting(recorded.and_then(Deferred::saved_next).unwrap_or(0)),
                 Vec::new(),
             ),
             Questions::Beneath => (
@@ -798,55 +798,7 @@ impl QuestionsSection<'_> {
 /// The state of a registry holding nothing that numbers its next batch
 /// `next`.
 fn nothing_waiting(next: u64) -> Value {
-    telling(saved(next, &[]), Vec::new())
-}
-
-/// The key in a registry's saved form that numbers its next batch.
-const NEXT: &str = "next";
-
-/// A registry's saved form: the number of its next batch and the batches
-/// waiting, as [`Deferred::state`] writes it and [`Deferred::restore`] reads
-/// it.
-pub(crate) fn saved(next: u64, waiting: &[Value]) -> Value {
-    json!({ NEXT: next, "waiting": waiting })
-}
-
-/// The number a questions state records for the next batch, where it records
-/// one this build can read.
-pub(crate) fn recorded_next(state: &Value) -> Option<u64> {
-    state.get(NEXT).and_then(Value::as_u64)
-}
-
-/// Has `held` hand out no id below the next one `recorded`, a questions state
-/// a session recorded, numbers: an answer in the transcript naming an id that
-/// state spent would otherwise settle a new batch. Ids `held` already handed
-/// out are its own and stay as they are. A state that records no readable
-/// number, or one `held` already numbers as far as or past, changes nothing,
-/// so nothing is reported as changed. A real raise is a change to `held`, so
-/// the waiting list, though the same batches, is reported once more.
-///
-/// Nothing may register on `held` while this runs: the list read before it is
-/// put back, without the batch registered in between. A runner calls it from
-/// a pass's assembly, while none of its tools, the only ones that register,
-/// is running. An answer settled in between is read again.
-pub fn continue_numbering(held: &Deferred, recorded: &Value) {
-    let Some(next) = recorded_next(recorded) else {
-        return;
-    };
-    // Each refusal is an answer settled since the read; there are no more of
-    // those than batches held.
-    for _ in 0..=MOST_HELD {
-        let mut now = held.state();
-        if recorded_next(&now).is_some_and(|numbered| numbered >= next) {
-            return;
-        }
-        if let Some(fields) = now.as_object_mut() {
-            fields.insert(NEXT.to_owned(), next.into());
-        }
-        if held.restore(&now).is_ok() {
-            return;
-        }
-    }
+    telling(Deferred::saved(next, &[]), Vec::new())
 }
 
 /// The key beside a registry's saved form that holds the ids the model was
@@ -865,16 +817,10 @@ pub(crate) fn telling(mut state: Value, told: Vec<Value>) -> Value {
 
 /// The ids of the waiting batches a questions state records, in order.
 fn waiting_ids(state: &Value) -> Vec<&str> {
-    state
-        .get("waiting")
-        .and_then(Value::as_array)
-        .map(|waiting| {
-            waiting
-                .iter()
-                .filter_map(|batch| batch.get("id").and_then(Value::as_str))
-                .collect()
-        })
-        .unwrap_or_default()
+    Deferred::saved_waiting(state)
+        .iter()
+        .filter_map(Deferred::saved_id)
+        .collect()
 }
 
 /// The ids a questions state records the model was last told are waiting.
