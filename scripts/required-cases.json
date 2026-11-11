@@ -8695,7 +8695,7 @@
     {
       "id": "CASE-TRANSCRIPT-BACKSLASH-BREAK-OPENER-AGREEMENT",
       "family": "transcript-blocks",
-      "obligation": "A backslash before a line is kept exactly when the reader opens a block there, for each line in the listed set of openers and near-openers (numbered items with a stop, tab or line end, bullets, headings, underlines, rows of bars and delimiter rows, quotes, fences, rules, display math, details and plain prose), the line whole, cut between the backslash and its break, cut after it, and a character at a time.",
+      "obligation": "A backslash before a line is kept exactly when the reader opens a block there, held to what the reader draws for the same lines without the backslash, for each line in the listed set of openers and near-openers (numbered items with a stop, tab or line end, bullets, headings, underlines, rows of bars and delimiter rows, quotes, fences, rules, display math, details and plain prose), the line whole, cut between the backslash and its break, cut after it, and a character at a time.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
@@ -8703,7 +8703,7 @@
       },
       "case": "markdown::tests::escapes::a_backslash_is_kept_exactly_where_the_reader_opens_a_block",
       "source": "crates/crucible-tui/src/markdown/tests/escapes.rs",
-      "body_sha256": "d44557a48650037527e3312ab432765fb82c72b03d53215e8f65d6d214d563c9",
+      "body_sha256": "0bb66d0566e6bfd814c23dd33f8b341a76eb7961a64e7a8a31a92545a90856ea",
       "platforms": [
         "linux",
         "macos",
@@ -8721,7 +8721,7 @@
       },
       "case": "markdown::tests::escapes::a_backslash_hold_ends_where_the_reader_ends_what_it_reads",
       "source": "crates/crucible-tui/src/markdown/tests/escapes.rs",
-      "body_sha256": "500373065860fce56090851e35387ac4218ef69e662edf567b63cb5cd0122eb7",
+      "body_sha256": "033a8854d189764f5fd732c13c1c7ceef81b022e7264ba4bd60fd74642aadbb0",
       "platforms": [
         "linux",
         "macos",
@@ -8731,7 +8731,7 @@
     {
       "id": "CASE-TRANSCRIPT-BACKSLASH-BREAK-MIDLINE",
       "family": "transcript-blocks",
-      "obligation": "A backslash before a line the answer ends in the middle of is drawn as that line would be drawn if it were whole.",
+      "obligation": "A backslash before a line the answer ends in the middle of is drawn as that line would be drawn if it were whole, a delimiter row under a bare header that the answer ends in among them.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
@@ -8739,7 +8739,7 @@
       },
       "case": "markdown::tests::escapes::a_backslash_before_a_line_the_answer_ends_in_the_middle_of_is_drawn_as_the_line_is",
       "source": "crates/crucible-tui/src/markdown/tests/escapes.rs",
-      "body_sha256": "a2829822f94de1cc567743bd2b9f24df33d4f114fdc4c90c48c5d3c3f48b1a04",
+      "body_sha256": "392a95b9807a92dace912337ef09f3a154b6b53eea4ac81d892b3cc1d5170177",
       "platforms": [
         "linux",
         "macos",
