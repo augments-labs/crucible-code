@@ -383,4 +383,42 @@ mod tests {
             .is_some()
         );
     }
+
+    // References and addresses as the transcript lays them out, at the width a
+    // laptop terminal splits in two. The pictures show slots, so one picture
+    // per set stands for every theme.
+
+    const REFERENCES: &str = "References, drawn short:\n\n\
+        - here: https://github.com/augments-labs/crucible-code/pull/1324\n\
+        - elsewhere: https://github.com/someone/else/pull/12\n\
+        - an issue: https://github.com/augments-labs/crucible-code/issues/7\n\
+        - a commit: https://github.com/augments-labs/crucible-code/commit/abcdef1234567\n\
+        - a link: [the guide](https://example.com/docs/guide/intro)\n\
+        - an autolink: <https://example.com/docs/guide/intro>\n\
+        - an image: ![the build passing](docs/images/build.png)\n\n\
+        | what | where |\n\
+        |---|---|\n\
+        | fix | [the fix](https://github.com/augments-labs/crucible-code/pull/1324) |\n\
+        | guide | [the guide](https://example.com/docs/guide/intro) |\n";
+
+    /// [`REFERENCES`] as the transcript lays it out at 64 columns, counted
+    /// against this checkout.
+    fn references(glyphs: crate::glyphs::Glyphs) -> String {
+        crate::markdown::corpus_pictures::picture_counting(
+            REFERENCES,
+            64,
+            glyphs,
+            Some(here("https://github.com", "/issues/")),
+        )
+    }
+
+    #[test]
+    fn references_and_addresses_at_64_columns() {
+        insta::assert_snapshot!(references(crate::glyphs::Glyphs::Unicode));
+    }
+
+    #[test]
+    fn references_and_addresses_at_64_columns_in_ascii() {
+        insta::assert_snapshot!(references(crate::glyphs::Glyphs::Ascii));
+    }
 }

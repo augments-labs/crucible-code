@@ -20,6 +20,7 @@
 use crate::color::Theme;
 use crate::dump::dump;
 use crate::escape::Escapes;
+use crate::forge::Forge;
 use crate::glyphs::Glyphs;
 use crate::record::Record;
 use crate::row::Row;
@@ -45,10 +46,26 @@ pub(crate) fn picture(answer: &str, columns: usize, glyphs: Glyphs) -> String {
     dump(&laid(answer, columns, glyphs), columns)
 }
 
+/// What `answer` lays out as, as [`picture`] has it, with its addresses
+/// counted against the repository `forge` names.
+pub(crate) fn picture_counting(
+    answer: &str,
+    columns: usize,
+    glyphs: Glyphs,
+    forge: Option<Forge>,
+) -> String {
+    dump(&laid_counting(answer, columns, glyphs, forge), columns)
+}
+
 /// The rows the record holds for `answer` at `columns`, in `glyphs`.
 pub(crate) fn laid(answer: &str, columns: usize, glyphs: Glyphs) -> Vec<Row> {
+    laid_counting(answer, columns, glyphs, None)
+}
+
+/// The rows [`laid`] holds, with addresses counted against `forge`.
+fn laid_counting(answer: &str, columns: usize, glyphs: Glyphs, forge: Option<Forge>) -> Vec<Row> {
     let mut record = Record::new(columns);
-    let mut markdown = Markdown::new(glyphs);
+    let mut markdown = Markdown::new(glyphs).counting(forge);
     let mut escapes = Escapes::default();
     let mut free = String::new();
     let mut write = |said: Said<'_>| match said {
