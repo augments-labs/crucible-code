@@ -186,6 +186,10 @@ where several may be chosen:
   enter choose · n note · tab composer · esc close
 ```
 
+The row under the dock names the keys that work there. Where the window is
+short, the dock gives up its blank rows before that row; where it is narrow,
+that row folds between two keys rather than cutting one off.
+
 Nothing in the dock moves by itself. New questions arriving add to the count
 and change neither what you are on nor what you have written, and the turn
 goes on under the dock while it is open.

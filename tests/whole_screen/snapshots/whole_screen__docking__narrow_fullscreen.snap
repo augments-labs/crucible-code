@@ -3,7 +3,6 @@ source: tests/whole_screen/docking.rs
 expression: still(&window)
 ---
 44x24 cursor 21,4 scrolled 0
-|› /questions                               •|
 |                                           ●|
 |                                            |
 |╭──────────────────────────────────────────╮|
@@ -20,7 +19,8 @@ expression: still(&window)
 |│  ──────────────────────────────────────  │|
 |│    4. ( ) Decline question               │|
 |╰──────────────────────────────────────────╯|
-|  enter choose · n note · tab composer · esc|
+|  enter choose · n note · tab composer      |
+|  esc close                                 |
 |                                            |
 |                             99% window left|
 |╭──────────────────────────────────────────╮|

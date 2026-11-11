@@ -721,7 +721,7 @@ pub(crate) struct Spacing {
 
 impl Spacing {
     /// The rungs, in the order they are given up.
-    pub(crate) const LADDER: [Self; 4] = [
+    const LADDER: [Self; 4] = [
         Self {
             footer: true,
             says: true,
