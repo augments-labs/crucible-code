@@ -379,6 +379,10 @@ pub struct Used {
     pub cache_read: u64,
     /// Input tokens written to a provider's cache.
     pub cache_write: u64,
+    /// The part of `cache_write` a provider said it kept for its longer
+    /// retention class: inside it, never added to it, and 0 where no provider
+    /// said.
+    pub cache_write_extended: u64,
 }
 
 impl Used {
@@ -393,6 +397,7 @@ impl Used {
             .with("output", self.output)
             .with("cache_read", self.cache_read)
             .with("cache_write", self.cache_write)
+            .with("cache_write_extended", self.cache_write_extended)
             .finish()
     }
 
@@ -408,6 +413,7 @@ impl Used {
             output: fields.number("output")?,
             cache_read: fields.number("cache_read")?,
             cache_write: fields.number("cache_write")?,
+            cache_write_extended: fields.number("cache_write_extended")?,
         };
         fields.done()?;
         Ok(used)

@@ -1679,7 +1679,7 @@ fn take<T: Terminal>(
     // spends its first ten seconds connecting has spent them.
     let settled = conversation.settled();
     let mut turning = Turning::started(settled.breakdown())
-        .using(settled.totals(), settled.plan_limits())
+        .using(&settled.totals(), settled.plan_limits())
         .pinning(terms.pinning.get());
 
     attaching::refresh_store(held, importing(conversation.session()));

@@ -334,6 +334,7 @@ fn used(totals: &Totals) -> api::Used {
         output: totals.output(),
         cache_read: totals.cache_read(),
         cache_write: totals.cache_write(),
+        cache_write_extended: totals.cache_write_extended(),
     }
 }
 
