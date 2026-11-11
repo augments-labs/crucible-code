@@ -4,8 +4,10 @@
 //! Every case offers every agent this build can run, with the fake peer
 //! installed as `claude` and nothing at all installed as `antigravity`, so the
 //! one agent is found and the other is not, whatever this machine has on its
-//! own `PATH`. A case walks the screens a person would to reach its own, and
-//! the picture taken there is the snapshot.
+//! own `PATH`. A case that tries the user's own program installs the fake
+//! peer instead under the name that program goes by, `goose` or `agy`, and
+//! never starts it. A case walks the screens a person would to reach its own,
+//! and the picture taken there is the snapshot.
 
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
@@ -1695,4 +1697,147 @@ fn an_add_left_at_its_question_writes_nothing_and_places_nothing() {
         assert!(screen.contains("Not installed."), "{case}: {screen}");
         assert!(screen.contains("› Add"), "{case}: {screen}");
     }
+}
+
+/// A row of `picture` that cuts a path in `case`'s scratch directory short,
+/// ending `…`, with the part of it drawn written as [`scrubbed`] writes the
+/// whole one, so the row keeps its width and no run's number is drawn.
+fn cut_short(picture: &str, case: &str) -> String {
+    let scratch = watched::scratch(case).display().to_string();
+    let fixed = format!("{:-<width$}", "/scratch", width = scratch.len());
+    picture
+        .split('\n')
+        .map(|row| {
+            (2..=scratch.len())
+                .rev()
+                .find_map(|drawn| {
+                    let cut = format!("{}…", scratch.get(..drawn)?);
+                    let kept = format!("{}…", fixed.get(..drawn)?);
+                    row.contains(&cut).then(|| row.replace(&cut, &kept))
+                })
+                .unwrap_or_else(|| row.to_owned())
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The sizes a try's screens are captured at: the two widths of [`SIZES`],
+/// the narrow one with rows enough for the question to stand whole though
+/// each path in it, under the case's long scratch directory, takes several
+/// rows. At forty rows it would say to make the window taller instead.
+const TRIED_SIZES: [(u16, u16); 2] = [(80, 40), (40, 80)];
+
+/// Takes a window with the user's own program of an agent installed on its
+/// `PATH` as `program`, a fake peer no case starts, at every size in both
+/// screen modes, the agent catalog fetched from a host that offers
+/// [`OFFERED`] where `published`: `reaching` walks each from `/login`'s
+/// agents to the screen captured, which is named `name`.
+fn own_tried(
+    name: &str,
+    (program, published): (&str, bool),
+    reaching: impl Fn(&mut Watched, &str),
+) {
+    for native in [false, true] {
+        for size in TRIED_SIZES {
+            let mode = if native { "native" } else { "fullscreen" };
+            let case = format!("agents-{name}-{}-{mode}", size.0);
+            let installed = watched::agents(&case);
+            std::fs::create_dir_all(&installed).expect("an agents directory");
+            fake_peer::install(&installed, program, &Script::of(Vec::new()))
+                .expect("the fake peer installs");
+            let vendor = Vendor::answering("Not asked.");
+            let host = published.then(|| Published::offering(OFFERED));
+            let mut window = match &host {
+                Some(host) => {
+                    let mut window = Watched::capturing_agents_published(
+                        &case,
+                        (size, native),
+                        &vendor,
+                        None,
+                        host,
+                    );
+                    // `/catalog` fetches the catalog as a person asking for
+                    // it, so `/login` then offers what it believed.
+                    window.types_until("/catalog\r", "1 of 1 offered");
+                    window.types_until("\x1b", "/catalog");
+                    window
+                }
+                None => Watched::capturing_agents(&case, size, native, &vendor, (None, "")),
+            };
+            agents(&mut window);
+            reaching(&mut window, &case);
+            let picture = scrubbed(&cut_short(&timeless(&window.picture()), &case), &case);
+            insta::assert_snapshot!(format!("tried_own_{name}_{}_{mode}", size.0), picture);
+            assert_eq!(
+                fake_peer::played(&installed),
+                0,
+                "{case}: the program was started"
+            );
+        }
+    }
+}
+
+/// `/login`'s screen for [`OFFERED`], whose own program is on `PATH`.
+fn own_offered(window: &mut Watched) {
+    takes(window, OFFERED);
+    window.types_until("", "Try your own");
+}
+
+#[test]
+fn a_catalog_agent_on_path_offers_trying_your_own_with_its_facts() {
+    own_tried("offered", (OFFERED, true), |window, case| {
+        own_offered(window);
+        let picture = window.picture();
+        // A sentence the narrow window wraps is read across its rows.
+        let read = picture
+            .lines()
+            .map(|row| row.trim_matches('|').trim())
+            .collect::<Vec<_>>()
+            .join(" ");
+        for told in [
+            "What should Crucible do with goose?",
+            "No instance of it is configured, so there is nothing to sign in.",
+            "Key: goose.",
+            "Arguments: none.",
+            "readable to it, read-only, during its probe and at every",
+            "› Try your own",
+            "Install goose 1.0.0.",
+        ] {
+            assert!(read.contains(told), "{case}: {told}\n{picture}");
+        }
+    });
+}
+
+#[test]
+fn trying_your_own_catalog_agent_asks_the_door_s_question_first() {
+    own_tried("asked", (OFFERED, true), |window, case| {
+        own_offered(window);
+        takes(window, "Try your own");
+        window.types_until("", "Try it");
+        let picture = window.picture();
+        asks(
+            case,
+            &picture,
+            "Try your own goose at",
+            ["Try it", "Cancel"],
+        );
+        assert!(picture.contains("Key: goose."), "{case}: {picture}");
+    });
+}
+
+#[test]
+fn trying_your_own_antigravity_asks_the_door_s_question_first() {
+    own_tried("agy-asked", ("agy", false), |window, case| {
+        takes(window, "Antigravity");
+        window.types_until("", "Try your own");
+        takes(window, "Try your own");
+        window.types_until("", "Try it");
+        let picture = window.picture();
+        asks(
+            case,
+            &picture,
+            "Try your own antigravity at",
+            ["Try it", "Cancel"],
+        );
+    });
 }

@@ -1,0 +1,45 @@
+---
+source: tests/whole_screen/agents.rs
+expression: picture
+---
+80x40 cursor 39,0 scrollback 16
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|Log in                                                                          |
+|                                                                                |
+|Try your own antigravity at                                                     |
+|/scratch------------------------------------------------------------------------|
+|--------------------------------------------------------------------------------|
+|--------------------------------------------------------------------------------|
+|/a-directory-to-be-working-in/and-something-below-that-again/workspace/agents/ag|
+|y?                                                                              |
+|                                                                                |
+|Program:                                                                        |
+|/scratch------------------------------------------------------------------------|
+|--------------------------------------------------------------------------------|
+|--------------------------------------------------------------------------------|
+|/a-directory-to-be-working-in/and-something-below-that-again/workspace/agents/ag|
+|y.                                                                              |
+|Arguments: acp.                                                                 |
+|Environment: AGY_ACP_FORCE_FILE_STORAGE=1, AGY_CLI_DISABLE_AUTO_UPDATE=1,       |
+|BROWSER=true, PYTHONUNBUFFERED=1.                                               |
+|Everything in                                                                   |
+|/scratch------------------------------------------------------------------------|
+|--------------------------------------------------------------------------------|
+|--------------------------------------------------------------------------------|
+|/a-directory-to-be-working-in/and-something-below-that-again/workspace/agents is|
+|readable to it, read-only, during its probe and at every launch, where the      |
+|network is open to its vendor.                                                  |
+|Under the sandbox on Linux it starts with a private home of its own, and a      |
+|sign-in made there is gone when that start ends.                                |
+|Your own Antigravity uses the sign-in it keeps in ~/.gemini, which another      |
+|Google product may share; the store release keeps a separate one. A business    |
+|sign-in needs the store release or a profileDir you add.                        |
+|                                                                                |
+|› Try it                                                                        |
+|  Start it once, confined with the network closed, ask it only `initialize`, an…|
+|                                                                                |
+|  Cancel                                                                        |
+|  Change nothing.                                                               |
+|                                                                                |
+|esc to go back                                                                  |

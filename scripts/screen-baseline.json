@@ -930,6 +930,126 @@
       "sha256": "7a242f589c767a3f3d87757fe6eb9b07c1937347757fe89eb469aeb3ac951701"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__tried_own_agy-asked_40_fullscreen.snap",
+      "case": "trying_your_own_antigravity_asks_the_door_s_question_first",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, host, )",
+        "Watched::capturing_agents(&case, size, native, &vendor, (None, \"\"))"
+      ],
+      "sha256": "7daf667d9a03244a9e9db4d1788f1831ad5d518939c429f5766cdbd8e495b586"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__tried_own_agy-asked_40_native.snap",
+      "case": "trying_your_own_antigravity_asks_the_door_s_question_first",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, host, )",
+        "Watched::capturing_agents(&case, size, native, &vendor, (None, \"\"))"
+      ],
+      "sha256": "dec07ba32fcd9a06311172632e9d262171c842b7ff84e125b4f38886939f6585"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__tried_own_agy-asked_80_fullscreen.snap",
+      "case": "trying_your_own_antigravity_asks_the_door_s_question_first",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, host, )",
+        "Watched::capturing_agents(&case, size, native, &vendor, (None, \"\"))"
+      ],
+      "sha256": "524026e8c3b3b01e3ef5c3023518c186044aaee1551fe758f16966611bb29d59"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__tried_own_agy-asked_80_native.snap",
+      "case": "trying_your_own_antigravity_asks_the_door_s_question_first",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, host, )",
+        "Watched::capturing_agents(&case, size, native, &vendor, (None, \"\"))"
+      ],
+      "sha256": "c6be493e1fc86c48719e22ed142294741168655956f7e609b88b98c9bdfff4e6"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__tried_own_asked_40_fullscreen.snap",
+      "case": "trying_your_own_catalog_agent_asks_the_door_s_question_first",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, host, )",
+        "Watched::capturing_agents(&case, size, native, &vendor, (None, \"\"))"
+      ],
+      "sha256": "b9bb0f9565433f499baf160dc58118a818af4b03fbc8d1640b97a39337b7c3ee"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__tried_own_asked_40_native.snap",
+      "case": "trying_your_own_catalog_agent_asks_the_door_s_question_first",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, host, )",
+        "Watched::capturing_agents(&case, size, native, &vendor, (None, \"\"))"
+      ],
+      "sha256": "02a970b34ec86c74d20b0f79ed167f3e1c42c94c93183b9ab8133eda92b68183"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__tried_own_asked_80_fullscreen.snap",
+      "case": "trying_your_own_catalog_agent_asks_the_door_s_question_first",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, host, )",
+        "Watched::capturing_agents(&case, size, native, &vendor, (None, \"\"))"
+      ],
+      "sha256": "fb4372852572fac9ca3052a4dd18f90cb7315ed17c66d21e1bf619e1ac77340b"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__tried_own_asked_80_native.snap",
+      "case": "trying_your_own_catalog_agent_asks_the_door_s_question_first",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, host, )",
+        "Watched::capturing_agents(&case, size, native, &vendor, (None, \"\"))"
+      ],
+      "sha256": "8d1d95285c898a472c1489937514e2f4362776a0278579d8328f8b6969dcbfa7"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__tried_own_offered_40_fullscreen.snap",
+      "case": "a_catalog_agent_on_path_offers_trying_your_own_with_its_facts",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, host, )",
+        "Watched::capturing_agents(&case, size, native, &vendor, (None, \"\"))"
+      ],
+      "sha256": "b2c363a968322661a7c42061d67a71f432d85ed46c14ee50645cffd76bd269c1"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__tried_own_offered_40_native.snap",
+      "case": "a_catalog_agent_on_path_offers_trying_your_own_with_its_facts",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, host, )",
+        "Watched::capturing_agents(&case, size, native, &vendor, (None, \"\"))"
+      ],
+      "sha256": "2a4a36c3e41dea94d86316988b1ed4af708f884ff71a519bdb8f71c71ceca7aa"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__tried_own_offered_80_fullscreen.snap",
+      "case": "a_catalog_agent_on_path_offers_trying_your_own_with_its_facts",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, host, )",
+        "Watched::capturing_agents(&case, size, native, &vendor, (None, \"\"))"
+      ],
+      "sha256": "607e3980612801a95b2954658c6ac657d2c76791118b4ab01e63f12e670534c8"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__tried_own_offered_80_native.snap",
+      "case": "a_catalog_agent_on_path_offers_trying_your_own_with_its_facts",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, host, )",
+        "Watched::capturing_agents(&case, size, native, &vendor, (None, \"\"))"
+      ],
+      "sha256": "e6db55a0456b14d54145e5ca5c6aed74d980a2399b1a1909752d2ad443ca2c7b"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__an_answer_is_committed_above_a_box_that_is_still_where_it_was.snap",
       "case": "an_answer_is_committed_above_a_box_that_is_still_where_it_was",
       "opened": [
