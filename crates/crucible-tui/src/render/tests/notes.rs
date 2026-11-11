@@ -55,24 +55,22 @@ const HOSTILE_ADDRESSES: [&str; 5] = [
     ),
 ];
 
-/// What `written` says with the hyperlink sequences it carries taken out, each
-/// of which must hold printable ASCII and nothing that ends it early.
-fn without_links(written: &str) -> String {
+/// What `written` says with the hyperlink sequences it carries taken out, and
+/// the sequences: what each holds between its opening and the string
+/// terminator that ends it.
+fn without_links(written: &str) -> (String, Vec<String>) {
     let mut rest = written;
     let mut kept = String::new();
+    let mut sequences = Vec::new();
     while let Some(at) = rest.find("\u{1b}]8;") {
         kept.push_str(rest.get(..at).unwrap_or_default());
         let after = rest.get(at.saturating_add(4)..).unwrap_or_default();
         let end = after.find("\u{1b}\\").unwrap_or(after.len());
-        let sequence = after.get(..end).unwrap_or_default();
-        assert!(
-            sequence.bytes().all(|byte| byte.is_ascii_graphic()),
-            "a link sequence carried {sequence:?} in {written:?}"
-        );
+        sequences.push(after.get(..end).unwrap_or_default().to_owned());
         rest = after.get(end.saturating_add(2)..).unwrap_or_default();
     }
     kept.push_str(rest);
-    kept
+    (kept, sequences)
 }
 
 #[test]
@@ -85,7 +83,13 @@ fn a_hostile_reference_angle_or_www_address_writes_no_escape_nor_a_picture_cell(
             drawn.render.draws(glyphs);
             drawn.answer(answer);
 
-            let written = without_links(drawn.render.terminal.written());
+            let (written, sequences) = without_links(drawn.render.terminal.written());
+            for sequence in sequences {
+                assert!(
+                    sequence.bytes().all(|byte| byte.is_ascii_graphic()),
+                    "a link sequence carried {sequence:?} for {answer:?} with {glyphs:?}"
+                );
+            }
             for hostile in [
                 "\u{1b}]", "\u{1b}P", "\u{1b}_", "\u{7}", "\u{8}", "\u{85}", "\u{9c}",
             ] {

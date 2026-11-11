@@ -312,8 +312,8 @@ Some text is drawn exactly as the model wrote it, rather than as a block:
   a space or a control character; one longer than 32 characters; a second note
   for a label that already has one; and a label first written after 64 others.
 - **A reference or definition crucible will not tie up.** A label with no
-  definition above it, a second definition of a label, a definition past the
-  64th or past 16 KiB, and a definition line that holds more than its address.
+  definition above it, a definition past the 64th or past 16 KiB, and a
+  definition line that holds more than its address.
 - **Any other tag.** A tag that is not one of the six, such as `<article>` or
   `<b>`, is shown as written, and so is one of the six whose `>` does not come
   on its line or within 64 characters of its `<`, as when a quoted value is

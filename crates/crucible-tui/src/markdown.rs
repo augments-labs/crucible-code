@@ -1946,6 +1946,12 @@ pub struct Markdown {
     /// tags and could still be an address in angle brackets. Bounded by
     /// [`MOST`]; ends with the line.
     angle: Option<String>,
+    /// Whether the text being read is text read again, which the heading line
+    /// and the watch on the line have been told already as it arrived.
+    told: bool,
+    /// How many bytes of `angle` arrived as a possible tag, and so have been
+    /// seen by the watch on the line already.
+    angle_seen: usize,
     /// A `<` and what has followed it, while the characters that say whether
     /// it is one of the tags read here arrive. Bounded by [`TAG_CAP`]; ends
     /// with the line.
@@ -2147,6 +2153,7 @@ impl Markdown {
             // What a heading is written with is kept for the rule under it.
             if let Some((_, line)) = self.atx.as_mut()
                 && character != '\n'
+                && !self.told
                 && line.len() < MOST
             {
                 line.push(character);
@@ -2216,17 +2223,7 @@ impl Markdown {
             // the line under it, until that says what it was. After the probe,
             // so that a line that opens like display math and is not is watched
             // from the character it opened with.
-            if self.opens_title(character) {
-                // Spaces in front of a line do not say whether it leaves the
-                // quote. The first character after them says that: `margin`
-                // hands it to `leaves_quote`, or, when it is a quote mark, the
-                // mark reader decides.
-                if character != ' ' {
-                    self.leaves_quote(character);
-                }
-                self.table = Some(Table::bare());
-            }
-            if self.table.as_ref().is_some_and(Table::mirrors) && self.mirrored(character) {
+            if self.watched(character) {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
                 run = next;
                 continue;
@@ -2257,7 +2254,7 @@ impl Markdown {
             // cannot be handed on where they stand, so while one is arriving
             // the run is empty and every character is decided below.
             if self.link.is_some() {
-                if self.links(character, say) {
+                if self.links(character, room, say) {
                     run = next;
                     continue;
                 }
@@ -3402,7 +3399,12 @@ impl Markdown {
     /// `false` says the shape was not a link: what was held has already gone
     /// back out as the text it turned out to be, and `character` is the
     /// caller's again.
-    fn links(&mut self, character: char, say: &mut dyn FnMut(Slot, &str, Option<&str>)) -> bool {
+    fn links(
+        &mut self,
+        character: char,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) -> bool {
         let Some(mut link) = self.link.take() else {
             return false;
         };
@@ -3433,11 +3435,16 @@ impl Markdown {
                 return true;
             }
             (Part::Second, ']') if carries => {
-                self.wrote_reference_link(&link, say);
+                self.wrote_reference_link(&link, room, say);
                 return true;
             }
             (Part::Label, held) if carries => link.label.push(held),
             (Part::Target | Part::Second, held) if carries => link.target.push(held),
+            // A second label that is not one: it is read again, below.
+            (Part::Second, _) => {
+                self.retaken(&link, character, room, say);
+                return true;
+            }
             // The marker of an alert is the whole of its line. The break
             // is the character that says so, and is the caller's again: the
             // header is drawn in place of the marker and the line ends as any
@@ -3718,6 +3725,50 @@ impl Markdown {
             || (self.angle.is_some() && self.angled(character, room, say))
     }
 
+    /// Shows the watch on the line, for a title or the header of a table,
+    /// `text` that was held while it arrived and has now been drawn.
+    ///
+    /// The block such a line turns out to be is laid out from what the watch
+    /// saw. A held text that is drawn as a link never goes back through the
+    /// scan, so it is told here, in the order it was written; one that is read
+    /// again is seen by the watch as that reading goes.
+    fn watches(&mut self, text: &str) {
+        for character in text.chars() {
+            if !self.table.as_ref().is_some_and(Table::mirrors) {
+                return;
+            }
+            self.mirrored(character);
+        }
+    }
+
+    /// Whether the watch on the line holds `character`, the start of a title
+    /// or a header being opened first. Text read again was told to the watch as
+    /// it arrived, so it is not told twice.
+    fn watched(&mut self, character: char) -> bool {
+        if self.told {
+            return false;
+        }
+        if self.opens_title(character) {
+            // Spaces in front of a line do not say whether it leaves the
+            // quote. The first character after them says that: `margin`
+            // hands it to `leaves_quote`, or, when it is a quote mark, the
+            // mark reader decides.
+            if character != ' ' {
+                self.leaves_quote(character);
+            }
+            self.table = Some(Table::bare());
+        }
+        self.table.as_ref().is_some_and(Table::mirrors) && self.mirrored(character)
+    }
+
+    /// Reads `text` again as if it were arriving, where the heading line and
+    /// the watch on the line have been told it already.
+    fn again(&mut self, text: &str, room: usize, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        let told = std::mem::replace(&mut self.told, true);
+        self.scan(text, room, say);
+        self.told = told;
+    }
+
     /// Reads `character` into the line being held as a definition. Answers
     /// whether it was taken.
     ///
@@ -3771,6 +3822,7 @@ impl Markdown {
             self.pay(say);
             say(Slot::Link, address, Some(address));
             self.previous = address.chars().next_back().unwrap_or(':');
+            self.watches(&held.rest);
             return;
         }
 
@@ -3788,7 +3840,8 @@ impl Markdown {
         );
         say(Slot::Plain, ":", None);
         self.previous = ':';
-        self.scan(&held.rest, room, say);
+        self.watches(&held.rest);
+        self.again(&held.rest, room, say);
     }
 
     /// Whether `address` can be drawn as the definition of `label`: it is
@@ -3844,7 +3897,12 @@ impl Markdown {
     /// Draws a reference written with a second label, `[words][label]` or
     /// `[words][]`, as its words where the label has a definition, and as it
     /// was written where it has none.
-    fn wrote_reference_link(&mut self, link: &Link, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+    fn wrote_reference_link(
+        &mut self,
+        link: &Link,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) {
         let label = if link.target.is_empty() {
             &link.label
         } else {
@@ -3853,10 +3911,39 @@ impl Markdown {
         if let Some(address) = self.defined_as(label).map(str::to_owned) {
             self.wrote_reference_to(&link.label, &address, say);
         } else {
-            self.pay(say);
-            spill(link, say);
-            say(Slot::Plain, "]", None);
+            self.retaken(link, ']', room, say);
         }
+    }
+
+    /// Settles a second label that names no definition, `ended` being the
+    /// character that closed it or that it could not carry on past.
+    ///
+    /// The first brackets are shown as written. The second, and `ended`, are
+    /// read again as if they were arriving, which is what they would have been
+    /// had nothing been looked for: the opening of a link with its address
+    /// after it, or of a footnote's reference, as it is where no definition
+    /// has been written.
+    fn retaken(
+        &mut self,
+        link: &Link,
+        ended: char,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) {
+        self.pay(say);
+        spill(
+            &Link {
+                part: Part::Between,
+                label: link.label.clone(),
+                ..Link::default()
+            },
+            say,
+        );
+        self.previous = ']';
+        let mut again = String::from('[');
+        again.push_str(&link.target);
+        again.push(ended);
+        self.again(&again, room, say);
     }
 
     /// Hands on a reference's `words`, carrying the `address` its definition
@@ -3902,6 +3989,8 @@ impl Markdown {
                 );
                 self.started = true;
                 self.previous = '>';
+                self.watches(written.get(self.angle_seen..).unwrap_or_default());
+                self.watches(">");
                 return true;
             }
         } else if written.len() < MOST {
@@ -3931,7 +4020,8 @@ impl Markdown {
         say: &mut dyn FnMut(Slot, &str, Option<&str>),
     ) {
         self.untag("<", say);
-        self.scan(written.get(1..).unwrap_or_default(), room, say);
+        self.watches(written.get(self.angle_seen..).unwrap_or_default());
+        self.again(written.get(1..).unwrap_or_default(), room, say);
     }
 
     /// Whether footnotes are read where the scan stands.
@@ -4046,6 +4136,7 @@ impl Markdown {
                 // It may yet be an address in angle brackets, which is read
                 // from here on by its own hold.
                 if written.get(1..).is_some_and(angles) {
+                    self.angle_seen = written.len();
                     self.angle = Some(written);
                     return true;
                 }

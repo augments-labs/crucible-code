@@ -4872,3 +4872,104 @@ fn an_answer_cut_anywhere_draws_the_reference_links_and_angle_addresses_the_whol
     assert_eq!(wrote(&said), wrote(&whole));
     assert_eq!(points(&said), points(&whole));
 }
+
+/// The blocks and the standing text of an answer arriving as these deltas.
+fn headed_in(deltas: &[&str]) -> (Vec<Block>, String) {
+    let mut markdown = Markdown::default();
+    let (mut blocks, mut runs) = (Vec::new(), String::new());
+    let mut say = |said: Said<'_>| match said {
+        Said::Run { text, .. } => runs.push_str(text),
+        Said::Block(block) => blocks.push(block),
+        Said::Retract => runs.push_str(RETRACTED),
+    };
+    for delta in deltas {
+        markdown.read(delta, ROOM, &mut say);
+    }
+    markdown.finish(ROOM, &mut say);
+    (blocks, standing_text(&runs))
+}
+
+#[test]
+fn a_title_or_a_header_keeps_every_character_of_the_address_or_bracket_it_held() {
+    // The block is laid out from the source the line was written as, so what
+    // a held address, definition or bracket took must be in it, however the
+    // answer is cut. Each answer names its last block: a heading over the
+    // lines after the first `skip`, or the table that is the whole answer.
+    let headings = [
+        ("See <https://a.test/x> now\n===\n", Level::One, 0),
+        ("[a]: https://a.test/x\n===\n", Level::One, 0),
+        ("<me@a.test> now\n---\n", Level::Two, 0),
+        ("# See <https://a b c>\n", Level::One, 0),
+        ("See <https://a b c>\n===\n", Level::One, 0),
+        ("[a]: https://a.test/x and\n---\n", Level::Two, 0),
+        ("[d]: https://d.test\n[a][b] [c][d\n===\n", Level::One, 1),
+    ];
+    let tables = [
+        "<https://a.test/x> | b\n--- | ---\n1 | 2\n",
+        "[a]: https://a.test/x | b\n--- | ---\n1 | 2\n",
+        "<https://a b | c\n--- | ---\n1 | 2\n",
+    ];
+    let wanted = headings
+        .map(|(answer, level, skip)| {
+            let lines: Vec<&str> = answer.lines().skip(skip).collect();
+            (answer, heading(level, &lines.join("\n")))
+        })
+        .into_iter()
+        .chain(tables.map(|answer| {
+            let kind = Kind::Table;
+            let source = answer.to_owned();
+            (
+                answer,
+                Block {
+                    kind,
+                    source,
+                    closed: true,
+                },
+            )
+        }));
+    for (answer, block) in wanted {
+        let whole = headed_in(&[answer]);
+        assert_eq!(whole.0.last(), Some(&block), "{answer:?}");
+        for cut in (1..answer.len()).filter(|cut| answer.is_char_boundary(*cut)) {
+            let (first, second) = answer.split_at(cut);
+            assert_eq!(
+                headed_in(&[first, second]),
+                whole,
+                "{answer:?} cut at {cut}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_link_or_a_footnote_reference_after_brackets_reads_as_it_does_with_no_definition_above() {
+    for written in [
+        "see [a][b](https://x.test/p) now\n",
+        "A claim [x][^1].\n\n[^1]: note\n",
+        "see [a][b] and [c][^1]\n\n[^1]: note\n",
+    ] {
+        let with = pointing(&format!("[d]: https://d.test\n{written}"));
+        let without = pointing(written);
+        assert_eq!(
+            wrote(&with).strip_prefix("https://d.test\n"),
+            Some(wrote(&without).as_str()),
+            "{written:?}"
+        );
+        assert_eq!(
+            points(&with)
+                .into_iter()
+                .filter(|(_, link)| *link != "https://d.test")
+                .collect::<Vec<_>>(),
+            points(&without),
+            "{written:?}"
+        );
+
+        let answer = format!("[d]: https://d.test\n{written}");
+        for cut in (1..answer.len()).filter(|cut| answer.is_char_boundary(*cut)) {
+            let (first, second) = answer.split_at(cut);
+            let said = pointing_in(&[first, second]);
+            assert_eq!(wrote(&said), wrote(&with), "{written:?} cut at {cut}");
+            assert_eq!(points(&said), points(&with), "{written:?} cut at {cut}");
+        }
+    }
+}

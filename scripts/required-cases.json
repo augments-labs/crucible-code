@@ -8495,6 +8495,42 @@
       ]
     },
     {
+      "id": "CASE-TRANSCRIPT-HELD-LINE-TAKEN-BACK",
+      "family": "transcript-blocks",
+      "obligation": "A line holding an angle address, a definition or a bracket that is no address, and then taken back as a heading's title or a table's header, keeps every character it was written with, cut anywhere.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_title_or_a_header_keeps_every_character_of_the_address_or_bracket_it_held",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "cba4e43a8abc4dc749315bd616310d62ec47db0124bc453182864dab23798a33",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-REFERENCE-BEFORE-LINK",
+      "family": "transcript-blocks",
+      "obligation": "With a definition above, a second bracket after a bracket that names no definition still opens an inline link or a footnote reference, as it does with none, cut anywhere.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_link_or_a_footnote_reference_after_brackets_reads_as_it_does_with_no_definition_above",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "065d05974739507a9c22ab2a1a89576806cc0a807b3100ad32088fddd7233165",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
       "id": "CASE-TRANSCRIPT-ADDRESS-HOSTILE",
       "family": "transcript-blocks",
       "obligation": "Escapes and controls written in a reference definition, an angle address or a `www.` address, and an image placeholder in a label, reach the terminal as nothing but a percent-escaped link target, in the unicode and the ascii glyph set.",
@@ -8505,7 +8541,7 @@
       },
       "case": "render::tests::notes::a_hostile_reference_angle_or_www_address_writes_no_escape_nor_a_picture_cell",
       "source": "crates/crucible-tui/src/render/tests/notes.rs",
-      "body_sha256": "5c876d8fb3c8e3ad54594b585279aedb43e11b6f3627d7d06fc866215d20bc15",
+      "body_sha256": "98eb72ff9802c157255e9aaf6c85662252b259f5dbc01c21bbc743f348f2e511",
       "platforms": [
         "linux",
         "macos",
