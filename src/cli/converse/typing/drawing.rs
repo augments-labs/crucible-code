@@ -44,19 +44,49 @@ pub(in crate::cli::converse) struct Around<'a> {
     pub(super) docking: &'a Docking,
 }
 
+/// What stands over the box whatever is typed in it: the plan, the queue and
+/// the dock, which a prompt being read holds from its first frame to its last.
+#[derive(Clone, Copy)]
+pub(in crate::cli::converse) struct Above<'a> {
+    /// The plan the agent is working to.
+    pub(in crate::cli::converse) planning: &'a Planning,
+    /// The lines waiting behind the box.
+    pub(in crate::cli::converse) queued: &'a Prompts,
+    /// The questions the model asked without waiting.
+    pub(in crate::cli::converse) docking: &'a Docking,
+}
+
+impl<'a> Above<'a> {
+    /// The three of them, named once where the prompt draws its frame.
+    pub(in crate::cli::converse) const fn new(
+        planning: &'a Planning,
+        queued: &'a Prompts,
+        docking: &'a Docking,
+    ) -> Self {
+        Self {
+            planning,
+            queued,
+            docking,
+        }
+    }
+}
+
 /// The six of them at one call.
 ///
 /// A function rather than a literal at each place that draws: the names are
 /// worth writing once, and the call that draws the box is worth keeping on one
 /// line.
 pub(in crate::cli::converse) fn around<'a>(
-    planning: &'a Planning,
+    above: Above<'a>,
     open: &'a Opened,
     says: &'a Says,
     history: Recalled,
-    queued: &'a Prompts,
-    docking: &'a Docking,
 ) -> Around<'a> {
+    let Above {
+        planning,
+        queued,
+        docking,
+    } = above;
     Around {
         planning,
         open,
@@ -162,7 +192,7 @@ pub(super) fn over(
     // The blank over the panel's rule, and the one the box is owed under a
     // plan, which the panel's own closing row stands in for only when it is
     // the last thing over the box.
-    let owed = usize::from(!opened && !(planned.is_empty() && docked.is_empty()));
+    let owed = usize::from(!(opened || (planned.is_empty() && docked.is_empty())));
     let left = room.saturating_sub(listed.len() + docked.len() + planned.len() + 1 + owed);
     let panel = queueing::panel(around.queued, columns, left, style);
 

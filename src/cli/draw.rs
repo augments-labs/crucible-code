@@ -151,6 +151,10 @@ pub(crate) fn event<T: Terminal>(
         // session has used and the plan windows are kept for `/usage`. Each is
         // true only until its next event, so committing every reading would
         // leave a column of stale state in front of the answer.
+        //
+        // What waits for an answer is the dock's, over the box: the loop
+        // that drains the turn reads it through the client on this report,
+        // and nothing of it is a transcript line either.
         Event::Spent { .. }
         | Event::PromptCache { .. }
         | Event::Sandbox { .. }
@@ -158,12 +162,8 @@ pub(crate) fn event<T: Terminal>(
         | Event::Carried { .. }
         | Event::Used { .. }
         | Event::PlanLimits { .. }
-        | Event::Compacting { .. } => Ok(()),
-
-        // What waits for an answer is the dock's, over the box: the loop
-        // that drains the turn reads it through the client on this report,
-        // and nothing of it is a transcript line.
-        Event::Waiting { .. } => Ok(()),
+        | Event::Compacting { .. }
+        | Event::Waiting { .. } => Ok(()),
 
         // A call the agent running this turn made with one of its own tools,
         // over there. Drawn as a call made here is, live in the footing until

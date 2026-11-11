@@ -296,12 +296,14 @@ fn the_box_is_drawn_around_the_line_with_the_mode_under_it() {
         &typed("hi"),
         Style::plain(),
         around(
-            &nothing(),
+            Above {
+                planning: &nothing(),
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
-            &Prompts::default(),
-            &Docking::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -323,12 +325,14 @@ fn the_window_reading_is_in_the_box_once_and_takes_no_row_of_its_own() {
         &typed("hi"),
         Style::plain(),
         around(
-            &nothing(),
+            Above {
+                planning: &nothing(),
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &Opened::default(),
             &says,
             Recalled::default(),
-            &Prompts::default(),
-            &Docking::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -349,12 +353,14 @@ fn a_window_with_room_for_one_of_them_keeps_the_mode_and_drops_the_keys() {
         &typed("hi"),
         Style::plain(),
         around(
-            &nothing(),
+            Above {
+                planning: &nothing(),
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
-            &Prompts::default(),
-            &Docking::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -377,12 +383,14 @@ fn the_cursor_ends_up_where_the_line_was_typed_to() {
         &typed("hi"),
         Style::plain(),
         around(
-            &nothing(),
+            Above {
+                planning: &nothing(),
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
-            &Prompts::default(),
-            &Docking::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -414,12 +422,14 @@ fn a_finished_line_is_left_in_the_record_and_the_box_is_taken_off() {
         &editor,
         Style::plain(),
         around(
-            &nothing(),
+            Above {
+                planning: &nothing(),
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
-            &Prompts::default(),
-            &Docking::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -640,12 +650,14 @@ fn a_line_beginning_with_a_slash_opens_the_list_above_the_box() {
         &typed("/m"),
         Style::plain(),
         around(
-            &nothing(),
+            Above {
+                planning: &nothing(),
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &listing("/m"),
             &settled(Mode::Ask),
             Recalled::default(),
-            &Prompts::default(),
-            &Docking::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -690,12 +702,14 @@ fn the_box_stays_where_it_was_while_the_list_is_open() {
             &typed("/m"),
             Style::plain(),
             around(
-                &nothing(),
+                Above {
+                    planning: &nothing(),
+                    queued: &Prompts::default(),
+                    docking: &Docking::default(),
+                },
                 opened,
                 &settled(Mode::Ask),
                 Recalled::default(),
-                &Prompts::default(),
-                &Docking::default(),
             ),
         )
         .expect("the box to be drawn");
@@ -720,12 +734,14 @@ fn a_prompt_is_drawn_in_the_rows_the_box_has_always_been() {
         &typed("hi"),
         Style::plain(),
         around(
-            &nothing(),
+            Above {
+                planning: &nothing(),
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
-            &Prompts::default(),
-            &Docking::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -748,12 +764,14 @@ fn the_offer_to_leave_is_drawn_under_the_mode_and_not_over_it() {
         &Editor::new(),
         Style::plain(),
         around(
-            &nothing(),
+            Above {
+                planning: &nothing(),
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &Opened::default(),
             &leaving(Mode::Ask),
             Recalled::default(),
-            &Prompts::default(),
-            &Docking::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -1384,12 +1402,14 @@ fn the_plan_stands_above_the_box_between_turns() {
         &typed("hi"),
         Style::plain(),
         around(
-            &planned(3),
+            Above {
+                planning: &planned(3),
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
-            &Prompts::default(),
-            &Docking::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -1414,12 +1434,14 @@ fn the_list_a_slash_opened_takes_its_rows_before_the_plan_does() {
         &typed("hi"),
         Style::plain(),
         around(
-            &plan,
+            Above {
+                planning: &plan,
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
-            &Prompts::default(),
-            &Docking::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -1430,12 +1452,14 @@ fn the_list_a_slash_opened_takes_its_rows_before_the_plan_does() {
         &typed("/m"),
         Style::plain(),
         around(
-            &plan,
+            Above {
+                planning: &plan,
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &listing("/m"),
             &settled(Mode::Ask),
             Recalled::default(),
-            &Prompts::default(),
-            &Docking::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -1486,12 +1510,14 @@ fn a_large_paste_is_shown_compactly_but_copied_expanded() {
         &editor,
         Style::plain(),
         around(
-            &nothing(),
+            Above {
+                planning: &nothing(),
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
-            &Prompts::default(),
-            &Docking::default(),
         ),
     )
     .expect("the compact paste to be drawn");
@@ -1527,12 +1553,14 @@ fn counted() -> (Renderer<Recording>, Says, usize, std::ops::Range<usize>) {
         &editor,
         Style::plain(),
         around(
-            &nothing(),
+            Above {
+                planning: &nothing(),
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &Opened::default(),
             &says,
             Recalled::default(),
-            &Prompts::default(),
-            &Docking::default(),
         ),
     )
     .unwrap();
@@ -2253,12 +2281,14 @@ fn between_turns_the_queue_stands_over_the_plan_as_it_does_under_a_turn() {
 
     let rows: Vec<String> = over(
         around(
-            &plan,
+            Above {
+                planning: &plan,
+                queued: &queued,
+                docking: &Docking::default(),
+            },
             &Opened::default(),
             &says,
             Recalled::default(),
-            &queued,
-            &Docking::default(),
         ),
         80,
         40,
@@ -2307,12 +2337,14 @@ fn the_queue_held_over_the_idle_box_fits_every_width_and_every_room() {
                         let says = settled(Mode::Ask);
                         let rows = over(
                             around(
-                                &plan,
+                                Above {
+                                    planning: &plan,
+                                    queued: &queued,
+                                    docking: &Docking::default(),
+                                },
                                 &open,
                                 &says,
                                 Recalled::default(),
-                                &queued,
-                                &Docking::default(),
                             ),
                             columns,
                             room,

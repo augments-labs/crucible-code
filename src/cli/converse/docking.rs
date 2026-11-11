@@ -124,8 +124,8 @@ impl Docking {
     /// Shows what waits as `era` and `batches` stood together: the view is
     /// replaced, a batch listed again under the same era and number keeps its
     /// draft, and one of another era is dropped with its draft and scroll.
-    pub(super) fn waiting(&mut self, era: Era, batches: &[Batch]) {
-        self.moved(&era);
+    pub(super) fn waiting(&mut self, era: &Era, batches: &[Batch]) {
+        self.moved(era);
         let front = self.front();
         let mut before = std::mem::take(&mut self.dock.batches);
         self.dock.batches = batches

@@ -56,7 +56,7 @@ fn pair() -> Batch {
 /// A dock showing `batch`, opened and drawn once, as `/questions` leaves it.
 fn opened(batch: Batch) -> Docking {
     let mut docking = Docking::default();
-    docking.waiting(era(), &[batch]);
+    docking.waiting(&era(), &[batch]);
     assert_eq!(docking.toggled(), Toggled::Opened);
     let _ = docking.rows(80, 40, Glyphs::default());
     docking
@@ -112,7 +112,7 @@ fn answered(chosen: &[&str], note: &str) -> Replied {
 #[test]
 fn a_batch_waiting_shows_the_closed_row_and_the_dock_does_not_open() {
     let mut docking = Docking::default();
-    docking.waiting(era(), &[single(1)]);
+    docking.waiting(&era(), &[single(1)]);
 
     let (rows, caret) = docking.rows(80, 40, Glyphs::default());
 
@@ -127,7 +127,7 @@ fn the_command_opens_and_closes_the_dock_and_says_when_nothing_waits() {
     let mut docking = Docking::default();
     assert_eq!(docking.toggled(), Toggled::Empty);
 
-    docking.waiting(era(), &[single(1)]);
+    docking.waiting(&era(), &[single(1)]);
     assert_eq!(docking.toggled(), Toggled::Opened);
     assert!(docking.is_open() && docking.has_focus());
     assert!(docking.rows(80, 40, Glyphs::default()).0.len() > 1);
@@ -300,7 +300,7 @@ fn an_accepted_batch_shows_accepted_until_a_listing_leaves_it_out() {
     assert_eq!(docking.dock.phase, Phase::Accepted);
     assert!(docking.rows(80, 40, Glyphs::default()).0.len() > 1);
 
-    docking.waiting(era(), &[]);
+    docking.waiting(&era(), &[]);
     assert!(!docking.is_open() && !docking.has_focus());
     assert!(docking.rows(80, 40, Glyphs::default()).0.is_empty());
 }
@@ -309,7 +309,7 @@ fn an_accepted_batch_shows_accepted_until_a_listing_leaves_it_out() {
 fn a_listing_keeps_the_draft_of_a_batch_with_the_same_era_and_id() {
     let mut docking = opened(single(1));
     press(&mut docking, &[enter()]);
-    docking.waiting(era(), &[single(1), single(2)]);
+    docking.waiting(&era(), &[single(1), single(2)]);
 
     assert_eq!(
         docking.dock.phase,
@@ -324,7 +324,7 @@ fn a_listing_keeps_the_draft_of_a_batch_with_the_same_era_and_id() {
 fn a_listing_of_another_era_drops_every_draft() {
     let mut docking = opened(single(1));
     press(&mut docking, &[enter()]);
-    docking.waiting(Era::Stint(2), &[single(1)]);
+    docking.waiting(&Era::Stint(2), &[single(1)]);
 
     assert!(!docking.is_open());
     assert_eq!(docking.toggled(), Toggled::Opened);

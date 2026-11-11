@@ -66,8 +66,8 @@ use super::{Prompts, Retained, Terms};
 
 mod drawing;
 
+pub(super) use drawing::{Above, around, draw};
 use drawing::{Bordering, Landed, Pointed, boxing, landed, replacement};
-pub(super) use drawing::{around, draw};
 
 /// What the row under the box says after the mode, when pressing the key again
 /// is all there is to do with it.
@@ -548,15 +548,23 @@ pub(crate) fn ask<T: Terminal>(
     }
 
     let mut open = Opened::filtered(commands, editor.projection().text(), glyphs);
-    draw(
-        renderer,
-        editor,
-        style,
-        around(planning, &open, &says, recalling.place(), queued, docking),
-    )?;
 
+    // Whether the box on screen is behind what it should show. Drawn at the top
+    // of the loop, before the next key is read, so every arm that moved
+    // something asks for the one frame here instead of drawing its own.
+    let mut owed = true;
     let mut following = None;
     loop {
+        if std::mem::take(&mut owed) {
+            let above = Above::new(planning, queued, docking);
+            draw(
+                renderer,
+                editor,
+                style,
+                around(above, &open, &says, recalling.place()),
+            )?;
+        }
+
         // Nothing arriving means a command ended instead: the count under the box
         // has moved and a line has been written above it, so what is owed is a
         // frame rather than a key to act on.
@@ -575,12 +583,7 @@ pub(crate) fn ask<T: Terminal>(
                     return Ok(woke);
                 }
 
-                draw(
-                    renderer,
-                    editor,
-                    style,
-                    around(planning, &open, &says, recalling.place(), queued, docking),
-                )?;
+                owed = true;
                 continue;
             };
 
@@ -606,21 +609,14 @@ pub(crate) fn ask<T: Terminal>(
 
         // The dock has the keys while it has the focus, and hands back the
         // ones it has no use for: a resize, the transcript's keys, a click.
-        if docking.has_focus() {
-            match docking.key(&arrived) {
-                Keyed::Passed => {}
-                Keyed::Still => continue,
-                Keyed::Moved | Keyed::Composer | Keyed::Closed => {
-                    draw(
-                        renderer,
-                        editor,
-                        style,
-                        around(planning, &open, &says, recalling.place(), queued, docking),
-                    )?;
-                    continue;
-                }
-                Keyed::Submit(command) => return Ok(Asked::Answer(command)),
+        match docking.has_focus().then(|| docking.key(&arrived)) {
+            None | Some(Keyed::Passed) => {}
+            Some(Keyed::Still) => continue,
+            Some(Keyed::Moved | Keyed::Composer | Keyed::Closed) => {
+                owed = true;
+                continue;
             }
+            Some(Keyed::Submit(command)) => return Ok(Asked::Answer(command)),
         }
 
         // Whether this key left the box looking like anything other than what
@@ -841,14 +837,7 @@ pub(crate) fn ask<T: Terminal>(
         // came from stops saying it on the same frame the edit lands in.
         recalling.standing(editor);
 
-        if moved || settled {
-            draw(
-                renderer,
-                editor,
-                style,
-                around(planning, &open, &says, recalling.place(), queued, docking),
-            )?;
-        }
+        owed = moved || settled;
     }
 }
 

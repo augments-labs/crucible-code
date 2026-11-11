@@ -1148,7 +1148,8 @@ fn ran<T: Terminal>(
     // request was made posted no event at all, so without this the reader is
     // handed a fresh prompt and no word on why nothing answered.
     match &took.did {
-        Did::Reported | Did::UsedUp => {}
+        // Answers that settled are the dock's to show, below.
+        Did::Reported | Did::UsedUp | Did::Settled(_) => {}
         Did::Refused(turned) => draw::refused(renderer, turned)?,
         Did::Uncertain => draw::uncertain(renderer)?,
         Did::Nothing => draw::unmade(renderer)?,
@@ -1158,7 +1159,6 @@ fn ran<T: Terminal>(
         Did::Unsent(refusal) => renderer.commit(&format!("! {refusal}"))?,
         // Answered as a prompt with nobody to ask is, down a pipe too.
         Did::Unasked => unanswered(&took.conversation, renderer, terms)?,
-        Did::Settled(_) => {}
     }
 
     // What became of the dock's answers is the dock's to show, and what waits
@@ -1581,7 +1581,7 @@ impl Turn<'_, '_> {
             (progress, questions)
         {
             let (era, batches) = questions.waiting();
-            self.held.docking.waiting(era, &batches);
+            self.held.docking.waiting(&era, &batches);
             self.turning.redraw();
         }
     }
@@ -2037,7 +2037,7 @@ fn waits(held: &Held<'_>, era: &crucible_client_api::Era, id: crucible_types::Qu
 fn refreshed(held: &mut Held<'_>) {
     if let Some(questions) = &held.questions {
         let (era, batches) = questions.waiting();
-        held.docking.waiting(era, &batches);
+        held.docking.waiting(&era, &batches);
     }
 }
 
