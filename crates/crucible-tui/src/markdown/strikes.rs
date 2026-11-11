@@ -123,7 +123,12 @@ impl Strikes {
     /// Closes the phrase opened last of those still open.
     fn close(&mut self) {
         let end = self.runs.len();
-        if let Some(opener) = self.openers.iter_mut().rev().find(|opener| opener.closed.is_none()) {
+        if let Some(opener) = self
+            .openers
+            .iter_mut()
+            .rev()
+            .find(|opener| opener.closed.is_none())
+        {
             opener.closed = Some(end);
         }
     }
@@ -148,7 +153,11 @@ impl Strikes {
 
     /// Drops the oldest opener still open, which is a tilde as written now.
     fn fail_oldest(&mut self) {
-        if let Some(at) = self.openers.iter().position(|opener| opener.closed.is_none()) {
+        if let Some(at) = self
+            .openers
+            .iter()
+            .position(|opener| opener.closed.is_none())
+        {
             self.openers.remove(at);
         }
     }
@@ -173,7 +182,9 @@ impl Strikes {
         let mut changes = vec![0_isize; boundary.saturating_add(1)];
         let mut tildes = vec![false; boundary];
         for opener in self.openers.iter().filter(|opener| opener.run < boundary) {
-            let Some(closed) = opener.closed else { continue };
+            let Some(closed) = opener.closed else {
+                continue;
+            };
             if let Some(tilde) = tildes.get_mut(opener.run) {
                 *tilde = true;
             }
@@ -268,7 +279,11 @@ impl Markdown {
                 !escapes.holds(*character) && !width::unshown(*character) && !character.is_control()
             })
             .collect();
-        Some(Row::new().then_structural(Slot::Plain, shown).clipped(columns))
+        Some(
+            Row::new()
+                .then_structural(Slot::Plain, shown)
+                .clipped(columns),
+        )
     }
 
     /// Reads a single tilde in prose that `next` followed.
@@ -289,7 +304,7 @@ impl Markdown {
                 strikes.close();
                 strikes.release()
             };
-            self.let_go(settled, say);
+            self.let_go(&settled, say);
         } else if opens {
             // What the line owes goes out first: it stands before the phrase.
             self.spend(say);
@@ -303,7 +318,7 @@ impl Markdown {
                 strikes.opened();
                 strikes.release()
             };
-            self.let_go(settled, say);
+            self.let_go(&settled, say);
         } else {
             self.say("~", say);
         }
@@ -321,14 +336,16 @@ impl Markdown {
         };
         // A tilde waiting on this character may be the closer, and is let
         // through: it arrived within the bound.
-        let closing = self.held.is_some_and(|held| held.mark == '~' && held.count == 1);
+        let closing = self
+            .held
+            .is_some_and(|held| held.mark == '~' && held.count == 1);
         if !closing && strikes.borrow().due() {
             let settled = {
                 let mut strikes = strikes.borrow_mut();
                 strikes.fail_oldest();
                 strikes.release()
             };
-            self.let_go(settled, say);
+            self.let_go(&settled, say);
         }
         strikes.borrow_mut().feed(character);
     }
@@ -343,11 +360,11 @@ impl Markdown {
             strikes.fail_all();
             strikes.release()
         };
-        self.let_go(settled, say);
+        self.let_go(&settled, say);
     }
 
     /// Says what has settled, in the order it was said.
-    fn let_go(&self, settled: Vec<Kept>, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+    fn let_go(&self, settled: &[Kept], say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         let Some(strikes) = self.strikes.as_ref() else {
             return;
         };
@@ -355,7 +372,7 @@ impl Markdown {
             return;
         }
         strikes.borrow_mut().releasing = true;
-        for run in &settled {
+        for run in settled {
             say(run.slot, &run.text, run.link.as_deref());
         }
         strikes.borrow_mut().releasing = false;

@@ -44,7 +44,10 @@ fn drawn_the_same_cut_anywhere(answer: &str) {
 #[test]
 fn single_tildes_strike_the_phrase_between_them() {
     assert_eq!(struck("~one~ and ~/Projects and cd ~/a and ~/b\n"), "one");
-    assert_eq!(struck("takes 2~3 seconds, then 5~10\n"), "3 seconds, then 5");
+    assert_eq!(
+        struck("takes 2~3 seconds, then 5~10\n"),
+        "3 seconds, then 5"
+    );
     assert_eq!(struck("see ~/a~ here\n"), "/a");
     assert_eq!(
         struck("an opener ~here\nand a closer~ on the next line\n"),
@@ -121,7 +124,10 @@ fn two_tildes_and_three_read_as_they_did() {
     assert_eq!(struck("~a ~~b~~ c~\n"), "a b c");
     assert_eq!(
         ended("~~~b~~~ c\n"),
-        [(Slot::Quiet, "┌─ b~~~".to_owned()), (Slot::Quiet, "\n".to_owned())]
+        [
+            (Slot::Quiet, "┌─ b~~~".to_owned()),
+            (Slot::Quiet, "\n".to_owned())
+        ]
     );
 }
 
@@ -175,8 +181,14 @@ fn a_single_tilde_changes_nothing_where_text_is_drawn_as_written() {
             "```mermaid\n~b~ and ~c~\n```\n",
             "┌─ mermaid\n│ ~b~ and ~c~\n└─\n",
         ),
-        ("```diff\n~b~ and ~c~\n```\n", "┌─ diff\n│ ~b~ and ~c~\n└─\n"),
-        ("para\n\n    ~b~ and ~c~\n", "para\n\n┌─\n│ ~b~ and ~c~\n└─\n"),
+        (
+            "```diff\n~b~ and ~c~\n```\n",
+            "┌─ diff\n│ ~b~ and ~c~\n└─\n",
+        ),
+        (
+            "para\n\n    ~b~ and ~c~\n",
+            "para\n\n┌─\n│ ~b~ and ~c~\n└─\n",
+        ),
     ] {
         let said = standing(ended(answer));
         assert_eq!(drawn(&said), drawn_text, "{answer:?}");
@@ -228,7 +240,9 @@ fn a_held_phrase_crosses_exactly_the_lines_a_double_pair_crosses() {
             assert_eq!(struck(&single), "", "{single:?}");
             assert_eq!(
                 picture(ended(&single)),
-                picture(ended(&written.replacen("{t}", "\\~", 1).replace("{t}", "~"))),
+                picture(ended(
+                    &written.replacen("{t}", "\\~", 1).replace("{t}", "~")
+                )),
                 "{single:?}"
             );
         }
@@ -265,11 +279,7 @@ fn a_phrase_at_the_bound_draws_the_same_wherever_it_is_cut() {
         cuts.extend((STRIKE_CAP..=STRIKE_CAP + 5).filter(|cut| *cut < answer.len()));
         cuts.extend([closer - 1, closer, closer + 1, closer + 2]);
         for cut in cuts {
-            assert_eq!(
-                cut_at(&answer, &[cut]),
-                whole,
-                "{length} cut at {cut}"
-            );
+            assert_eq!(cut_at(&answer, &[cut]), whole, "{length} cut at {cut}");
         }
         // Reaching the bound in one delta and the closer in the next.
         assert_eq!(
@@ -312,7 +322,9 @@ fn an_unended_opener_holds_what_follows_it_out_of_the_record() {
     );
 
     let mut rest = Vec::new();
-    markdown.finish_runs(ROOM, &mut |slot, text, _| rest.push((slot, text.to_owned())));
+    markdown.finish_runs(ROOM, &mut |slot, text, _| {
+        rest.push((slot, text.to_owned()));
+    });
     assert_eq!(drawn(&rest), "~/Projects");
     assert!(!markdown.holds_a_phrase());
     assert!(markdown.striking(ROOM).is_none());
@@ -342,7 +354,10 @@ fn the_held_phrase_is_shown_with_no_control_character_in_it() {
     let mut markdown = Markdown::default();
     read(&mut markdown, "a ~b \u{1b}[31mred\u{7} \u{202e}c");
 
-    let shown = markdown.striking(ROOM).map(|row| row.text()).unwrap_or_default();
+    let shown = markdown
+        .striking(ROOM)
+        .map(|row| row.text())
+        .unwrap_or_default();
     assert!(
         !shown.contains(['\u{1b}', '\u{7}', '\u{202e}']),
         "{shown:?}"

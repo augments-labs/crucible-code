@@ -2144,7 +2144,9 @@ impl Markdown {
         // A phrase is not held across a line taken back or a block.
         if self.retract == Retract::Owed || self.retitle.is_some() || self.ready.is_some() {
             self.unstrike(&mut |slot, text, link| {
-                kinds.tell(slot, text, link, &mut |slot, text, link| say(Said::Run { slot, text, link }));
+                kinds.tell(slot, text, link, &mut |slot, text, link| {
+                    say(Said::Run { slot, text, link });
+                });
             });
         }
         if self.retract == Retract::Owed {
@@ -2993,10 +2995,12 @@ impl Markdown {
                     1 => emphasis.leant = !emphasis.leant,
                     2 => emphasis.raised = !emphasis.raised,
                     // Closes whichever of the two is open, or opens both.
-                    _ if emphasis.raised != emphasis.leant => *emphasis = Emphasis {
-                        struck: emphasis.struck,
-                        ..Emphasis::default()
-                    },
+                    _ if emphasis.raised != emphasis.leant => {
+                        *emphasis = Emphasis {
+                            struck: emphasis.struck,
+                            ..Emphasis::default()
+                        }
+                    }
                     _ => {
                         emphasis.raised = !emphasis.raised;
                         emphasis.leant = !emphasis.leant;
