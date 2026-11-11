@@ -34,6 +34,7 @@ use crate::bar::{Bar, Fill, Part};
 use crate::chrome::{Frame, Label, Undrawn};
 use crate::color::Slot;
 use crate::expanded::{Expanded, Shown};
+use crate::glyphs::Glyphs;
 use crate::key_panel::KeyPanel;
 use crate::ladder::Ladder;
 use crate::markdown::corpus_pictures::laid;
@@ -116,6 +117,36 @@ fn an_alert_fits_the_window_it_is_drawn_in() {
                 laid(&format!("> [!{kind}]\n> {body}\n"), columns, glyphs)
             });
         }
+    }
+}
+
+#[test]
+fn footnotes_and_tags_fit_the_window_and_under_ascii_draw_no_structure_but_ascii() {
+    // A note's number, a key's brackets, the summary's mark and the two
+    // columns a details block's body is drawn in take their columns on the
+    // rows they stand on, so a window of any width has to hold the rows each
+    // fixture is cut into. Under ascii, with a fixture that is ascii, nothing
+    // on those rows is anything else but the sub and superscript characters,
+    // which are drawn in both glyph sets.
+    for body in [PROSE, LONG, WIDE, MARKED] {
+        let answer = format!(
+            "{body}[^1] <kbd>{body}</kbd> H<sub>2</sub>O x<sup>2</sup><br>{body}\n\n\
+             <details><summary>{body}</summary>\n{body}\n</details>\n\n[^1]: {body}\n"
+        );
+        across("footnotes and tags", |columns, glyphs| {
+            let rows = laid(&answer, columns, glyphs);
+            if glyphs == Glyphs::Ascii && body.is_ascii() {
+                for row in &rows {
+                    let text = row.text();
+                    assert!(
+                        text.chars().all(|character| character.is_ascii()
+                            || "\u{2082}\u{b2}".contains(character)),
+                        "drew {text:?} at {columns} columns under ascii"
+                    );
+                }
+            }
+            rows
+        });
     }
 }
 

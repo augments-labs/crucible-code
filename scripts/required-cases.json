@@ -8027,6 +8027,330 @@
       ]
     },
     {
+      "id": "CASE-TRANSCRIPT-FOOTNOTE-NUMBER",
+      "family": "transcript-blocks",
+      "obligation": "In the unicode glyph set `A claim.[^1]` with the note `[^1]: the source` draws `A claim.\u00b9` and `\u00b9 the source`: the reference's number in the plain slot, the note's number and its words quiet, and no bracket of either.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_footnote_reference_is_a_plain_superscript_number_and_its_definition_a_quiet_note",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "ed6756d54783c4adb957657bae8abae2a183cc544433502318b2956a8064dbad",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FOOTNOTE-ASCII",
+      "family": "transcript-blocks",
+      "obligation": "In the ascii glyph set the same footnote draws `A claim.[1]` and `[1] the source`, both numbers and the note's words quiet.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::under_ascii_a_footnote_reference_and_its_note_are_a_quiet_bracketed_number",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "56cd45a0012bd2791be89d3c88c694ea309056e4fa936319dbf0702bbf774b73",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FOOTNOTE-ORDER",
+      "family": "transcript-blocks",
+      "obligation": "Footnotes are numbered in the order their labels are first written, whatever the labels say: a label used twice keeps one number, and a note written in another order takes its reference's number, in the unicode and the ascii glyph set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::footnotes_are_numbered_in_the_order_their_labels_first_appear",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "0d92639a894a49885427b3999f79f1c94e9a18eb04757ec68e1b681517f423d1",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FOOTNOTE-CAP",
+      "family": "transcript-blocks",
+      "obligation": "Once `FOOTNOTE_CAP` labels are numbered, a new label's reference and note are drawn as written, while a label already numbered keeps its number.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_footnote_past_the_cap_is_shown_as_written",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "5cac3dd01c8a91e284dc2d21cef8414efdb6108dd64b979d076dfa6b0d7b947b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-KBD",
+      "family": "transcript-blocks",
+      "obligation": "`<kbd>Ctrl</kbd>` draws `Ctrl` in the code slot with no tag in the unicode glyph set, and `[Ctrl]` in the code slot in the ascii glyph set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_kbd_tag_draws_its_key_in_the_code_slot_bare_and_in_brackets_under_ascii",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "5cf28a04c8e32d21e3e5814528fea37ee9abf16da89027166afede368c9817b2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SCRIPTS",
+      "family": "transcript-blocks",
+      "obligation": "`H<sub>2</sub>O and x<sup>n+1</sup>` draws `H\u2082O and x\u207f\u207a\u00b9`, the script characters quiet, in the unicode and in the ascii glyph set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::sub_and_superscript_runs_are_quiet_unicode_characters_in_both_glyph_sets",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "08a07fa301409b205e62896e3368400d87b7d9d7b386b748c1a457a3e331b4a4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DETAILS",
+      "family": "transcript-blocks",
+      "obligation": "A `<details>` block draws its summary bold behind a quiet `\u25b8` in the unicode glyph set and a quiet `Details:` in the ascii one, its body two columns in on every row a line wider than the window folds onto, a `<br>`'s row included, in both glyph sets, and what follows `</details>` at the margin.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_details_tag_draws_its_summary_bold_behind_a_quiet_mark_and_its_body_two_columns_in",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "d44855bcdaf7d632522e0dafcffe8a54d18878dfd87ee7cf5d7aa5810ad22090",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DETAILS-BLOCKS",
+      "family": "transcript-blocks",
+      "obligation": "A list, quote, heading, table, fence or display formula inside `<details>` draws no row set in, while the paragraph after it inside the block is drawn two columns in.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_list_quote_heading_table_fence_or_formula_inside_details_stays_at_the_margin",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "9f0f63118bc7d9c9b0cb4c453d66091a63ee9bb8118698090eff6dcf8cbeed99",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-OTHER-TAGS",
+      "family": "transcript-blocks",
+      "obligation": "A tag that is not one of the six, a near miss of one of them and a bare `<` are drawn exactly as written, and an autolink in angle brackets is still a link.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::other_tags_and_near_misses_of_the_six_are_shown_as_written",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "da7701612729a5a8789f4ef7225e04db146f06ce0b0943849465456b9faddcea",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-TAG-CAP",
+      "family": "transcript-blocks",
+      "obligation": "A `<kbd>` tag longer than `TAG_CAP` is drawn as written, and its closing tag, with nothing open, is read away.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_tag_longer_than_the_tag_cap_is_shown_as_written",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "4b62f6477e68feee5c41f1b9a8e7bccab0641299d427e6747158cafef27d45ed",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-NOTES-CUT",
+      "family": "transcript-blocks",
+      "obligation": "An answer with a footnote, a key, sub and superscripts, a line break and a details block draws no `<` and no `[^` whole, and cut in two at any character draws the same text in the same slots as whole, in the unicode and the ascii glyph set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::an_answer_cut_anywhere_draws_the_footnotes_and_tags_the_whole_answer_draws",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "d51b963f84fe32e227651e6d8b3fb51bf7ba392e8946cde1fe0535cd254f8de5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-NOTES-CUT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The same answer kept natively at 40 columns keeps no row holding `<` or `[^`, and cut at any character keeps the rows the whole answer keeps, in the unicode and the ascii glyph set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_answer_cut_anywhere_draws_the_footnotes_and_tags_the_whole_answer_draws",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "53832b4644b5ee1628f6a84c7c1d98b7b12b3c9e410f4c730b96884388ade97a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-NOTES-HOSTILE",
+      "family": "transcript-blocks",
+      "obligation": "Escapes and controls written inside a tag, a key, a script run or a footnote label never reach the terminal, and an image placeholder written in a tag's attributes or a footnote label places no picture cell, in the unicode and the ascii glyph set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::notes::a_hostile_tag_key_or_footnote_label_writes_no_escape_nor_a_tag_or_label_a_picture_cell",
+      "source": "crates/crucible-tui/src/render/tests/notes.rs",
+      "body_sha256": "5845f83f319f43ddfae15f6f84d5f6aafe2496a23bd8e828ffb58eab455f5057",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-NOTES-HOSTILE-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In the native screen, escapes and controls written inside a tag, a key, a script run or a footnote label never reach the terminal, and an image placeholder in a tag's attributes or a footnote label places no picture cell.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_hostile_tag_key_or_footnote_label_writes_no_escape_nor_a_tag_or_label_a_picture_cell",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "d237bc9c3da4ec756556c5aea67559b092c4c509ddddf68588e68088937acff2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-NOTES-FIT",
+      "family": "transcript-blocks",
+      "obligation": "Footnotes, keys, scripts, line breaks and details blocks fit every window width of the fit sweep in both glyph sets, and under ascii an ascii answer draws nothing but ascii, `\u2082` and `\u00b2`.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "fits::footnotes_and_tags_fit_the_window_and_under_ascii_draw_no_structure_but_ascii",
+      "source": "crates/crucible-tui/src/fits.rs",
+      "body_sha256": "2c8dbc64e2b77f0dfdc0dbd227e14c693dabdcf5b6fffe13fa13c7d4c8ec789f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-NOTES-ASCII-MARKS",
+      "family": "transcript-blocks",
+      "obligation": "In the ascii glyph set a footnote's number, the details mark and a key's brackets are ascii.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "glyphs::tests::every_mark_of_a_footnote_a_details_block_and_a_key_is_ascii_under_ascii",
+      "source": "crates/crucible-tui/src/glyphs.rs",
+      "body_sha256": "703d9ba08cce1b9276356a0398b84f890712bb013fe6396d7cbcd77c45e3f367",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SMALL-CONSTRUCTS-80-UNICODE",
+      "family": "transcript-blocks",
+      "obligation": "The footnotes and tags answer lays out at 80 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::small_constructs_80_unicode",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "9444851bd9fff8bcc709e6f514961e2fc060830cff912f87a9f2563ff3793eb4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SMALL-CONSTRUCTS-80-ASCII",
+      "family": "transcript-blocks",
+      "obligation": "The footnotes and tags answer lays out at 80 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::small_constructs_80_ascii",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "d4c62f5b62dc0f977084a99ad5ac013ca659f7c12b52b52246e53f2664a2707a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
       "id": "CASE-SANDBOX-DISK-ONE-TOTAL",
       "family": "files-and-sandbox",
       "obligation": "A run writing into its root, /tmp and its home together stops at the disk ceiling in total, never at a ceiling per place.",

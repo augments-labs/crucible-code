@@ -2,17 +2,17 @@
 source: crates/crucible-tui/src/markdown/corpus_pictures.rs
 expression: "pictured(\"notes\", 120, Glyphs::Unicode)"
 ---
-A claim with a source.[^1] Another claim, defined later.[^2]                                                            
+A claim with a source.¹ Another claim, defined later.²                                                                  
                                                                                                                         
-<details><summary>More</summary>                                                                                        
-hidden                                                                                                                  
-</details>                                                                                                              
+<Quiet>▸</> <Bold>More</>                                                                                                                  
+<Quiet>  </>hidden                                                                                                                
                                                                                                                         
-A line broken<br>inside it, a key <kbd>Ctrl</kbd>, and H<sub>2</sub>O with x<sup>2</sup>.                               
+A line broken                                                                                                           
+inside it, a key <Code>Ctrl</>, and H<Quiet>₂</>O with x<Quiet>²</>.                                                                                 
                                                                                                                         
 An <article> tag is not in the subset.                                                                                  
                                                                                                                         
-[^1]: the first source                                                                                                  
-[^2]: the second source, written after it was used                                                                      
+<Quiet>¹</><Quiet> the first source</>                                                                                                      
+<Quiet>²</><Quiet> the second source, written after it was used</>                                                                          
                                                                                                                         
 The corpus ends here.
