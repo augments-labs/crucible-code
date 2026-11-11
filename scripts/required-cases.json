@@ -8515,7 +8515,7 @@
     {
       "id": "CASE-TRANSCRIPT-BACKSLASH-BREAK",
       "family": "transcript-blocks",
-      "obligation": "A backslash that ends a line inside a paragraph breaks the line and draws no backslash, in a list item, a quote and under emphasis, and is kept where no line follows, a blank line follows, or it is not in prose.",
+      "obligation": "A backslash that ends a line inside a paragraph, a list item, a quote or under emphasis breaks the line and draws no backslash, also when the next line only starts like a block and is more of the paragraph.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
@@ -8523,7 +8523,7 @@
       },
       "case": "markdown::tests::escapes::a_backslash_hard_break_draws_no_backslash",
       "source": "crates/crucible-tui/src/markdown/tests/escapes.rs",
-      "body_sha256": "fd5c503027797f2ae63236c6e08b08ae325544336981a936d407d16079a28c8c",
+      "body_sha256": "948835c1159b5960e443801c9940e5b95551bf91b870172e984917b0737fbe93",
       "platforms": [
         "linux",
         "macos",
@@ -8541,7 +8541,7 @@
       },
       "case": "markdown::tests::escapes::a_backslash_hard_break_is_the_same_cut_anywhere",
       "source": "crates/crucible-tui/src/markdown/tests/escapes.rs",
-      "body_sha256": "5189405091345919da0654175a7a79ea3c248ef33cc19e6b024955b6acf30f21",
+      "body_sha256": "833feb7abca5677efd9fd3f7be212c54924d2d77d453e64a3851e4cc18c87085",
       "platforms": [
         "linux",
         "macos",
@@ -8569,7 +8569,7 @@
     {
       "id": "CASE-TRANSCRIPT-ENTITY-IN-CODE",
       "family": "transcript-blocks",
-      "obligation": "An entity inside a code span, a fence, an indented block or a key stays as written.",
+      "obligation": "An entity inside a code span, a fence, an indented block, a key or display math stays as written.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
@@ -8577,7 +8577,7 @@
       },
       "case": "markdown::tests::escapes::an_entity_inside_code_stays_as_written",
       "source": "crates/crucible-tui/src/markdown/tests/escapes.rs",
-      "body_sha256": "d6a31ced44f4f58814a72014c06cccc9defcb0957a64f71501db96479a69840b",
+      "body_sha256": "37a57c02bf1aa75f314066d786b733461e45fa34b0a1c1dc843c642f39705de4",
       "platforms": [
         "linux",
         "macos",
@@ -8649,7 +8649,223 @@
       },
       "case": "render::native::tests::a_native_hostile_entity_writes_no_escape_nor_a_picture_cell_and_is_drawn_as_written",
       "source": "crates/crucible-tui/src/render/native/tests.rs",
-      "body_sha256": "1504c64330376856382c4c4a53f13ddc54f2980d1339bdfe42b9c9bcc38716de",
+      "body_sha256": "ce65d09999a7b00a584b3078658e7d98becd870f7fc4d9c08e66d94c0538a8f8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BACKSLASH-BREAK-KEPT",
+      "family": "transcript-blocks",
+      "obligation": "A backslash that breaks no line is drawn as written: at the end of the answer, before a blank line, in a heading, a code span, a fence or an indented block, and before a line that opens a block.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::escapes::a_backslash_that_breaks_no_line_is_kept",
+      "source": "crates/crucible-tui/src/markdown/tests/escapes.rs",
+      "body_sha256": "9b39443d19f431d43978eda98fc56af91b2afa6bde362ba83b4762af1ed32835",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BACKSLASH-BREAK-OPENER",
+      "family": "transcript-blocks",
+      "obligation": "A backslash before a line that opens a block is drawn as written and the block opens as it does without the backslash, for every kind of opener.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::escapes::a_backslash_before_a_line_that_opens_a_block_is_kept_and_the_block_opens",
+      "source": "crates/crucible-tui/src/markdown/tests/escapes.rs",
+      "body_sha256": "ac49a1085d72d151661084074beb5aaae765d2eb5150f6911c3536c48eaaf980",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BACKSLASH-BREAK-MIDLINE",
+      "family": "transcript-blocks",
+      "obligation": "A backslash before a line the answer ends in the middle of is drawn as that line would be drawn if it were whole.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::escapes::a_backslash_before_a_line_the_answer_ends_in_the_middle_of_is_drawn_as_the_line_is",
+      "source": "crates/crucible-tui/src/markdown/tests/escapes.rs",
+      "body_sha256": "605147579e98cd4e3bba67aa3fbc12b902e97840ccfbfbec7fd0cfe4a90b8a52",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BACKSLASH-DISPLAY-MATH",
+      "family": "transcript-blocks",
+      "obligation": "A trailing backslash inside display math is drawn as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::escapes::a_backslash_inside_display_math_is_kept",
+      "source": "crates/crucible-tui/src/markdown/tests/escapes.rs",
+      "body_sha256": "1fdb050a7b350b85da012f940603a0b8c7c134d46a693efd21b5f0b818bcfcc2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ENTITY-DISPLAY-MATH",
+      "family": "transcript-blocks",
+      "obligation": "An entity inside display math, which is a block read again as written, is drawn as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::escapes::an_entity_inside_display_math_is_kept_as_written",
+      "source": "crates/crucible-tui/src/markdown/tests/escapes.rs",
+      "body_sha256": "9b7efc32e04ff94e6c008b127a7656ccf2b27d4f64c29f11573457c307190409",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ENTITY-SCRIPT",
+      "family": "transcript-blocks",
+      "obligation": "An entity inside a subscript or superscript run is drawn as the character it names, in the script when the script has it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::escapes::an_entity_inside_a_sub_or_a_sup_run_is_drawn_as_the_character_it_names",
+      "source": "crates/crucible-tui/src/markdown/tests/escapes.rs",
+      "body_sha256": "7f4611e707a58eac2e725f1ccc74024dba7447bb57e85725d12c14d1467a00b9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ENTITY-NUMBER-SIGN",
+      "family": "transcript-blocks",
+      "obligation": "An ampersand and a number sign that make no entity are drawn as written and the number still names an issue, cut anywhere.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::escapes::a_number_sign_after_an_ampersand_that_is_no_entity_still_names_an_issue",
+      "source": "crates/crucible-tui/src/markdown/tests/escapes.rs",
+      "body_sha256": "c73371b32451bf3535af6708d89b28561f3abbe210051de5a5045bd77527f1de",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BACKSLASH-BREAK-SCREEN",
+      "family": "transcript-blocks",
+      "obligation": "A backslash before a line break breaks the line and draws no backslash on the redrawing screen, and is kept before a blank line.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::escapes::a_backslash_before_a_line_break_breaks_the_line_and_draws_no_backslash",
+      "source": "crates/crucible-tui/src/render/tests/escapes.rs",
+      "body_sha256": "1cfe51f058bfa7e85c732fb186087967f08dbbad090b8b1e24f9a71cc19d4a9a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BACKSLASH-OPENER-SCREEN",
+      "family": "transcript-blocks",
+      "obligation": "A backslash before a line that opens a block is drawn as written on the redrawing screen and the block opens.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::escapes::a_backslash_before_a_line_that_opens_a_block_is_drawn_and_the_block_opens",
+      "source": "crates/crucible-tui/src/render/tests/escapes.rs",
+      "body_sha256": "6d885d52aec91b32b70a1fb6901c9d6509968141b437e892573c9321f91c216c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BLOCK-WRITTEN-SCREEN",
+      "family": "transcript-blocks",
+      "obligation": "A block shown as written, display math, keeps its trailing backslash and its entities on the redrawing screen.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::escapes::a_block_shown_as_written_keeps_its_trailing_backslash_and_its_entities",
+      "source": "crates/crucible-tui/src/render/tests/escapes.rs",
+      "body_sha256": "8b80208af6ae0cb93aa5415e5b4410378e0338b2e1d6d145e32346240b2820c9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ENTITY-SCRIPT-SCREEN",
+      "family": "transcript-blocks",
+      "obligation": "An entity inside a subscript or superscript run draws no entity as written on the redrawing screen.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::escapes::an_entity_in_a_script_is_drawn_as_the_character_it_names",
+      "source": "crates/crucible-tui/src/render/tests/escapes.rs",
+      "body_sha256": "fc3d72a44d018189684dd32b568c9182e482098a2ddbd0b4c0083e2cc05d7303",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ENTITY-NOT-SCREEN",
+      "family": "transcript-blocks",
+      "obligation": "An ampersand and a number sign that make no entity are drawn as written on the redrawing screen.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::escapes::an_ampersand_and_a_number_sign_that_are_no_entity_are_drawn_as_written",
+      "source": "crates/crucible-tui/src/render/tests/escapes.rs",
+      "body_sha256": "4f828a742689759eca7b0debe7dc44309a70d88cf705449ab30a0747d3ded1b4",
       "platforms": [
         "linux",
         "macos",
@@ -8659,15 +8875,15 @@
     {
       "id": "CASE-TRANSCRIPT-ENTITY-SCREEN",
       "family": "transcript-blocks",
-      "obligation": "An entity and a backslash break are drawn as their characters on the redrawing screen.",
+      "obligation": "An entity is drawn as the character it names on the redrawing screen, in both glyph sets.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "render::tests::escapes::a_backslash_before_a_line_break_breaks_the_line_and_draws_no_backslash",
+      "case": "render::tests::escapes::an_entity_is_drawn_as_the_character_it_names",
       "source": "crates/crucible-tui/src/render/tests/escapes.rs",
-      "body_sha256": "1cfe51f058bfa7e85c732fb186087967f08dbbad090b8b1e24f9a71cc19d4a9a",
+      "body_sha256": "7bf3ff217a90f7388cfcc19e4ba762e12b646b92a655796667fdf1e17deb430e",
       "platforms": [
         "linux",
         "macos",
