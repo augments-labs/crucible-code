@@ -8,34 +8,45 @@ use seccompiler::{BpfProgram, SeccompAction, SeccompFilter};
 #[cfg(target_arch = "x86_64")]
 const X32_SYSCALL_BIT: i64 = 0x4000_0000;
 
+/// The listener calls a closed network refuses, and the `io_uring` calls,
+/// which would reach the same sockets without passing a filter on them.
+const LISTENING: [i64; 2] = [libc::SYS_bind, libc::SYS_listen];
+const IO_URING: [i64; 3] = [
+    libc::SYS_io_uring_setup,
+    libc::SYS_io_uring_enter,
+    libc::SYS_io_uring_register,
+];
+
 pub(super) fn compile(allow_local_binding: bool) -> io::Result<Option<BpfProgram>> {
     if allow_local_binding {
         return Ok(None);
     }
+    refusing(LISTENING.into_iter().chain(IO_URING)).map(Some)
+}
+
+/// The filter for a closed network whose own private loopback the process may
+/// listen on: `bind` and `listen` pass, and the `io_uring` calls stay refused.
+///
+/// Bubblewrap's `--unshare-net` is what keeps the loopback private; this lifts
+/// nothing else.
+pub(super) fn compile_private_loopback() -> io::Result<BpfProgram> {
+    refusing(IO_URING)
+}
+
+/// Answers each of `syscalls`, and its x32 number on `x86_64`, with `EPERM`.
+fn refusing(syscalls: impl IntoIterator<Item = i64> + Clone) -> io::Result<BpfProgram> {
     if !cfg!(any(target_arch = "x86_64", target_arch = "aarch64")) {
         return Err(io::Error::other(
             "Linux sandbox network filtering requires x86_64 or aarch64",
         ));
     }
     let mut rules = BTreeMap::new();
-    for syscall in [
-        libc::SYS_bind,
-        libc::SYS_listen,
-        libc::SYS_io_uring_setup,
-        libc::SYS_io_uring_enter,
-        libc::SYS_io_uring_register,
-    ] {
+    for syscall in syscalls.clone() {
         rules.insert(syscall, Vec::new());
     }
     #[cfg(target_arch = "x86_64")]
     {
-        for syscall in [
-            libc::SYS_bind,
-            libc::SYS_listen,
-            libc::SYS_io_uring_setup,
-            libc::SYS_io_uring_enter,
-            libc::SYS_io_uring_register,
-        ] {
+        for syscall in syscalls {
             rules.insert(syscall + X32_SYSCALL_BIT, Vec::new());
         }
     }
@@ -50,7 +61,6 @@ pub(super) fn compile(allow_local_binding: bool) -> io::Result<Option<BpfProgram
     )
     .map_err(error)?
     .try_into()
-    .map(Some)
     .map_err(error)
 }
 
@@ -102,6 +112,117 @@ mod tests {
             .args([
                 "--exact",
                 "broker::binding::tests::child_filter_denies_tcp_and_unix_bind",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env(CHILD_MARKER, &marker)
+            .spawn()
+            .expect("spawn child");
+        let status = child.wait().expect("wait for child");
+        assert!(status.success(), "child status: {status}");
+        assert_eq!(std::fs::read(&marker).expect("child marker"), b"executed");
+        let _ = std::fs::remove_file(marker);
+    }
+
+    /// The `io_uring` calls, each with arguments a kernel answers with an
+    /// error of its own (a bad descriptor, a null pointer) where no filter
+    /// refuses it first, so `EPERM` can only be the filter's.
+    fn io_uring_answers() -> [(&'static str, i64); 3] {
+        let null = std::ptr::null_mut::<libc::c_void>();
+        // SAFETY: each call passes a null pointer or an invalid descriptor and
+        // no length, so the kernel reads and writes no memory of this process.
+        unsafe {
+            [
+                (
+                    "io_uring_setup",
+                    libc::syscall(libc::SYS_io_uring_setup, 0, null),
+                ),
+                (
+                    "io_uring_enter",
+                    libc::syscall(libc::SYS_io_uring_enter, -1, 0, 0, 0, null, 0),
+                ),
+                (
+                    "io_uring_register",
+                    libc::syscall(libc::SYS_io_uring_register, -1, 0, null, 0),
+                ),
+            ]
+        }
+    }
+
+    #[test]
+    fn the_private_loopback_filter_lifts_bind_and_listen_and_nothing_else() {
+        if std::env::var_os(CHILD).is_some() {
+            let filter = compile_private_loopback().expect("compile");
+            apply(&filter).expect("install");
+            let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+                .expect("bind and listen on loopback");
+            std::net::TcpStream::connect(listener.local_addr().expect("listener address"))
+                .expect("connect to the listener");
+            let path = std::env::temp_dir().join(format!(
+                "crucible-private-loopback-{}.sock",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_file(&path);
+            let unix = std::os::unix::net::UnixListener::bind(&path);
+            let _ = std::fs::remove_file(&path);
+            unix.expect("bind and listen on a Unix socket");
+            for (call, answer) in io_uring_answers() {
+                let errno = std::io::Error::last_os_error().raw_os_error();
+                assert_eq!((call, answer, errno), (call, -1, Some(libc::EPERM)));
+            }
+            std::fs::write(
+                std::env::var_os(CHILD_MARKER).expect("child marker path"),
+                b"executed",
+            )
+            .expect("child marker");
+            return;
+        }
+        // The refusing filter still names bind and listen, and local binding
+        // still has no filter at all.
+        assert!(compile(true).expect("compile").is_none());
+        let refusing = compile(false).expect("compile").expect("filter");
+        let lifted = compile_private_loopback().expect("compile");
+        let named = |filter: &BpfProgram, syscall: i64| {
+            let syscall = u32::try_from(syscall).expect("a syscall number");
+            filter.iter().any(|instruction| instruction.k == syscall)
+        };
+        let mut lifted_calls = vec![libc::SYS_bind, libc::SYS_listen];
+        let mut kept_calls = vec![
+            libc::SYS_io_uring_setup,
+            libc::SYS_io_uring_enter,
+            libc::SYS_io_uring_register,
+        ];
+        #[cfg(target_arch = "x86_64")]
+        {
+            lifted_calls.extend([
+                libc::SYS_bind + X32_SYSCALL_BIT,
+                libc::SYS_listen + X32_SYSCALL_BIT,
+            ]);
+            kept_calls.extend([
+                libc::SYS_io_uring_setup + X32_SYSCALL_BIT,
+                libc::SYS_io_uring_enter + X32_SYSCALL_BIT,
+                libc::SYS_io_uring_register + X32_SYSCALL_BIT,
+            ]);
+        }
+        for syscall in &lifted_calls {
+            assert!(named(&refusing, *syscall), "{syscall}");
+            assert!(!named(&lifted, *syscall), "{syscall}");
+        }
+        for syscall in &kept_calls {
+            assert!(named(&refusing, *syscall), "{syscall}");
+            assert!(named(&lifted, *syscall), "{syscall}");
+        }
+
+        let marker = std::env::temp_dir().join(format!(
+            "crucible-private-loopback-child-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&marker);
+        let _turn = crate::broker::child_turn::take();
+        let mut child = Command::new(std::env::current_exe().expect("test executable"))
+            .args([
+                "--exact",
+                "broker::binding::tests::the_private_loopback_filter_lifts_bind_and_listen_and_nothing_else",
                 "--nocapture",
             ])
             .env(CHILD, "1")
