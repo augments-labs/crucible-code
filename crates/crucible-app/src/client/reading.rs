@@ -137,9 +137,9 @@ pub fn billing(conversation: &Conversation) -> api::Billing {
 /// and reads the era and the set from its handle itself.
 ///
 /// What waits for the person's answer is the exception to the progress hold.
-/// It goes to a
-/// client that claimed [`Capability::Questions`], whether or not it asked for
-/// progress, because that client is the one answering it, and to no other.
+/// It goes to a client that claimed [`Capability::Questions`], whether or not
+/// it asked for progress, because that client is the one answering it, and to
+/// no other.
 /// Each question is shown in the shape a blocking question is put, with one
 /// difference: an answer whose name is longer than the words a client is
 /// handed is cut, saying so, where a blocking question like it is declined

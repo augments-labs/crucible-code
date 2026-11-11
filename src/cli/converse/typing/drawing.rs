@@ -110,10 +110,10 @@ pub(in crate::cli::converse) fn around<'a>(
 /// renderer's to say ([`Renderer::room`]): the whole of it on the full screen,
 /// half in native mode, where a transcript row given up is gone for good. The
 /// dock is the one exception, through [`reach`]: closed, by its row and the
-/// blank over it, so a question waiting is never left unsaid; open, it is a
+/// blank over it, so the share cannot hide a question waiting; open, it is a
 /// question being answered, so it may take the window in native mode as a
-/// question asked before the turn goes on does. Both bands reach the renderer together so the
-/// prompt, status and map control come from one frame.
+/// question asked before the turn goes on does. Both bands reach the renderer
+/// together so the prompt, status and map control come from one frame.
 pub(in crate::cli::converse) fn draw<T: Terminal>(
     renderer: &mut Renderer<T>,
     editor: &Editor,

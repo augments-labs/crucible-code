@@ -12,10 +12,11 @@
 //!
 //! **Nothing moves by itself.** A new batch is the closed row; a report
 //! arriving changes neither the focus nor a draft, and a batch it lists again
-//! under the same era and number keeps the draft it had. A batch of another
-//! era goes with its draft and its scroll. The one move a report makes is
-//! when the batch in front is gone: what is in front now opens at its start,
-//! and with nothing left the dock closes.
+//! under the same era and number keeps the draft it had. A report makes two
+//! moves only. Under another era every batch goes with its draft and its
+//! scroll, and the dock closes. Under the same era, when the batch in front is
+//! gone, what is in front now opens at its start, and with nothing left the
+//! dock closes.
 //!
 //! **Escape never answers.** Out of an editor it leaves the editor with the
 //! line kept; while a decline waits for its second press it keeps the

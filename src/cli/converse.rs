@@ -1338,7 +1338,8 @@ impl Turn<'_, '_> {
 
                 // What waits for an answer changed. The report is a signal:
                 // what waits is read through the handle, as any client reads
-                // it, and the dock shown it without moving focus or a draft.
+                // it, and the dock shown it without moving the focus or the
+                // draft of a batch that is still there, as `docking` says.
                 if let Seen::Turn(event @ Event::Waiting { .. }) = &one {
                     self.waited(event);
                 }

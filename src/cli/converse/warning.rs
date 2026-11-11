@@ -1,22 +1,22 @@
 //! The question put before anything is sent on a route whose vendor says it
 //! uses what is sent to it.
 //!
-//! Asked on the drawing thread, before the work is handed to a worker, so
-//! the message is still this side's to give back, and the dock's answers stay
-//! in the dock, refused with their drafts kept; a message that would start
-//! an installed agent is asked about on that agent's own route, and says
-//! what starting it runs, unless the start would be refused whatever the
-//! answer: that message is not asked about, and goes on to be refused as a
-//! failed turn, before anything starts. Put before an installed agent is
-//! first started any other way, it is the application's question, answered
-//! on the drawing thread while the operation that asked it waits: it says the
-//! same, and the application writes down its yes. What stands is a panel
-//! with the vendor's sentence and the page it comes from; `Use it anyway`
-//! writes the yes into the user's own file and lets the work go, and
-//! anything else sends nothing. Behind it, every client the run sends through
-//! holds the route's origins until the yes is given, and a web source built
-//! for a warned model asks that model's route before each request, so a path
-//! that reached a send without passing here still sends nothing.
+//! Asked on the drawing thread, before the work is handed to a worker, so the
+//! message is still this side's to give back, and the dock's answers held back
+//! where keys are read stay in the dock, refused with their drafts kept; a
+//! message that would start an installed agent is asked about on that agent's
+//! own route, and says what starting it runs, unless the start would be refused
+//! whatever the answer: that message is not asked about, and goes on to be
+//! refused as a failed turn, before anything starts. Put before an installed
+//! agent is first started any other way, it is the application's question,
+//! answered on the drawing thread while the operation that asked it waits: it
+//! says the same, and the application writes down its yes. What stands is a
+//! panel with the vendor's sentence and the page it comes from; `Use it anyway`
+//! writes the yes into the user's own file and lets the work go, and anything
+//! else sends nothing. Behind it, every client the run sends through holds the
+//! route's origins until the yes is given, and a web source built for a warned
+//! model asks that model's route before each request, so a path that reached a
+//! send without passing here still sends nothing.
 //!
 //! A key pressed before the panel was drawn does not answer it: whatever is
 //! waiting to be read when it is about to stand is dropped, so the Enter that
@@ -86,7 +86,8 @@ pub(super) const CRAMPED_SEND: &str =
 pub(super) const CRAMPED_CHOICE: &str =
     "! this route needs an answer first; make the window taller and choose again";
 
-/// Said where no panel fits before room is made.
+/// Said where no panel fits before room is made, or before the dock's answers
+/// are sent.
 pub(super) const CRAMPED_ROOM: &str =
     "! this route needs an answer first; make the window taller and try again";
 
@@ -275,10 +276,10 @@ pub(super) fn unanswered(warned: &Warned) -> Box<str> {
 /// conversation's provider is held by, or on an installed agent's route, the
 /// agent's own where the turn would start it. Room is not made on an agent's
 /// route, so nothing is started for it. The dock's answers that reach this
-/// are asked about as a turn would be, save that an answer whose turn would
-/// be refused before it started the agent is asked about all the same, since
-/// it is sent nowhere without a yes. Ones with nothing left to settle were
-/// refused before it. Both are read from the yes the question writes to, so a
+/// are asked about as a turn would be, and the check that spares a turn the
+/// question when it would be refused before it started the agent is not made
+/// for them: what it reads first is the turn's attachments, and an answer
+/// carries none. Ones with nothing left to settle were refused before it. Both are read from the yes the question writes to, so a
 /// route answered here is not asked again.
 fn unsent(conversation: &Conversation, terms: &Terms, work: &Work) -> Option<Warned> {
     match conversation.serving() {

@@ -435,10 +435,10 @@ fn down_a_pipe_an_answer_on_a_warned_route_with_no_yes_ends_the_run_and_sends_no
 
 #[test]
 fn an_answer_held_back_at_a_terminal_stays_in_the_dock_refused() {
-    // The window is too short for the question, which is the one answer
-    // read without a key: what the reader is told is the dock's, not the
-    // prompt box's, and the dock leaves its submission for a refusal it can
-    // be retried from.
+    // The window is too short for the warning panel to stand, which ends it
+    // as `Cramped` without a key being read: what the reader is told is the
+    // dock's wording, not the prompt box's, and the dock leaves its
+    // submission for a refusal it can be retried from.
     let (ended, asked, waits, written, shown) = answered_on(serving_google(), true);
 
     assert!(matches!(ended, Ok(false)), "{ended:?}");

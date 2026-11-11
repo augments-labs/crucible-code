@@ -1109,11 +1109,12 @@ pub(super) fn under(settled: Settled<'_>) -> Says {
 /// then the line stays in the box and the row under it says why.
 ///
 /// The keys that mean something here are the ones that still do. Return
-/// finishes a line, Esc closes the command list where one is open and otherwise
-/// asks the turn to stop, Ctrl+O stands the whole of what the results so far
-/// were cut down to, a click on a row that offered to expand stands that one
-/// result, Ctrl+T opens the whole of the plan above the box or
-/// bounds it again, and Ctrl+Enter and Ctrl+S stop the turn to send the queue
+/// finishes a line, Esc is the questions dock's while it has the keys, then
+/// closes the command list where one is open and otherwise asks the turn to
+/// stop, Tab crosses to the dock where it is open, Ctrl+O stands the whole of
+/// what the results so far were cut down to, a click on a row that offered to
+/// expand stands that one result, Ctrl+T opens the whole of the plan above the
+/// box or bounds it again, and Ctrl+Enter and Ctrl+S stop the turn to send the queue
 /// now, as [`queueing`] says. Ctrl-C is the line's own: in raw mode the
 /// terminal sends it rather than raising a signal, so it reaches the editor
 /// here exactly as it does at the prompt. The rest edit the line. While that
@@ -1195,9 +1196,8 @@ pub(super) fn during<T: Terminal>(
         }
 
         // While the view stands it has the keyboard, the way whatever is
-        // standing has it everywhere else in a session: Esc is its own, to
-        // close it or to leave its editor or a waiting decline, rather than
-        // stopping the turn, and Ctrl-C reaches it before it reaches the
+        // standing has it everywhere else in a session: Esc closes it rather
+        // than stopping the turn, and Ctrl-C reaches it before it reaches the
         // line. The turn goes on writing above it either way, which is the
         // whole reason the view is worth standing there.
         if opened.is_open() {
@@ -1222,8 +1222,9 @@ pub(super) fn during<T: Terminal>(
         }
 
         // And the dock, while it has the focus: its keys are its own, Esc
-        // closes it rather than stopping the turn, and what it has no use for
-        // is read below as it would be with the composer focused.
+        // closes it, or leaves its editor or a waiting decline, rather than
+        // stopping the turn, and what it has no use for is read below as it
+        // would be with the composer focused.
         if docking.has_focus() {
             match docking.key(&arrived) {
                 Keyed::Passed => {}
