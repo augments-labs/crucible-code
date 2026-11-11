@@ -50,7 +50,7 @@ this page is the list. Slash commands are not keys: they are listed under
 | <kbd>Ctrl+W</kbd>, <kbd>Ctrl+Backspace</kbd>, <kbd>Alt-Backspace</kbd> | Rubs out the word behind the cursor. |
 | <kbd>Ctrl+U</kbd> | Rubs out from the cursor back to the start of its line. |
 | <kbd>Ctrl+K</kbd> | Rubs out from the cursor to the end of its line. |
-| <kbd>Tab</kbd> | Nothing. A tab inside pasted text becomes four spaces. |
+| <kbd>Tab</kbd> | Gives the keys to the [dock of questions](#answering-questions-asked-without-waiting) while it is open. Nothing otherwise. A tab inside pasted text becomes four spaces. |
 | <kbd>Ctrl+Y</kbd> | Copies everything in the box exactly as typed, by asking your terminal to put it on the clipboard. The row under the box says `line copied` once the request is sent. Nothing while the box is empty. |
 | <kbd>Ctrl+V</kbd> | Pastes an image from the clipboard and puts a marker such as `[Image #1]` in the box. When nothing readable is there, the reason is written under the box. |
 | <kbd>Ctrl+C</kbd> | Clears the box, every line of it. When the box is already empty the row says `press ctrl+c again to leave`, and a second press within two seconds ends the session. |
@@ -144,7 +144,7 @@ wheel. These differ:
 | <kbd>Ctrl+O</kbd> | Stands the cut results, then the source of each drawn block, under the tail of the answer, which goes on arriving above them. Opens for a drawn block alone. |
 | <kbd>Ctrl+E</kbd>, <kbd>Ctrl+X</kbd> | Take the highlighted prompt of [the queue](#the-queue) back into the box, or delete it. Nothing while none are waiting. |
 | <kbd>Ctrl+Enter</kbd>, <kbd>Ctrl+S</kbd> | Stop the turn and send [the queue](#the-queue) now: all of it with the line in the box last, or the highlighted prompt alone. Each prompt is sent as the line it was typed as. |
-| <kbd>Tab</kbd> | Nothing. |
+| <kbd>Tab</kbd> | Gives the keys to the [dock of questions](#answering-questions-asked-without-waiting) while it is open, as at the prompt. Nothing otherwise. |
 
 While the <kbd>Ctrl+O</kbd> view or the command list stands over a running
 turn, <kbd>Esc</kbd> closes it rather than stopping the turn. Its keys are
@@ -221,6 +221,32 @@ other ask has a review stop and adds `←→ between questions`. A question that
 takes several answers adds `space to choose`, and the review stop itself reads
 `esc to cancel · ←→ between questions`. [Several questions
 at once](../tools/asking.md#several-questions-at-once) is about that stop.
+
+## Answering questions asked without waiting
+
+Questions the agent [asked without
+waiting](../tools/asking.md#asking-without-waiting) stand in a dock over the
+box once `/questions` opens it. While the dock has the keys:
+
+| Key | What it does |
+| --- | --- |
+| <kbd>↑</kbd>, <kbd>↓</kbd> | Moves the mark down the answers, or down the actions on the last stop. Stops at each end. |
+| <kbd>←</kbd>, <kbd>→</kbd> | Steps to the next question in the batch or the one before. Stops at each end. |
+| <kbd>Enter</kbd> | Chooses the marked answer and moves on, to the review stop after the last question. Where several answers may be chosen, it moves on and <kbd>Space</kbd> does the choosing. On `Write your own answer` with nothing written yet, it opens the line instead; once a line is written, it takes it and moves on. On `Decline question`, it asks once more; on a question already declined, it takes the decline back. On the last stop, it does the marked action. |
+| <kbd>Space</kbd> | Where several answers may be chosen, chooses the marked one or unchooses it. |
+| <kbd>n</kbd> | Opens a line for a note of your own beside the answer. |
+| <kbd>Tab</kbd> | Gives the keys to the box, with the dock left open; <kbd>Tab</kbd> in the box gives them back. |
+| <kbd>PgUp</kbd>, <kbd>PgDn</kbd> | Scrolls a question or a read-back taller than the room for it. |
+| <kbd>Esc</kbd> | Closes the dock with everything you picked and wrote kept, and does not stop the turn. |
+| <kbd>Ctrl+C</kbd>, <kbd>Ctrl+D</kbd>, <kbd>Shift+Tab</kbd>, <kbd>Ctrl+B</kbd>, <kbd>Ctrl+E</kbd>, <kbd>Ctrl+O</kbd>, <kbd>Ctrl+T</kbd>, the wheel, a drag, a click | What they do with the box focused. |
+| Anything else | Nothing. |
+
+While you are writing a line, the editing keys edit it, and <kbd>Enter</kbd>
+or <kbd>Esc</kbd> stops writing and keeps what you wrote. While a decline
+asks once more, <kbd>Enter</kbd> declines and <kbd>Esc</kbd> keeps the
+question; any other key keeps it too, and one the dock reads then does what it
+does there. The footer
+under the dock names the keys that work where you are.
 
 ## Pickers and panels
 

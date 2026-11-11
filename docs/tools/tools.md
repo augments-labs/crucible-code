@@ -1,8 +1,8 @@
 # Tools
 
 Twelve tools, advertised in the order a model tends to reach for them. Nine are
-in the list from the start, and eight when nobody is at a keyboard for
-`ask_user` to ask. The rest are **held back**: they exist and they work, and the
+in the list from the start, and eight when there is nobody for `ask_user` to
+ask. The rest are **held back**: they exist and they work, and the
 agent does not see them until it looks them up with `tool_search`. A schema the
 agent can see is one it pays for on every request of every turn, and most
 sessions never write a plan or ask a question about the world.
@@ -26,10 +26,12 @@ There is nothing to install. What you configure is which calls get through, and
 that is [Permissions](../permissions/index.md).
 
 `ask_user` is always in the list, except in a run whose output is not a
-terminal: there is nobody to ask, so it is neither advertised nor held back. It
-is not deferred anywhere, because a model that cannot see it will not look it up
-at the moment it realises it should ask, and that moment is the only thing it is
-for.
+terminal: there is nobody to ask, so it is neither advertised nor held back. A
+program driving crucible through its client protocol is the exception to that:
+one that holds questions for later is offered it, as [Asking
+you](asking.md#from-a-program-with-no-terminal) says. It is never held back,
+because a model that cannot see it will not look it up at the moment it
+realises it should ask, and that moment is the only thing it is for.
 
 `todo_write`, `web_search` and `web_fetch` are held back. You will see the agent
 call `tool_search` before it uses one, which costs a round trip the first time

@@ -1061,6 +1061,7 @@ back to correct.
 | `/login` | Signs in with your provider account |
 | `/logout` | Signs out from your provider account |
 | `/catalog` | Lists the coding agents the ACP Registry offers, and adds one |
+| `/questions` | Opens the [questions the agent asked without waiting](../tools/asking.md#asking-without-waiting), or closes them |
 | `/mode` | The [permission mode](../permissions/modes.md) in force, or the one you name |
 | `/sandbox` | Shows the [sandbox](../security/sandboxing.md) in force, and turns it on or off |
 | `/theme` | Picks the colours crucible draws with, and the one code is drawn in |
@@ -1446,8 +1447,8 @@ stays in the box, and the next prompt carries on the same session.
 ## What it can do
 
 Twelve tools, advertised in the order a model tends to reach for them. Nine are
-in the list from the start, and eight when nobody is at a keyboard for
-`ask_user` to ask. The rest are **held back**: they exist and they work, and the
+in the list from the start, and eight when there is nobody for `ask_user` to
+ask. The rest are **held back**: they exist and they work, and the
 agent does not see them until it looks them up with `tool_search`. A schema the
 agent can see is one it pays for on every request of every turn, and most
 sessions never write a plan or ask a question about the world.
