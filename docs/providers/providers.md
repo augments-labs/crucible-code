@@ -296,9 +296,11 @@ choice that asks least of it, and this says which fact it was.
   form: xAI serves a priority tier, but no source shows how it refuses one.
 - **DeepSeek.** No web tool on Chat Completions. Provider-managed caching,
   with no published smallest prefix. No fast form: DeepSeek serves none.
-  `deepseek-flash` is DeepSeek-V4.1-Flash-1017 and `deepseek-v4-pro` is
-  DeepSeek-V4-Pro-0813, the names `/model` shows beside them, since the
-  model behind `deepseek-flash` changes when DeepSeek upgrades Flash.
+  `/model` lists `deepseek-flash` as `deepseek-v4.1-flash-1017` and
+  `deepseek-v4-pro` as `deepseek-v4-pro-0813`, the versions behind them,
+  since the model behind `deepseek-flash` changes when DeepSeek upgrades
+  Flash. `--model`, `/model` named on the line and the configuration still
+  take `deepseek-flash` and `deepseek-v4-pro`, the names DeepSeek's API takes.
   DeepSeek still accepts `deepseek-v4-flash` and
   `deepseek-v4-flash-vision-exp`, retired names it routes to that model.
   It reads pictures; crucible sends it text alone.
