@@ -15,6 +15,12 @@
 //! Nothing is guessed. A session with no forge in hand draws `#487` exactly as
 //! it drew it before, because a link to a repository nobody named is a link
 //! somewhere wrong, and somewhere wrong is worse than nowhere at all.
+//!
+//! The other way round as well: an address on GitHub or GitLab that names one
+//! pull or merge request, issue or commit is read as a [`Reference`] and drawn
+//! as people call it. Read from the address alone, so it names its own
+//! repository wherever the forge in hand is not the same host and slug, and
+//! any address of another shape is an ordinary link.
 
 /// The repository a bare number is counted against, and how that forge spells
 /// the page it is on.

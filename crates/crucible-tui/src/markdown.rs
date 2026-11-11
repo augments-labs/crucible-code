@@ -18,7 +18,9 @@
 //! line inside a fence is held because a highlighter reads whole lines, and a
 //! link's words are held because nothing says they were a link's words until
 //! the `](` after them. Either one that runs past its bound, or past the line
-//! it is on, is handed out as the text it turned out to be.
+//! it is on, is handed out as the text it turned out to be. Besides them, a
+//! `!` that ends a delta waits the one character that says whether it opens
+//! an image.
 //!
 //! A table written without outer bars, and a heading written as a line over a
 //! row of `=` or `-`, are prose until the line under them arrives, and prose
@@ -119,7 +121,10 @@
 //! blank or a control character, or stands in code, a key or sub or
 //! superscript, is shown as written. A word written as `www.` and a host, after
 //! a space, an opening bracket or a mark of emphasis, is a link to the `https://`
-//! address that begins with it.
+//! address that begins with it. What any link is drawn as, a forge address
+//! as its reference, words followed by their quiet address, or an image as
+//! its words, is the [`links`] module's to decide, in a paragraph and in a
+//! table's cell alike.
 //!
 //! Six tags, `<details>`, `<summary>`, `<br>`, `<kbd>`, `<sub>` and `<sup>`, in
 //! any letter case and with attributes holding `<` or `>` only inside a quoted

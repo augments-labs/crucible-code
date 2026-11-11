@@ -831,7 +831,20 @@ An address written on its own is a link without being written as one. `https://`
 or `http://` and everything up to the next space is drawn the way a link's words
 are, and arrives exactly as it was written: the underscores and stars in a
 path are part of it rather than markers. What ends the sentence is not part of
-the address, so a full stop after one stays with the prose.
+the address, so a full stop after one stays with the prose. The one exception
+is a pull request, issue or commit on GitHub or GitLab, which is drawn as the
+reference people call it by: `#1324` in the repository you are in, and
+`owner/repo#1324` anywhere else, still a link to the whole address.
+
+A link whose words are not its address is followed by its address in the quiet
+grey, without its scheme, and cut short with an ellipsis once it is wider than
+24 columns, keeping its host and first segment where they fit:
+`the guide (example.com/docs/…)`. An image is drawn as `[image: its words]`
+followed by its address the same way, and nothing is fetched.
+<kbd>Ctrl+O</kbd> lists every address drawn shorter in full. See
+[Pull requests, issues and commits](../sessions/transcript.md#pull-requests-issues-and-commits)
+and
+[The address after a link's words](../sessions/transcript.md#the-address-after-a-links-words).
 
 A backslash in front of a marker says the marker was meant as itself: `\*` is a
 star and `\|` is a pipe, and the backslash is gone. In front of anything else

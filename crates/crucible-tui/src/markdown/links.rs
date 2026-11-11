@@ -5,8 +5,9 @@
 //! which is the one place that decides what stands for it on the row:
 //!
 //! - The address of a pull request, an issue or a commit on a forge
-//!   ([`Reference`]) is drawn as the reference people call it by, `#1324` in
-//!   the checkout's own repository and `owner/repo#1324` anywhere else.
+//!   ([`Reference`]) is drawn as the reference people call it by, `#1324` or
+//!   `abcdef1` in the checkout's own repository and `owner/repo#1324` or
+//!   `owner/repo@abcdef1` anywhere else; a merge request is `!1324`.
 //! - Words that are not their address are followed by a space and the quiet
 //!   address: the address without its scheme, or `mailto:`, and once that is
 //!   past [`QUIET`] columns, its host and first segment and an ellipsis.
@@ -16,6 +17,10 @@
 //!   with no alt, followed by its quiet address; nothing is fetched. Only the
 //!   written-out form is one: a bang in front of any other bracket is the
 //!   character it was, as is a bang a backslash stood in front of.
+//! - A link in a table's cell is drawn as the paragraph around the table
+//!   would draw it, against the same forge, but with no quiet address after
+//!   it: a column has no room to spare, and the whole address stays in the
+//!   table's source.
 //!
 //! Invariants:
 //!

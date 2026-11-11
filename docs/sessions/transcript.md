@@ -90,7 +90,8 @@ Two blocks in one selection give both. A rule, and a heading with its rule,
 copy as they are drawn, the words and then the rule. In the native screen, or
 with <kbd>Shift</kbd> held while you drag, your terminal copies what it shows.
 In both screens <kbd>Ctrl+O</kbd> lists the source of each drawn block, newest
-first, after any cut results: see
+first, after any cut results, and then every
+[address drawn shorter](#the-address-after-a-links-words): see
 [Results cut short](../reference/keys.md#results-cut-short).
 
 ## Drawn again at every width
@@ -237,6 +238,61 @@ the start of a line or after a space, an opening bracket or the mark of
 emphasis, is a link to the `https://` address that begins with it:
 `www.example.com` points to `https://www.example.com`. The address of every
 link is written as safe characters only, whatever a model put in it.
+
+## Pull requests, issues and commits
+
+An `https://` address on `github.com` or `gitlab.com`, or on the host of the
+repository you are in, that names one pull request, merge request, issue or
+commit is drawn as the reference people call it by, still a link to the whole
+address:
+
+| Address | In the repository you are in | Anywhere else |
+| --- | --- | --- |
+| `…/owner/repo/pull/1324` | `#1324` | `owner/repo#1324` |
+| `…/owner/repo/issues/1324` | `#1324` | `owner/repo#1324` |
+| `…/group/repo/-/merge_requests/12` | `!12` | `group/repo!12` |
+| `…/owner/repo/commit/58ed227aa01` | `58ed227` | `owner/repo@58ed227` |
+
+A number is at most 12 digits and a hash is 7 to 40 hexadecimal digits, of
+which the first 7 are drawn. On GitHub the repository is an owner and a name;
+on GitLab it may sit in subgroups, as in `group/sub/repo!3`. One trailing `/`
+is allowed. An address with anything after the item, such as a tab of the
+page, a query or an anchor, any other shape, or another host is an ordinary
+link. The same repository on another host is another repository, and is
+named in full.
+
+## The address after a link's words
+
+A link whose words are not its address is followed by a space and its quiet
+address in brackets, in the quiet grey: `[the guide](https://example.com/docs)`
+is drawn `the guide (example.com/docs)`. The address loses its scheme, or
+`mailto:`, and one wider than 24 columns is cut short with an ellipsis, `…`,
+or `...` in the ASCII glyph set. An address with a host keeps its host and
+first segment, `the guide (example.com/docs/…)`, and a path or an e-mail
+address keeps what fits; nothing before the ellipsis is wider than 24 columns,
+and a wide character that would cross that bound is left out. Words
+that link to a pull request, an issue or a commit are followed by its
+reference instead, as in `the fix (#1324)`. The quiet address is not a link,
+and a drag in the full screen copies the words without it.
+
+An image, `![the build passing](docs/images/build.png)`, is drawn as the link
+`[image: the build passing]`, or `[image]` with no words, followed by its
+quiet address; nothing is fetched. A `!` before any other bracket, or after a
+backslash, is drawn as itself. An address written as its own words, bare or
+between angle brackets, has nothing after it. In a table's cell a link is drawn
+as it is in prose, a reference included, but with no quiet address: the whole
+of it is in the table's source.
+
+A link in code, a key, a fence, display math, a mermaid diagram or a diff is
+drawn as the model wrote it, and so is every link and image in output with no
+colour, including output that is not a terminal.
+
+<kbd>Ctrl+O</kbd> lists the whole of every address drawn shorter than it was
+written, a reference or a quiet address cut at 24 columns, newest first, each
+under the word `address`, after the cut results and the drawn blocks. It
+keeps the newest 64; an older one is still in the
+[session log](sessions.md) as the answer wrote it. A bare number such as `#7`
+is not among them, since it was written that short.
 
 ## Tags
 
