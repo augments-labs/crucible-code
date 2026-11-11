@@ -1057,6 +1057,44 @@ fn leaving_first<L, T>(
     })
 }
 
+/// Settles what pictures are drawn with, before raw mode and the first frame,
+/// so what the terminal answers while the exchange waits, a first cursor
+/// position too late to decide anything included, is read before any key is;
+/// what it says later than every wait is left to the key reader, as
+/// `crucible_tui::graphics` says. Only a terminal on both sides is asked, and
+/// only where the configuration and the support table allow; what the input
+/// was is kept, so `/settings` draws by the same rule.
+fn settle_pictures<T: crucible_tui::Terminal>(
+    terms: &converse::Terms,
+    renderer: &mut Renderer<T>,
+    settings: &Settings,
+    from: &dyn Fn(&str) -> Option<String>,
+) {
+    terms
+        .style
+        .set(terms.style().reading_from(io::stdin().is_terminal()));
+    let picturing_on = picturing(
+        settings.images(),
+        settings,
+        renderer.is_terminal() && terms.style().input_terminal(),
+        graphics::Passthrough::Unknown,
+    );
+    let platform = terms.style().platform();
+    let passthrough = graphics::passthrough(from, platform, picturing_on);
+    terms.style.set(terms.style().passing(passthrough));
+    renderer.images(graphics::confirm(
+        graphics::select(
+            from,
+            platform,
+            graphics::Setting {
+                passthrough,
+                ..picturing_on
+            },
+        ),
+        graphics::Deadline::STARTUP,
+    ));
+}
+
 /// Builds everything, then hands over to the loop.
 fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), Fatal> {
     let here = std::env::current_dir().map_err(Fatal::Here)?;
@@ -1277,37 +1315,9 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         workspace: workspace.clone(),
     };
 
-    // What pictures are drawn with, settled here: after the background question,
-    // so the two exchanges never interleave on the wire, and before raw mode and
-    // the first frame, so what the terminal answers while the exchange waits,
-    // a first cursor position too late to decide anything included, is read
-    // before any key is; what it says later than every wait is left to the key
-    // reader, as `crucible_tui::graphics` says. Only a terminal on both sides is
-    // asked, and only where the configuration and the support table allow;
-    // what the input was is kept, so `/settings` draws by the same rule.
-    terms
-        .style
-        .set(terms.style().reading_from(io::stdin().is_terminal()));
-    let picturing_on = picturing(
-        settings.images(),
-        &settings,
-        renderer.is_terminal() && terms.style().input_terminal(),
-        graphics::Passthrough::Unknown,
-    );
-    let platform = terms.style().platform();
-    let passthrough = graphics::passthrough(&from, platform, picturing_on);
-    terms.style.set(terms.style().passing(passthrough));
-    renderer.images(graphics::confirm(
-        graphics::select(
-            &from,
-            platform,
-            graphics::Setting {
-                passthrough,
-                ..picturing_on
-            },
-        ),
-        graphics::Deadline::STARTUP,
-    ));
+    // After the background question, so the two exchanges never interleave on
+    // the wire, and before raw mode and the first frame.
+    settle_pictures(&terms, &mut renderer, &settings, &from);
 
     // Said once, now that the style is settled. It is what decides whether the
     // markers in the model's markdown are read or left where they are.
