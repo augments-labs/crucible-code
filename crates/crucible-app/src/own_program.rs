@@ -6,7 +6,8 @@
 //! every launch alike. That directory is refused when it is the user's home or
 //! the top of the file system, or is, lies within or contains a place no agent
 //! is made able to write; the one exception is a home search directory such as
-//! `~/.local/bin`, which may itself be read. A directory the sandbox already
+//! `~/.local/bin`, which may itself be read though it is listed as one, where
+//! no other such place lies there. A directory the sandbox already
 //! lets every program read gets no rule of its own, and any other is given
 //! read-only, never writable. Everything in that directory is readable to the
 //! agent while it runs.
@@ -253,8 +254,9 @@ fn signing_in(row: &AgentRow, started: Started, platform: Platform) -> Told {
 /// lies in, for its probe and its launch alike: refused where that directory
 /// is `home`, contains it, is `/`, or is, lies within or contains a place no
 /// agent is made able to write, crucible's own home `crucible` and its session
-/// logs `sessions` among them, but for a home search directory itself; no
-/// rule where the sandbox already reads it; else given read-only.
+/// logs `sessions` among them, but for a home search directory against its
+/// own listing; no rule where the sandbox already reads it; else given
+/// read-only.
 #[must_use]
 pub fn root(program: &Path, home: &Path, crucible: &Path, sessions: &Path) -> Root {
     decided(
@@ -293,13 +295,17 @@ pub(crate) fn decided(
     if let Some(why) = platform.unrecorded(root) {
         return Root::Refused(why);
     }
+    // A home search directory is excepted from its own listing alone, so
+    // another guarded place kept exactly there still refuses it.
     let searched = HOME_SEARCH
         .iter()
-        .any(|dir| overlap(root, &beneath(home, dir), Reach::Itself) == Some(Overlap::Is));
+        .copied()
+        .find(|dir| overlap(root, &beneath(home, dir), Reach::Itself) == Some(Overlap::Is));
     for place in guarded {
+        let excepted = searched.is_some() && place.listed == searched;
         for at in &place.at {
             match overlap(root, at, place.reach) {
-                Some(Overlap::Is) if searched => {}
+                Some(Overlap::Is) if excepted => {}
                 Some(found @ (Overlap::Is | Overlap::Within | Overlap::Contains)) => {
                     return Root::Refused(format!(
                         "{shown} {} {} ({}), so it is not given to an agent.",

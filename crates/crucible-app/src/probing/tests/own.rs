@@ -109,6 +109,29 @@ fn the_own_probe_refuses_a_root_that_is_home_or_never_writable() {
     assert!(why.contains("crucible's own home"), "{why}");
 }
 
+/// A home search directory is excepted only from its own listing: another
+/// guarded place that lies exactly there, as crucible's home kept in
+/// `~/.local/bin` with its session logs elsewhere, still refuses it.
+#[test]
+fn a_guarded_place_at_a_home_search_directory_is_refused() {
+    let (home, _, _) = places();
+    let crucible = under(&home, &[".local", "bin"]);
+    let sessions = Path::new("/").join("srv").join("sessions");
+
+    let decided = decided(
+        &crucible.join("agent"),
+        &home,
+        &guarded(&home, &crucible, &sessions),
+        Platform::Other,
+        &[],
+    );
+
+    let Root::Refused(why) = decided else {
+        panic!("{decided:?}");
+    };
+    assert!(why.contains("crucible's own home"), "{why}");
+}
+
 #[test]
 fn a_root_inside_the_runtime_mounts_gets_no_rule() {
     let (home, crucible, sessions) = places();

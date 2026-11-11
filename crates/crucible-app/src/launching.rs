@@ -2458,13 +2458,17 @@ pub(crate) struct Guarded {
     pub(crate) reach: Reach,
     /// Why it is guarded.
     pub(crate) why: &'static str,
+    /// Its path under the home as [`NEVER_WRITABLE`] lists it, where it is
+    /// one of those; none for crucible's home and its session logs, which may
+    /// lie anywhere.
+    pub(crate) listed: Option<&'static str>,
     /// Where it lies: as written, under the home once its links are followed,
     /// and where it leads itself.
     pub(crate) at: Vec<PathBuf>,
 }
 
 impl Guarded {
-    /// The place at `named`, which also lies at `elsewhere`.
+    /// The place at `named`, which also lies at `elsewhere`, listed nowhere.
     fn new(
         place: String,
         reach: Reach,
@@ -2485,6 +2489,7 @@ impl Guarded {
             place,
             reach,
             why,
+            listed: None,
             at,
         }
     }
@@ -2494,8 +2499,9 @@ impl Guarded {
 /// [`NEVER_WRITABLE`], the `crucible` home and the `sessions` directory.
 pub(crate) fn guarded(home: &Path, crucible: &Path, sessions: &Path) -> Vec<Guarded> {
     let real = resolved(home).ok();
-    let listed = NEVER_WRITABLE.iter().map(|place| {
-        Guarded::new(
+    let listed = NEVER_WRITABLE.iter().map(|place| Guarded {
+        listed: Some(place.path),
+        ..Guarded::new(
             format!("~/{}", place.path),
             place.reach,
             place.why,

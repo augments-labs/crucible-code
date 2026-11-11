@@ -542,7 +542,8 @@ not. Everything in the program's directory is readable to it during the probe
 and at every launch, where the network is open to its vendor. That directory
 is refused when it is your home or `/`, or is, lies within or contains a place
 no agent is made able to write, such as `~/.ssh` or crucible's home; `bin`,
-`.local/bin` and `.cargo/bin` in your home may themselves be read. Your home
+`.local/bin` and `.cargo/bin` in your home may themselves be read, unless
+crucible's home or its session logs are kept in one. Your home
 here is your own, the one crucible itself was started with (`HOME`, or
 `USERPROFILE` on Windows), even where the agent's entry gives the program a
 home of its own; where crucible knows no home of yours, a program whose
