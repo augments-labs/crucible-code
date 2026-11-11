@@ -17,9 +17,10 @@
 //! splice `/theme` writes with. What a running session can take is put in
 //! force the moment it is written: the theme, the syntax theme, the
 //! transcript's colours, the glyphs, the tool detail, the scroll rail, the
-//! wheel's speed and the key that sends.
-//! What only a start reads says so on its row, changed or not, and [`takes`]
-//! is where each row is given one answer or the other. A file that cannot be
+//! wheel's speed, the key that sends, and a protocol `output.images` names or
+//! `off`. What only a start reads says so on its row, changed or not — `auto`
+//! among them, since only a start asks the terminal — and [`takes`] is where
+//! each row is given one answer or the other. A file that cannot be
 //! written leaves a live change in force for this session and says so on the
 //! panel.
 //!
@@ -28,7 +29,10 @@
 //! file under it would be an answer that looks taken and does nothing.
 //! So is what only a screen of crucible's own draws, in a session drawn in the
 //! terminal's own buffer: the rail and the wheel's speed say `fullscreen mode
-//! only` there, for the same reason.
+//! only` there, for the same reason. A protocol the terminal support table
+//! does not draw where the session runs is not locked, since the file may be
+//! read somewhere it does, but its row says `not available`, and in which
+//! mode where the other mode draws it; the session draws text.
 //!
 //! What the start read is not read again, so what this panel wrote is kept on
 //! the terms, one entry a row, and a panel opened later shows it.
@@ -42,7 +46,7 @@ use crucible_client_api::{self as api, Name};
 use crucible_config::{Forced, Row as Setting_, RowId, Values};
 use crucible_tools::Mode;
 use crucible_tui::{
-    Caret, Glyphs, Key, Pressed, Renderer, Row, Slot, TabRow, Terminal, columns, fold,
+    Caret, Glyphs, Key, Pressed, Renderer, Row, Slot, TabRow, Terminal, columns, fold, graphics,
 };
 
 use crate::cli::client::{Out, astray};
@@ -118,6 +122,20 @@ struct Line {
     locked: Option<Lock>,
     /// Read only at the next start, which its row says.
     later: bool,
+    /// Where the protocol it names is not drawn, which its row says.
+    unavailable: Option<Unavailable>,
+}
+
+/// Where a protocol `output.images` names is not drawn, as the terminal
+/// support table has it for where the session runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Unavailable {
+    /// Not in native mode, which this session draws in; fullscreen draws it.
+    InNative,
+    /// Not in fullscreen mode, which this session draws in; native draws it.
+    InFullscreen,
+    /// In neither mode.
+    Anywhere,
 }
 
 /// Why a row cannot be changed from the panel.
@@ -371,12 +389,13 @@ fn settle<T: Terminal>(
     };
     match asked {
         Performed::Setting(Setting::Remembered) => {
-            line.later = match takes(row.id()) {
+            line.later = match takes(row.id(), &word) {
                 Takes::Now => !worn(row, &word, renderer, terms),
                 Takes::NextStart => true,
                 Takes::NextUse => false,
             };
             line.value.clone_from(&word);
+            line.unavailable = unavailable(terms, row.id(), &word);
             kept(terms, row, word);
             let said = format!("{} set to {}", row.label(), line.worded(glyphs));
             Some(if line.later {
@@ -389,6 +408,7 @@ fn settle<T: Terminal>(
             let note = format!("! not written: {problem}");
             panel.note = Some(if worn(row, &word, renderer, terms) {
                 line.value.clone_from(&word);
+                line.unavailable = unavailable(terms, row.id(), &word);
                 kept(terms, row, word);
                 format!("{note} {} in force for this session only", glyphs.dot())
             } else {
@@ -420,14 +440,16 @@ enum Takes {
     NextUse,
 }
 
-/// When a change to the row `id` reaches the running session.
+/// When a change of the row `id` to `word` reaches the running session.
 ///
 /// [`worn`] matches the same identity to put a change in force, and a test
 /// holds the two to one answer. Colour is a new start's: the palette's depth
 /// is settled from the terminal and the environment, and the syntax theme's
 /// colours are only read where colour is on, so turning it on or off is a
 /// palette resolved again rather than a value set on the one in force.
-const fn takes(id: RowId) -> Takes {
+/// Pictures turn on the word: `auto` is a question only a start asks the
+/// terminal, and a protocol or `off` is used without asking.
+fn takes(id: RowId, word: &str) -> Takes {
     match id {
         RowId::Theme
         | RowId::SyntaxTheme
@@ -446,6 +468,10 @@ const fn takes(id: RowId) -> Takes {
         | RowId::CacheRetention
         | RowId::CachePersistent
         | RowId::ScreenMode => Takes::NextStart,
+        RowId::Images => match crucible_config::ImageOutput::read(word) {
+            Some(crucible_config::ImageOutput::Auto) => Takes::NextStart,
+            _ => Takes::Now,
+        },
         RowId::UpdateCheck => Takes::NextUse,
     }
 }
@@ -498,6 +524,30 @@ fn worn<T: Terminal>(
             .parse::<u64>()
             .map(|seconds| terms.pinning.set(Duration::from_secs(seconds)))
             .is_ok(),
+        // A protocol or `off` is drawn with at once, never over a cell the
+        // support table disables nor where the start found either side not a
+        // terminal; inside tmux, a protocol named while whether tmux passes
+        // sequences through is still unknown asks it. `auto` is a question
+        // only a start asks, so it is not worn here.
+        RowId::Images => crucible_config::ImageOutput::read(word)
+            .filter(|images| *images != crucible_config::ImageOutput::Auto)
+            .map(|images| {
+                let style = terms.style();
+                let from = &*terms.environment;
+                let mut setting = crate::cli::picturing(
+                    images,
+                    &terms.settings,
+                    renderer.is_terminal() && style.input_terminal(),
+                    style.passthrough(),
+                );
+                if setting.passthrough == graphics::Passthrough::Unknown {
+                    setting.passthrough = graphics::passthrough(from, style.platform(), setting);
+                    terms.style.set(style.passing(setting.passthrough));
+                }
+                let candidate = graphics::select(from, style.platform(), setting);
+                renderer.images(graphics::unasked(candidate, renderer.terminal().cell()));
+            })
+            .is_some(),
         RowId::Colour
         | RowId::ScreenMode
         | RowId::Tone
@@ -507,6 +557,42 @@ fn worn<T: Terminal>(
         | RowId::CacheIsolation
         | RowId::CacheRetention
         | RowId::CachePersistent => false,
+    }
+}
+
+/// Where the protocol the row `id` names as `value` is not drawn: only the
+/// pictures row names one, and only where the support table, read for this
+/// session's platform, environment and tmux, disables the cell of the mode it
+/// draws in.
+fn unavailable(terms: &Terms, id: RowId, value: &str) -> Option<Unavailable> {
+    if id != RowId::Images {
+        return None;
+    }
+    let graphics::Wanted::Forced(protocol) =
+        crate::cli::pictures_wanted(crucible_config::ImageOutput::read(value)?)
+    else {
+        return None;
+    };
+    let style = terms.style();
+    let drawn = |screen| {
+        graphics::support(
+            &*terms.environment,
+            style.platform(),
+            screen,
+            protocol,
+            style.passthrough(),
+        ) == graphics::Support::Enabled
+    };
+    let native = drawn(crucible_tui::ScreenMode::Native);
+    let fullscreen = drawn(crucible_tui::ScreenMode::Fullscreen);
+    match crate::cli::drawn_on(terms.settings.screen()) {
+        crucible_tui::ScreenMode::Native if native => None,
+        crucible_tui::ScreenMode::Fullscreen if fullscreen => None,
+        crucible_tui::ScreenMode::Native if fullscreen => Some(Unavailable::InNative),
+        crucible_tui::ScreenMode::Fullscreen if native => Some(Unavailable::InFullscreen),
+        crucible_tui::ScreenMode::Native | crucible_tui::ScreenMode::Fullscreen => {
+            Some(Unavailable::Anywhere)
+        }
     }
 }
 
@@ -547,7 +633,8 @@ const fn fullscreen_only(id: RowId) -> bool {
         | RowId::CacheMode
         | RowId::CacheIsolation
         | RowId::CacheRetention
-        | RowId::CachePersistent => false,
+        | RowId::CachePersistent
+        | RowId::Images => false,
     }
 }
 
@@ -576,7 +663,8 @@ impl Line {
             | RowId::CacheMode
             | RowId::CacheIsolation
             | RowId::CacheRetention
-            | RowId::CachePersistent => None,
+            | RowId::CachePersistent
+            | RowId::Images => None,
         };
         let settled = terms
             .settled
@@ -602,9 +690,10 @@ impl Line {
         };
         Self {
             row,
-            value,
             locked,
-            later: takes(row.id()) == Takes::NextStart,
+            later: takes(row.id(), &value) == Takes::NextStart,
+            unavailable: unavailable(terms, row.id(), &value),
+            value,
         }
     }
 
@@ -620,13 +709,19 @@ impl Line {
         }
     }
 
-    /// What is said after the value: who set it, or when it is read.
+    /// What is said after the value: who set it, where what it names is not
+    /// drawn, or when it is read.
     fn aside(&self) -> Option<&'static str> {
         match self.locked {
             Some(Lock::Set(Forced::Project)) => Some("set by project config"),
             Some(Lock::Set(Forced::Environment)) => Some("set by the environment"),
             Some(Lock::FullscreenOnly) => Some("fullscreen mode only"),
-            None => self.later.then_some("applies at next start"),
+            None => match self.unavailable {
+                Some(Unavailable::InNative) => Some("not available in native mode"),
+                Some(Unavailable::InFullscreen) => Some("not available in fullscreen mode"),
+                Some(Unavailable::Anywhere) => Some("not available"),
+                None => self.later.then_some("applies at next start"),
+            },
         }
     }
 }

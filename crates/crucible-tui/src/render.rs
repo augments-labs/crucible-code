@@ -27,8 +27,12 @@
 //!
 //! A run whose output is redirected has no screen to own, and no frame either:
 //! text goes straight through at the moment it arrives, stripped of the escape
-//! bytes an untrusted string put in it. It keeps the same record all the same,
-//! so what separates one block from the next is decided once rather than twice.
+//! bytes an untrusted string put in it. The one line it holds back is a line
+//! that could still be the header of a table or the title of a heading,
+//! since what is written cannot be taken back: it goes out with its delta once
+//! it is known, and a table goes out whole. It keeps the same record all the
+//! same, so what separates one block from the next is decided once rather than
+//! twice.
 //! Nothing on that path can write an escape sequence, because nothing on it
 //! goes near one.
 
@@ -44,6 +48,7 @@ use crate::record::{Record, Source};
 use crate::row::Row;
 use crate::scroll_rail::{self, ScrollRail};
 use crate::select::{self, Place, Taken, View};
+use crate::terminal::graphics::Capability;
 use crate::terminal::keys::{Pressed, pressed, waiting};
 use crate::terminal::system::ResizeFlag;
 use crate::terminal::{Size, Terminal, TerminalError};
@@ -376,6 +381,14 @@ pub struct Renderer<T: Terminal> {
     painted: Painted,
     /// Reused across deltas: one run of text with its escape bytes taken out.
     free: String,
+    /// What a redirected run has been told and not yet written, because the
+    /// line it ends in may still be taken back.
+    ///
+    /// Empty on a screen, where a frame decides what is written. Bounded by
+    /// the header or title a line in doubt can be, and the row under it: past
+    /// [`markdown::HEADER_CAP`] bytes a line is prose, and goes out with the
+    /// delta it was found to be in.
+    unwritten: String,
     /// How far into an escape sequence streamed text is.
     ///
     /// Held across deltas because a sequence arrives split across two of them
@@ -465,6 +478,11 @@ pub struct Renderer<T: Terminal> {
     recall: Option<Arc<dyn Recall>>,
     /// What says the window changed size, where anything does.
     resizes: Option<ResizeFlag>,
+    /// What the session draws pictures with.
+    ///
+    /// Text until [`Renderer::images`] says otherwise, so a renderer nobody
+    /// told — a preview, a test, a redirected run — draws no picture.
+    images: Capability,
 }
 
 impl<T: Terminal> Renderer<T> {
@@ -506,6 +524,7 @@ impl<T: Terminal> Renderer<T> {
             size,
             painted: Painted::new(),
             free: String::new(),
+            unwritten: String::new(),
             escapes: Escapes::default(),
             markdown: Markdown::default(),
             arriving: Arriving::Nothing,
@@ -520,6 +539,7 @@ impl<T: Terminal> Renderer<T> {
             pointing: None,
             recall: None,
             resizes: None,
+            images: Capability::Text,
         }
     }
 
@@ -1187,10 +1207,12 @@ impl<T: Terminal> Renderer<T> {
     /// thing here that puts a character of its own in place of one the model
     /// wrote. The reader is told rather than replaced, since a change can
     /// arrive between two deltas of one answer and the scan has to go on where
-    /// it was. A table or a rule already written is laid out again in this
-    /// set now, since the record keeps the source it was written as; other
-    /// rows already written keep the characters they were drawn with, except
-    /// the opening, which the next resize lays out again in this set.
+    /// it was. A table, a rule or the rule under a heading already written is
+    /// laid out again in this set now, since the record keeps the source it
+    /// was written as, and so is a block written through
+    /// [`Self::responsive_in`], such as a tool's change; other rows already
+    /// written keep the characters they were drawn with, except the opening,
+    /// which the next resize lays out again in this set.
     pub fn draws(&mut self, glyphs: Glyphs) {
         self.glyphs = glyphs;
         self.markdown.draws(glyphs);
@@ -1298,6 +1320,22 @@ impl<T: Terminal> Renderer<T> {
         usize::try_from(self.notch).unwrap_or(1).max(1)
     }
 
+    /// Tells this renderer what the session draws pictures with.
+    ///
+    /// Said at startup, once the terminal was asked, and again whenever the
+    /// reader changes the setting. The cell is read again at each resize; a
+    /// window that stops reporting its pixels keeps the cell it had, and text
+    /// stays text.
+    pub fn images(&mut self, capability: Capability) {
+        self.images = capability;
+    }
+
+    /// What the session draws pictures with.
+    #[must_use]
+    pub const fn capability(&self) -> Capability {
+        self.images
+    }
+
     /// Tells this renderer whether the transcript has a scroll rail.
     ///
     /// Said at startup from the setting, and again whenever the reader changes
@@ -1355,6 +1393,7 @@ impl<T: Terminal> Renderer<T> {
             record,
             escapes,
             free,
+            unwritten,
             terminal,
             glyphs,
             ..
@@ -1364,6 +1403,7 @@ impl<T: Terminal> Renderer<T> {
             record,
             escapes,
             free,
+            unwritten,
             out: redirected.then_some(terminal),
             columns,
             glyphs: *glyphs,
@@ -1382,7 +1422,74 @@ impl<T: Terminal> Renderer<T> {
         });
         wrote?;
 
+        // What a file has been given cannot be taken back, so a line that may
+        // still be the header of a table or the title of a heading is not
+        // written until it is known.
+        self.written_out(self.markdown.in_doubt())?;
+
         self.draw()
+    }
+
+    /// Reads a line that may still be the header of a table or the title of a
+    /// heading as the prose it was said to be, for a call that is about to end
+    /// the line it is on.
+    fn undoubted(&mut self) -> Result<(), TerminalError> {
+        if !self.markdown.in_doubt() {
+            return Ok(());
+        }
+
+        let columns = self.folds();
+        let redirected = !self.terminal.is_terminal();
+        let theme = self.palette.theme();
+        let Self {
+            markdown,
+            record,
+            escapes,
+            free,
+            unwritten,
+            terminal,
+            glyphs,
+            ..
+        } = self;
+
+        let mut taking = Taking {
+            record,
+            escapes,
+            free,
+            unwritten,
+            out: redirected.then_some(terminal),
+            columns,
+            glyphs: *glyphs,
+            theme,
+        };
+        let mut wrote = Ok(());
+        markdown.undoubted(columns, &mut |said| {
+            let said = taking.said(said);
+            if wrote.is_ok() {
+                wrote = said;
+            }
+        });
+        wrote?;
+        self.written_out(false)
+    }
+
+    /// Writes what a redirected run has been told and kept back: all of it,
+    /// or with `doubtful` the lines that are whole, leaving the one that may
+    /// still be taken back.
+    fn written_out(&mut self, doubtful: bool) -> Result<(), TerminalError> {
+        let whole = if doubtful {
+            self.unwritten.rfind('\n').map_or(0, |at| at + 1)
+        } else {
+            self.unwritten.len()
+        };
+        if whole == 0 {
+            return Ok(());
+        }
+
+        let kept = self.unwritten.split_off(whole);
+        let wrote = self.terminal.write(&self.unwritten);
+        self.unwritten = kept;
+        wrote
     }
 
     /// Writes a line that is finished and will never be re-read.
@@ -1396,10 +1503,15 @@ impl<T: Terminal> Renderer<T> {
     /// taken: the divider is already the row that parts what follows, and a
     /// blank one under it would part the new session from its own start.
     ///
+    /// A line of an answer that may still be the header of a table or the title of
+    /// a heading is ended as the prose it was said to be first, as
+    /// [`Renderer::present`] does: what is committed is under it.
+    ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn commit(&mut self, line: &str) -> Result<(), TerminalError> {
+        self.undoubted()?;
         if line.is_empty() && self.record.divided() {
             return Ok(());
         }
@@ -1433,6 +1545,7 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn present(&mut self, rows: &[Row]) -> Result<(), TerminalError> {
+        self.undoubted()?;
         if !self.terminal.is_terminal() {
             // The line still open has already gone out without its ending, so
             // the ending is owed before anything is written under it.
@@ -1466,6 +1579,10 @@ impl<T: Terminal> Renderer<T> {
     /// over, charged against that record's ceiling. Each width it is handed is
     /// [`Self::transcript_columns`], as for [`Self::present`].
     ///
+    /// A line of an answer that may still be the header of a table or the title of
+    /// a heading is ended as the prose it was said to be first, as
+    /// [`Self::present`] does: the block is under it.
+    ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
@@ -1475,11 +1592,38 @@ impl<T: Terminal> Renderer<T> {
         retained: usize,
         lay: Box<dyn Fn(usize) -> Vec<Row>>,
     ) -> Result<(), TerminalError> {
+        self.undoubted()?;
         if !self.terminal.is_terminal() {
             return self.present(&lay(self.transcript_columns()));
         }
 
         self.record.responsive(retained, lay);
+        self.draw()
+    }
+
+    /// Writes a responsive block drawn in a glyph set.
+    ///
+    /// As [`Self::responsive`], with the glyph set [`Self::draws`] last named
+    /// handed to the closure beside the width: the block is laid out again in
+    /// the set a reader switches to, as well as at each new width, so a change
+    /// a tool made is never left on the screen in characters they turned away
+    /// from.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn responsive_in(
+        &mut self,
+        retained: usize,
+        lay: Box<dyn Fn(usize, Glyphs) -> Vec<Row>>,
+    ) -> Result<(), TerminalError> {
+        self.undoubted()?;
+        if !self.terminal.is_terminal() {
+            return self.present(&lay(self.transcript_columns(), self.glyphs));
+        }
+
+        self.record.responsive_in(retained, self.glyphs, lay);
         self.draw()
     }
 
@@ -1490,7 +1634,8 @@ impl<T: Terminal> Renderer<T> {
     /// the rows laid for the width there is now are what is charged, so they
     /// are laid out once, and not a second time to be measured. A source much
     /// larger than what it lays, such as one clipped at a narrow width, goes
-    /// through [`Self::responsive`] with its own size instead.
+    /// through [`Self::responsive`] with its own size instead. A line still in
+    /// doubt is ended first, as there.
     ///
     /// # Errors
     ///
@@ -1499,6 +1644,7 @@ impl<T: Terminal> Renderer<T> {
         &mut self,
         lay: Box<dyn Fn(usize) -> Vec<Row>>,
     ) -> Result<(), TerminalError> {
+        self.undoubted()?;
         if !self.terminal.is_terminal() {
             return self.present(&lay(self.transcript_columns()));
         }
@@ -1520,6 +1666,10 @@ impl<T: Terminal> Renderer<T> {
     /// named, so a card laid out again after the reader changed it is drawn
     /// in the set they chose.
     ///
+    /// A line of an answer that may still be the header of a table or the title of
+    /// a heading is ended as the prose it was said to be first, as
+    /// [`Self::present`] does: the opening is under it.
+    ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
@@ -1527,6 +1677,7 @@ impl<T: Terminal> Renderer<T> {
         &mut self,
         lay: Box<dyn Fn(usize, Glyphs) -> Vec<Row>>,
     ) -> Result<(), TerminalError> {
+        self.undoubted()?;
         if !self.terminal.is_terminal() {
             // Nothing will resize a file, so holding what could draw it again
             // would be holding it for an event that cannot arrive.
@@ -1768,6 +1919,7 @@ impl<T: Terminal> Renderer<T> {
             record,
             escapes,
             free,
+            unwritten,
             terminal,
             glyphs,
             ..
@@ -1777,6 +1929,7 @@ impl<T: Terminal> Renderer<T> {
             record,
             escapes,
             free,
+            unwritten,
             out: redirected.then_some(terminal),
             columns,
             glyphs: *glyphs,
@@ -1791,6 +1944,7 @@ impl<T: Terminal> Renderer<T> {
             }
         });
         wrote?;
+        self.written_out(false)?;
 
         // The markers belong to the message that is ending. A fence the model
         // opened and never closed would otherwise read the tool result under it
@@ -1880,12 +2034,20 @@ impl<T: Terminal> Renderer<T> {
     /// out the next one.
     ///
     /// A size the terminal could not report is no news of a size, and the one
-    /// already known is kept.
+    /// already known is kept; so is a cell, read again here where pictures are
+    /// drawn.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn resized(&mut self) -> Result<(), TerminalError> {
+        // Read before the size is compared, since a window can keep its count
+        // of cells and change their pixels; text asks nothing.
+        if let Capability::Graphics { protocol, .. } = self.images
+            && let Some(cell) = self.terminal.cell()
+        {
+            self.images = Capability::Graphics { protocol, cell };
+        }
         let Ok(size) = self.terminal.size() else {
             return Ok(());
         };
@@ -1950,10 +2112,19 @@ impl<T: Terminal> Renderer<T> {
     /// A reply hung by [`Renderer::hangs`] is let go of unmarked, as the full
     /// screen marks nothing of a reply that emptied the transcript.
     ///
+    /// On a screen, a line of an answer that may still be the header of a
+    /// table or the title of a heading is ended as the prose it was said to
+    /// be first, as [`Renderer::present`] does: what follows is under it.
+    /// Output that is not a terminal keeps what was written to it, and the
+    /// line goes on there.
+    ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn empties(&mut self) -> Result<(), TerminalError> {
+        if self.terminal.is_terminal() {
+            self.undoubted()?;
+        }
         self.record.unhangs();
         self.native_empties()?;
         match self.native {
@@ -1982,10 +2153,15 @@ impl<T: Terminal> Renderer<T> {
     /// the question before it can answer, and the record only lets go of a line
     /// once that line can no longer change.
     ///
+    /// A line of an answer that may still be the header of a table or the title of
+    /// a heading is ended as the prose it was said to be first, as
+    /// [`Renderer::present`] does.
+    ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn prompt(&mut self, slot: Slot, text: &str) -> Result<(), TerminalError> {
+        self.undoubted()?;
         self.take(slot, text)?;
         self.draw()
     }
@@ -2223,6 +2399,11 @@ impl<T: Terminal> Renderer<T> {
     /// copies it. A command that emptied the record is handled by the record's
     /// stable line numbering: only output written after that reset is changed.
     ///
+    /// On a screen the line still open is ended, and one that may still be the
+    /// header of a table or the title of a heading is ended as the prose it
+    /// was said to be first, as [`Renderer::present`] does: what follows is
+    /// under it.
+    ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be redrawn.
@@ -2235,6 +2416,7 @@ impl<T: Terminal> Renderer<T> {
             return Ok(());
         }
 
+        self.undoubted()?;
         self.record.subordinate(from, glyphs.hangs());
         self.draw()
     }
@@ -2368,6 +2550,7 @@ impl<T: Terminal> Renderer<T> {
             record,
             escapes,
             free,
+            unwritten,
             terminal,
             glyphs,
             ..
@@ -2377,12 +2560,14 @@ impl<T: Terminal> Renderer<T> {
             record,
             escapes,
             free,
+            unwritten,
             out: redirected.then_some(terminal),
             columns,
             glyphs: *glyphs,
             theme,
         }
-        .take(slot, text, None)
+        .take(slot, text, None);
+        self.written_out(false)
     }
 
     /// The row that tells of a block the reader is holding, drawn `columns`
@@ -2553,6 +2738,9 @@ struct Taking<'a, T: Terminal> {
     free: &'a mut String,
     /// `None` on a screen, where a frame decides when a row is written.
     out: Option<&'a mut T>,
+    /// What `out` has been told and not yet been given, because the line it is
+    /// part of may still be taken back.
+    unwritten: &'a mut String,
     /// The width a block is laid out for, where it is written out.
     columns: usize,
     /// The glyph set and theme a block is laid out in.
@@ -2564,8 +2752,18 @@ impl<T: Terminal> Taking<'_, T> {
     /// Add what the reader said: a run of text, or a whole block.
     fn said(&mut self, said: Said<'_>) -> Result<(), TerminalError> {
         match said {
-            Said::Run { slot, text, link } => self.take(slot, text, link),
+            Said::Run { slot, text, link } => {
+                self.take(slot, text, link);
+                Ok(())
+            }
             Said::Block(block) => self.block(block),
+            Said::Retract => {
+                self.record.retract();
+                // Only the line, and not the lines kept back with it.
+                let kept = self.unwritten.rfind('\n').map_or(0, |at| at + 1);
+                self.unwritten.truncate(kept);
+                Ok(())
+            }
         }
     }
 
@@ -2585,6 +2783,8 @@ impl<T: Terminal> Taking<'_, T> {
         // A redirected run is written the block as it is laid out now, row by
         // row: a file has one width, and it is this one.
         if let Some(out) = &mut self.out {
+            out.write(self.unwritten)?;
+            self.unwritten.clear();
             for row in markdown::lay(&block, self.columns, self.glyphs, self.record.links()) {
                 out.write(&row.text())?;
                 out.write("\n")?;
@@ -2601,7 +2801,7 @@ impl<T: Terminal> Taking<'_, T> {
     /// there: a row of the record is spans this program painted from a
     /// palette, and a byte of a redirected run's output is one this program
     /// meant to write.
-    fn take(&mut self, slot: Slot, text: &str, link: Option<&str>) -> Result<(), TerminalError> {
+    fn take(&mut self, slot: Slot, text: &str, link: Option<&str>) {
         let escapes = &mut *self.escapes;
         self.free.clear();
         // A format character goes with the escapes: it would reorder or hide
@@ -2616,9 +2816,8 @@ impl<T: Terminal> Taking<'_, T> {
         // The address never reaches a redirected run. What that run is written
         // is what the row says, and an address a terminal would have swallowed
         // is bytes in the middle of a file somebody is going to read.
-        match &mut self.out {
-            Some(out) => out.write(self.free),
-            None => Ok(()),
+        if self.out.is_some() {
+            self.unwritten.push_str(self.free);
         }
     }
 }

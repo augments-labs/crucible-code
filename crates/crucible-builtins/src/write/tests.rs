@@ -674,6 +674,8 @@ fn replacing_a_file_shows_what_went_and_what_came_in_its_place() {
         .collect();
 
     assert_eq!((diff.added(), diff.removed()), (1, 1));
+    // Named as the model asked for it, as the call row above it is.
+    assert_eq!(diff.path(), Some("one.txt"));
     assert_eq!(
         block,
         [
@@ -693,6 +695,7 @@ fn a_file_that_was_not_there_is_shown_as_lines_that_are_all_new() {
 
     let diff = output.diff().expect("the change the call made");
     assert_eq!((diff.added(), diff.removed()), (2, 0));
+    assert_eq!(diff.path(), Some("one.txt"));
     assert!(
         diff.lines()
             .iter()

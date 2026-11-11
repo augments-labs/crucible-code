@@ -3,7 +3,6 @@ source: tests/whole_screen/main.rs
 expression: config
 ---
 80x30 cursor 29,0 scrolled 0
-|                                                                               │|
 |› /settings                                                                    ●|
 |────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
@@ -31,5 +30,6 @@ expression: config
 |  Cache isolation                                session · applies at next start|
 |  Cache retention                        providerDefault · applies at next start|
 |  Persistent cache                                forbid · applies at next start|
+|  Images                                            auto · applies at next start|
 |                                                                                |
 |↑↓ to walk · enter changes · / to search · ←→ tabs · esc to close               |

@@ -38,7 +38,6 @@ use crate::docked::{
     Batched, Chosen, Dock, Docked, Drafted, Editing, Focus, Member, Offer, Phase, Scrolled,
 };
 use crate::expanded::{Expanded, Shown};
-use crate::glyphs::Glyphs;
 use crate::key_panel::KeyPanel;
 use crate::ladder::Ladder;
 use crate::markdown::corpus_pictures::laid;
@@ -55,37 +54,10 @@ use crate::sandbox_panel::{SandboxPanel, SandboxTab};
 use crate::scroll_rail::{Place, ScrollRail};
 use crate::shelf::{Pane, Serving, Shelf, Stocked};
 use crate::tab_row::TabRow;
+use crate::testing::{across, down};
 use crate::timeline::{Brief, Timeline, Told};
 use crate::welcome::{Recent, Welcome};
 use crate::working::Working;
-
-/// Every width worth walking: one column, and on past the widest terminal
-/// anybody works in.
-///
-/// From one rather than from nothing, because a window of no columns is not a
-/// window. A terminal that will not say its size is given
-/// [`Size::FALLBACK`](crate::Size::FALLBACK) instead of a zero, and the one
-/// component that draws into a nought-column window does it on purpose — the
-/// prompt mark, so that a record says a prompt was asked — with its own test
-/// beside it saying so.
-const WIDTHS: std::ops::RangeInclusive<usize> = 1..=200;
-
-/// Every room worth walking, for the components that are given one.
-///
-/// From no rows at all — which is what a window with something already standing
-/// in it has left — through every height a component decides something at, and
-/// on past an ordinary terminal.
-///
-/// A list rather than the range the widths are, because the two are not the
-/// same kind of axis. Width is where the wrapping arithmetic lives, and it is
-/// wrong at one column and right at the next. Height is where a component picks
-/// which rung of its ladder to draw, and those are counted in single rows near
-/// the bottom and nowhere near the top.
-const ROOMS: [usize; 11] = [0, 1, 2, 3, 4, 5, 6, 8, 12, 24, 40];
-
-/// Both fonts, because a component picks its glyphs by which it was handed and
-/// the two are not the same width.
-const FONTS: [Glyphs; 2] = [Glyphs::Unicode, Glyphs::Ascii];
 
 /// Prose long enough to break at every width in the sweep, in words short
 /// enough that where it breaks is the layout's decision rather than one word's.
@@ -106,48 +78,6 @@ const WIDE: &str = "\u{691c}\u{7d22}\u{304c} \u{9014}\u{4e2d}\u{3067} \u{6b62}\u
 /// characters is wider than this one is.
 const MARKED: &str = "a re\u{301}sume\u{301} of a nai\u{308}ve cafe\u{301} that stops \
                       partway through, and says so on the ro\u{302}w it stopped on";
-
-/// Sweeps `laid` across every width in both fonts.
-#[track_caller]
-fn across(what: &str, laid: impl Fn(usize, Glyphs) -> Vec<Row>) {
-    for glyphs in FONTS {
-        for columns in WIDTHS {
-            within(&laid(columns, glyphs), columns, what, glyphs);
-        }
-    }
-}
-
-/// The same, across every room as well, checking the height too.
-#[track_caller]
-fn down(what: &str, laid: impl Fn(usize, usize, Glyphs) -> Vec<Row>) {
-    for glyphs in FONTS {
-        for columns in WIDTHS {
-            for room in ROOMS {
-                let rows = laid(columns, room, glyphs);
-                within(&rows, columns, what, glyphs);
-                assert!(
-                    rows.len() <= room,
-                    "{what} drew {} rows into a window with room for {room}, at {columns} \
-                     columns with {glyphs:?}",
-                    rows.len()
-                );
-            }
-        }
-    }
-}
-
-/// Asserts that nothing in `rows` reaches past column `columns`.
-#[track_caller]
-fn within(rows: &[Row], columns: usize, what: &str, glyphs: Glyphs) {
-    for row in rows {
-        assert!(
-            row.columns() <= columns,
-            "{what} drew {} columns into a window {columns} wide with {glyphs:?}: {:?}",
-            row.columns(),
-            row.text()
-        );
-    }
-}
 
 #[test]
 fn a_framed_block_fits_the_window_it_stands_in() {
@@ -176,6 +106,20 @@ fn a_fence_in_its_frame_fits_the_window_it_is_drawn_in() {
         across("a fence", |columns, glyphs| {
             laid(&format!("```rust\n{code}\n```\n"), columns, glyphs)
         });
+    }
+}
+
+#[test]
+fn an_alert_fits_the_window_it_is_drawn_in() {
+    // The bar and the mark take their columns on every row of it, and the
+    // header's word is bold, so a window of any width has to hold the row
+    // each fixture is cut into: the words after the marker and the ones below.
+    for kind in ["NOTE", "TIP", "IMPORTANT", "WARNING", "CAUTION"] {
+        for body in [PROSE, LONG, WIDE, MARKED] {
+            across("an alert", |columns, glyphs| {
+                laid(&format!("> [!{kind}]\n> {body}\n"), columns, glyphs)
+            });
+        }
     }
 }
 

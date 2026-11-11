@@ -2,19 +2,19 @@
 source: crates/crucible-tui/src/markdown/corpus_pictures.rs
 expression: "pictured(\"alerts\", 40, Glyphs::Ascii)"
 ---
-<Quiet>|</><Quiet> </>[!NOTE]                               
-<Quiet>|</><Quiet> </><Quote>Useful information.</>                   
+<Quiet>|</><Quiet> </><Link>*</> <Bold>Note</>                                
+<Quiet>|</><Quiet> </>Useful information.                   
                                         
-<Quiet>|</><Quiet> </>[!TIP]                                
-<Quiet>|</><Quiet> </><Quote>A shortcut worth taking.</>              
+<Quiet>|</><Quiet> </><Done>+</> <Bold>Tip</>                                 
+<Quiet>|</><Quiet> </>A shortcut worth taking.              
                                         
-<Quiet>|</><Quiet> </>[!IMPORTANT]                          
-<Quiet>|</><Quiet> </><Quote>Something that must not be missed.</>    
+<Quiet>|</><Quiet> </><Accent>#</> <Bold>Important</>                           
+<Quiet>|</><Quiet> </>Something that must not be missed.    
                                         
-<Quiet>|</><Quiet> </>[!WARNING]                            
-<Quiet>|</><Quiet> </><Quote>Something that could go wrong.</>        
+<Quiet>|</><Quiet> </><Doing>!</> <Bold>Warning</>                             
+<Quiet>|</><Quiet> </>Something that could go wrong.        
                                         
-<Quiet>|</><Quiet> </>[!CAUTION]                            
-<Quiet>|</><Quiet> </><Quote>Something that could go wrong badly.</>  
+<Quiet>|</><Quiet> </><Trouble>x</> <Bold>Caution</>                             
+<Quiet>|</><Quiet> </>Something that could go wrong badly.  
                                         
 The corpus ends here.

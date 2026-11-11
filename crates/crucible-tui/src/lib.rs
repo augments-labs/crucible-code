@@ -38,7 +38,8 @@ mod color;
 #[cfg(test)]
 mod colour_rule;
 mod docked;
-#[cfg(test)]
+pub mod drawing;
+#[cfg(any(test, feature = "testing"))]
 mod dump;
 mod editor;
 mod escape;
@@ -69,6 +70,8 @@ mod shelf;
 pub mod syntax;
 mod tab_row;
 mod terminal;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 mod timeline;
 mod title;
 mod welcome;
@@ -106,6 +109,7 @@ pub use running::{Command, Running};
 pub use sandbox_panel::{SandboxPanel, SandboxTab};
 pub use shelf::{Pane, Resting, Serving, Shelf, Stocked};
 pub use tab_row::TabRow;
+pub use terminal::graphics;
 pub use terminal::ground::asked;
 pub use terminal::keyboard::{Pasting, Spelling};
 pub use terminal::keys::{Characters, Pressed, characters, pressed, waiting};
