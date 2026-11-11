@@ -1,6 +1,6 @@
 //! Google's Antigravity agent, spoken to over the Agent Client Protocol: a
 //! release crucible installs, run in a profile of its own, or the user's own
-//! program, run with the sign-in it already keeps.
+//! program, run with no profile, so it looks in its usual home.
 //!
 //! [`Antigravity`] is the protocol's client run as a release the catalog
 //! reviewed: the entry keyed [`AGENT`], from the catalog most lately believed
@@ -15,8 +15,9 @@
 //! [`Antigravity::own`] is the client run as the user's own program instead,
 //! such as Google's `agy`, found under one of the [`COMMANDS`] or named by its
 //! path: it is admitted by what it answers, as [`Manifest::admits_own`] says,
-//! never by its name or version, and uses the sign-in its user already gave
-//! it unless the user names a profile for it. [`own_note`] tells the user so.
+//! never by its name or version, and is given no profile unless the user
+//! names one, so it looks for its sign-in in its usual home, which the sandbox
+//! hides. [`own_note`] tells the user which sign-in that leaves it.
 //!
 //! It signs in by any of the four methods [`methods`] lists, the one asked
 //! for named by the user.
@@ -194,10 +195,10 @@ impl Antigravity {
 
     /// The wire for the user's own program at `program`, its canonical path:
     /// it is admitted by what it answers rather than as a release `offered`,
-    /// and is started as `agy acp`, unless its file is named as a release's
-    /// program is, when it is started as the newest release `offered` is.
-    /// With no profile it is given no home, so it reads the sign-in it
-    /// already keeps; one the user names is its home, as for a release.
+    /// and is started with the single argument `acp`, unless its file is
+    /// named as a release's program is, when it is started as the newest
+    /// release `offered` is. With no profile it is given no home, so it looks
+    /// in its usual one; one the user names is its home, as for a release.
     #[must_use]
     pub fn own(program: &std::path::Path, allowing: Allowing, offered: &[OwnedPin]) -> Self {
         let mut own = Self::new(Acp::allowing(OWN_PROFILE, allowing), offered);

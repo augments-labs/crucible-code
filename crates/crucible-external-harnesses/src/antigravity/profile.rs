@@ -12,8 +12,8 @@
 //! crucible makes is never one another Google product shares: a release from
 //! the store is refused a launch without one, since its usual home is the one
 //! the Antigravity IDE signs in under. The user's own program is given none
-//! unless the user names one, so it uses the sign-in its user already gave it,
-//! its token still in a file.
+//! unless the user names one, so it looks for its sign-in in its usual home,
+//! which the sandbox hides, its token still in a file.
 //!
 //! A business sign-in is billed to a Google Cloud project in a location,
 //! which the agent reads from its own settings file in the profile and from

@@ -1071,7 +1071,7 @@ impl Agent {
     /// program outside the store is the user's own, [`Origin::Own`], and no
     /// release of the catalog's. A release of an agent whose row needs a
     /// profile directory is started only with one, while the user's own
-    /// program uses the sign-in its user already gave it. A version that
+    /// program is given none and looks in its usual home. A version that
     /// holds a launcher is started through it or not at all.
     ///
     /// # Errors
@@ -1109,7 +1109,7 @@ impl Agent {
         };
         // A release whose usual home another program of its vendor shares is
         // started only in a profile of its own; the user's own program, which
-        // returned above, uses the sign-in its user already gave it.
+        // returned above, is given none and looks in its usual home.
         if let AgentRow::Built(built) = &self.row
             && built.driver.profile_needed()
             && self.profile.is_none()

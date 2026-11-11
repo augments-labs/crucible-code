@@ -1921,7 +1921,7 @@ fn either(agent: &str, stored: &Path, own: &Path, note: Option<&str>) -> Confirm
             ),
             (
                 "Your own program".to_owned(),
-                format!("Run {}, signed in as it already is.", own.display()),
+                format!("Run {} with no profile of its own.", own.display()),
             ),
             ("Go back".to_owned(), "Choose another agent.".to_owned()),
         ],
@@ -1932,7 +1932,7 @@ fn either(agent: &str, stored: &Path, own: &Path, note: Option<&str>) -> Confirm
 /// written beside the user file in `home`: one whose release shares its usual
 /// home with another program of its vendor is given a profile directory of
 /// its own there, unless it runs the user's own program, as `own` says, which
-/// uses the sign-in its user already gave it.
+/// is given none, so it looks for its sign-in in its usual home.
 fn unwritten(
     home: &Path,
     row: &'static crate::backends::Row,
@@ -2630,6 +2630,30 @@ mod tests {
             stored_instance.profile(),
             Some(profile.to_string_lossy().as_ref())
         );
+    }
+
+    /// The choice of the user's own program says what it is run with, which
+    /// holds with the sandbox on and off, and leaves whose sign-in it then
+    /// sees to the note beside it, which differs between the two.
+    #[test]
+    fn the_own_program_s_choice_holds_with_the_sandbox_on_and_off() {
+        let stored = Path::new("/home/programs/antigravity/1.4.1/agy_acp_server.par");
+        let own = Path::new("/usr/local/bin/agy");
+        for sandboxed in [false, true] {
+            let question = either("Antigravity", stored, own, Some(own_note(sandboxed)));
+
+            let says = question
+                .choices
+                .iter()
+                .find(|(name, _)| name == "Your own program")
+                .map(|(_, says)| says.as_str());
+
+            assert_eq!(
+                says,
+                Some(format!("Run {} with no profile of its own.", own.display()).as_str()),
+                "sandboxed: {sandboxed}"
+            );
+        }
     }
 
     fn method(id: &str, name: &str) -> AuthMethod {
