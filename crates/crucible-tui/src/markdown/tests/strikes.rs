@@ -33,14 +33,6 @@ fn cut_at(answer: &str, cuts: &[usize]) -> (String, Vec<Slot>) {
     picture(ended_in(&pieces))
 }
 
-/// Holds `answer` to drawing what it draws whole, wherever it is cut in two.
-fn drawn_the_same_cut_anywhere(answer: &str) {
-    let whole = picture(ended(answer));
-    for cut in (1..answer.len()).filter(|cut| answer.is_char_boundary(*cut)) {
-        assert_eq!(cut_at(answer, &[cut]), whole, "{answer:?} cut at {cut}");
-    }
-}
-
 #[test]
 fn single_tildes_strike_the_phrase_between_them() {
     assert_eq!(struck("~one~ and ~/Projects and cd ~/a and ~/b\n"), "one");
@@ -305,7 +297,10 @@ fn an_answer_with_single_tildes_draws_the_same_wherever_it_is_cut() {
         "a ~b\nc\n===\nd~ e\n",
         "**bold _italic_ bold** and ***both***\n",
     ] {
-        drawn_the_same_cut_anywhere(answer);
+        let whole = picture(ended(answer));
+        for cut in (1..answer.len()).filter(|cut| answer.is_char_boundary(*cut)) {
+            assert_eq!(cut_at(answer, &[cut]), whole, "{answer:?} cut at {cut}");
+        }
     }
 }
 
