@@ -59,6 +59,7 @@ import tempfile
 import threading
 import time
 import tomllib
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 
 MANIFEST = "scripts/required-cases.json"
@@ -83,10 +84,13 @@ PREDICATES = {"package": "#", "binary": "#", "test": "~"}
 
 
 def processors():
-    """The processors this process may run on, as nextest counts them for its threads.
+    """The processors this process may run on.
 
     Where the system can say, that is the processors the process is allowed,
     which a container or `taskset` can make fewer than the machine has.
+    nextest counts with Rust's `available_parallelism`, which also lowers the
+    count to a cgroup's CPU quota, so in a container with a quota this can
+    count more than nextest does.
     """
     if hasattr(os, "sched_getaffinity"):
         return len(os.sched_getaffinity(0))
@@ -298,6 +302,7 @@ def self_test():
         "package({pa,pb})",
         "binary([^a]*)",
         "test(/(/)",
+        "test(/[[:digit:]]x/)",
     ):
         try:
             selector(expression)
@@ -345,6 +350,7 @@ def self_test():
             (b"[[profile.default.overrides]]\nfilter = 5\ntest-group = 'confined'\n", "teach"),
             (b"[[profile.default.overrides]]\nfilter = 'package(a)'\nthreads-required = 2\n", "teach"),
             (b"[profile.ci]\ntest-threads = 4\n", "teach"),
+            (b"[profile.default]\nthreads-required = 2\n", "teach"),
         ):
             with open(path, "wb") as file:
                 file.write(written)
@@ -410,6 +416,20 @@ def self_test():
     )
     if jobs != [[("a", "lib", "a"), ("b", "lib", "b"), ("c", "lib", "c")]]:
         print(f"    FAIL a binary in two groups let one group's reruns run beside it: {jobs}")
+        return 1
+
+    affinity, count = getattr(os, "sched_getaffinity", None), os.cpu_count
+    os.sched_getaffinity, os.cpu_count = (lambda pid: {0, 1}), (lambda: 5)
+    try:
+        allowed = processors()
+    finally:
+        os.cpu_count = count
+        if affinity is None:
+            del os.sched_getaffinity
+        else:
+            os.sched_getaffinity = affinity
+    if allowed != 2:
+        print(f"    FAIL {allowed} processors were counted where the process may run on 2 of 5")
         return 1
 
     guarded = threading.Lock()
@@ -487,6 +507,23 @@ def self_test():
         rerun({key: key[2] for key in many}, many, {}, counted, width=lambda: 2)
     if now[1] > 2:
         print(f"    FAIL {now[1]} binary reruns went at once where two processors allow two")
+        return 1
+
+    # Grouped with d, a reruns after b and c, so lines printed as the reruns
+    # finished, or in the order they were scheduled, would name b before a.
+    late = {(name, "lib", name): [(None, "one", None)] for name in "abcd"}
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        rerun(
+            {key: key[2] for key in late},
+            late,
+            {"confined": lambda package, binary, test: package in ("a", "d")},
+            lambda binary, names: len(names) - (binary in ("a", "b")),
+            width=lambda: 1,
+        )
+    lines = printed.getvalue().splitlines()
+    if len(lines) != 2 or " in a lib a " not in lines[0] or " in b lib b " not in lines[1]:
+        print(f"    FAIL reruns that did not all pass were not printed in name order: {lines}")
         return 1
 
     with tempfile.TemporaryDirectory() as root:
@@ -707,12 +744,16 @@ def name_matcher(text, default):
 
     nextest reads an escape in the first three, and an alternation and a `[^`
     negated class in a glob, which fnmatch would take as they stand, so all
-    three are refused, as is a regex Python cannot compile.
+    three are refused, as is a regex Python cannot compile. So is one Python
+    warns it may read otherwise, which is where Rust's class syntax, such as
+    `[[:digit:]]` or `&&`, departs from Python's.
     """
     if len(text) > 1 and text.startswith("/") and text.endswith("/"):
         try:
-            pattern = re.compile(text[1:-1])
-        except re.error as error:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", FutureWarning)
+                pattern = re.compile(text[1:-1])
+        except (re.error, FutureWarning) as error:
             raise ValueError(f"cannot read {text!r} as a regex ({error})") from error
         return lambda value: pattern.search(value) is not None
     form, body = (text[0], text[1:]) if text[:1] in ("=", "~", "#") else (default, text)
@@ -732,9 +773,10 @@ def confining(path):
     since a test that one profile or platform groups cannot be told apart here
     from one it does not, and an override naming only a platform groups every
     test. A checkout with no nextest configuration declares no groups, so
-    nothing takes turns. A profile's `test-threads` and a test's
-    `threads-required` other than 1 change how many tests nextest runs at once
-    in a way no group says, so either is refused rather than read as nothing.
+    nothing takes turns. A profile's `test-threads`, and a `threads-required`
+    other than 1 that a profile sets for every test or an override for some,
+    change how many tests nextest runs at once in a way no group says, so
+    either is refused rather than read as nothing.
     """
     try:
         source = open(path, "rb")
@@ -746,6 +788,8 @@ def confining(path):
     for name, profile in config.get("profile", {}).items():
         if "test-threads" in profile:
             raise ValueError(f"profile {name} sets test-threads")
+        if profile.get("threads-required", 1) != 1:
+            raise ValueError(f"profile {name} sets threads-required")
         for override in profile.get("overrides", []):
             if override.get("threads-required", 1) != 1:
                 raise ValueError(f"an override of profile {name} sets threads-required")
