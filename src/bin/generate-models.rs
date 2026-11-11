@@ -214,12 +214,6 @@ const PASSED: &[(&str, &str, &str)] = &[
         "qwen3.8-omni-flash",
         "the vendor's audio and video model; its coding models are the 3.8 max and flash already offered",
     ),
-    ("google", "gemini-2.5-flash-lite", "family not chosen"),
-    ("google", "gemini-3.1-flash-lite", "family not chosen"),
-    ("google", "gemini-3.5-flash-lite", "family not chosen"),
-    ("google", "gemini-flash-lite-latest", "family not chosen"),
-    ("google", "gemma-4-26b-a4b-it", "family not chosen"),
-    ("google", "gemma-4-31b-it", "family not chosen"),
     (
         "mistral",
         "voxtral-small-latest",
@@ -300,26 +294,28 @@ const PASSED: &[(&str, &str, &str)] = &[
         "zai-glm-5-3",
         "not chosen with Mistral's first model",
     ),
-    ("openai", "gpt-4.1-mini", "family not chosen"),
-    ("openai", "gpt-4o-mini", "family not chosen"),
-    ("openai", "gpt-5-mini", "family not chosen"),
-    ("openai", "gpt-5-nano", "family not chosen"),
-    ("openai", "gpt-5-pro", "family not chosen"),
-    ("openai", "gpt-5.2-pro", "family not chosen"),
-    ("openai", "gpt-5.3-codex", "family not chosen"),
-    ("openai", "gpt-5.3-codex-spark", "family not chosen"),
-    ("openai", "gpt-5.4-mini", "family not chosen"),
-    ("openai", "gpt-5.4-nano", "family not chosen"),
-    ("openai", "gpt-5.4-pro", "family not chosen"),
-    ("openai", "gpt-5.5-pro", "family not chosen"),
-    ("openai", "o3", "family not chosen"),
-    ("openai", "o3-pro", "family not chosen"),
-    ("qwen", "deepseek-v4-flash-0731", "family not chosen"),
-    ("qwen", "glm-5.2", "family not chosen"),
-    ("qwen", "kimi-k3", "family not chosen"),
-    ("qwen", "qwen3.6-flash", "family not chosen"),
-    ("xai", "grok-build-0.1", "family not chosen"),
-    ("zai", "glm-4.5-air", "family not chosen"),
+];
+
+/// Families of a provider crucible offers that it chose not to offer, and why:
+/// every model the database files under one, a later one included, is
+/// declined with it until the row is removed. A model declined on its own
+/// stays in [`PASSED`].
+const PASSED_FAMILIES: &[(&str, &str, &str)] = &[
+    ("google", "gemini-flash-lite", "not chosen"),
+    ("google", "gemma", "not chosen"),
+    ("openai", "gpt-codex", "not chosen"),
+    ("openai", "gpt-codex-spark", "not chosen"),
+    ("openai", "gpt-mini", "not chosen"),
+    ("openai", "gpt-nano", "not chosen"),
+    ("openai", "gpt-pro", "not chosen"),
+    ("openai", "o", "not chosen"),
+    ("openai", "o-pro", "not chosen"),
+    ("qwen", "deepseek-flash", "not chosen"),
+    ("qwen", "glm", "not chosen"),
+    ("qwen", "kimi-k3", "not chosen"),
+    ("qwen", "qwen3.6", "not chosen"),
+    ("xai", "grok-build", "not chosen"),
+    ("zai", "glm-air", "not chosen"),
 ];
 
 /// Offered models whose rungs crucible keeps apart from the database's, and
@@ -394,11 +390,19 @@ fn drifted(database: &Value) -> i32 {
     };
     let rungs =
         |provider: &str, model: &str| crucible_app::providers::rungs(&providers, provider, model);
-    let found = drift(database, OFFERED, PASSED, KEPT, &rungs, &|provider| {
-        crucible_app::providers::offered(&providers)
-            .find(|one| one.name == provider)
-            .map(|one| one.reviewed)
-    });
+    let found = drift(
+        database,
+        OFFERED,
+        PASSED,
+        PASSED_FAMILIES,
+        KEPT,
+        &rungs,
+        &|provider| {
+            crucible_app::providers::offered(&providers)
+                .find(|one| one.name == provider)
+                .map(|one| one.reviewed)
+        },
+    );
     if found.is_empty() {
         return 0;
     }
@@ -574,19 +578,22 @@ enum Finding {
 /// Read through [`OFFERED`] and [`listed`], so the providers it looks at and the
 /// keys it reads are the generator's own, and it never proposes a provider
 /// crucible does not already offer; a family it does not offer is reported as a
-/// lead and chosen by hand. A newer
-/// model is one released after every offered model of its family, that calls
-/// tools and answers in text, and that nobody has declined in `passed`. Rungs
-/// are compared only where the database lists effort at all, since one that
-/// lists none says nothing either way, only in the words crucible's ladder
-/// has, and not for a model whose difference is `kept`.
-// Six inputs of one comparison, each a different kind of thing and each named
+/// lead and chosen by hand, unless that model is declined in `passed` or that
+/// provider's family is declined whole in `passed_families`, which quiets every
+/// model of it, a later one included. A newer model is one released after every
+/// offered model of its family, that calls tools and answers in text, and that
+/// nobody has declined in `passed`.
+/// Rungs are compared only where the database lists effort at all, since one
+/// that lists none says nothing either way, only in the words crucible's
+/// ladder has, and not for a model whose difference is `kept`.
+// Seven inputs of one comparison, each a different kind of thing and each named
 // at its two call sites; a struct holding them would only rename them.
 #[allow(clippy::too_many_arguments)]
 fn drift(
     database: &Value,
     offered: &[Offer],
     passed: &[(&str, &str, &str)],
+    passed_families: &[(&str, &str, &str)],
     kept: &[(&str, &str, &str)],
     rungs: &dyn Fn(&str, &str) -> Vec<Effort>,
     reviewed: &dyn Fn(&str) -> Option<&str>,
@@ -687,7 +694,10 @@ fn drift(
             };
             let declined = passed
                 .iter()
-                .any(|(of, declined, _)| *of == provider && declined == key);
+                .any(|(of, declined, _)| *of == provider && declined == key)
+                || passed_families
+                    .iter()
+                    .any(|(of, declined, _)| *of == provider && *declined == family);
             if !families.contains(&(provider, family)) && !declined && coding(entry) {
                 found.push(Finding::Family {
                     provider,
@@ -1133,7 +1143,7 @@ mod tests {
         }));
 
         assert_eq!(
-            drift(&database, SHIPPED, &[], &[], &every, &unreviewed),
+            drift(&database, SHIPPED, &[], &[], &[], &every, &unreviewed),
             vec![Finding::Newer {
                 provider: "anthropic",
                 family: String::from("claude-opus"),
@@ -1151,7 +1161,7 @@ mod tests {
             "deepseek-flash": listing("deepseek-flash", "2026-10-17", RUNGS),
         } } });
         let on = |database: &Value, offered: &[Offer], day: &'static str| {
-            drift(database, offered, &[], &[], &every, &|_| Some(day))
+            drift(database, offered, &[], &[], &[], &every, &|_| Some(day))
         };
 
         assert_eq!(
@@ -1195,7 +1205,7 @@ mod tests {
             "no-family": with(listing("x", "2026-10-16", RUNGS), "/family", Value::Null),
         } } });
         let passed = [("google", "gemini-4-declined", "declined")];
-        let mut shown: Vec<_> = drift(&database, &[flash], &passed, &[], &every, &unreviewed)
+        let mut shown: Vec<_> = drift(&database, &[flash], &passed, &[], &[], &every, &unreviewed)
             .into_iter()
             .filter_map(|one| match one {
                 Finding::Family { key, family, .. } => Some((family, key)),
@@ -1227,7 +1237,7 @@ mod tests {
         }));
 
         assert_eq!(
-            drift(&database, SHIPPED, &[], &[], &every, &unreviewed),
+            drift(&database, SHIPPED, &[], &[], &[], &every, &unreviewed),
             Vec::new(),
             "an offered entry without a date still makes its family offered"
         );
@@ -1251,6 +1261,60 @@ mod tests {
         assert!(
             report.contains("A family is a product decision"),
             "{report}"
+        );
+    }
+
+    #[test]
+    fn drift_leaves_a_family_declined_whole_unreported() {
+        // `kimi` is declined whole for qwen and not for moonshot: a family is
+        // its provider's, and the same name under another provider is another
+        // family. Declining a family the provider offers quiets nothing.
+        let offered: [Offer; 2] = [
+            ("qwen", "qwen3.8-max", Some("qwen3.8-max"), None),
+            ("moonshot", "k3", Some("kimi-k3"), None),
+        ];
+        let database = json!({
+            "alibaba": { "models": {
+                "qwen3.8-max": listing("qwen", "2026-09-01", RUNGS),
+                "qwen3.9-max": listing("qwen", "2026-10-01", RUNGS),
+                "kimi-k9": listing("kimi", "2026-10-02", RUNGS),
+            } },
+            "moonshotai": { "models": {
+                "kimi-k3": listing("kimi-k3", "2026-09-01", RUNGS),
+                "kimi-k9": listing("kimi", "2026-10-02", RUNGS),
+            } },
+        });
+        let families = [
+            ("qwen", "kimi", "fabricated"),
+            ("qwen", "qwen", "fabricated"),
+        ];
+
+        assert_eq!(
+            drift(
+                &database,
+                &offered,
+                &[],
+                &families,
+                &[],
+                &every,
+                &unreviewed
+            ),
+            vec![
+                Finding::Newer {
+                    provider: "qwen",
+                    family: String::from("qwen"),
+                    key: String::from("qwen3.9-max"),
+                    released: String::from("2026-10-01"),
+                },
+                Finding::Family {
+                    provider: "moonshot",
+                    family: String::from("kimi"),
+                    key: String::from("kimi-k9"),
+                    released: String::from("2026-10-02"),
+                },
+            ],
+            "qwen's kimi is declined, moonshot's is not, and qwen's own family still \
+             reports a newer model"
         );
     }
 
@@ -1303,7 +1367,7 @@ mod tests {
         let passed = [("anthropic", "claude-opus-declined", "fabricated")];
 
         assert_eq!(
-            drift(&database, SHIPPED, &passed, &[], &every, &unreviewed),
+            drift(&database, SHIPPED, &passed, &[], &[], &every, &unreviewed),
             Vec::new(),
             "an image model, a model that calls no tools, a retired one and one \
              already declined are all quiet"
@@ -1324,6 +1388,7 @@ mod tests {
                 SHIPPED,
                 &[],
                 &[],
+                &[],
                 &every,
                 &unreviewed
             ),
@@ -1336,6 +1401,7 @@ mod tests {
             drift(
                 &database(&json!({ "claude-opus-5-5": retired })),
                 SHIPPED,
+                &[],
                 &[],
                 &[],
                 &every,
@@ -1356,7 +1422,7 @@ mod tests {
         }));
 
         assert_eq!(
-            drift(&database, SHIPPED, &[], &[], &fewer, &unreviewed),
+            drift(&database, SHIPPED, &[], &[], &[], &fewer, &unreviewed),
             vec![Finding::Rungs {
                 provider: "anthropic",
                 model: "claude-opus-5-5",
@@ -1376,7 +1442,7 @@ mod tests {
         let kept = [("anthropic", "claude-opus-5-5", "fabricated")];
 
         assert_eq!(
-            drift(&database, SHIPPED, &[], &kept, &fewer, &unreviewed),
+            drift(&database, SHIPPED, &[], &[], &kept, &fewer, &unreviewed),
             vec![]
         );
     }
@@ -1418,6 +1484,7 @@ mod tests {
             drift(
                 &database(&json!({ "claude-opus-5-5": unlisted })),
                 SHIPPED,
+                &[],
                 &[],
                 &[],
                 &every,
@@ -1530,6 +1597,20 @@ mod tests {
             assert!(
                 !why.is_empty(),
                 "{provider}/{key} is declined for no reason"
+            );
+        }
+    }
+
+    #[test]
+    fn every_declined_family_is_an_offered_provider_s_and_says_why() {
+        for (provider, family, why) in PASSED_FAMILIES {
+            assert!(
+                OFFERED.iter().any(|(offered, ..)| offered == provider),
+                "{provider} is no provider crucible offers"
+            );
+            assert!(
+                !why.is_empty(),
+                "{provider}'s {family} family is declined for no reason"
             );
         }
     }
