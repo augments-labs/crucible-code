@@ -742,10 +742,10 @@ fn put(question: &Question) -> Option<Asked> {
     })
 }
 
-/// One question that waits, as a client is shown it: as [`put`] puts it,
-/// with an answer's name too long to carry cut and saying so rather than the
-/// question refused. The registry holds no more answers to a question than a
-/// list here carries.
+/// One question that waits, as a client is shown it: as [`put`] puts it. The
+/// registry bounds every text it holds below the words a client is handed, so
+/// none is cut here, and holds no more answers to a question than a list here
+/// carries.
 pub(super) fn shown(question: &Question) -> Asked {
     Asked {
         heading: Text::cut(question.heading()),

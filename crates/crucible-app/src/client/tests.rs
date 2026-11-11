@@ -677,7 +677,10 @@ fn every_text_a_waiting_batch_may_hold_is_carried_to_a_client_whole() {
         .register(vec![Question::new(
             "H".repeat(MOST_HEADING_BYTES),
             "q".repeat(MOST_TEXT_BYTES),
-            [Answer::new(long.as_str()), Answer::new("Rust")],
+            [
+                Answer::new(long.as_str()).saying(long.as_str()),
+                Answer::new("Rust"),
+            ],
         )])
         .expect("the registry holds it");
     let waiting = crucible_runner::Event::Waiting { batches: vec![] };
@@ -703,6 +706,8 @@ fn every_text_a_waiting_batch_may_hold_is_carried_to_a_client_whole() {
         .collect();
     assert_eq!(names, [(false, long.as_str()), (false, "Rust")]);
     assert!(!question.asks.truncated() && !question.heading.truncated());
+    let says = question.choices.first().map(|choice| &choice.says);
+    assert!(says.is_some_and(|says| !says.truncated() && says.as_str() == long));
 }
 
 #[test]

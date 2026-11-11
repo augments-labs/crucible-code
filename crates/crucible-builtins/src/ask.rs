@@ -116,8 +116,8 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
                     Field {
                         name: HEADING,
                         about: format!(
-                            "Two or three words on one line, naming the question beside the others. \
-                             At most {MOST_HEADING_BYTES} bytes."
+                            "Two or three words on one line, naming the question beside the \
+                             others. At most {MOST_HEADING_BYTES} bytes."
                         ),
                         needed: true,
                         shape: Shape::Text,
@@ -526,10 +526,10 @@ fn repeated<'a>(every: impl Iterator<Item = &'a str>) -> Option<&'a str> {
 /// The question is repeated rather than referred to by number, because the
 /// answer is read in a transcript where the call's own arguments are not on
 /// screen — a line saying *3 → Rust* would need the reader to go and find what
-/// three was. It is read back on one line, whatever line breaks it shows the
-/// person: one line per question is what lets the model tell which words are
-/// an answer, and a question written to carry a line shaped like one would
-/// otherwise read back as an answer nobody gave.
+/// three was. It is read back on one line, whatever line breaks it holds: one
+/// line per question is what lets the model tell which words are an answer,
+/// and a question written to carry a line shaped like one would otherwise read
+/// back as an answer nobody gave.
 fn said(asked: &[Question], given: &[Answered]) -> String {
     let mut text = String::new();
 
