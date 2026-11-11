@@ -37,10 +37,33 @@ use super::{Held, Terms, Work, picking};
 pub(super) enum Put {
     /// A message about to be sent.
     Send,
+    /// The dock's answers about to be sent.
+    Answer,
     /// A row or a model about to be chosen.
     Choice,
     /// An installed agent about to be started for the first time.
     Launch,
+}
+
+impl Put {
+    /// The question put before `work` is sent.
+    pub(super) fn before(work: &Work) -> Self {
+        match work {
+            Work::Answer(_) => Self::Answer,
+            Work::Turn(..) | Work::Room(_) => Self::Send,
+        }
+    }
+
+    /// The answers offered, where they are fixed: all but a launch's, which
+    /// name the agent it starts.
+    pub(super) fn offered(self) -> Option<&'static [Offered<'static>]> {
+        match self {
+            Self::Send => Some(&SENDING),
+            Self::Answer => Some(&ANSWERING),
+            Self::Choice => Some(&CHOOSING),
+            Self::Launch => None,
+        }
+    }
 }
 
 /// How the question was answered.
@@ -63,6 +86,19 @@ const SENDING: [Offered<'static>; 2] = [
     Offered {
         name: "Go back",
         says: "Keeps your message in the prompt box; nothing is sent",
+    },
+];
+
+/// The answers offered before the dock's answers are sent, which stay in the
+/// dock where they are not.
+const ANSWERING: [Offered<'static>; 2] = [
+    Offered {
+        name: "Use it anyway",
+        says: "Sends your answers; this route is not asked about again",
+    },
+    Offered {
+        name: "Go back",
+        says: "Keeps your answers in the dock; nothing is sent",
     },
 ];
 
@@ -148,13 +184,13 @@ pub(super) fn ask_while<T: Terminal>(
     } else {
         &[content_use::LAUNCHING]
     };
-    let (shown, told): (&[Offered<'_>], &[&str]) = match put {
-        // A message on an installed agent's route that starts the agent says
-        // what starting it runs, as a launch does.
-        Put::Send if content_use::launches(&warned.route) => (&SENDING, launched),
-        Put::Send => (&SENDING, &[]),
-        Put::Choice => (&CHOOSING, &[]),
-        Put::Launch => (&launching, launched),
+    let shown: &[Offered<'_>] = put.offered().unwrap_or(&launching);
+    let told: &[&str] = match put {
+        // A message or an answer on an installed agent's route that starts
+        // the agent says what starting it runs, as a launch does.
+        Put::Send | Put::Answer if content_use::launches(&warned.route) => launched,
+        Put::Launch => launched,
+        Put::Send | Put::Answer | Put::Choice => &[],
     };
     let cited = warned.warning.cited();
     let footer = format!("enter to choose {} esc to go back", style.glyphs().dot());
@@ -238,7 +274,7 @@ pub(super) fn held<T: Terminal>(
         if !held.answers.keys {
             return Err(Fatal::Unanswered(unanswered(&warned)));
         }
-        break match ask(renderer, terms.style(), &warned, Put::Send)? {
+        break match ask(renderer, terms.style(), &warned, Put::before(work))? {
             Answer::Yes => match recorded(terms, &warned) {
                 Ok(()) => continue,
                 Err(said) => said,

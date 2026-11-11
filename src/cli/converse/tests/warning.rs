@@ -17,7 +17,7 @@ use crate::cli::fake::Script;
 
 use crate::cli::converse::answering::Answers;
 use crate::cli::converse::docking::Submission;
-use crate::cli::converse::warning::{CRAMPED_ROOM, CRAMPED_SEND, UNSENT, unanswered};
+use crate::cli::converse::warning::{CRAMPED_ROOM, CRAMPED_SEND, Put, UNSENT, unanswered};
 use crate::cli::converse::{Held, Work, ran, refreshed};
 
 use super::{opening, paired, plain, saying, scripted};
@@ -461,4 +461,33 @@ fn an_answer_on_a_route_already_said_yes_to_is_sent_without_a_question() {
     assert_eq!(asked, 3, "the answer was not sent");
     assert!(!waits, "the batch still waits");
     assert!(!written.contains(UNSENT), "{written}");
+}
+
+/// What the question before `work` offers for going back.
+fn going_back(work: &Work) -> &'static str {
+    let offered = Put::before(work).offered().expect("fixed answers");
+    offered
+        .iter()
+        .find(|offer| offer.name == "Go back")
+        .expect("a way back")
+        .says
+}
+
+#[test]
+fn the_question_before_a_dock_answer_says_the_answers_stay_in_the_dock() {
+    let answer = Work::Answer(Submission {
+        era: crucible_client_api::Era::Stint(1),
+        id: crucible_types::QuestionId::numbered(1),
+        replies: Vec::new(),
+    });
+    let turn = Work::Turn("go".to_owned(), Box::default());
+
+    let answered = going_back(&answer);
+    assert!(answered.contains("in the dock"), "{answered}");
+    assert!(!answered.contains("prompt box"), "{answered}");
+    assert!(
+        going_back(&turn).contains("prompt box"),
+        "{}",
+        going_back(&turn)
+    );
 }
