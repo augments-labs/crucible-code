@@ -1466,6 +1466,60 @@ fn trying_your_own_agy_writes_an_antigravity_instance_with_no_profile() -> Resul
     Ok(())
 }
 
+/// Where the sandbox cannot close the network the user's own `agy` is not
+/// started: the refusal says it could not be checked, quotes why, points at
+/// the sandboxing page and at the release Crucible's store holds, and nothing
+/// is written.
+#[test]
+fn trying_your_own_agy_where_the_sandbox_cannot_close_points_at_the_store() -> Result<(), Failed> {
+    let tree = Tree::new("external-choosing-own-agy-unclosable")?;
+    own_agy(&tree)?;
+    let mut conversation = own_stepped(
+        &tree,
+        Arc::new(crate::agents::registry::Unclosing),
+        &tools(&tree),
+    )?;
+    let (action, _) = chose_own(&tree, &mut conversation, "{}", "Antigravity")?;
+    let before = std::fs::read_to_string(crate::Desk::new(&tree, &[])?.choosing).ok();
+
+    let tried = carried(
+        &tree,
+        &conversation,
+        &action,
+        &mut Picking::of([Some("Try it")]),
+    )?;
+
+    let Err(refused @ AgentsError::Own { .. }) = tried else {
+        return Err(format!("the door answered {tried:?}").into());
+    };
+    let said = refused.to_string();
+    let why = crucible_sandbox::SandboxError::Unsupported {
+        feature: crucible_sandbox::SandboxFeature::NetworkDeny,
+    }
+    .to_string();
+    assert!(said.contains("could not be checked"), "{said}");
+    assert!(said.contains(&format!("({why})")), "{said}");
+    assert!(said.contains("docs/security/sandboxing.md"), "{said}");
+    assert!(
+        said.ends_with(
+            "Crucible's own release of Antigravity works on this machine: run `crucible agents \
+             install antigravity`."
+        ),
+        "{said}"
+    );
+    assert_eq!(
+        fake_peer::played(&tools(&tree)),
+        0,
+        "the program was started"
+    );
+    assert_eq!(
+        std::fs::read_to_string(crate::Desk::new(&tree, &[])?.choosing).ok(),
+        before,
+        "the user file was written"
+    );
+    Ok(())
+}
+
 /// What the agents door answers `command`, asked as [`carried`] asks a move
 /// by a client that says yes to the door's question about a try.
 pub(crate) fn tried_at_door(
@@ -1494,6 +1548,14 @@ pub(crate) fn goose_of_your_own(tree: &Tree) -> Result<(Conversation, PathBuf), 
 /// conversation's steps look on, which answers as the reviewed release does;
 /// that conversation, and the path the program's links lead to.
 pub(crate) fn agy_of_your_own(tree: &Tree) -> Result<(Conversation, PathBuf), Failed> {
+    let program = own_agy(tree)?;
+    Ok((own_sandboxed(tree)?, program))
+}
+
+/// The user's own Antigravity installed on the `PATH` a conversation's steps
+/// look on in `tree`, answering as the reviewed release does: the path its
+/// links lead to.
+fn own_agy(tree: &Tree) -> Result<PathBuf, Failed> {
     use crucible_external_harnesses::acp::SignIn;
     use crucible_external_harnesses::antigravity::Manifest;
     use crucible_external_harnesses::fake_peer::scripts::acp;
@@ -1509,7 +1571,7 @@ pub(crate) fn agy_of_your_own(tree: &Tree) -> Result<(Conversation, PathBuf), Fa
         "agy",
         &Peer::once(Reply::new().hear(1).say(reviewed.as_str())),
     )?;
-    Ok((own_sandboxed(tree)?, std::fs::canonicalize(program)?))
+    Ok(std::fs::canonicalize(program)?)
 }
 
 /// The instance `/login` writes in `tree`, set up by `of_your_own`, where the
