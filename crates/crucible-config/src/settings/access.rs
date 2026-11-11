@@ -185,9 +185,11 @@ impl Driver {
     /// Whether a release of its agent from crucible's install store is started
     /// only in a profile directory its instance names: one whose usual home
     /// another program of the same vendor keeps its own sign-in in would
-    /// otherwise share it. The user's own program, outside the store, uses the
-    /// sign-in its user already gave it, so the launch, which knows where the
-    /// program lies, applies this rule and the configuration does not.
+    /// otherwise share it. The user's own program, outside the store, is given
+    /// no profile directory without one, so it looks for its sign-in in its
+    /// usual home, and under the sandbox it does not see that sign-in. Only the
+    /// launch knows where the program lies, so it applies this rule and the
+    /// configuration does not.
     #[must_use]
     pub const fn profile_needed(self) -> bool {
         match self {
