@@ -4901,39 +4901,7 @@ impl Steps {
     /// its end; unreadable, saying why, where it could not be started or a
     /// run of the entry could not be confirmed stopped.
     pub async fn account(&self, agent: &ExternalAgent, step: Account) -> Reading {
-        let unreadable = |why: &str| Reading::Unreadable(Failure::new(why));
-        let chosen = match Agent::believing(agent, self.registry, &self.state, |name| {
-            (name == "PATH").then(|| self.path.clone()).flatten()
-        }) {
-            Ok(chosen) => chosen,
-            Err(Unbelieved::NoLaunch) => {
-                return unreadable("this release has no launch for the agent's driver");
-            }
-            Err(why) => return unreadable(&why.to_string()),
-        };
-        // The releases on offer as they are now, which the agent is admitted as.
-        let trust = Trust::load(&self.state, SystemTime::now());
-        let mut dialect = match chosen.dialect(
-            Mode::default(),
-            &trust,
-            &programs_beside(&self.state),
-            self.sandboxing(),
-        ) {
-            Ok(dialect) => dialect,
-            Err(refused) => return Reading::Unreadable(refused),
-        };
-        drop(trust);
-        if self.controls.unstopped(agent.name()) {
-            return unreadable(&Refusal::Unstopped.to_string());
-        }
-        let Some(control) = Control::new() else {
-            return unreadable("no control for the agent's program");
-        };
-        let policy = self.policy();
-        self.launcher(&policy)
-            .account(&chosen, &control, dialect.as_mut(), step, &|_| {})
-            .await
-            .unwrap_or_else(|refused| unreadable(&refused.to_string()))
+        self.account_answered(agent, step).await.0
     }
 
     /// What `with` returns, lent for as long as it runs the launcher these

@@ -176,7 +176,7 @@ use super::performing::{Desk, Performed};
 use crate::Conversation;
 use crate::backends::{AgentRow, Started, Unbelieved};
 use crate::launching::{Origin, Unlaunched, quoted};
-use crate::own_program::Platform;
+use crate::own_program::{Introduced, Platform};
 use crate::remember::{self, RememberError};
 
 /// What came of an account operation, in the application's own values.
@@ -2191,9 +2191,9 @@ async fn connect(
     let note = noted(conversation.steps(), row, agent);
     let how = started(conversation.steps(), row, agent);
     for _ in 0..CHECKS {
-        let status = match conversation.steps() {
-            Some(steps) => steps.account(agent, Step::Status).await,
-            None => unstepped(),
+        let (status, answered) = match conversation.steps() {
+            Some(steps) => steps.account_answered(agent, Step::Status).await,
+            None => (unstepped(), None),
         };
         let (question, moves) = match &status {
             // Signed in, it is already connected: there is nothing to ask.
@@ -2210,7 +2210,7 @@ async fn connect(
                 agent,
                 row,
                 capabilities.has(Capability::Install).then_some(written),
-                (note, how.unwrap_or(Started::STORED)),
+                (note, how.unwrap_or(Started::STORED), answered.as_ref()),
                 Platform::HERE,
             ),
             Reading::Signed(
@@ -2316,16 +2316,17 @@ fn commit(desk: &Desk<'_>, provider: &str, agent: &ExternalAgent, written: bool)
 /// that does not claim it gives `None` and is offered no move. A `note` on
 /// the user's own program of the agent is said after its profile. The methods
 /// offered, and what is said of signing in, are those of its program as it is
-/// `started`, on `platform`.
+/// `started`, on `platform`, and the user's own program is told what it
+/// `answered` of itself at the start that read it signed out.
 fn signed_out(
     agent: &ExternalAgent,
     row: &AgentRow,
     written: Option<bool>,
-    (note, started): (Option<&str>, Started),
+    (note, started, answered): (Option<&str>, Started, Option<&Introduced>),
     platform: Platform,
 ) -> (Confirmation, Vec<AgentAction>) {
     let name = agent.name();
-    let own = crate::own_program::told(row, started, platform);
+    let own = crate::own_program::told(row, started, platform, answered);
     let told = match row {
         AgentRow::Built(row) => (row.sign_in)(agent.profile().map(Path::new)),
         AgentRow::Catalog(_) => None,
@@ -2683,7 +2684,7 @@ mod tests {
             &written,
             &row,
             None,
-            (Some(note), Started::STORED),
+            (Some(note), Started::STORED, None),
             Platform::HERE,
         );
         assert!(

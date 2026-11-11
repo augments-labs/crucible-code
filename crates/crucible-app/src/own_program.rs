@@ -30,6 +30,9 @@
 //! or removed with the launch refused. Every start's answer to `initialize`
 //! is admitted as the probe's was, and one that differs from the record
 //! replaces it.
+//! The name and version a start answered, or that it did not say, are shown
+//! where [`told`] reads the user's own program signed out, escaped as any
+//! other text a program gives.
 
 use std::ffi::OsString;
 use std::fs;
@@ -162,12 +165,36 @@ pub(crate) struct Told {
 /// the places its entry names, which a registry entry names none of; with the
 /// sandbox off, no variable the user exported, and on Linux no desktop
 /// keyring and no relocated configuration or data directory, since it is
-/// given neither the session bus nor those variables. A release is told
-/// nothing more.
-pub(crate) fn told(row: &AgentRow, started: Started, platform: Platform) -> Told {
-    if started.origin != Origin::Own {
+/// given neither the session bus nor those variables. Each is told first
+/// the name and version its program `answered` with at the start that read
+/// it, where that answer was heard. A release is told nothing more.
+pub(crate) fn told(
+    row: &AgentRow,
+    started: Started,
+    platform: Platform,
+    answered: Option<&Introduced>,
+) -> Told {
+    if started.origin != Origin::Own || !own_row(row) {
         return Told::default();
     }
+    let mut told = signing_in(row, started, platform);
+    if let Some(answered) = answered {
+        told.more.insert(0, answered.said());
+    }
+    told
+}
+
+/// Whether `row`'s agent run as the user's own program is held to what is
+/// decided here: a catalog agent's own program and Antigravity's.
+fn own_row(row: &AgentRow) -> bool {
+    match row {
+        AgentRow::Catalog(catalog) => catalog.is_own(),
+        AgentRow::Built(built) => built.driver == crucible_config::Driver::Antigravity,
+    }
+}
+
+/// What [`told`] says of signing `row`'s own program in.
+fn signing_in(row: &AgentRow, started: Started, platform: Platform) -> Told {
     match row {
         AgentRow::Built(built) if built.driver == crucible_config::Driver::Antigravity => {
             if !started.homeless() {
@@ -308,6 +335,61 @@ const KEPT_IN: &str = "own-programs";
 
 /// What a name or version the program did not give is recorded as.
 pub const DID_NOT_SAY: &str = "did not say";
+
+/// What the user's own program answered `initialize` with of itself at one
+/// start: the name and version it gave, bounded as the wire bounds a name,
+/// each [`DID_NOT_SAY`] where it gave none, as its record keeps them. They
+/// are shown, never compared with anything.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Introduced {
+    /// Its name.
+    name: Box<str>,
+    /// Its version.
+    version: Box<str>,
+}
+
+impl Introduced {
+    /// What `frame`, a message the program sent, says of it, where it answers
+    /// `initialize` with a result that admits it.
+    pub(crate) fn heard(frame: &str) -> Option<Self> {
+        let said = initialize_answer(frame)?;
+        let initialized = Initialized::own(said.get("result")?).ok()?;
+        Some(Self {
+            name: initialized.name().unwrap_or(DID_NOT_SAY).into(),
+            version: initialized.version().unwrap_or(DID_NOT_SAY).into(),
+        })
+    }
+
+    /// The name it gave, or [`DID_NOT_SAY`].
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The version it gave, or [`DID_NOT_SAY`].
+    #[must_use]
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+
+    /// What a person is told of it, its control characters escaped.
+    fn said(&self) -> String {
+        format!(
+            "Your own program answered as {}, version {}.",
+            crate::launching::quoted(&self.name),
+            crate::launching::quoted(&self.version)
+        )
+    }
+}
+
+/// `frame` as a message, where it answers `initialize`, the first request a
+/// start sends, with its result or an error.
+fn initialize_answer(frame: &str) -> Option<Map<String, Value>> {
+    let Ok(Value::Object(said)) = serde_json::from_str::<Value>(frame) else {
+        return None;
+    };
+    (said.get("id") == Some(&json!(0)) && !said.contains_key("method")).then_some(said)
+}
 
 /// The places [`root`] guards: the user's home, crucible's own home and the
 /// directory of its session logs.
@@ -837,11 +919,7 @@ pub(crate) fn launched(
     program: &Path,
     places: &Places<'_>,
 ) -> Result<SandboxPolicy, Unowned> {
-    let decided = match row {
-        AgentRow::Catalog(catalog) => catalog.is_own(),
-        AgentRow::Built(built) => built.driver == crucible_config::Driver::Antigravity,
-    };
-    if !decided || !conversation.enabled() {
+    if !own_row(row) || !conversation.enabled() {
         return Ok(conversation.clone());
     }
     let canonical =
@@ -1135,12 +1213,9 @@ impl Recording {
         if !self.waiting {
             return;
         }
-        let Ok(Value::Object(said)) = serde_json::from_str::<Value>(frame) else {
+        let Some(said) = initialize_answer(frame) else {
             return;
         };
-        if said.get("id") != Some(&json!(0)) || said.contains_key("method") {
-            return;
-        }
         self.waiting = false;
         if said.contains_key("result") {
             self.owned.answered(&said);

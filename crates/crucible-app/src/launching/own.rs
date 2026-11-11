@@ -1,18 +1,27 @@
 //! How a start of the user's own program is held to its probe record: its
 //! wire records every start's answer, and a program changed since its probe
-//! is probed again before it starts.
+//! is probed again before it starts. An account step also gives back what
+//! the program it started answered of itself, which a person reading the
+//! user's own program signed out is shown.
 
 use std::path::Path;
 
-use crucible_external_harnesses::Program;
+use std::sync::Arc;
+use std::time::SystemTime;
+
+use crucible_config::ExternalAgent;
+use crucible_execution::{Decision, Failure, TurnRequest};
+use crucible_external_harnesses::{
+    Account, Act, Control, Dialect, Program, Ran, Reading, Refusal, Request, Shape, Told,
+};
 use crucible_sandbox::SandboxPolicy;
 use crucible_tools::Mode;
 
-use std::sync::Arc;
-
-use super::{Agent, AuthMethod, Launcher, Trust, Unlaunched, Unpiped, quoted};
+use super::{
+    Agent, AuthMethod, Launcher, Steps, Trust, Unlaunched, Unpiped, programs_beside, quoted,
+};
 use crate::backends::{AgentRow, Sandboxing, Unbelieved, Wire};
-use crate::own_program::{Owned, Places, Recording, Unowned};
+use crate::own_program::{Introduced, Owned, Places, Recording, Unowned};
 
 impl Unpiped {
     /// Why the user's own program is not signed in by `method`'s command.
@@ -155,5 +164,127 @@ impl Launcher<'_> {
             }
             .into()),
         }
+    }
+}
+
+impl Steps {
+    /// [`Steps::account`], with what the program it started answered
+    /// `initialize` with of itself, where that answer was heard and admits
+    /// it.
+    pub async fn account_answered(
+        &self,
+        agent: &ExternalAgent,
+        step: Account,
+    ) -> (Reading, Option<Introduced>) {
+        let unreadable = |why: &str| Reading::Unreadable(Failure::new(why));
+        let chosen = match Agent::believing(agent, self.registry, &self.state, |name| {
+            (name == "PATH").then(|| self.path.clone()).flatten()
+        }) {
+            Ok(chosen) => chosen,
+            Err(Unbelieved::NoLaunch) => {
+                return (
+                    unreadable("this release has no launch for the agent's driver"),
+                    None,
+                );
+            }
+            Err(why) => return (unreadable(&why.to_string()), None),
+        };
+        // The releases on offer as they are now, which the agent is admitted as.
+        let trust = Trust::load(&self.state, SystemTime::now());
+        let dialect = match chosen.dialect(
+            Mode::default(),
+            &trust,
+            &programs_beside(&self.state),
+            self.sandboxing(),
+        ) {
+            Ok(dialect) => dialect,
+            Err(refused) => return (Reading::Unreadable(refused), None),
+        };
+        drop(trust);
+        if self.controls.unstopped(agent.name()) {
+            return (unreadable(&Refusal::Unstopped.to_string()), None);
+        }
+        let Some(control) = Control::new() else {
+            return (unreadable("no control for the agent's program"), None);
+        };
+        let policy = self.policy();
+        let mut hearing = Hearing {
+            wire: dialect,
+            answered: None,
+        };
+        let reading = self
+            .launcher(&policy)
+            .account(&chosen, &control, &mut hearing, step, &|_| {})
+            .await
+            .unwrap_or_else(|refused| unreadable(&refused.to_string()));
+        (reading, hearing.answered)
+    }
+}
+
+/// A wire that keeps what its program last answered `initialize` with of
+/// itself, and is otherwise the wire it holds.
+struct Hearing {
+    /// The wire, which says what is sent and admits what is answered.
+    wire: Box<dyn Dialect>,
+    /// What the program answered of itself, once that was heard.
+    answered: Option<Introduced>,
+}
+
+impl Hearing {
+    /// Notes `frame`, where it answers `initialize` with a result that admits.
+    fn noted(&mut self, frame: &str) {
+        if let Some(answered) = Introduced::heard(frame) {
+            self.answered = Some(answered);
+        }
+    }
+}
+
+impl Dialect for Hearing {
+    fn program(&self) -> &str {
+        self.wire.program()
+    }
+
+    fn request(&mut self, shape: Shape<'_>) -> Request {
+        self.wire.request(shape)
+    }
+
+    fn open(&mut self, turn: &TurnRequest) -> Result<Vec<String>, Failure> {
+        self.wire.open(turn)
+    }
+
+    fn heard(&mut self, frame: &str) -> Result<Vec<Act>, Failure> {
+        let acts = self.wire.heard(frame)?;
+        self.noted(frame);
+        Ok(acts)
+    }
+
+    fn answer(&mut self, native: &str, decision: &Decision) -> Result<String, Failure> {
+        self.wire.answer(native, decision)
+    }
+
+    fn cancel(&mut self) -> Option<String> {
+        self.wire.cancel()
+    }
+
+    fn account(&mut self, step: Account, shape: Shape<'_>) -> Option<Request> {
+        self.wire.account(step, shape)
+    }
+
+    fn read(&self, step: Account, ran: &Ran) -> Reading {
+        self.wire.read(step, ran)
+    }
+
+    fn spoken(&mut self, step: Account) -> Option<Vec<String>> {
+        self.wire.spoken(step)
+    }
+
+    fn told(&mut self, step: Account, frame: &str) -> Result<Told, Failure> {
+        let told = self.wire.told(step, frame)?;
+        self.noted(frame);
+        Ok(told)
+    }
+
+    fn signing_in_with(&mut self, id: &str) -> bool {
+        self.wire.signing_in_with(id)
     }
 }

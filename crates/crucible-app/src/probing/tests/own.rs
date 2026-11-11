@@ -625,7 +625,7 @@ fn the_lost_sign_in_sentence_is_shown_on_linux_only() {
         Platform::Windows,
         Platform::Other,
     ] {
-        let told = told(&row, unreachable, platform);
+        let told = told(&row, unreachable, platform, None);
         let how = told.how.unwrap_or_default();
         assert!(how.contains("~/.gemini"), "{platform:?}: {how}");
         let said = told.more.iter().any(|line| line.contains(lost));
@@ -650,7 +650,7 @@ fn the_lost_sign_in_sentence_is_shown_on_linux_only() {
             ..unreachable
         },
     ] {
-        let told = told(&row, started, Platform::Linux);
+        let told = told(&row, started, Platform::Linux, None);
         assert_eq!(told.how, None, "{started:?}");
         assert!(
             !told.more.iter().any(|line| line.contains(lost)),

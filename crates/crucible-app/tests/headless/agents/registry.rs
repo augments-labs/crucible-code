@@ -1772,6 +1772,18 @@ fn an_own_agy_under_the_sandbox_is_offered_no_sign_in_it_would_lose() -> Result<
     ] {
         assert!(how.contains(said), "{said} is not said: {how}");
     }
+    let shipped = crucible_external_harnesses::catalog::SNAPSHOT
+        .entries()
+        .first()
+        .ok_or("the snapshot's entry")?;
+    let answered = format!(
+        "fact: Your own program answered as {}, version {}.",
+        shipped.admits.name, shipped.admits.version
+    );
+    assert!(
+        screen.contains(&answered),
+        "{answered} is not said: {screen}"
+    );
     let lost = "is gone when that start ends";
     assert_eq!(
         screen.contains(lost),
@@ -1902,6 +1914,26 @@ fn an_own_program_is_never_signed_in_by_a_command() -> Result<(), Failed> {
 /// sandbox on where `sandboxed` holds and the user file as it is: each
 /// account question written out.
 fn own_signed_out_screen(bench: &Bench, sandboxed: bool) -> Result<Vec<String>, Failed> {
+    use crucible_external_harnesses::fake_peer::scripts::acp;
+
+    own_signed_out_answering(
+        bench,
+        sandboxed,
+        &acp::offering(
+            "goose-acp",
+            "1.2.3",
+            &json!([{"id": "browser", "name": "Browser"}]),
+        ),
+    )
+}
+
+/// [`own_signed_out_screen`], the program answering `initialize` with
+/// `answer` at every start.
+fn own_signed_out_answering(
+    bench: &Bench,
+    sandboxed: bool,
+    answer: &str,
+) -> Result<Vec<String>, Failed> {
     use crucible_app::launching::{Launcher, Steps};
     use crucible_external_harnesses::fake_peer::scripts::acp;
     use crucible_external_harnesses::fake_peer::{Reply as Said, Script};
@@ -1910,14 +1942,9 @@ fn own_signed_out_screen(bench: &Bench, sandboxed: bool) -> Result<Vec<String>, 
     // Read-only under the sandbox, the peer plays the one reply at every
     // start: the probe hears `initialize` alone, a status check opens a
     // session too and is told it is signed out.
-    let answer = acp::offering(
-        "goose-acp",
-        "1.2.3",
-        &json!([{"id": "browser", "name": "Browser"}]),
-    );
     let reply = Said::new()
         .hear(1)
-        .say(answer.as_str())
+        .say(answer)
         .hear(1)
         .say(acp::sign_in_required(1))
         .hear_out();
@@ -1980,6 +2007,53 @@ fn an_own_program_under_the_sandbox_is_told_it_starts_signed_out() -> Result<(),
         cfg!(target_os = "linux"),
         "{screen}"
     );
+    Ok(())
+}
+
+/// The user's own program read signed out is shown the name and version it
+/// answered with, its control characters escaped, or `did not say` for each
+/// it gave none of, with the sandbox on and off alike.
+#[test]
+fn an_own_program_is_shown_the_name_and_version_it_answered() -> Result<(), Failed> {
+    use crucible_external_harnesses::fake_peer::scripts::acp;
+
+    let methods = json!([{"id": "browser", "name": "Browser"}]);
+    let named = "goose\u{1b}[31m-acp";
+    let escaped = crucible_types::shown::escaped(named);
+    for sandboxed in [true, false] {
+        let bench = Bench::new(&format!("registry-own-answered-{sandboxed}"))?;
+        let screen =
+            own_signed_out_answering(&bench, sandboxed, &acp::offering(named, "1.2.3", &methods))?
+                .join("\n");
+        assert!(screen.contains("is not signed in."), "{screen}");
+        assert!(
+            screen.contains(&format!(
+                "fact: Your own program answered as {escaped}, version 1.2.3."
+            )),
+            "{screen}"
+        );
+        assert!(!screen.contains('\u{1b}'), "{screen}");
+
+        let bench = Bench::new(&format!("registry-own-answered-silent-{sandboxed}"))?;
+        let screen = own_signed_out_answering(
+            &bench,
+            sandboxed,
+            &acp::response(
+                0,
+                &json!({
+                    "protocolVersion": 1,
+                    "agentCapabilities": {},
+                    "authMethods": methods,
+                }),
+            ),
+        )?
+        .join("\n");
+        assert!(screen.contains("is not signed in."), "{screen}");
+        assert!(
+            screen.contains("fact: Your own program answered as did not say, version did not say."),
+            "{screen}"
+        );
+    }
     Ok(())
 }
 
@@ -2324,7 +2398,10 @@ fn an_own_program_is_judged_against_the_users_home_not_its_entrys() -> Result<()
     let refused = started.expect_err("a program in the user's home was started");
     assert!(refused.contains("your home"), "{refused}");
     assert!(seen.is_empty(), "started: {seen:?}");
-    assert!(own_record_setting(&bench, &setting).is_some(), "the record went");
+    assert!(
+        own_record_setting(&bench, &setting).is_some(),
+        "the record went"
+    );
 
     // Probed outside the user's home and moved into it since, it is probed
     // again against that home, refused, and its record removed.

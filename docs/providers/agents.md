@@ -168,7 +168,8 @@ record. Until a record holds for the instance as it is configured now, it is
 not started, and the refusal names `crucible agents try <agent>`. The probe
 starts it once in the sandbox with the network closed, sends `initialize`
 alone, and admits it where it answers with protocol version 1 and its
-capabilities; it then keeps the name and version it gave, or `did not say`.
+capabilities; it then keeps the name and version it gave, or `did not say`,
+and the agent's screen shows them where it reads the program signed out.
 That proves it speaks ACP, not that it is the program the entry describes. A
 change to the instance's driver, its `agent:` key or the arguments and
 environment its entry gives makes the record stale, and it is refused until it
