@@ -407,3 +407,29 @@ fn moving_to_the_next_question_opens_it_with_the_mark_at_its_top() {
     assert_eq!(docking.dock.focus.member, 1);
     assert_eq!(docking.dock.focus.marked, 0);
 }
+
+#[test]
+fn an_answer_written_in_after_a_decline_is_sent_instead_of_the_decline() {
+    let mut docking = opened(pair());
+    press(
+        &mut docking,
+        &[
+            Pressed::Down,
+            Pressed::Down,
+            Pressed::Down,
+            enter(),
+            enter(),
+        ],
+    );
+    assert_eq!(docking.dock.focus.member, 1, "the decline moved on");
+
+    // Back to the declined question, and an answer written in for it.
+    press(&mut docking, &[Pressed::Key(Key::Left)]);
+    press(&mut docking, &[Pressed::Down, Pressed::Down, enter()]);
+    press(&mut docking, &typed("Go"));
+    press(&mut docking, &[enter(), Pressed::Key(Key::Right), enter()]);
+    assert_eq!(docking.dock.phase, Phase::Reviewing);
+
+    let sent = replies(press(&mut docking, &[enter()]));
+    assert_eq!(sent, vec![answered(&["Go"], ""), answered(&["bash"], "")]);
+}

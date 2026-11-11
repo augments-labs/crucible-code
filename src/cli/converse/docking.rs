@@ -327,8 +327,12 @@ impl Docking {
         };
         match editing {
             Editing::Written { .. } => {
-                if !text.is_empty() && !member.draft.chosen.several() {
-                    member.draft.chosen = Chosen::One(None);
+                // An answer written in replaces a decline, as one chosen does.
+                if !text.is_empty() {
+                    member.draft.declined = false;
+                    if !member.draft.chosen.several() {
+                        member.draft.chosen = Chosen::One(None);
+                    }
                 }
                 member.draft.written = text;
                 self.dock.focus.editing = Some(Editing::Written { column });
