@@ -1,0 +1,35 @@
+---
+source: tests/whole_screen/docking.rs
+expression: still(&window)
+---
+80x30 cursor 27,4 scrolled 0
+|                                                                               │|
+|Asked.                                                                         │|
+|                                                                               │|
+|› /questions                                                                   •|
+|                                                                               ●|
+|                                                                                |
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│  ✗ Answer not accepted                                                       │|
+|│  question 1 takes one answer and was given 0                                 │|
+|│  Your draft is still here.                                                   │|
+|│                                                                              │|
+|│  □ Pick                                                                      │|
+|│    No answer yet                                                             │|
+|│    Note: still here                                                          │|
+|│                                                                              │|
+|│  ✓ Next                                                                      │|
+|│    Stop                                                                      │|
+|│                                                                              │|
+|│  ──────────────────────────────────────────────────────────────────────────  │|
+|│  › Retry submission                                                          │|
+|│    Keep editing                                                              │|
+|│    Close                                                                     │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|  enter select · tab composer · esc close                                       |
+|                                                                                |
+|                                                                 99% window left|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|

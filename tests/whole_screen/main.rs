@@ -37,6 +37,7 @@
 #![allow(clippy::expect_used, clippy::panic)]
 
 mod agents;
+mod docking;
 mod fast;
 mod native;
 mod providers;

@@ -1,21 +1,22 @@
 //! The question put before anything is sent on a route whose vendor says it
 //! uses what is sent to it.
 //!
-//! Asked on the drawing thread, before the work is handed to a worker, so
-//! the message is still this side's to give back; a message that would start
-//! an installed agent is asked about on that agent's own route, and says
-//! what starting it runs, unless the start would be refused whatever the
-//! answer: that message is not asked about, and goes on to be refused as a
-//! failed turn, before anything starts. Put before an installed agent is
-//! first started any other way, it is the application's question, answered
-//! on the drawing thread while the operation that asked it waits: it says the
-//! same, and the application writes down its yes. What stands is a panel
-//! with the vendor's sentence and the page it comes from; `Use it anyway`
-//! writes the yes into the user's own file and lets the work go, and
-//! anything else sends nothing. Behind it, every client the run sends through
-//! holds the route's origins until the yes is given, and a web source built
-//! for a warned model asks that model's route before each request, so a path
-//! that reached a send without passing here still sends nothing.
+//! Asked on the drawing thread, before the work is handed to a worker, so the
+//! message is still this side's to give back, and the dock's answers held back
+//! where keys are read stay in the dock, refused with their drafts kept; a
+//! message that would start an installed agent is asked about on that agent's
+//! own route, and says what starting it runs, unless the start would be refused
+//! whatever the answer: that message is not asked about, and goes on to be
+//! refused as a failed turn, before anything starts. Put before an installed
+//! agent is first started any other way, it is the application's question,
+//! answered on the drawing thread while the operation that asked it waits: it
+//! says the same, and the application writes down its yes. What stands is a
+//! panel with the vendor's sentence and the page it comes from; `Use it anyway`
+//! writes the yes into the user's own file and lets the work go, and anything
+//! else sends nothing. Behind it, every client the run sends through holds the
+//! route's origins until the yes is given, and a web source built for a warned
+//! model asks that model's route before each request, so a path that reached a
+//! send without passing here still sends nothing.
 //!
 //! A key pressed before the panel was drawn does not answer it: whatever is
 //! waiting to be read when it is about to stand is dropped, so the Enter that
@@ -36,10 +37,33 @@ use super::{Held, Terms, Work, picking};
 pub(super) enum Put {
     /// A message about to be sent.
     Send,
+    /// The dock's answers about to be sent.
+    Answer,
     /// A row or a model about to be chosen.
     Choice,
     /// An installed agent about to be started for the first time.
     Launch,
+}
+
+impl Put {
+    /// The question put before `work` is sent.
+    pub(super) fn before(work: &Work) -> Self {
+        match work {
+            Work::Answer(_) => Self::Answer,
+            Work::Turn(..) | Work::Room(_) => Self::Send,
+        }
+    }
+
+    /// The answers offered, where they are fixed: all but a launch's, which
+    /// name the agent it starts.
+    pub(super) fn offered(self) -> Option<&'static [Offered<'static>]> {
+        match self {
+            Self::Send => Some(&SENDING),
+            Self::Answer => Some(&ANSWERING),
+            Self::Choice => Some(&CHOOSING),
+            Self::Launch => None,
+        }
+    }
 }
 
 /// How the question was answered.
@@ -65,6 +89,19 @@ const SENDING: [Offered<'static>; 2] = [
     },
 ];
 
+/// The answers offered before the dock's answers are sent, which stay in the
+/// dock where they are not.
+const ANSWERING: [Offered<'static>; 2] = [
+    Offered {
+        name: "Use it anyway",
+        says: "Sends your answers; this route is not asked about again",
+    },
+    Offered {
+        name: "Go back",
+        says: "Keeps your answers in the dock; nothing is sent",
+    },
+];
+
 /// The answers offered before a choice.
 const CHOOSING: [Offered<'static>; 2] = [
     Offered {
@@ -85,11 +122,13 @@ pub(super) const CRAMPED_SEND: &str =
 pub(super) const CRAMPED_CHOICE: &str =
     "! this route needs an answer first; make the window taller and choose again";
 
-/// Said where no panel fits before room is made.
+/// Said where no panel fits before room is made, or before the dock's answers
+/// are sent.
 pub(super) const CRAMPED_ROOM: &str =
     "! this route needs an answer first; make the window taller and try again";
 
-/// Said once room was going to be made and nothing was sent.
+/// Said once room was going to be made, or the dock's answers were going to
+/// be sent, and nothing was sent.
 pub(super) const UNSENT: &str = "nothing was sent";
 
 /// Said once the message is back in the box.
@@ -145,13 +184,13 @@ pub(super) fn ask_while<T: Terminal>(
     } else {
         &[content_use::LAUNCHING]
     };
-    let (shown, told): (&[Offered<'_>], &[&str]) = match put {
-        // A message on an installed agent's route that starts the agent says
-        // what starting it runs, as a launch does.
-        Put::Send if content_use::launches(&warned.route) => (&SENDING, launched),
-        Put::Send => (&SENDING, &[]),
-        Put::Choice => (&CHOOSING, &[]),
-        Put::Launch => (&launching, launched),
+    let shown: &[Offered<'_>] = put.offered().unwrap_or(&launching);
+    let told: &[&str] = match put {
+        // A message or an answer on an installed agent's route that starts
+        // the agent says what starting it runs, as a launch does.
+        Put::Send | Put::Answer if content_use::launches(&warned.route) => launched,
+        Put::Launch => launched,
+        Put::Send | Put::Answer | Put::Choice => &[],
     };
     let cited = warned.warning.cited();
     let footer = format!("enter to choose {} esc to go back", style.glyphs().dot());
@@ -235,14 +274,17 @@ pub(super) fn held<T: Terminal>(
         if !held.answers.keys {
             return Err(Fatal::Unanswered(unanswered(&warned)));
         }
-        break match ask(renderer, terms.style(), &warned, Put::Send)? {
+        break match ask(renderer, terms.style(), &warned, Put::before(work))? {
             Answer::Yes => match recorded(terms, &warned) {
                 Ok(()) => continue,
                 Err(said) => said,
             },
-            // Room to be made has no message to give back.
-            Answer::Back if matches!(work, Work::Room(_)) => UNSENT.to_owned(),
-            Answer::Cramped if matches!(work, Work::Room(_)) => CRAMPED_ROOM.to_owned(),
+            // Room to be made has no message to give back, and the dock's
+            // answers stay in the dock.
+            Answer::Back if matches!(work, Work::Room(_) | Work::Answer(_)) => UNSENT.to_owned(),
+            Answer::Cramped if matches!(work, Work::Room(_) | Work::Answer(_)) => {
+                CRAMPED_ROOM.to_owned()
+            }
             Answer::Back => KEPT.to_owned(),
             Answer::Cramped => CRAMPED_SEND.to_owned(),
         };
@@ -269,15 +311,20 @@ pub(super) fn unanswered(warned: &Warned) -> Box<str> {
 /// The warned route `work` would go on with no yes: the one a send to the
 /// conversation's provider is held by, or on an installed agent's route, the
 /// agent's own where the turn would start it. Room is not made on an agent's
-/// route, so nothing is started for it. Both are read from the yes the
-/// question writes to, so a route answered here is not asked again.
+/// route, so nothing is started for it. Either route is read from the yes the
+/// question writes to, so a route answered here is not asked again. The dock's
+/// answers that reach this are asked about as a turn would be, and always:
+/// the check that spares a turn the question when it would be refused before
+/// it started the agent is made in `held` for a turn alone, so an answer is
+/// asked about whatever its launch would do. Ones with nothing left to settle
+/// were refused before it.
 fn unsent(conversation: &Conversation, terms: &Terms, work: &Work) -> Option<Warned> {
     match conversation.serving() {
         Some(provider) => terms
             .consent
             .unanswered(provider, conversation.settled().model()),
         None => match work {
-            Work::Turn(..) => terms.consent.asks(&conversation.launching()?),
+            Work::Turn(..) | Work::Answer(_) => terms.consent.asks(&conversation.launching()?),
             Work::Room(_) => None,
         },
     }

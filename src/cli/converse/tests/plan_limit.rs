@@ -265,11 +265,14 @@ fn idle(conversation: &Conversation, held: &Held<'_>) -> Vec<String> {
         &held.editor,
         Style::plain(),
         typing::around(
-            &held.planning,
+            typing::Above {
+                planning: &held.planning,
+                queued: &held.queued,
+                docking: &held.docking,
+            },
             &Opened::default(),
             &typing::saying(conversation.settled()),
             Recalled::default(),
-            &held.queued,
         ),
     )
     .expect("the box to be drawn");

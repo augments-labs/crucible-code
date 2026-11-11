@@ -48,11 +48,12 @@ CASES = [
     os.path.join(SUITE, "main.rs"),
     os.path.join(SUITE, "native.rs"),
     os.path.join(SUITE, "agents.rs"),
+    os.path.join(SUITE, "docking.rs"),
 ]
 
 # The modules a capture's name carries between the crate's and the case's own,
 # for the cases that live in a module of the suite rather than in `main.rs`.
-MODULES = ("native__", "agents__")
+MODULES = ("native__", "agents__", "docking__")
 
 # The harness, and not the cases. The files in `CASES` hold every case
 # body, so hashing them would put a new case in conflict with every accepted

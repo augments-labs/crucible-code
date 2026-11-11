@@ -56,8 +56,8 @@ use crucible_app::client::agents::{
     Typing, Watching,
 };
 use crucible_app::client::{
-    Answered, Confirmation, Desk, Front, Performed, Shown, account, asked, asking, interrupt, keep,
-    perform,
+    Answered, Confirmation, Desk, Front, Performed, Questions, Shown, account, asked, asking,
+    interrupt, keep, perform,
 };
 use crucible_app::content_use::Warned;
 use crucible_app::launching::{Launcher, Steps};
@@ -1165,6 +1165,20 @@ impl Terms {
         }
 
         kept
+    }
+
+    /// Settles the questions `command` answers in `questions`, the handle
+    /// startup supplied. Needs no conversation, which is what lets the dock
+    /// answer while a turn has it: the running turn delivers what settles.
+    pub(crate) fn answer(&self, command: Command, questions: &Questions) -> Outcome {
+        let request = self.client.asking(command);
+        let answered = crucible_app::client::answer(&request, questions);
+
+        if let Some(witness) = &self.client.witness {
+            witness.apart(&request, answered.clone());
+        }
+
+        answered
     }
 
     /// Asks the turn `cancel` belongs to to stop. Needs no conversation, which

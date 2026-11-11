@@ -246,9 +246,9 @@ impl Standing {
             Asked::Expand => self.open(kept, blocks),
             Asked::Clicked(at) => self.one(kept, *at),
 
-            // Not this one's. A line, a turn nobody typed and the end of a
-            // session are the loop's.
-            Asked::Said(_) | Asked::Woke(_) | Asked::Ended | Asked::Untyped => {
+            // Not this one's. A line, a turn nobody typed, the dock's answers
+            // and the end of a session are the loop's.
+            Asked::Said(_) | Asked::Woke(_) | Asked::Answer(_) | Asked::Ended | Asked::Untyped => {
                 return false;
             }
         }

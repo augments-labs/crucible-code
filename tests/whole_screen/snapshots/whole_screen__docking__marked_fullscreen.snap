@@ -1,0 +1,21 @@
+---
+source: tests/whole_screen/docking.rs
+expression: still(&window)
+---
+60x16 cursor 13,4 scrolled 0
+|                                                           │|
+|* running (#s · ↓ 4 · esc to interrupt)                    │|
+|                                                           ●|
+|                                                            |
+|╭──────────────────────────────────────────────────────────╮|
+|│  □ 2 questions waiting                                   │|
+|│     6. ( ) Foxtrot                                       │|
+|│     7. ( ) Golf                                          │|
+|│  ›  8. ( ) Hotel                                         │|
+|╰──────────────────────────────────────────────────────────╯|
+|  pgup pgdn to see more                                     |
+|                                             99% window left|
+|╭──────────────────────────────────────────────────────────╮|
+|│ ›                                                        │|
+|╰──────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)   anthropic · claude-test-1|

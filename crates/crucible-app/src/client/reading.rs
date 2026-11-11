@@ -131,11 +131,15 @@ pub fn billing(conversation: &Conversation) -> api::Billing {
 /// Nothing, for a client that did not ask for [`Capability::Progress`]: this is
 /// the one place progress is handed to a client, so it is where that is held.
 /// Called by a consumer with no terminal — today the one the headless tests
-/// drive; the terminal draws a turn from the runner's events as they stand.
+/// drive — and by the terminal for what waits for an answer alone: it draws a
+/// turn from the runner's events as they stand, takes a
+/// [`Progress::Waiting`] from here only as the word that what waits changed,
+/// and reads the era and the set from its handle itself.
 ///
-/// What waits for the person's answer is the one exception. It goes to a
-/// client that claimed [`Capability::Questions`], whether or not it asked for
-/// progress, because that client is the one answering it, and to no other.
+/// What waits for the person's answer is the exception to the progress hold.
+/// It goes to a client that claimed [`Capability::Questions`], whether or not
+/// it asked for progress, because that client is the one answering it, and to
+/// no other.
 /// Each question is shown in the shape a blocking question is put, with one
 /// difference: an answer whose name is longer than the words a client is
 /// handed is cut, saying so, where a blocking question like it is declined

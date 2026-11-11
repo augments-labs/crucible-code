@@ -58,7 +58,7 @@ use crucible_app::subscription::Subscriptions;
 use crucible_app::{Conversation, Settled};
 use crucible_auth::Store;
 use crucible_builtins::{Background, Ledger, Plan};
-use crucible_client_api::{Command, ErrorCode, Prompt, Refusal};
+use crucible_client_api::{AnswerOutcome, Command, ErrorCode, Outcome, Prompt, Refusal};
 use crucible_context::Room;
 use crucible_runner::{Event, TurnError, Turned};
 use crucible_runtime::Cancel;
@@ -78,6 +78,7 @@ use super::style::Style;
 use super::{Fatal, standing};
 use answering::{Answers, asked, cramped, read, verdict};
 use command::Ran;
+use docking::{Submission, Toggled};
 use expanding::Standing;
 pub(crate) use first::First;
 use planning::Planning;
@@ -90,6 +91,7 @@ mod answering;
 mod asking;
 mod attaching;
 pub(crate) mod command;
+mod docking;
 mod expanding;
 mod finding;
 mod first;
@@ -669,6 +671,11 @@ fn conversing<T: Terminal>(
     // the line it puts in the box.
     held.recalling = Recalling::new(terms.sessions.clone(), terms.workspace.clone());
 
+    // The handle the conversation was started with, kept here as the turn's
+    // `Cancel` is: the dock reads what waits through it while a turn has the
+    // conversation, and answers through it.
+    held.questions = conversation.questions().cloned();
+
     // The opening is the first thing in the transcript, which is where a
     // reader scrolls back to find it. Written down rather than stood over the
     // box: the band it lands in is the one that scrolls, so the card keeps its
@@ -795,6 +802,7 @@ fn conversing<T: Terminal>(
             left,
             aside: &terms.aside,
             queued: &mut held.queued,
+            docking: &mut held.docking,
             keys,
         };
         let asked = typing::ask(renderer, style, between)?;
@@ -813,6 +821,22 @@ fn conversing<T: Terminal>(
             Asked::Said(said) => said.into_parts(),
             Asked::Woke(said) => (said, false),
             Asked::Ended => break,
+
+            // The dock's answers, sent as the turn that delivers them.
+            Asked::Answer(submission) => {
+                let (back, leaving) = ran(
+                    conversation,
+                    renderer,
+                    terms,
+                    Work::Answer(submission),
+                    &mut held,
+                )?;
+                conversation = back;
+                if leaving {
+                    break;
+                }
+                continue;
+            }
 
             // Taken above, by the state that holds what it stands over.
             Asked::Expand | Asked::Clicked(_) => continue,
@@ -833,6 +857,10 @@ fn conversing<T: Terminal>(
             let ran = command::run(wanted, renderer, &mut conversation, &mut held, terms)?;
             // `/settings` may have changed which press sends.
             held.editor.send_with(terms.sending.get());
+            // `/clear`, `/resume` and a move of route take the questions to
+            // another era, and the batches of the one left go with their
+            // drafts.
+            moved(&mut held);
             attaching::refresh_store(&mut held, importing(conversation.session()));
             match ran {
                 Ran::Again => continue,
@@ -1069,6 +1097,29 @@ fn ran<T: Terminal>(
         unanswered(&conversation, renderer, terms)?;
         return Ok((conversation, false));
     }
+    // The dock's answers, refused in the dock with the draft kept where they
+    // could settle nothing or have no model to go to: a session resumed is
+    // not given back its questions until its first turn. This only spares a
+    // turn started for nothing; the door that settles them checks again and
+    // is the one that decides.
+    let answering = match &work {
+        Work::Answer(submission) => Some((submission.era.clone(), submission.id)),
+        Work::Turn(..) | Work::Room(_) => None,
+    };
+    if let Some((era, id)) = &answering {
+        if !waits(held, era, *id) {
+            held.docking.answered(
+                *id,
+                Err(Refusal::from(ErrorCode::StaleQuestions).to_string()),
+            );
+            return Ok((conversation, false));
+        }
+        if !answerable(&conversation) {
+            held.docking.answered(*id, Err(UNASKED.to_owned()));
+            unanswered(&conversation, renderer, terms)?;
+            return Ok((conversation, false));
+        }
+    }
     // Only a line somebody typed has a reply to hang under it, which is why
     // this asks who asked rather than what ran: room made because the window
     // filled, or because a resumed session was picked up as notes, was nobody's
@@ -1080,6 +1131,9 @@ fn ran<T: Terminal>(
     let command = matches!(work, Work::Room(Compacting::Asked)).then(|| renderer.lines());
     let style = terms.style();
     if warning::held(&conversation, renderer, terms, &work, held)? {
+        if let Some((_, id)) = &answering {
+            held.docking.answered(*id, Err(warning::UNSENT.to_owned()));
+        }
         replied(renderer, command, style)?;
         return Ok((conversation, false));
     }
@@ -1096,14 +1150,39 @@ fn ran<T: Terminal>(
     // request was made posted no event at all, so without this the reader is
     // handed a fresh prompt and no word on why nothing answered.
     match &took.did {
-        Did::Reported | Did::UsedUp => {}
+        // Answers that settled are the dock's to show, below.
+        Did::Reported | Did::UsedUp | Did::Settled(_) => {}
         Did::Refused(turned) => draw::refused(renderer, turned)?,
         Did::Uncertain => draw::uncertain(renderer)?,
         Did::Nothing => draw::unmade(renderer)?,
         Did::Stopped => draw::stopped(renderer)?,
+        // An answer refused is said in the dock, beside the draft it kept.
+        Did::Unsent(_) if answering.is_some() => {}
         Did::Unsent(refusal) => renderer.commit(&format!("! {refusal}"))?,
         // Answered as a prompt with nobody to ask is, down a pipe too.
         Did::Unasked => unanswered(&took.conversation, renderer, terms)?,
+    }
+
+    // What became of the dock's answers is the dock's to show, and what waits
+    // is read again once a turn has run: the one that delivered them left
+    // nothing of the batch waiting. Not where nothing ran, which may be a
+    // session resumed whose questions its first turn has yet to bring back.
+    if let Some((_, id)) = answering {
+        let outcome = match &took.did {
+            Did::Unsent(refusal) => Err(refusal.to_string()),
+            Did::Settled(settled) => settled.clone(),
+            Did::Unasked => Err(UNASKED.to_owned()),
+            Did::Reported
+            | Did::UsedUp
+            | Did::Uncertain
+            | Did::Refused(_)
+            | Did::Nothing
+            | Did::Stopped => Ok(()),
+        };
+        held.docking.answered(id, outcome);
+    }
+    if !matches!(took.did, Did::Unsent(_) | Did::Unasked) {
+        refreshed(held);
     }
 
     // And only a one-line reply is a reply. A compaction that ran posts the
@@ -1255,6 +1334,14 @@ impl Turn<'_, '_> {
                     && self.held.queued.steered(line)
                 {
                     self.turning.redraw();
+                }
+
+                // What waits for an answer changed. The report is a signal:
+                // what waits is read through the handle, as any client reads
+                // it, and the dock shown it without moving the focus or the
+                // draft of a batch that is still there, as `docking` says.
+                if let Seen::Turn(event @ Event::Waiting { .. }) = &one {
+                    self.waited(event);
                 }
 
                 // And the line of a call whose tool has answered is written
@@ -1459,6 +1546,7 @@ impl Turn<'_, '_> {
                     steer: &self.terms.steer,
                     terms: self.terms,
                     leaving: self.leaving,
+                    docking: &mut self.held.docking,
                 },
             ) {
                 // Kept rather than acted on. The turn has been asked to stop
@@ -1476,10 +1564,51 @@ impl Turn<'_, '_> {
                         *self.drawn = stop_if_failed(ran, &self.terms.cancel);
                     }
                 }
+                Ok(typing::Meanwhile::Answer(submission)) => self.answer(submission),
                 Ok(typing::Meanwhile::Nothing) => {}
                 Err(problem) => *self.drawn = stop_if_failed(Err(problem), &self.terms.cancel),
             }
         }
+    }
+
+    /// The dock shown what waits, on a report that it changed.
+    fn waited(&mut self, event: &Event) {
+        let questions = self.held.questions.as_ref();
+        let progress = crucible_app::client::progress(
+            crucible_client_api::Capabilities::every(),
+            event,
+            self.serving,
+            questions,
+        );
+        if let (Some(crucible_client_api::Progress::Waiting { .. }), Some(questions)) =
+            (progress, questions)
+        {
+            let (era, batches) = questions.waiting();
+            self.held.docking.waiting(&era, &batches);
+            self.turning.redraw();
+        }
+    }
+
+    /// Settles the dock's answers while the turn has the conversation; the
+    /// turn delivers them. What came of it is shown in the dock.
+    fn answer(&mut self, submission: Submission) {
+        let id = submission.id;
+        let outcome = match &self.held.questions {
+            Some(questions) => self.terms.answer(submission.command(), questions),
+            None => Outcome::Refused(ErrorCode::StaleQuestions.into()),
+        };
+        let said = match outcome {
+            Outcome::Answer(answered) => match answered {
+                AnswerOutcome::Settled => Ok(()),
+                AnswerOutcome::Invalid { reason } => Err(reason.as_str().to_owned()),
+            },
+            Outcome::Refused(refusal) => Err(refusal.to_string()),
+            // The door that settles answers gives an answer's outcome or a
+            // refusal; no other kind of outcome is about a submission.
+            _ => Err(Refusal::from(ErrorCode::StaleQuestions).to_string()),
+        };
+        self.held.docking.answered(id, said);
+        self.turning.redraw();
     }
 
     /// Runs a slash command finished mid-turn, with the turn rendering behind
@@ -1494,6 +1623,23 @@ impl Turn<'_, '_> {
         // A panel waits on the keyboard with no clock, and the pass that would
         // read a noted signal is run from inside that wait.
         let _unclocked = self.terms.ending.unclocked()?;
+
+        // The dock is the band over the box, not a panel: it opens or closes
+        // where it is drawn, with the turn going on under it.
+        if command.command() == command::Command::Questions {
+            match self.held.docking.toggled() {
+                Toggled::Empty => {
+                    command::refused(
+                        renderer,
+                        command,
+                        command::questions::NOTHING,
+                        self.terms.style(),
+                    )?;
+                }
+                Toggled::Opened | Toggled::Closed => self.turning.redraw(),
+            }
+            return Ok(());
+        }
 
         match command.class() {
             command::MidTurn::Live => self.live(renderer, command),
@@ -1712,6 +1858,7 @@ fn take<T: Terminal>(
                 // room for it, and its panel stands from the first frame.
                 queued: &held.queued,
                 history: held.recalling.place(),
+                docking: &held.docking,
             },
             &says,
             terms.style(),
@@ -1838,6 +1985,16 @@ fn sent(
             Work::Room(why) => {
                 Ended::Room(conversation.compact(why, &run, &mut Spend::default()).await)
             }
+            Work::Answer(submission) => {
+                asking
+                    .turn(
+                        &mut conversation,
+                        submission.command(),
+                        Box::default(),
+                        &run,
+                    )
+                    .await
+            }
         };
 
         // What a turn came to is read rather than dropped: one that ran
@@ -1858,19 +2015,48 @@ fn sent(
             // Not reached from here: a prompt or `/compact` with no model to
             // ask is answered by [`answerable`] before any work is sent.
             Ended::Unasked(_) => Did::Unasked,
+            // Settled where no turn was owed to deliver it, or refused by the
+            // registry with the batch as it was.
+            Ended::Answered(settled) => {
+                Did::Settled(settled.map_err(|unsettled| unsettled.to_string()))
+            }
             // Not reached from here: every route holding the send is asked
             // about on the drawing thread before the work is sent, each yes
             // is written down there, and nothing on the worker takes one out.
-            //
-            // An answer to questions held for later is not reached from here:
-            // the terminal answers the model's questions as they are asked.
-            Ended::Warned(_) | Ended::Unrecorded(_) | Ended::Answered(_) => {
-                Did::Unsent(ErrorCode::Abandoned.into())
-            }
+            Ended::Warned(_) | Ended::Unrecorded(_) => Did::Unsent(ErrorCode::Abandoned.into()),
         };
 
         (conversation, did)
     })
+}
+
+/// What the dock says of answers that had no model to go to.
+const UNASKED: &str = "there is no model to send the answers to";
+
+/// Whether the batch of `era` numbered `id` waits, as the handle reads it.
+fn waits(held: &Held<'_>, era: &crucible_client_api::Era, id: crucible_types::QuestionId) -> bool {
+    held.questions.as_ref().is_some_and(|questions| {
+        let (now, batches) = questions.waiting();
+        now == *era && batches.iter().any(|batch| batch.id() == id)
+    })
+}
+
+/// The dock shown what waits now, read through the handle.
+fn refreshed(held: &mut Held<'_>) {
+    if let Some(questions) = &held.questions {
+        let (era, batches) = questions.waiting();
+        held.docking.waiting(&era, &batches);
+    }
+}
+
+/// The dock told the era the questions are in now, after a command that may
+/// have moved them: a batch of any other era goes with its draft, and one of
+/// the same era stays until a report says otherwise.
+fn moved(held: &mut Held<'_>) {
+    if let Some(questions) = &held.questions {
+        let (era, _) = questions.waiting();
+        held.docking.moved(&era);
+    }
 }
 
 /// What a worker is sent away to do.
@@ -1885,6 +2071,9 @@ enum Work {
     Turn(String, Box<[Attachment]>),
     /// Room, made for the reason it names.
     Room(Compacting),
+    /// The dock's answers to questions the model asked without waiting,
+    /// settled and delivered by the turn this starts.
+    Answer(Submission),
 }
 
 /// What the worker found to do.
@@ -1923,6 +2112,9 @@ enum Did {
     /// Room was asked for with no model to ask for a recap. Nothing was
     /// recorded, sent or posted.
     Unasked,
+    /// The dock's answers settled with no turn to deliver them, or were
+    /// refused for the reason given, the batch as it was. Nothing was posted.
+    Settled(Result<(), String>),
 }
 
 /// A turn, and what the keyboard asked for while it ran.
@@ -2037,6 +2229,14 @@ struct Held<'a> {
     /// The card the session opened with, which `/clear` and `/resume` write
     /// again at the top of the record they start over.
     opening: &'a draw::opening::Standing,
+    /// The questions the model asked without waiting, as the dock over the
+    /// box shows them, with their drafts. For the conversation's life: a
+    /// draft outlives the turn it was written under.
+    docking: docking::Docking,
+    /// The handle on those questions startup supplied, through which what
+    /// waits is read and an answer settled while a turn has the
+    /// conversation. `None` where the conversation holds none.
+    questions: Option<crucible_app::client::Questions>,
 }
 
 impl<'a> Held<'a> {
@@ -2072,6 +2272,8 @@ impl<'a> Held<'a> {
             told: false,
             answers,
             opening,
+            docking: docking::Docking::default(),
+            questions: None,
         }
     }
 }

@@ -52,6 +52,7 @@ fn every_command_decides_what_it_can_do_mid_turn() {
         Command::Settings,
         Command::Context,
         Command::Usage,
+        Command::Questions,
     ];
     let deferred = [Command::Model, Command::Mode, Command::Fast];
 
@@ -211,12 +212,18 @@ fn the_nearest_names_are_at_most_three_and_the_nearest_first() {
     );
 
     // A slip of one letter anywhere in any name is offered that name first.
+    // The letter slipped in is one the name does not have there, or the word
+    // would be the name itself.
     for command in EVERY {
         let name = command.name();
         for at in 1..name.len() {
             let slipped: String = name
                 .char_indices()
-                .map(|(here, one)| if here == at { 'q' } else { one })
+                .map(|(here, one)| match (here == at, one) {
+                    (true, 'q') => 'z',
+                    (true, _) => 'q',
+                    (false, _) => one,
+                })
                 .collect();
             let offered = nearest(&commands, &slipped);
 
@@ -391,6 +398,7 @@ fn help_answers_with_a_name_and_what_it_does() {
             "/login           sign in to a provider account",
             "/logout          remove a stored account or API key",
             "/catalog         browse and add coding agents from the ACP R",
+            "/questions       open or close the questions waiting for you",
             "/mode            ask · allowEdits · fullAccess",
             "/sandbox         inspect or configure sandbox confinement",
             "/theme           pick the colours crucible draws with",
@@ -419,6 +427,7 @@ fn a_terminal_without_the_marks_gets_the_ring_punctuated_for_it() {
             "/login           sign in to a provider account",
             "/logout          remove a stored account or API key",
             "/catalog         browse and add coding agents from the ACP R",
+            "/questions       open or close the questions waiting for you",
             "/mode            ask, allowEdits, fullAccess",
             "/sandbox         inspect or configure sandbox confinement",
             "/theme           pick the colours crucible draws with",
