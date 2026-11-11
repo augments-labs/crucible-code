@@ -3840,6 +3840,7 @@ async fn confirmed(
             name: Text::cut(name),
             says: Text::cut(says),
             recommended: at == 0,
+            shows: Vec::new(),
         })
         .collect();
     let cut = asks.truncated()

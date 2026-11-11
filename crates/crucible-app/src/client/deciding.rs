@@ -677,6 +677,7 @@ pub async fn confirmed(
             name: Text::cut(name),
             says: Text::cut(says),
             recommended: at == 0,
+            shows: Vec::new(),
         })
         .collect();
     let cut = asks.truncated()
@@ -717,8 +718,10 @@ pub async fn confirmed(
 }
 
 /// One question, as it is put to a client, or `None` where it cannot be put
-/// whole: more answers than a list here holds, or an answer's name longer than
-/// the words here carry.
+/// whole: more answers, or more rows an answer shows, than a list here holds,
+/// or an answer's name longer than the words here carry. A row longer than
+/// that is cut and says so, as what an answer says is: it is drawn, never sent
+/// back.
 fn put(question: &Question) -> Option<Asked> {
     if question.answers().len() > ITEMS {
         return None;
@@ -732,10 +735,11 @@ fn put(question: &Question) -> Option<Asked> {
             .answers()
             .map(|answer| {
                 let name = Text::cut(answer.answer());
-                (!name.truncated()).then(|| Choice {
+                (!name.truncated() && answer.shows().len() <= ITEMS).then(|| Choice {
                     name,
                     says: Text::cut(answer.says()),
                     recommended: answer.is_recommended(),
+                    shows: answer.shows().map(Text::cut).collect(),
                 })
             })
             .collect::<Option<_>>()?,
@@ -744,8 +748,8 @@ fn put(question: &Question) -> Option<Asked> {
 
 /// One question that waits, as a client is shown it: as [`put`] puts it. The
 /// registry bounds every text it holds below the words a client is handed, so
-/// none is cut here, and holds no more answers to a question than a list here
-/// carries.
+/// none is cut here, and holds no more answers to a question, nor rows to an
+/// answer, than a list here carries.
 pub(super) fn shown(question: &Question) -> Asked {
     Asked {
         heading: Text::cut(question.heading()),
@@ -757,6 +761,7 @@ pub(super) fn shown(question: &Question) -> Asked {
                 name: Text::cut(answer.answer()),
                 says: Text::cut(answer.says()),
                 recommended: answer.is_recommended(),
+                shows: answer.shows().map(Text::cut).collect(),
             })
             .collect(),
     }

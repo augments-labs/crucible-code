@@ -298,6 +298,32 @@ fn the_recommended_answer_is_put_marked_and_under_its_own_name() {
 }
 
 #[test]
+fn the_rows_an_answer_shows_are_put_with_it_in_order() {
+    let asking = vec![Question::new(
+        "Layout",
+        "Which layout?",
+        [
+            Answer::new("Table").showing(["| a | b |", "| 1 | 2 |"]),
+            Answer::new("List"),
+        ],
+    )];
+    let mut front = Scripted::saying([Reply::Answers(1)]);
+
+    crucible_runtime::answered!(questions(Capabilities::every(), &mut front, &asking))
+        .expect("a question that fits");
+
+    let Some(Pending::Questions { questions, .. }) = front.put.first() else {
+        panic!("the question was never put: {:?}", front.put);
+    };
+    let rows: Vec<Vec<&str>> = questions
+        .iter()
+        .flat_map(|asked| &asked.choices)
+        .map(|choice| choice.shows.iter().map(Text::as_str).collect())
+        .collect();
+    assert_eq!(rows, [vec!["| a | b |", "| 1 | 2 |"], vec![]]);
+}
+
+#[test]
 fn a_question_that_cannot_be_put_whole_is_not_put_short() {
     // An answer that was not offered cannot be chosen, and a name that was cut
     // is not the name the asker reads back: either way what was shown is not
@@ -322,6 +348,18 @@ fn a_question_that_cannot_be_put_whole_is_not_put_short() {
         crucible_runtime::answered!(questions(Capabilities::every(), &mut front, &named)).is_none()
     );
     assert!(front.put.is_empty(), "put with an answer's name cut");
+
+    let rows = vec!["row"; ITEMS + 1];
+    let shown = vec![Question::new(
+        "Colour",
+        "Which colour?",
+        [Answer::new("yes").showing(rows), Answer::new("no")],
+    )];
+    let mut front = Scripted::saying([Reply::Answers(1)]);
+    assert!(
+        crucible_runtime::answered!(questions(Capabilities::every(), &mut front, &shown)).is_none()
+    );
+    assert!(front.put.is_empty(), "put with an answer's rows left out");
 
     let full = (0..ITEMS).map(|number| Answer::new(format!("answer {number}")));
     let fitting = vec![Question::new("Colour", "Which colour?", full)];
@@ -708,6 +746,54 @@ fn every_text_a_waiting_batch_may_hold_is_carried_to_a_client_whole() {
     assert!(!question.asks.truncated() && !question.heading.truncated());
     let says = question.choices.first().map(|choice| &choice.says);
     assert!(says.is_some_and(|says| !says.truncated() && says.as_str() == long));
+}
+
+#[test]
+fn the_most_a_waiting_set_may_hold_crosses_to_a_client_whole_with_every_row_it_shows() {
+    // The registry's ceilings, each at its most at once, so the report a
+    // client is sent never runs into the frame's: the frame's ceiling bounds
+    // each list and not how many rows a choice shows, and these do.
+    use crucible_tools::{MOST_ANSWERS, MOST_HELD, MOST_HELD_BYTES, MOST_QUESTIONS, MOST_SHOWS};
+    const { assert!(MOST_ANSWERS <= ITEMS && MOST_SHOWS <= ITEMS) };
+    let rows = MOST_HELD * MOST_QUESTIONS * MOST_ANSWERS * MOST_SHOWS;
+    // Each row as long as the batches' text together allows, less the names
+    // that tell the answers apart.
+    let row = "r".repeat(MOST_HELD_BYTES / rows - 1);
+    let held = super::Questions::new();
+    for _ in 0..MOST_HELD {
+        let question = |at: usize| {
+            Question::new(
+                "H",
+                format!("q{at}"),
+                (0..MOST_ANSWERS).map(|answer| {
+                    Answer::new(format!("{at}{answer}")).showing(vec![row.as_str(); MOST_SHOWS])
+                }),
+            )
+        };
+        held.held()
+            .register((0..MOST_QUESTIONS).map(question).collect())
+            .expect("the registry holds it");
+    }
+    let waiting = crucible_runner::Event::Waiting { batches: vec![] };
+
+    let shown = progress(
+        Capabilities::none().with(Capability::Questions),
+        &waiting,
+        None,
+        Some(&held),
+    );
+    let Some(shown @ Progress::Waiting { batches, .. }) = &shown else {
+        panic!("no waiting set was shown: {shown:?}");
+    };
+    let carried: usize = batches
+        .iter()
+        .flat_map(|batch| &batch.questions)
+        .flat_map(|asked| &asked.choices)
+        .map(|choice| choice.shows.len())
+        .sum();
+    assert_eq!(carried, rows);
+    let frame = shown.encode().expect("the fullest set fits a frame");
+    assert_eq!(&Progress::decode(&frame).expect("it reads back"), shown);
 }
 
 #[test]
@@ -1228,11 +1314,13 @@ fn nothing_a_client_says_settles_an_install_confirmation_a_conversation_never_ra
                 name: Text::cut("Install"),
                 says: Text::cut(""),
                 recommended: true,
+                shows: Vec::new(),
             },
             Choice {
                 name: Text::cut("Leave it"),
                 says: Text::cut(""),
                 recommended: false,
+                shows: Vec::new(),
             },
         ],
     };

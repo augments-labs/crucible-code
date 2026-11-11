@@ -1550,6 +1550,7 @@ fn an_account_confirmation_is_drawn_and_answered_at_this_terminal() {
             name: Text::cut(name),
             says: Text::cut(says),
             recommended: at == 0,
+            shows: Vec::new(),
         })
         .collect();
     let pending = Pending::Account {
