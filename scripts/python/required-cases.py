@@ -73,9 +73,15 @@ DOCTEST = re.compile(r"^(?P<source>.+?) - (?P<case>\S+) \(line (?P<line>\d+)\): 
 
 DEFINITION = re.compile(r"^(\s*)(?:pub\s+)?(?:async\s+)?fn\s+([^\s(<]+)\s*[(<]")
 
+# A nextest regex matcher as nextest delimits one: inside the slashes, `\/` is
+# the only escape it reads, and the first `/` not so escaped ends it. The
+# repetition is possessive because nextest never goes back to read a `\` that
+# began a `\/` as a character of its own.
+REGEX = re.compile(r"/(?:\\/|[^/])*+/")
+
 FILTER = re.compile(
     r"\s*(?:(?P<operator>[&|()])"
-    r"|(?P<predicate>[a-z_]+)\((?P<matcher>/(?:\\.|[^/\\])*/|[^()]*)\))"
+    rf"|(?P<predicate>[a-z_]+)\((?P<matcher>{REGEX.pattern}|[^()]*)\))"
 )
 
 # The predicates a test group may be written with, in the order selector() is
@@ -283,6 +289,9 @@ def self_test():
         ("package(=a) & (test(x) | test(y))", ("b", "b", "y"), False),
         (r"test(/\(a\/b\)/)", ("a", "a", "(a/b)"), True),
         (r"test(/a\\</)", ("a", "a", "a\\<"), True),
+        (r"test(/^bash\\/?::tests::/)", ("a", "a", "bash::tests::runs_one"), True),
+        (r"test(/^a\\/?\(b\)/)", ("a", "a", "a(b)"), True),
+        (r"test(/^a\/b\\/c$/)", ("a", "a", "a/b/c"), True),
     ):
         try:
             picked = selector(expression)(*test)
@@ -305,7 +314,13 @@ def self_test():
         "test(/(/)",
         "test(/[[:digit:]]x/)",
         r"test(/\<a/)",
+        r"test(/a\>/)",
         r"test(/\b{start}a/)",
+        r"test(/a\€/)",
+        r"test(/a\\/)",
+        "test(/a/b/)",
+        "test(/a)",
+        "test(/)",
     ):
         try:
             selector(expression)
@@ -748,23 +763,34 @@ def name_matcher(text, default):
 
     nextest reads an escape in the first three, and an alternation and a `[^`
     negated class in a glob, which fnmatch would take as they stand, so all
-    three are refused, as is a regex Python cannot compile. So is one Python
-    warns it may read otherwise, which is where Rust's class syntax, such as
+    three are refused. A regex is what nextest hands Rust: the text between
+    the slashes as `REGEX` delimits it, with each `\\/` made `/`. Text that
+    opens with a slash but is not one such regex is refused, since nextest
+    refuses it, and so is a regex Python cannot compile, or one Python warns
+    it may read otherwise, which is where Rust's class syntax, such as
     `[[:digit:]]` or `&&`, departs from Python's. Both read an escaped ASCII
-    punctuation mark as itself, except that Rust reads `\\<` and `\\>` as word
-    boundaries, and an escaped letter or digit, such as `\\b{start}`, can mean
-    something else in each, so a regex escaping any of these is refused too.
+    character that is not a letter or digit as itself, except that Rust reads
+    `\\<` and `\\>` as word boundaries. An escaped letter or digit, such as
+    `\\b{start}`, can mean something else in each, and Rust refuses an
+    escaped character beyond ASCII, so a regex escaping any of these is
+    refused too.
     """
-    if len(text) > 1 and text.startswith("/") and text.endswith("/"):
+    if text.startswith("/"):
+        if not REGEX.fullmatch(text):
+            raise ValueError(
+                f"cannot read {text!r} as one regex: nextest reads a regex from its opening / to the first"
+                " / after it not written \\/, and that / must end the matcher"
+            )
+        body = text[1:-1].replace("\\/", "/")
         if any(
             not (escaped.isascii() and not escaped.isalnum()) or escaped in "<>"
-            for escaped in re.findall(r"\\(.)", text[1:-1], re.DOTALL)
+            for escaped in re.findall(r"\\(.)", body, re.DOTALL)
         ):
             raise ValueError(f"cannot read {text!r} as a regex, as Rust may read an escape in it otherwise")
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("error", FutureWarning)
-                pattern = re.compile(text[1:-1])
+                pattern = re.compile(body)
         except (re.error, FutureWarning) as error:
             raise ValueError(f"cannot read {text!r} as a regex ({error})") from error
         return lambda value: pattern.search(value) is not None
