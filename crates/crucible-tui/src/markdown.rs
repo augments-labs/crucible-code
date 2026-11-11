@@ -3731,8 +3731,12 @@ impl Markdown {
     /// The block such a line turns out to be is laid out from what the watch
     /// saw. A held text that is drawn as a link never goes back through the
     /// scan, so it is told here, in the order it was written; one that is read
-    /// again is seen by the watch as that reading goes.
+    /// again is seen by the watch as that reading goes. Text read again was
+    /// told to the watch before it was, so while one is read nothing is told.
     fn watches(&mut self, text: &str) {
+        if self.told {
+            return;
+        }
         for character in text.chars() {
             if !self.table.as_ref().is_some_and(Table::mirrors) {
                 return;

@@ -8505,7 +8505,7 @@
       },
       "case": "markdown::tests::a_title_or_a_header_keeps_every_character_of_the_address_or_bracket_it_held",
       "source": "crates/crucible-tui/src/markdown/tests.rs",
-      "body_sha256": "cba4e43a8abc4dc749315bd616310d62ec47db0124bc453182864dab23798a33",
+      "body_sha256": "60e2f77771fbf8c4eb77961a47d46a90989227695c59928dc48b41b9db284d52",
       "platforms": [
         "linux",
         "macos",

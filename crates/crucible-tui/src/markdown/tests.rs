@@ -4903,11 +4903,17 @@ fn a_title_or_a_header_keeps_every_character_of_the_address_or_bracket_it_held()
         ("See <https://a b c>\n===\n", Level::One, 0),
         ("[a]: https://a.test/x and\n---\n", Level::Two, 0),
         ("[d]: https://d.test\n[a][b] [c][d\n===\n", Level::One, 1),
+        ("[a]: see <https://x.test/p> now\n===\n", Level::One, 0),
+        ("[1]: <https://x.test/p>\n---\n", Level::Two, 0),
+        ("[a]: x <yy z\n===\n", Level::One, 0),
     ];
     let tables = [
         "<https://a.test/x> | b\n--- | ---\n1 | 2\n",
         "[a]: https://a.test/x | b\n--- | ---\n1 | 2\n",
         "<https://a b | c\n--- | ---\n1 | 2\n",
+        "[a]: <https://x.test/p> | b\n--- | ---\n1 | 2\n",
+        "[a]: me <me@a.test> | b\n--- | ---\n1 | 2\n",
+        "[a]: x <yy | z\n--- | ---\n1 | 2\n",
     ];
     let wanted = headings
         .map(|(answer, level, skip)| {
