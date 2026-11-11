@@ -542,7 +542,10 @@ not. Everything in the program's directory is readable to it during the probe
 and at every launch, where the network is open to its vendor. That directory
 is refused when it is your home or `/`, or is, lies within or contains a place
 no agent is made able to write, such as `~/.ssh` or crucible's home; `bin`,
-`.local/bin` and `.cargo/bin` in your home may themselves be read. A directory
+`.local/bin` and `.cargo/bin` in your home may themselves be read. Your home
+here is your own, the `HOME` crucible itself was started with, even where the
+agent's entry gives the program a home of its own; where crucible knows no home
+of yours, the program is not started. A directory
 the sandbox already lets every program read, such as `/usr/bin`, gets no rule
 of its own, and any other is given read-only, never writable. The probe runs
 in an empty directory of its own, which is removed after.

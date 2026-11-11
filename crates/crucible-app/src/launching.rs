@@ -3425,7 +3425,6 @@ impl<'a> Launcher<'a> {
             );
         } else if Origin::of(&programs_beside(self.state), program.path()) == Origin::Own {
             let held = Own {
-                request: &request,
                 program: &program,
                 crucible,
                 started: signing_in.is_none(),

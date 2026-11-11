@@ -4,15 +4,15 @@
 
 use std::path::Path;
 
-use crucible_external_harnesses::{Program, Request};
+use crucible_external_harnesses::Program;
 use crucible_sandbox::SandboxPolicy;
 use crucible_tools::Mode;
 
 use std::sync::Arc;
 
-use super::{Agent, AuthMethod, Launcher, Trust, Unlaunched, Unpiped, child_home, quoted};
+use super::{Agent, AuthMethod, Launcher, Trust, Unlaunched, Unpiped, quoted};
 use crate::backends::{AgentRow, Sandboxing, Unbelieved, Wire};
-use crate::own_program::{Owned, Places, Recording};
+use crate::own_program::{Owned, Places, Recording, Unowned};
 
 impl Unpiped {
     /// Why the user's own program is not signed in by `method`'s command.
@@ -53,8 +53,6 @@ impl Agent {
 
 /// A start of the user's own program, as [`Launcher::own_held`] holds it.
 pub(super) struct Own<'a> {
-    /// What it is started with.
-    pub(super) request: &'a Request,
     /// The program.
     pub(super) program: &'a Program,
     /// Crucible's home, which its record is kept under.
@@ -66,7 +64,11 @@ pub(super) struct Own<'a> {
 impl Launcher<'_> {
     /// `policy` as `agent`'s start `own` of the user's own program is
     /// confined, once it is held to its probe record where it is started as
-    /// the agent.
+    /// the agent. Its directory is judged, at its launch and at the probe a
+    /// change since its probe brings, against the user's own home: the one
+    /// this launcher was told of, else this process's. A home the child is
+    /// started with is never that, since an entry can set its own; where no
+    /// home of the user's is known it is not started.
     ///
     /// # Errors
     ///
@@ -77,9 +79,21 @@ impl Launcher<'_> {
         own: &Own<'_>,
         policy: &SandboxPolicy,
     ) -> Result<SandboxPolicy, Unlaunched> {
-        let home = child_home(own.request, false).or_else(|| self.home.clone());
+        let Some(home) = self
+            .home
+            .clone()
+            .or_else(std::env::home_dir)
+            .filter(|home| home.is_absolute())
+        else {
+            return Err(Unowned::Root(format!(
+                "no home of yours is known, so whether the directory {} lies in may be given \
+                 to an agent cannot be judged; set HOME to your home",
+                own.program.path().display()
+            ))
+            .into());
+        };
         let places = Places {
-            home: home.as_deref().unwrap_or_else(|| Path::new("/")),
+            home: &home,
             crucible: own.crucible,
             sessions: self.sessions,
         };

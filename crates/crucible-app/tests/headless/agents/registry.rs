@@ -1816,17 +1816,31 @@ fn own_probed_with(
     bench: &Bench,
     script: &crucible_external_harnesses::fake_peer::Script,
 ) -> Result<(PathBuf, PathBuf, ExternalAgent), Failed> {
-    use crucible_app::own_program::{self, Places};
-
     cache(&bench.home, &registry_json("1.0.0"));
     let tools = bench.tree.0.join("tools");
-    let program = fake_peer::install(&tools, "goose", script)?;
+    let user = bench.tree.0.join("user");
+    let (program, configured) = own_probed_in(bench, &tools, &user, script)?;
+    Ok((tools, program, configured))
+}
+
+/// Puts the user's own `goose`, playing `script`, in `directory`, configures
+/// the instance `work` to start it by its whole path, and probes it as
+/// `crucible agents try` does with `home` for the user's home, against the
+/// registry already cached.
+fn own_probed_in(
+    bench: &Bench,
+    directory: &Path,
+    home: &Path,
+    script: &crucible_external_harnesses::fake_peer::Script,
+) -> Result<(PathBuf, ExternalAgent), Failed> {
+    use crucible_app::own_program::{self, Places};
+
+    let program = fake_peer::install(directory, "goose", script)?;
     configure_command(&bench.home, &program.to_string_lossy())?;
     let configured = instance(&bench.home, "work")?;
-    let user = bench.tree.0.join("user");
     own_program::tried(
         &Places {
-            home: &user,
+            home,
             crucible: bench.home.path(),
             sessions: bench.home.sessions(),
         },
@@ -1837,7 +1851,7 @@ fn own_probed_with(
         Duration::from_secs(20),
     )
     .map_err(|why| why.to_string())?;
-    Ok((tools, program, configured))
+    Ok((program, configured))
 }
 
 /// No sign-in command is run for the user's own program: a terminal method
@@ -2071,6 +2085,16 @@ fn own_started(
     bench: &Bench,
     configured: &ExternalAgent,
 ) -> Result<(Result<String, String>, Vec<Seen>), Failed> {
+    own_started_in(bench, configured, None)
+}
+
+/// [`own_started`] by a launcher told of `home`, where one is given, as the
+/// user's home in place of the shell's.
+fn own_started_in(
+    bench: &Bench,
+    configured: &ExternalAgent,
+    home: Option<&Path>,
+) -> Result<(Result<String, String>, Vec<Seen>), Failed> {
     use crucible_app::launching::Launcher;
     use crucible_execution::{SessionRef, TurnRequest};
     use crucible_external_harnesses::Control;
@@ -2095,6 +2119,10 @@ fn own_started(
         &state,
         bench.home.sessions(),
     );
+    let launcher = match home {
+        Some(home) => launcher.homed(home),
+        None => launcher,
+    };
     let control = Control::new().ok_or("a control")?;
     let trust = Trust::load(&state, SystemTime::now());
     let programs = bench.home.path().join("programs");
@@ -2148,8 +2176,25 @@ fn turning(initialized: &str) -> crucible_external_harnesses::fake_peer::Script 
 /// The record kept for the instance `work` of the user's own `goose` started
 /// as the registry fixture's entry says, where one is kept.
 fn own_record(bench: &Bench) -> Option<crucible_app::own_program::Record> {
+    own_record_setting(bench, &[])
+}
+
+/// [`own_record`] for an entry that also sets each of `more`, a name and its
+/// value, after the fixture's own variable.
+fn own_record_setting(
+    bench: &Bench,
+    more: &[(&str, &str)],
+) -> Option<crucible_app::own_program::Record> {
     use crucible_external_harnesses::catalog::Variable;
 
+    let env = [("GOOSE_HOME", "/tmp/goose")]
+        .iter()
+        .chain(more)
+        .map(|(name, value)| Variable {
+            name: (*name).into(),
+            value: (*value).into(),
+        })
+        .collect::<Vec<_>>();
     crucible_app::own_program::read(
         bench.home.path(),
         &crucible_app::own_program::Instance {
@@ -2157,10 +2202,7 @@ fn own_record(bench: &Bench) -> Option<crucible_app::own_program::Record> {
             driver: "catalog",
             agent: Some("goose"),
             args: &["acp".into()],
-            env: &[Variable {
-                name: "GOOSE_HOME".into(),
-                value: "/tmp/goose".into(),
-            }],
+            env: &env,
         },
     )
 }
@@ -2249,6 +2291,56 @@ fn an_own_program_changed_since_its_probe_is_probed_again_before_its_launch() ->
     assert!(
         own_record(&bench).is_none(),
         "the record of a program that no longer admits was kept"
+    );
+    Ok(())
+}
+
+/// The user's own program is judged against the user's own home at its
+/// launch, and at the probe a change since its probe brings, never against a
+/// home its entry gives it: one in the user's home is refused at its launch
+/// though its entry sets a home elsewhere, and one moved there since its probe
+/// is refused by its probe again, leaving no record.
+#[test]
+fn an_own_program_is_judged_against_the_users_home_not_its_entrys() -> Result<(), Failed> {
+    use crucible_external_harnesses::fake_peer::scripts::acp;
+
+    let bench = Bench::new("registry-own-entry-home")?;
+    let user = bench.tree.0.join("user");
+    let elsewhere = bench.tree.0.join("elsewhere");
+    let given = elsewhere.to_str().ok_or("a home that is text")?;
+    let mut index = registry_json("1.0.0");
+    let env = index
+        .pointer_mut(&format!("/agents/0/distribution/binary/{}/env", platform()))
+        .ok_or("the goose target's variables")?;
+    env["HOME"] = json!(given);
+    cache(&bench.home, &index);
+    let script = turning(&acp::offering("goose-acp", "1.2.3", &json!([])));
+    let setting = [("HOME", given)];
+
+    // Probed while the user's home was elsewhere, a program in the home the
+    // launch is told of is refused there, and its record is left as it was.
+    let (_, configured) = own_probed_in(&bench, &user, &elsewhere, &script)?;
+    let (started, seen) = own_started_in(&bench, &configured, Some(&user))?;
+    let refused = started.expect_err("a program in the user's home was started");
+    assert!(refused.contains("your home"), "{refused}");
+    assert!(seen.is_empty(), "started: {seen:?}");
+    assert!(own_record_setting(&bench, &setting).is_some(), "the record went");
+
+    // Probed outside the user's home and moved into it since, it is probed
+    // again against that home, refused, and its record removed.
+    let tools = bench.tree.0.join("tools");
+    own_probed_in(&bench, &tools, &user, &script)?;
+    let moved = user.join(format!("goose{}", std::env::consts::EXE_SUFFIX));
+    configure_command(&bench.home, &moved.to_string_lossy())?;
+    let configured = instance(&bench.home, "work")?;
+    let (started, seen) = own_started_in(&bench, &configured, Some(&user))?;
+    let refused = started.expect_err("a program moved into the user's home was started");
+    assert!(refused.contains("changed since it was probed"), "{refused}");
+    assert!(refused.contains("your home"), "{refused}");
+    assert!(seen.is_empty(), "started: {seen:?}");
+    assert!(
+        own_record_setting(&bench, &setting).is_none(),
+        "the record of a program refused by its probe again was kept"
     );
     Ok(())
 }
