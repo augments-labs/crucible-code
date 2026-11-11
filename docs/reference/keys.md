@@ -222,6 +222,32 @@ takes several answers adds `space to choose`, and the review stop itself reads
 `esc to cancel · ←→ between questions`. [Several questions
 at once](../tools/asking.md#several-questions-at-once) is about that stop.
 
+## Answering questions asked without waiting
+
+Questions the agent [asked without
+waiting](../tools/asking.md#asking-without-waiting) stand in a dock over the
+box once `/questions` opens it. While the dock has the keys:
+
+| Key | What it does |
+| --- | --- |
+| <kbd>↑</kbd>, <kbd>↓</kbd> | Moves the mark down the answers, or down the actions on the last stop. Stops at each end. |
+| <kbd>←</kbd>, <kbd>→</kbd> | Steps to the next question in the batch or the one before. Stops at each end. |
+| <kbd>Enter</kbd> | Chooses the marked answer and moves on, to the review stop after the last question. Where several answers may be chosen, it moves on and <kbd>Space</kbd> does the choosing. On `Write your own answer` with nothing written yet, it opens the line instead. On `Decline question`, it asks once more; on a question already declined, it takes the decline back. On the last stop, it does the marked action. |
+| <kbd>Space</kbd> | Where several answers may be chosen, chooses the marked one or unchooses it. |
+| <kbd>n</kbd> | Opens a line for a note of your own beside the answer. |
+| <kbd>Tab</kbd> | Gives the keys to the box, with the dock left open; <kbd>Tab</kbd> in the box gives them back. |
+| <kbd>PgUp</kbd>, <kbd>PgDn</kbd> | Scrolls a question or a read-back taller than the room for it. |
+| <kbd>Esc</kbd> | Closes the dock with everything you picked and wrote kept, and does not stop the turn. |
+| <kbd>Ctrl+C</kbd>, <kbd>Ctrl+D</kbd>, the wheel, a click | What they do with the box focused. |
+| Anything else | Nothing. |
+
+While you are writing a line, the editing keys edit it, and <kbd>Enter</kbd>
+or <kbd>Esc</kbd> stops writing and keeps what you wrote. While a decline
+asks once more, <kbd>Enter</kbd> declines and <kbd>Esc</kbd> keeps the
+question; any other key keeps it too, and one the dock reads then does what it
+does there. The footer
+under the dock names the keys that work where you are.
+
 ## Pickers and panels
 
 Every panel stood over the box reads the same few keys unless its section
