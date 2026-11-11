@@ -1077,8 +1077,12 @@ subagents mechanism. The command line keeps its name, `crucible agents`.
 `/model` on its own stands a shelf over the whole shell, with the model being
 asked now named above it: a search line across the top, the providers this build
 serves in one pane beside the models in the other, and the rungs the marked model
-takes on a strip underneath. Model rows show exact API IDs, such as `gpt-6-astra`
-and `gemini-3.8-flash`; search also accepts display names.
+takes on a strip underneath. Model rows show the exact API ID typed to ask for
+each model, such as `gpt-6-astra` and `gemini-3.8-flash`, except where the
+vendor's pricing page names a dated release the ID does not carry: that row
+names the release, so DeepSeek's read `deepseek-v4.1-flash-1017` and
+`deepseek-v4-pro-0813`, while `/model` and `--model` still take
+`deepseek-flash` and `deepseek-v4-pro`. Search also accepts display names.
 Type to narrow both panes at once: `openai` leaves everything that vendor
 serves, `sonnet` leaves the two Sonnet models, and the line does not ask which
 kind of name it just got. <kbd>Tab</kbd> crosses between the panes, the up and down

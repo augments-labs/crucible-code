@@ -207,7 +207,9 @@ fn kimi_product_names_keep_their_wire_identifiers_and_effort_sets() {
 #[test]
 fn deepseek_rows_show_the_version_its_pricing_page_names() {
     // `deepseek-flash` names no version, and the model behind it changes
-    // when DeepSeek upgrades it, so the row says which one it is now.
+    // when DeepSeek upgrades it, so the row says which one it is now, spelled
+    // the way the wire spells its names. The wire name stays what DeepSeek's
+    // API takes.
     let deepseek = serving("deepseek");
     let offered: Vec<_> = deepseek
         .models
@@ -218,9 +220,18 @@ fn deepseek_rows_show_the_version_its_pricing_page_names() {
     assert_eq!(
         offered,
         [
-            ("deepseek-flash", "DeepSeek-V4.1-Flash-1017"),
-            ("deepseek-v4-pro", "DeepSeek-V4-Pro-0813"),
+            ("deepseek-flash", "deepseek-v4.1-flash-1017"),
+            ("deepseek-v4-pro", "deepseek-v4-pro-0813"),
         ]
+    );
+    // What a client is told a usage group is called.
+    assert_eq!(
+        model_shown("deepseek", "deepseek-flash"),
+        Some("deepseek-v4.1-flash-1017")
+    );
+    assert_eq!(
+        model_shown("deepseek", "deepseek-v4-pro"),
+        Some("deepseek-v4-pro-0813")
     );
 }
 
