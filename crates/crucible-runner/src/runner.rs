@@ -41,7 +41,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crucible_context::{ContextSection, PermissionsSection, Room};
+use crucible_context::{ContextSection, PermissionsSection, Room, Task};
 use crucible_models::{
     Content, Delta, DeltaStream, Effort, PromptCacheAttempt, PromptCachePreparationError,
     PromptCachePricing, Provider, ProviderError, Request,
@@ -206,6 +206,10 @@ pub struct Runner {
     /// Whether the root run's first assembly has already looked for waiting
     /// questions the session's log recorded, which happens once.
     recalled: bool,
+    /// What the person asked for and every later instruction, kept for the
+    /// root run; `None` until this process first needs it, when it is read
+    /// back from what the session's log recorded.
+    task: Option<Task>,
 }
 
 struct Tooling {
@@ -294,6 +298,7 @@ impl Runner {
             deferred: None,
             told: 0,
             recalled: false,
+            task: None,
         };
         runner
             .state
@@ -525,6 +530,9 @@ impl Runner {
             held.clear();
         }
         self.recalled = false;
+        // The task is the session's too, and the one picked up has its own
+        // in its log: it is read back from there when next needed.
+        self.task = None;
     }
 
     /// The transcript so far.
@@ -1219,6 +1227,7 @@ impl Runner {
             turn: self.state.turn,
         });
         if let Some((prompt, attachments)) = said {
+            self.amend(run.ancestry(), prompt);
             self.record(
                 run.ancestry(),
                 Message::User {

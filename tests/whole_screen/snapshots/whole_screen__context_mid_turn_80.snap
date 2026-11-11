@@ -22,8 +22,8 @@ expression: on_the_first_beat(&picture)
 |  ██ project instructions       0       0%                                      |
 |  ██ tool schemas            3.9k     2.0%                                      |
 |  ██ MCP tool schemas           0       0%                                      |
-|  ██ messages                 483     0.2%                                      |
+|  ██ messages                 521     0.3%                                      |
 |  ██ reserve                28.1k    14.1%                                      |
-|  ░░ free                  166.3k      99%                                      |
+|  ░░ free                  166.2k      99%                                      |
 |                                                                                |
 |esc to close                                                                    |

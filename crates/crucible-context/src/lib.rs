@@ -2,11 +2,11 @@
 //!
 //! A turn is sent under a system prompt and a set of context fragments that say
 //! what is true of the session: its workspace, the skills it found, the
-//! environment, the model, the tools, the permissions and the questions still
-//! waiting for the person. This crate owns how those facts become words —
-//! [`ContextSection`], the order a pass assembles them in, the prompt around
-//! them — and what a compaction asks the model for in place of the history it
-//! replaces.
+//! environment, the model, the tools, the person's request, the permissions and
+//! the questions still waiting for the person. This crate owns how those facts
+//! become words — [`ContextSection`], the order a pass assembles them in, the
+//! prompt around them — and what a compaction asks the model for in place of
+//! the history it replaces.
 //!
 //! What it does not own is as deliberate. The persisted half of a context —
 //! [`Fragment`](crucible_types::Fragment), [`ContextSnapshot`](crucible_types::ContextSnapshot)
@@ -30,6 +30,7 @@
 //!     tools: &tools,
 //!     permission: &permission,
 //!     questions: Questions::Unheld,
+//!     task: None,
 //! };
 //!
 //! // A session with no recorded state states every section.
@@ -43,6 +44,7 @@ mod assembly;
 pub mod compaction;
 mod prompt;
 mod sections;
+mod task;
 
 pub use assembly::{Assembled, ContextInputs, Live, asked, assemble};
 pub use compaction::Room;
@@ -51,3 +53,4 @@ pub use prompt::{
     Skill, SkillsSection, SystemPrompt, ToolsSection, WorkspaceSection, continue_numbering,
 };
 pub use sections::{ContextSection, capture, seen};
+pub use task::{AMENDMENT_BYTES, MOST_AMENDMENTS, REQUEST_BYTES, Task, TaskSection};

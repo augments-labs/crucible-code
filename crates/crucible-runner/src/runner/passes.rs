@@ -163,6 +163,7 @@ impl<'a> AgentLoop<'a> {
         let events = run.reporting();
         for line in run.steer().take() {
             events.post(Event::Steered { line: line.clone() });
+            self.runner.amend(run.ancestry(), &line);
             self.runner
                 .record(run.ancestry(), Message::said(line))
                 .await?;

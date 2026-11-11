@@ -94,6 +94,7 @@ mod cache_operations;
 mod compaction;
 mod context;
 mod continuation;
+mod continuity;
 mod deferring;
 mod fast;
 mod guardrails;
@@ -1232,8 +1233,8 @@ fn the_second_request_carries_the_first_pass_in_full() {
 
     assert_eq!(
         scripted.asked(),
-        [7, 9],
-        "the first request adds six sections; the second adds only call and result"
+        [8, 10],
+        "the first request adds seven sections; the second adds only call and result"
     );
 }
 

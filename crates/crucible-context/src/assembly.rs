@@ -23,7 +23,8 @@ use serde_json::Value;
 use crate::prompt::{recorded_next, saved, telling, told_ids};
 use crate::{
     ContextSection, EnvironmentSection, ModelSection, PermissionsSection, Questions,
-    QuestionsSection, Skill, SkillsSection, ToolsSection, WorkspaceSection, capture, seen,
+    QuestionsSection, Skill, SkillsSection, Task, TaskSection, ToolsSection, WorkspaceSection,
+    capture, seen,
 };
 
 /// Stable inputs one run's composition root knows and the runner does not.
@@ -106,6 +107,9 @@ pub struct Live<'a> {
     pub permission: &'a Permission,
     /// How this run stands to the questions asked without waiting.
     pub questions: Questions<'a>,
+    /// What the person asked for, where this run is the conversation they
+    /// are in; `None` for a run beneath it, which is told nothing of it.
+    pub task: Option<&'a Task>,
 }
 
 impl fmt::Debug for Live<'_> {
@@ -164,6 +168,10 @@ pub fn assemble(
     ))?;
     assembly.resolve(&ModelSection::new(live.model, live.effort))?;
     assembly.resolve(&ToolsSection::new(live.tools))?;
+    // After the stable sections: a prompt or a steered line changes it
+    // between passes, and a turn's first pass is the one that tells it.
+    let recorded = assembly.prior.get(TaskSection::ID);
+    assembly.resolve(&TaskSection::new(live.task, recorded))?;
     assembly.resolve(&PermissionsSection::new(live.permission))?;
     let recorded = assembly.prior.get(QuestionsSection::ID);
     assembly.resolve(&QuestionsSection::new(live.questions, recorded))?;

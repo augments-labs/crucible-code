@@ -20,9 +20,14 @@
 //! come back. A batch asked during a tool pass is recorded, with the next id,
 //! before the result naming it ([`Runner::asked_since`]), so a log that holds
 //! the id brings the batch back and never hands the id out again.
+//!
+//! The person's task is the root run's as well. Each answer delivered amends
+//! it, and the patch recorded after the answers carries the task with them, so
+//! a log that holds the patch holds the answers it names.
 
 use crucible_context::{
-    ContextSection, Live, Questions, QuestionsSection, asked, assemble, continue_numbering,
+    ContextSection, Live, Questions, QuestionsSection, Task, TaskSection, asked, assemble,
+    continue_numbering,
 };
 use crucible_tools::Deferred;
 use crucible_types::{Ancestry, Message};
@@ -79,6 +84,9 @@ impl Runner {
             }
         }
 
+        if root {
+            self.task();
+        }
         let assembled = assemble(
             &self.context,
             snapshot.as_ref(),
@@ -89,6 +97,7 @@ impl Runner {
                 tools: &self.state.tools,
                 permission: &self.permission,
                 questions,
+                task: self.task.as_ref().filter(|_| root),
             },
         )?;
 
@@ -111,16 +120,58 @@ impl Runner {
         let mut delivered = 0;
         if let Some(held) = &held {
             for answer in held.take_settled() {
-                self.record(ancestry, Message::said(answer.said())).await?;
+                let said = answer.said();
+                self.amend(ancestry, &said);
+                self.record(ancestry, Message::said(said)).await?;
                 delivered += 1;
             }
         }
 
-        if let Some(patch) = assembled.patch {
+        let mut patch = assembled.patch;
+        if delivered > 0
+            && let Some(task) = &self.task
+        {
+            // The words told above are not told again: the answers follow
+            // them in the transcript, and the next compaction restates them
+            // from the task this records.
+            let prior = snapshot.unwrap_or_default();
+            let mut now = match &patch {
+                Some(patch) => patch.apply(&prior)?,
+                None => prior.clone(),
+            };
+            now.record(
+                TaskSection::ID,
+                TaskSection::new(Some(task), None).checked_snapshot()?,
+            )?;
+            patch = now.patch_from(&prior);
+        }
+        if let Some(patch) = patch {
             self.store.contextual(&patch).await?;
         }
 
         Ok(delivered)
+    }
+
+    /// Adds what the person said to the task, where `ancestry` is the root
+    /// run's: what a run beneath it is told is its parent's words.
+    pub(super) fn amend(&mut self, ancestry: Ancestry, said: &str) {
+        if ancestry.parent().is_none() {
+            self.task().said(said);
+        }
+    }
+
+    /// The root run's task, read back from what the session's log recorded
+    /// the first time this process needs it.
+    fn task(&mut self) -> &mut Task {
+        let task = match self.task.take() {
+            Some(task) => task,
+            None => self
+                .store
+                .context_snapshot()
+                .and_then(|recorded| recorded.get(TaskSection::ID).map(Task::restored))
+                .unwrap_or_default(),
+        };
+        self.task.insert(task)
     }
 
     /// Records the batches a root run's registry was asked during the tool

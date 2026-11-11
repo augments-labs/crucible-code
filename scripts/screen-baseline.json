@@ -1017,7 +1017,7 @@
         "Vendor::answering_each(&[&a_long_answer(), &again])",
         "Watched::answering(case, columns, rows, &vendor)"
       ],
-      "sha256": "388f05206d9f365b04babf9338569bac20706d6b4e9ea9d149a85896c9454505"
+      "sha256": "f97daaf48a955e6468e2b0a5b2bba6175ae04518ab0571b2b20b76b663831124"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__context_mid_turn_80.snap",
@@ -1026,7 +1026,7 @@
         "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"context-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "393d0b5adf7b3599f61b82a7019ff3c191f0e086023cbc42b08ea44d586a7744"
+      "sha256": "6183f492c1c42016ed10787c6ad1f80a8420342ad1f314b1eecdc253702e09cc"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__context_short_40.snap",
