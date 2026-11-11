@@ -2,7 +2,11 @@
 //! install and run.
 //!
 //! The registry is unsigned: it is fetched over `https` from one address, and
-//! nothing in it is believed beyond what a hash pins. An entry is offered only
+//! a hash pins what crucible installs; an entry's text may also propose a
+//! program on the user's `PATH` and give its arguments and environment, which
+//! run only after the user picks that path and only under the probe's
+//! admission. That proposal is read by [`OwnEntry`](super::OwnEntry), which
+//! asks for no hash. An entry is offered only
 //! for the platform this build runs on and only where that platform's target
 //! carries a SHA-256 and an archive the hardened unpacker reads; every other
 //! entry is absent and says why. There is no review, revocation, serial or key,
@@ -266,6 +270,15 @@ impl RegistryEntry {
             terms,
             targets,
         })
+    }
+
+    /// The binary target it publishes for `platform`, whether or not it is one
+    /// crucible would install.
+    #[must_use]
+    pub fn target(&self, platform: &str) -> Option<&RegistryTarget> {
+        self.targets
+            .iter()
+            .find(|target| *target.platform == *platform)
     }
 
     /// The target it offers for `platform`, or why it offers none.

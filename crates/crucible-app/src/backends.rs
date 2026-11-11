@@ -58,7 +58,8 @@ use crucible_external_harnesses::acp::{Acp, Allowing};
 use crucible_external_harnesses::antigravity::{self, Antigravity};
 use crucible_external_harnesses::catalog::registry::{RegistryIndex, Unoffered};
 use crucible_external_harnesses::catalog::{
-    AuthMethod, CatalogError, CatalogProfile, Entry, Offer, Target, Trust, Unprofiled, Unusable,
+    AuthMethod, CatalogError, CatalogProfile, Entry, Offer, OwnEntry, Target, Trust, Unprofiled,
+    Unusable,
 };
 use crucible_external_harnesses::claude::Claude;
 use crucible_external_harnesses::release::OwnedPin;
@@ -150,6 +151,9 @@ pub struct CatalogRow {
     /// statement of content use, from the registry's generic warning where a
     /// registry entry gives none, or why no warning can be given.
     warned: Result<Box<Warned>, Unstated>,
+    /// Whether it runs a program the user installed, outside crucible's
+    /// store, rather than a release the store keeps.
+    own: bool,
 }
 
 impl CatalogRow {
@@ -166,6 +170,7 @@ impl CatalogRow {
             source: ReleaseSource::Catalog,
             read: None,
             warned: stated(entry).map(Box::new),
+            own: false,
         })
     }
 
@@ -191,7 +196,52 @@ impl CatalogRow {
             source: ReleaseSource::Registry,
             read: Some(read),
             warned,
+            own: false,
         })
+    }
+
+    /// The row of the program the user installed for `key`, started with what
+    /// `own` proposes and signed in by `methods`, the ones its probe record
+    /// answered. `entry` is the entry it stands for, where one can be read,
+    /// whose statement of content use it is held under; a registry row, read on `read`, holds the
+    /// registry's generic warning where its entry states none, as
+    /// [`CatalogRow::registry`] does.
+    ///
+    /// # Errors
+    ///
+    /// [`Unprofiled`] where the entry's hosts give no profile to run it under.
+    pub fn own(
+        key: AgentKey,
+        own: &OwnEntry,
+        entry: Option<&Entry>,
+        read: Option<Box<str>>,
+        methods: Vec<AuthMethod>,
+    ) -> Result<Self, Unprofiled> {
+        let warned = match (entry.map_or(Err(Unstated::Missing), stated), &read) {
+            (Ok(warned), _) => Ok(Box::new(warned)),
+            (Err(Unstated::Missing), Some(read)) => Ok(Box::new(generic(key.as_str(), read))),
+            (Err(why), _) => Err(why),
+        };
+        Ok(Self {
+            route: agent_route(key.as_str()),
+            profile: CatalogProfile::from_own(key.clone(), own, entry, methods)?,
+            source: if read.is_some() {
+                ReleaseSource::Registry
+            } else {
+                ReleaseSource::Catalog
+            },
+            key,
+            read,
+            warned,
+            own: true,
+        })
+    }
+
+    /// Whether it runs a program the user installed rather than a release
+    /// crucible's store keeps.
+    #[must_use]
+    pub const fn is_own(&self) -> bool {
+        self.own
     }
 
     /// Where its entry came from.
@@ -386,6 +436,17 @@ pub enum Unbelieved {
     /// The install store could not be read.
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// The program the user installed for it has no probe record that holds
+    /// for this instance as it is now configured, and belief never probes.
+    #[error(
+        "{key} runs as your own program, which has not been tried as this instance starts it; \
+         run `crucible agents try {key}`, or `crucible agents install {key}` to run a release \
+         crucible keeps instead"
+    )]
+    OwnUnprobed {
+        /// The key, as the instance names it.
+        key: AgentKey,
+    },
 }
 
 /// Whether a catalog key spells a word a built-in driver or the native runner
@@ -616,6 +677,61 @@ pub fn believed_registry_row(
     })
 }
 
+/// Whether the sandbox confines a start of an agent, and whether a project
+/// requires it to, so that the user cannot turn it off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Sandboxing {
+    /// The sandbox confines it.
+    pub on: bool,
+    /// A project requires the sandbox.
+    pub required: bool,
+}
+
+impl Sandboxing {
+    /// The sandbox a start is made under as `enablement` says now.
+    #[must_use]
+    pub fn of(enablement: &crucible_sandbox::SandboxEnablement) -> Self {
+        Self {
+            on: enablement.enabled(),
+            required: enablement.required(),
+        }
+    }
+}
+
+/// How an agent's program is started, as what it can sign in by depends on
+/// it: where the program comes from, under what sandbox, and whether its
+/// instance names a profile directory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Started {
+    /// Where its program comes from.
+    pub origin: crate::launching::Origin,
+    /// The sandbox it is started under.
+    pub sandbox: Sandboxing,
+    /// Its instance names a profile directory.
+    pub profiled: bool,
+}
+
+impl Started {
+    /// Whether it is the user's own program started under the sandbox with
+    /// no profile directory, which reaches no sign-in it keeps in the user's
+    /// home and keeps none it makes.
+    #[must_use]
+    pub const fn homeless(self) -> bool {
+        matches!(self.origin, crate::launching::Origin::Own) && self.sandbox.on && !self.profiled
+    }
+
+    /// A release from crucible's install store, which signs in by every
+    /// method its row gives wherever it is started.
+    pub const STORED: Self = Self {
+        origin: crate::launching::Origin::Stored,
+        sandbox: Sandboxing {
+            on: false,
+            required: false,
+        },
+        profiled: true,
+    };
+}
+
 /// An agent's row: one built in, or one made from the catalog entry of the
 /// agent an instance names.
 // A row is made for one question and dropped with it, never collected; boxing
@@ -686,13 +802,19 @@ impl AgentRow {
         }
     }
 
-    /// The methods its agent signs in by, in the order offered: a catalog
-    /// agent's entry's, and Antigravity's own four; none for Claude Code,
-    /// which signs in at its own command.
+    /// The methods its agent signs in by, started as `started` says, in the
+    /// order offered: a catalog agent's entry's, and Antigravity's own four,
+    /// none of which the user's own Antigravity is offered where it is
+    /// [`homeless`](Started::homeless), since it cannot reach the sign-in it
+    /// keeps in `~/.gemini` and one made there is not kept; none for Claude
+    /// Code, which signs in at its own command. This is the one place that
+    /// decides them: the question a person is put, the agents door and the
+    /// keys a start is given all read it.
     #[must_use]
-    pub fn methods(&self) -> Vec<AuthMethod> {
+    pub fn methods(&self, started: Started) -> Vec<AuthMethod> {
         match self {
             Self::Built(row) => match row.driver {
+                Driver::Antigravity if started.homeless() => Vec::new(),
                 Driver::Antigravity => antigravity::methods(),
                 Driver::Claude | Driver::Catalog => Vec::new(),
             },
@@ -759,13 +881,19 @@ impl AgentRow {
     /// [`dialect`](Self::dialect) makes it for a release: for Antigravity,
     /// the driver's own program, admitted by what it answers, which reads the
     /// trust state only where its file is named as a release's program is and
-    /// is started with a release's arguments; every other row's wire is the
-    /// same either way.
+    /// is started with a release's arguments, and is told the `sandbox` it is
+    /// started under; every other row's wire is the same either way.
     ///
     /// # Errors
     ///
     /// As [`dialect`](Self::dialect).
-    pub fn own_dialect(&self, mode: Mode, trust: Option<&Trust>, program: &Path) -> Wire {
+    pub fn own_dialect(
+        &self,
+        mode: Mode,
+        trust: Option<&Trust>,
+        program: &Path,
+        sandbox: Sandboxing,
+    ) -> Wire {
         match self {
             Self::Built(row) => match row.driver {
                 Driver::Antigravity => {
@@ -775,11 +903,10 @@ impl AgentRow {
                     } else {
                         Vec::new()
                     };
-                    Ok(Box::new(Antigravity::own(
-                        program,
-                        allowing(mode),
-                        &offered,
-                    )))
+                    Ok(Box::new(
+                        Antigravity::own(program, allowing(mode), &offered)
+                            .sandboxed(sandbox.on, sandbox.required),
+                    ))
                 }
                 Driver::Claude | Driver::Catalog => self.dialect(mode, trust, Some(program)),
             },

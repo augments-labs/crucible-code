@@ -63,6 +63,27 @@ pub fn hold_broker_directory() {
     windows::hold_broker_directory();
 }
 
+/// The directories this machine's sandbox lets every program it confines read
+/// without a rule of the program's policy, as the backend for this platform
+/// mounts or allows them; none where the backend reads nothing beyond its
+/// rules. A caller deciding what a policy must add to make a place readable
+/// reads this rather than keeping a list of its own.
+#[must_use]
+pub const fn runtime_directories() -> &'static [&'static str] {
+    #[cfg(target_os = "linux")]
+    {
+        linux::RUNTIME_DIRECTORIES
+    }
+    #[cfg(target_os = "macos")]
+    {
+        macos::RUNTIME_DIRECTORIES
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        &[]
+    }
+}
+
 #[cfg(test)]
 mod sample;
 

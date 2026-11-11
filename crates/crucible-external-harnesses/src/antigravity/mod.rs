@@ -17,7 +17,10 @@
 //! path: it is admitted by what it answers, as [`Manifest::admits_own`] says,
 //! never by its name or version, and is given no profile unless the user
 //! names one, so it looks for its sign-in in its usual home, which the sandbox
-//! hides. [`own_note`] tells the user which sign-in that leaves it.
+//! hides. [`own_note`] tells the user which sign-in that leaves it. One made
+//! [`Antigravity::sandboxed`] and given no profile fails a turn it is not
+//! signed in for by naming the two ways it can be, [`own_ways`], rather than a
+//! sign-in it could not keep.
 //!
 //! It signs in by any of the four methods [`methods`] lists, the one asked
 //! for named by the user.
@@ -113,6 +116,23 @@ pub const fn own_note(sandboxed: bool) -> &'static str {
     }
 }
 
+/// The ways the user's own Antigravity program can be signed in where it is
+/// run under the sandbox with no profile, and so cannot reach the sign-in it
+/// keeps in `~/.gemini`: turning the sandbox off, which is left out where
+/// `required` says a project requires the sandbox, and the store release.
+#[must_use]
+pub const fn own_ways(required: bool) -> &'static str {
+    if required {
+        "This project requires the sandbox, so use the store release of Antigravity, \
+         which keeps its sign-in in a profile of its own."
+    } else {
+        "Either turn the sandbox off (see docs/security/sandboxing.md), which removes \
+         confinement from every command and agent in the conversation and is not \
+         available where a project requires the sandbox, or use the store release of \
+         Antigravity, which keeps its sign-in in a profile of its own."
+    }
+}
+
 /// The command it is looked up as.
 const PROGRAM: &str = "antigravity";
 
@@ -173,6 +193,14 @@ pub struct Antigravity {
     acp: Acp,
     /// The arguments it is started with.
     args: Vec<String>,
+    /// Whether it is the user's own program run under the sandbox.
+    sandboxed: bool,
+    /// Whether a project requires the sandbox, so turning it off is not one
+    /// of the ways it can be signed in.
+    required: bool,
+    /// Whether it was last started under the sandbox with no profile, so the
+    /// sign-in it keeps in `~/.gemini` is out of its reach.
+    unreachable: bool,
 }
 
 impl Default for Antigravity {
@@ -208,6 +236,17 @@ impl Antigravity {
         own
     }
 
+    /// The wire for the user's own program, said to run under the sandbox
+    /// where `sandboxed` holds, which a project requires where `required`
+    /// does: started with no profile, it fails a turn it is not signed in for
+    /// by naming [`own_ways`].
+    #[must_use]
+    pub const fn sandboxed(mut self, sandboxed: bool, required: bool) -> Self {
+        self.sandboxed = sandboxed;
+        self.required = required;
+        self
+    }
+
     /// `acp`, held to the releases `offered`.
     fn new(acp: Acp, offered: &[OwnedPin]) -> Self {
         let args = offered.first().map_or_else(Vec::new, |newest| {
@@ -216,6 +255,9 @@ impl Antigravity {
         Self {
             acp: acp.listing(offered.iter().map(|pin| pin.admits.clone()).collect()),
             args,
+            sandboxed: false,
+            required: false,
+            unreachable: false,
         }
     }
 }
@@ -227,6 +269,7 @@ impl Dialect for Antigravity {
 
     fn request(&mut self, shape: Shape<'_>) -> Request {
         let _ = self.acp.request(shape);
+        self.unreachable = self.sandboxed && shape.profile.is_none();
         Request::showing(
             self.args.clone(),
             profile::environment(std::env::vars_os(), shape.profile),
@@ -239,6 +282,13 @@ impl Dialect for Antigravity {
 
     fn heard(&mut self, frame: &str) -> Result<Vec<Act>, Failure> {
         if account::link(frame).is_some() {
+            if self.unreachable {
+                return Ok(vec![Act::Fail(Failure::new(&format!(
+                    "Your own Antigravity is not signed in: under the sandbox it cannot \
+                     reach the sign-in it keeps in ~/.gemini. {}",
+                    own_ways(self.required)
+                )))]);
+            }
             return Ok(vec![Act::Fail(Failure::new(
                 "The agent is not signed in. Sign in with /login, then try again.",
             ))]);

@@ -302,13 +302,17 @@ use crate::external::External;
 use crate::outside::Relaunch;
 use crate::providers;
 
-mod discovery;
+pub(crate) mod discovery;
+mod keyed;
+mod own;
+use own::Own;
 #[cfg(unix)]
 mod terminal;
 
 use discovery::stored_under;
 pub use discovery::{Origin, discover};
 pub(crate) use discovery::{looked_for, renamed, unfound};
+pub(crate) use keyed::keyed;
 
 /// Why nothing was started.
 #[derive(Debug, thiserror::Error)]
@@ -340,6 +344,21 @@ pub enum Unlaunched {
     /// one it was found with.
     #[error("{0}.")]
     Unbelieved(#[from] Unbelieved),
+    /// The directory the user's own program lies in is not given to an agent.
+    #[error("{0}.")]
+    Unowned(#[from] crate::own_program::Unowned),
+    /// The user's own program changed since it was probed, and probed again
+    /// it is no longer admitted; its record is gone with it.
+    #[error(
+        "{agent} runs your own program, which changed since it was probed; probed again, it \
+         is not started: {why}"
+    )]
+    Changed {
+        /// The instance.
+        agent: String,
+        /// Why it is not admitted now.
+        why: Box<crate::own_program::Unowned>,
+    },
     /// Its route is not one this build warns about.
     #[error("{0} is not an agent route this build knows, so nothing is started on it.")]
     Unknown(String),
@@ -531,6 +550,14 @@ pub enum Unpiped {
     /// The agent is not a release in crucible's install store.
     #[error("a sign-in run as a command is run only from a catalog agent's installed version")]
     Unstored,
+    /// The agent is the user's own program, whose sign-in command is its own
+    /// to run: it is named by its description, or its name where it has none.
+    #[error(
+        "a sign-in run as a command is run only from a catalog agent's installed version, and \
+         this is your own program: sign it in yourself in a terminal as its entry says ({0}), \
+         then choose Check again"
+    )]
+    OwnProgram(String),
     /// What the catalog records lies outside the version installed.
     #[error("the sign-in command {0} is not a program in the version installed")]
     Outside(String),
@@ -805,6 +832,14 @@ impl Agent {
         let (Driver::Catalog, Some(key)) = (agent.driver(), agent.agent()) else {
             return Err(Unbelieved::NoLaunch);
         };
+        if let Some(own) = crate::own_program::believed(agent, key, state, &lookup) {
+            let (row, program) = own?;
+            return Ok(Self {
+                believed: Some(programs_beside(state)),
+                discovery: Discovery::Found(program),
+                ..Self::of_row(agent, AgentRow::Catalog(row), lookup)
+            });
+        }
         let programs = programs_beside(state);
         let store = Store::new(programs.clone());
         let executable = Path::new(agent.executable());
@@ -987,13 +1022,13 @@ impl Agent {
         }
         match &self.discovery {
             Discovery::Found(program) => {
-                if let (Some(programs), AgentRow::Catalog(catalog)) = (&self.believed, row) {
-                    // A catalog row's program is held to the catalog wherever
-                    // it lies: one outside the store is no release of the
-                    // catalog's, and is refused as one not believed.
-                    match Origin::of(programs, program.path()) {
-                        Origin::Stored | Origin::Own => {}
-                    }
+                // A catalog row's program is held to the catalog wherever it
+                // lies: one outside the store is no release of the catalog's,
+                // and is refused as one not believed, unless its row is that
+                // of the user's own program, held to its probe record.
+                if let (Some(programs), AgentRow::Catalog(catalog)) = (&self.believed, row)
+                    && !(catalog.is_own() && Origin::of(programs, program.path()) == Origin::Own)
+                {
                     let store = Store::new(programs.clone());
                     if catalog.source() == ReleaseSource::Registry {
                         // A registry row is held to its own receipt: the probe
@@ -1206,22 +1241,26 @@ impl Agent {
     /// Its wire, fresh for a run in `mode`, admitting the agent as the
     /// releases `trust` offers: a release in the install store `programs` as
     /// its row speaks to one, and the user's own program, named by where its
-    /// path leads, as its row speaks to that.
+    /// path leads, as its row speaks to that under `sandbox`. A catalog
+    /// agent's own program is admitted at every start as its probe admitted
+    /// it, and an answer that differs from its record replaces the record.
     ///
     /// # Errors
     ///
     /// Why the agent does not run in `mode`, or is not admitted.
-    pub(crate) fn dialect(&self, mode: Mode, trust: &Trust, programs: &Path) -> Wire {
+    pub fn dialect(
+        &self,
+        mode: Mode,
+        trust: &Trust,
+        programs: &Path,
+        sandbox: crate::backends::Sandboxing,
+    ) -> Wire {
         let Some(installed) = self.installed() else {
             return self.row.dialect(mode, Some(trust), None);
         };
         match Origin::of(programs, installed) {
             Origin::Stored => self.row.dialect(mode, Some(trust), Some(installed)),
-            Origin::Own => {
-                let canonical = std::fs::canonicalize(installed);
-                let program = canonical.as_deref().unwrap_or(installed);
-                self.row.own_dialect(mode, Some(trust), program)
-            }
+            Origin::Own => self.own_wire(mode, trust, programs, installed, sandbox),
         }
     }
 
@@ -1277,7 +1316,7 @@ pub(crate) fn quoted(text: &str) -> String {
 
 /// Crucible's install store: `programs` in crucible's home, beside the
 /// directory `state` the trust state is kept under.
-fn programs_beside(state: &Path) -> PathBuf {
+pub(crate) fn programs_beside(state: &Path) -> PathBuf {
     state.parent().unwrap_or(state).join("programs")
 }
 
@@ -1467,47 +1506,6 @@ fn binned(mut request: Request, bin: Option<&str>) -> Request {
 /// `request` with `leading` ahead of its arguments.
 fn led(mut request: Request, leading: &[String]) -> Request {
     request.arguments.splice(0..0, leading.iter().cloned());
-    request
-}
-
-/// `request` with each key the credential store in `home` keeps for `row`'s
-/// agent set in the variable of the method it was typed for, where the agent
-/// still signs in by that method, and that variable taken off the ones whose
-/// value may be shown, so its value is withheld from what the agent says.
-pub(crate) fn keyed(mut request: Request, row: &AgentRow, home: &Path) -> Request {
-    let methods = row.methods();
-    let variables: Vec<(&str, &str)> = methods
-        .iter()
-        .filter_map(|method| match &method.method {
-            Method::EnvVar { var } => Some((&*method.id, &**var)),
-            Method::Agent | Method::Terminal { .. } => None,
-        })
-        .collect();
-    if variables.is_empty() {
-        return request;
-    }
-    let Ok(agent) = AgentKey::new(row.named()) else {
-        return request;
-    };
-    let rows = providers::Rows::production();
-    let stored = crucible_auth::Store::in_home(home)
-        .naming(rows.names())
-        .read();
-    for (id, var) in variables {
-        let Ok(name) = rows.signing_in(&agent, id) else {
-            continue;
-        };
-        if let Some(key) = stored.get(&name) {
-            request.shown.retain(|shown| {
-                if cfg!(windows) {
-                    !shown.eq_ignore_ascii_case(var)
-                } else {
-                    *shown != var
-                }
-            });
-            key.set_in(&mut request.environment, var);
-        }
-    }
     request
 }
 
@@ -1792,7 +1790,7 @@ pub enum Overlap {
 
 impl Overlap {
     /// How the refusal says it.
-    const fn says(self) -> &'static str {
+    pub(crate) const fn says(self) -> &'static str {
         match self {
             Self::Is => "is",
             Self::Within => "lies within",
@@ -1804,7 +1802,7 @@ impl Overlap {
 
 /// How far a place of [`NEVER_WRITABLE`] reaches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Reach {
+pub(crate) enum Reach {
     /// The place and everything beneath it.
     Beneath,
     /// The place itself only, and what contains it: the directories that hold
@@ -2383,7 +2381,7 @@ fn with_home(mut request: Request, home: &Path) -> Request {
 }
 
 /// `path` relative to `home`, as the list writes it: a component at a time.
-fn beneath(home: &Path, path: &str) -> PathBuf {
+pub(crate) fn beneath(home: &Path, path: &str) -> PathBuf {
     path.split('/')
         .fold(home.to_path_buf(), |joined, name| joined.join(name))
 }
@@ -2419,7 +2417,7 @@ fn ended(name: &OsStr, trims: bool) -> &[u8] {
 
 /// Whether `path` is `base` or lies beneath it, compared by components and
 /// not by how their text begins, as the file system compares their names.
-fn is_beneath(path: &Path, base: &Path) -> bool {
+pub(crate) fn is_beneath(path: &Path, base: &Path) -> bool {
     is_beneath_as(path, base, cfg!(any(windows, target_os = "macos")))
 }
 
@@ -2438,7 +2436,7 @@ fn is_beneath_as(path: &Path, base: &Path, folds: bool) -> bool {
 /// ignored whatever the file system, since a place that cannot be written must
 /// not be named by a spelling that only some file system takes for it, and a
 /// file system that tells the spellings apart is refused for nothing.
-fn overlap(path: &Path, place: &Path, reach: Reach) -> Option<Overlap> {
+pub(crate) fn overlap(path: &Path, place: &Path, reach: Reach) -> Option<Overlap> {
     match (
         is_beneath_as(path, place, true),
         is_beneath_as(place, path, true),
@@ -2453,20 +2451,24 @@ fn overlap(path: &Path, place: &Path, reach: Reach) -> Option<Overlap> {
 
 /// A place no state path may make writable, as it is written for the user's
 /// `home`, and everywhere it lies once links are followed.
-struct Guarded {
+pub(crate) struct Guarded {
     /// What the refusal calls it.
-    place: String,
+    pub(crate) place: String,
     /// How far it reaches.
-    reach: Reach,
+    pub(crate) reach: Reach,
     /// Why it is guarded.
-    why: &'static str,
+    pub(crate) why: &'static str,
+    /// Its path under the home as [`NEVER_WRITABLE`] lists it, where it is
+    /// one of those; none for crucible's home and its session logs, which may
+    /// lie anywhere.
+    pub(crate) listed: Option<&'static str>,
     /// Where it lies: as written, under the home once its links are followed,
     /// and where it leads itself.
-    at: Vec<PathBuf>,
+    pub(crate) at: Vec<PathBuf>,
 }
 
 impl Guarded {
-    /// The place at `named`, which also lies at `elsewhere`.
+    /// The place at `named`, which also lies at `elsewhere`, listed nowhere.
     fn new(
         place: String,
         reach: Reach,
@@ -2487,6 +2489,7 @@ impl Guarded {
             place,
             reach,
             why,
+            listed: None,
             at,
         }
     }
@@ -2494,10 +2497,11 @@ impl Guarded {
 
 /// Every place no state path under `home` may make writable: those of
 /// [`NEVER_WRITABLE`], the `crucible` home and the `sessions` directory.
-fn guarded(home: &Path, crucible: &Path, sessions: &Path) -> Vec<Guarded> {
+pub(crate) fn guarded(home: &Path, crucible: &Path, sessions: &Path) -> Vec<Guarded> {
     let real = resolved(home).ok();
-    let listed = NEVER_WRITABLE.iter().map(|place| {
-        Guarded::new(
+    let listed = NEVER_WRITABLE.iter().map(|place| Guarded {
+        listed: Some(place.path),
+        ..Guarded::new(
             format!("~/{}", place.path),
             place.reach,
             place.why,
@@ -2761,7 +2765,7 @@ impl Life<'_> {
 /// [`SandboxPolicyError::InvalidPath`] where a part of it exists and cannot be
 /// followed, as a link leading nowhere yet: what it leads to could be made
 /// later, under metadata a rule naming the link would not see.
-fn resolved(path: &Path) -> Result<PathBuf, SandboxPolicyError> {
+pub(crate) fn resolved(path: &Path) -> Result<PathBuf, SandboxPolicyError> {
     let mut missing = Vec::new();
     let mut existing = path;
     loop {
@@ -2943,6 +2947,8 @@ pub struct Launcher<'a> {
     /// The home every catalog agent it starts is given, where it is not the
     /// shell's.
     home: Option<PathBuf>,
+    /// Whether this process's home is the user's where no home was told.
+    asks_home: bool,
 }
 
 impl std::fmt::Debug for Launcher<'_> {
@@ -2977,6 +2983,7 @@ impl<'a> Launcher<'a> {
             state,
             sessions,
             home: None,
+            asks_home: true,
         }
     }
 
@@ -2986,6 +2993,17 @@ impl<'a> Launcher<'a> {
     pub fn homed(self, home: impl Into<PathBuf>) -> Self {
         Self {
             home: Some(home.into()),
+            ..self
+        }
+    }
+
+    /// The same launcher knowing no home of the user's: told none, it takes
+    /// none from this process either.
+    #[must_use]
+    pub fn unhomed(self) -> Self {
+        Self {
+            home: None,
+            asks_home: false,
             ..self
         }
     }
@@ -3100,6 +3118,9 @@ impl<'a> Launcher<'a> {
         let AgentRow::Catalog(catalog) = &agent.row else {
             return Err(Unpiped::Unstored);
         };
+        if catalog.is_own() {
+            return Err(Unpiped::own_program(signing));
+        }
         let Method::Terminal {
             command,
             args,
@@ -3199,6 +3220,9 @@ impl<'a> Launcher<'a> {
         let AgentRow::Catalog(catalog) = &agent.row else {
             return Err(Unpiped::Unstored);
         };
+        if catalog.is_own() {
+            return Err(Unpiped::own_program(signing));
+        }
         let Method::Terminal {
             command,
             args,
@@ -3382,7 +3406,7 @@ impl<'a> Launcher<'a> {
         let request = if signing_in.is_some() {
             request
         } else {
-            keyed(request, row, crucible)
+            keyed(request, row, crucible, self.started(agent, &program))
         };
         // A registry row records no sign-in hosts, so its sign-in command runs
         // under the conversation's own network policy, as the agent's run
@@ -3419,6 +3443,13 @@ impl<'a> Launcher<'a> {
                 led(updating_off(request, stored.updater_off.as_ref()), leading),
                 stored.bin.as_deref(),
             );
+        } else if Origin::of(&programs_beside(self.state), program.path()) == Origin::Own {
+            let held = Own {
+                program: &program,
+                crucible,
+                started: signing_in.is_none(),
+            };
+            policy = self.own_held(agent, &held, &policy).await?;
         }
         for root in &kept {
             // Made only where the child may write it, as the profile is, and
@@ -3476,7 +3507,7 @@ impl<'a> Launcher<'a> {
 /// probe sends the program is one fixed `initialize` that carries no content,
 /// the sandbox closes the network when it can, and when it cannot the probe is
 /// run only on a disposable runner with nothing of a user's on it.
-const PROBING: &str = "catalog-probe";
+pub(crate) const PROBING: &str = "catalog-probe";
 
 /// How far the sandbox held a probe in.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3488,13 +3519,13 @@ pub(crate) enum Sandbox {
     Unavailable(String),
 }
 
-/// A program started for the intake's probe.
+/// A program started for the intake's probe, spoken to over `D`.
 #[derive(Debug)]
-pub(crate) struct Probe {
+pub(crate) struct Probe<D = Acp> {
     /// The running program.
     pub(crate) host: Host,
     /// The wire it is spoken to over.
-    pub(crate) dialect: Acp,
+    pub(crate) dialect: D,
     /// How far it is held in.
     pub(crate) sandbox: Sandbox,
 }
@@ -3587,27 +3618,11 @@ pub(crate) async fn probing(
     if let (Some(reason), false) = (&unclosable, unconfined) {
         return Err(Unprobeable::Unclosable(reason.clone()));
     }
-    let readable = SandboxFilesystemRule::new(
+    let policy = crate::probing::policy(
         &root,
-        SandboxFilesystemAccess::ReadOnly,
         SandboxFilesystemProvenance::Workspace,
+        unclosable.is_none(),
     )?;
-    let policy = SandboxPolicy::new(
-        true,
-        [readable],
-        &root,
-        SandboxNetworkPolicy::Closed,
-        // The program lives as long as the probe waits for it, which is
-        // bounded by the caller, not by a ceiling on one command.
-        SandboxResourceLimits {
-            command_time: None,
-            cpu_seconds: None,
-            output_bytes: None,
-            ..SandboxResourceLimits::confining()
-        },
-    )?
-    // Without the sandbox its limits go with it, as for a command.
-    .with_enabled(unclosable.is_none());
     let mut dialect = Acp::cataloged(profile, Allowing::Nothing);
     let request = binned(
         led(
@@ -3631,7 +3646,7 @@ pub(crate) async fn probing(
 
 /// Why `service` cannot hold a program in with its network closed and its
 /// filesystem enforced, where it cannot; nothing where it can.
-async fn unclosable(service: &dyn SandboxService) -> Option<String> {
+pub(crate) async fn unclosable(service: &dyn SandboxService) -> Option<String> {
     match tokio::time::timeout(PREPARING, service.probe()).await {
         Ok(Ok((_, capabilities))) => {
             let enforced = [SandboxFeature::NetworkDeny, SandboxFeature::Filesystem]
@@ -4563,8 +4578,12 @@ impl Runs {
     /// release installed since is one to be run.
     fn dialect(&self, mode: Mode) -> Result<Box<dyn Dialect>, Failure> {
         let trust = Trust::load(&self.state, SystemTime::now());
-        self.agent
-            .dialect(mode, &trust, &programs_beside(&self.state))
+        self.agent.dialect(
+            mode,
+            &trust,
+            &programs_beside(&self.state),
+            crate::backends::Sandboxing::of(&self.enablement),
+        )
     }
 }
 
@@ -4740,6 +4759,12 @@ impl Steps {
         self.enablement.enabled()
     }
 
+    /// The sandbox a step started now is started under.
+    #[must_use]
+    pub(crate) fn sandboxing(&self) -> crate::backends::Sandboxing {
+        crate::backends::Sandboxing::of(&self.enablement)
+    }
+
     /// The agent the session opened on `opened` goes on on, as [`reopening`]
     /// finds it among `entries`, its program looked for on the `PATH` every
     /// step is, startable in `mode`, and the route that entry is now.
@@ -4896,35 +4921,7 @@ impl Steps {
     /// its end; unreadable, saying why, where it could not be started or a
     /// run of the entry could not be confirmed stopped.
     pub async fn account(&self, agent: &ExternalAgent, step: Account) -> Reading {
-        let unreadable = |why: &str| Reading::Unreadable(Failure::new(why));
-        let chosen = match Agent::believing(agent, self.registry, &self.state, |name| {
-            (name == "PATH").then(|| self.path.clone()).flatten()
-        }) {
-            Ok(chosen) => chosen,
-            Err(Unbelieved::NoLaunch) => {
-                return unreadable("this release has no launch for the agent's driver");
-            }
-            Err(why) => return unreadable(&why.to_string()),
-        };
-        // The releases on offer as they are now, which the agent is admitted as.
-        let trust = Trust::load(&self.state, SystemTime::now());
-        let mut dialect =
-            match chosen.dialect(Mode::default(), &trust, &programs_beside(&self.state)) {
-                Ok(dialect) => dialect,
-                Err(refused) => return Reading::Unreadable(refused),
-            };
-        drop(trust);
-        if self.controls.unstopped(agent.name()) {
-            return unreadable(&Refusal::Unstopped.to_string());
-        }
-        let Some(control) = Control::new() else {
-            return unreadable("no control for the agent's program");
-        };
-        let policy = self.policy();
-        self.launcher(&policy)
-            .account(&chosen, &control, dialect.as_mut(), step, &|_| {})
-            .await
-            .unwrap_or_else(|refused| unreadable(&refused.to_string()))
+        self.account_answered(agent, step).await.0
     }
 
     /// What `with` returns, lent for as long as it runs the launcher these

@@ -3932,6 +3932,46 @@ async fn a_built_in_route_gets_no_roots() {
     );
 }
 
+/// A built-in route's program outside the install store needs no home of the
+/// user's: a launcher that knows none still asks the sandbox for it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_built_in_program_of_the_users_starts_with_no_home_known() {
+    let sample = Sample::new("launch-state-built-in-unhomed");
+    let peer = standing(&sample);
+    let registry = Registry::new(&SHIPPED);
+    let agent = agent(&registry, &peer);
+    let consent = granted();
+    let policy = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
+    let state = sample.state();
+    let sessions = sample.sessions();
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let sandbox = Policies {
+        local: local(),
+        asked: Arc::clone(&asked),
+    };
+    let launcher = Launcher::new(
+        Arc::new(sandbox),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    )
+    .unhomed();
+    let control = Control::new().expect("a control");
+    let mut dialect = agent.row().dialect(Mode::Ask, None, None).expect("asking");
+
+    let started = launcher
+        .launch(&agent, &control, dialect.as_mut(), None)
+        .await;
+
+    let Err(refused) = started else {
+        panic!("the recording sandbox started a run")
+    };
+    let asked = asked.lock().unwrap_or_else(PoisonError::into_inner).clone();
+    assert_eq!(asked.len(), 1, "the sandbox was not asked: {refused}");
+}
+
 /// Where the child's home is unusable no place becomes a root.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_home_that_is_relative_gives_no_roots() {

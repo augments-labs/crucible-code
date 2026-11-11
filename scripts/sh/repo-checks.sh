@@ -459,6 +459,10 @@ section "every vendor client is built where its hold was decided"
 # network, and only a disposable runner may run it without the sandbox; it also
 # runs a catalog agent's install script, under the hold its install asked for,
 # in a sandbox reaching only the hosts the entry's review named;
+# own_program.rs starts a program the user installed for its try, and again
+# at a launch whose program changed since that probe, before the launch starts
+# it, under the same probe's hold and with the same one fixed `initialize`,
+# never without the sandbox and always with the network closed;
 # conformance.rs launches the fake peer, which reaches no vendor, and compiles only under the proof feature; renewal.rs builds the
 # client sign-ins and renewals go through, handed the application's hold;
 # release.rs lends the client provider turns and web posts share only under a
@@ -479,6 +483,7 @@ decided="crates/crucible-app/src/agent_download.rs
 crates/crucible-app/src/catalog_fetch.rs
 crates/crucible-app/src/content_use.rs
 crates/crucible-app/src/launching.rs
+crates/crucible-app/src/own_program.rs
 crates/crucible-auth/src/oauth/renewal.rs
 crates/crucible-external-harnesses/src/conformance.rs
 crates/crucible-provider/src/transport/http.rs
@@ -1374,8 +1379,8 @@ removable=(
     # The application's route: the backends, the launch, the turn and its
     # translation, the accounts, the test build's registry, the `agent:` rows,
     # the writes, the start-up arm, the switch, and the refusals they raise.
-    crates/crucible-app/src/{access,backends,launching,external,outside,probing}.rs
-    crates/crucible-app/src/launching/{discovery,terminal}.rs
+    crates/crucible-app/src/{access,backends,launching,external,outside,own_program,probing}.rs
+    crates/crucible-app/src/launching/{discovery,keyed,own,terminal}.rs
     crates/crucible-app/src/{proof,content_use,remember,startup,switching}.rs
     crates/crucible-app/src/{conversation,error,lib,client}.rs
     crates/crucible-app/src/client/{accounts,performing,reading}.rs

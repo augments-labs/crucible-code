@@ -23,10 +23,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crucible_execution::{Failure, Text, TurnRequest};
-use crucible_external_harnesses::acp::Acp;
 use crucible_external_harnesses::catalog::{CatalogError, Entry, INDEX_BYTES};
 use crucible_external_harnesses::{Account, Act, Dialect, Ran, Reading, Request, Shape, Told};
-use crucible_sandbox::SandboxService;
+use crucible_sandbox::{
+    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
+    SandboxNetworkPolicy, SandboxPolicy, SandboxPolicyError, SandboxResourceLimits, SandboxService,
+};
 use crucible_sandbox_local::LocalSandbox;
 use serde_json::{Map, Value, json};
 use tokio::runtime::Handle;
@@ -40,10 +42,10 @@ use crate::services::{Unfinished, serving};
 pub const BOUND: Duration = Duration::from_secs(30);
 
 /// The most bytes any one text of the agent's answer keeps.
-const TEXT_BYTES: usize = 256;
+pub(crate) const TEXT_BYTES: usize = 256;
 
 /// The most sign-in methods, arguments to one, and variables of one, kept.
-const ITEMS: usize = 16;
+pub(crate) const ITEMS: usize = 16;
 
 /// The most bytes of the agent's capabilities kept, as JSON.
 const CAPABILITY_BYTES: usize = 4096;
@@ -174,6 +176,38 @@ pub fn probe(
     Ok(recorded)
 }
 
+/// The policy a probe's program is started under: the network closed, `root`
+/// readable alone, as `provenance` says it was given, and the directory it
+/// works in, and the sandbox on where `enabled`, which a caller makes it only
+/// where the sandbox can close the network.
+///
+/// # Errors
+///
+/// A [`SandboxPolicyError`] where `root` is not a valid root for a policy.
+pub(crate) fn policy(
+    root: &Path,
+    provenance: SandboxFilesystemProvenance,
+    enabled: bool,
+) -> Result<SandboxPolicy, SandboxPolicyError> {
+    let readable = SandboxFilesystemRule::new(root, SandboxFilesystemAccess::ReadOnly, provenance)?;
+    Ok(SandboxPolicy::new(
+        true,
+        [readable],
+        root,
+        SandboxNetworkPolicy::Closed,
+        // The program lives as long as the probe waits for it, which is
+        // bounded by the caller, not by a ceiling on one command.
+        SandboxResourceLimits {
+            command_time: None,
+            cpu_seconds: None,
+            output_bytes: None,
+            ..SandboxResourceLimits::confining()
+        },
+    )?
+    // Without the sandbox its limits go with it, as for a command.
+    .with_enabled(enabled))
+}
+
 /// Starts the program and records its answer, on the runtime that is polling
 /// this.
 // Each is an input of its own to the probe, and a value gathering them would
@@ -216,17 +250,18 @@ async fn initialized(
 
 /// The agent's wire, listening for the one answer the probe waits on and
 /// keeping it whole, which the wire's own reading of it would not.
-struct Hearing {
+pub(crate) struct Hearing<D> {
     /// The wire, which says what is sent.
-    acp: Acp,
+    acp: D,
     /// How many lines the agent has said.
     lines: usize,
     /// The answer to `initialize`, once it has come.
-    answered: Option<Map<String, Value>>,
+    pub(crate) answered: Option<Map<String, Value>>,
 }
 
-impl Hearing {
-    const fn new(acp: Acp) -> Self {
+impl<D> Hearing<D> {
+    /// Listening on `acp`, before anything was said.
+    pub(crate) const fn new(acp: D) -> Self {
         Self {
             acp,
             lines: 0,
@@ -235,7 +270,7 @@ impl Hearing {
     }
 }
 
-impl Dialect for Hearing {
+impl<D: Dialect> Dialect for Hearing<D> {
     fn program(&self) -> &str {
         self.acp.program()
     }
@@ -303,15 +338,15 @@ impl Dialect for Hearing {
 
 /// What is kept of an agent's answer, and whether any of it was cut.
 #[derive(Default)]
-struct Kept {
+pub(crate) struct Kept {
     /// Whether anything was left out.
-    cut: bool,
+    pub(crate) cut: bool,
 }
 
 impl Kept {
     /// `value` as text cut to [`TEXT_BYTES`] bytes on a character boundary;
     /// nothing where it is not text.
-    fn text(&mut self, value: Option<&Value>) -> Value {
+    pub(crate) fn text(&mut self, value: Option<&Value>) -> Value {
         match value.and_then(Value::as_str) {
             Some(text) => Value::String(self.clipped(text)),
             None => Value::Null,
@@ -319,7 +354,7 @@ impl Kept {
     }
 
     /// `text` cut to [`TEXT_BYTES`] bytes on a character boundary.
-    fn clipped(&mut self, text: &str) -> String {
+    pub(crate) fn clipped(&mut self, text: &str) -> String {
         let end = text.floor_char_boundary(TEXT_BYTES);
         self.cut |= end < text.len();
         text.get(..end).unwrap_or_default().to_owned()
@@ -351,7 +386,7 @@ impl Kept {
 
 /// What the intake records of the answer `said` to `initialize`, from an
 /// agent held in as `sandbox` says.
-fn recorded(sandbox: &Sandbox, said: &Map<String, Value>) -> Result<Value, Unprobed> {
+pub(crate) fn recorded(sandbox: &Sandbox, said: &Map<String, Value>) -> Result<Value, Unprobed> {
     let mut kept = Kept::default();
     if let Some(error) = said.get("error") {
         let message = kept.text(error.get("message"));

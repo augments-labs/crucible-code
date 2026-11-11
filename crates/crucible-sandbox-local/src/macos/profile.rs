@@ -63,6 +63,24 @@ const BASE_POLICY: &str = "\
     (literal \"/dev/urandom\")))\n\
 (allow file-write-data (require-all (literal \"/dev/null\") (vnode-type CHARACTER-DEVICE)))\n";
 
+/// The directories the base policy lets every confined program read without
+/// a rule of its policy's, as its `subpath` entries name them; a test holds
+/// the two to each other.
+pub(crate) const RUNTIME_DIRECTORIES: &[&str] = &[
+    "/System/Library",
+    "/Library/Apple",
+    "/usr/bin",
+    "/usr/sbin",
+    "/usr/lib",
+    "/usr/libexec",
+    "/bin",
+    "/sbin",
+    "/nix/store",
+    "/private/var/db/timezone",
+    "/private/var/select",
+    "/var/select",
+];
+
 #[derive(Clone)]
 pub(super) struct Profile {
     policy: String,
@@ -721,8 +739,24 @@ mod tests {
         SandboxNetworkProvenance, SandboxPolicy, SandboxResourceLimits, SandboxUnreadablePattern,
     };
 
-    use super::{Profile, paths_with_system_alias, protected_metadata_regex, seatbelt_literal};
+    use super::{
+        BASE_POLICY, Profile, RUNTIME_DIRECTORIES, paths_with_system_alias,
+        protected_metadata_regex, seatbelt_literal,
+    };
     use crate::sample::Sample;
+
+    #[test]
+    fn the_runtime_directories_are_the_base_policys_read_subpaths() {
+        let mut read: Vec<&str> = BASE_POLICY
+            .split("(subpath \"")
+            .skip(1)
+            .filter_map(|rest| rest.split_once('"').map(|(path, _)| path))
+            .collect();
+        let mut listed = RUNTIME_DIRECTORIES.to_vec();
+        read.sort_unstable();
+        listed.sort_unstable();
+        assert_eq!(read, listed);
+    }
 
     #[test]
     fn a_profile_uses_parameters_for_paths_and_keeps_network_closed() {

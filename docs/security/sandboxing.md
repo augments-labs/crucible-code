@@ -532,6 +532,47 @@ variables, starting from a cleared
 environment, and it is run from the version installed, which stays read-only
 for the agent's other runs.
 
+A program you installed yourself and configured as a catalog or registry
+agent, one outside `programs`, is probed before it is first started: once, in
+the sandbox, with the network closed and nothing of yours readable but the
+directory it lies in. Where the sandbox cannot close the network, as where its
+backend is missing or unavailable, it is not probed and is not started; a
+registry install has the same need, while Antigravity's store release does
+not. Everything in the program's directory is readable to it during the probe
+and at every launch, where the network is open to its vendor. That directory
+is refused when it is your home or `/`, or is, lies within or contains a place
+no agent is made able to write, such as `~/.ssh` or crucible's home; `bin`,
+`.local/bin` and `.cargo/bin` in your home may themselves be read, unless
+crucible's home or its session logs are kept in one. Your home
+here is your own, the one crucible itself was started with (`HOME`, or
+`USERPROFILE` on Windows), even where the agent's entry gives the program a
+home of its own; where crucible knows no home of yours, a program whose
+directory would be judged, or that is probed again, is not started. Your home
+is judged both as written and where its links lead, and where it is not a full
+path or a link in it leads nowhere, no program's directory is given. A directory
+the sandbox already lets every program read, such as `/usr/bin`, gets no rule
+of its own, and any other is given read-only, never writable. The probe runs
+in an empty directory of its own, which is removed after.
+
+A program changed since its probe, whose path leads elsewhere or whose size or
+modification time differs, is probed again in the same way before it is
+started, as is one dated before 1970 at every start, and a refusal there is the launch's: the program is not started and
+its old record is removed. Every start's answer to `initialize` is held to
+protocol version 1 and its capabilities as the probe's was, and an answer that
+differs from the record replaces it. On Linux the probe and every launch under
+the sandbox run with the sandbox's private home as `HOME`; on macOS and Windows
+the sandbox gives them none.
+
+Google's own `agy` or `antigravity`, run under the sandbox with no
+`profileDir`, cannot read the sign-in it keeps in `~/.gemini`, so it starts
+signed out. `/login` offers it no Google account or key, and a turn that fails
+for want of a sign-in names two ways instead of `/login`. On Linux a sign-in
+made under the sandbox would live on its private home and be gone when that
+start ends. Turning the sandbox off lets it read `~/.gemini`, and removes
+confinement from every command and agent in the conversation, not only from
+Antigravity; it is not offered where a project requires the sandbox. The store
+release keeps its sign-in in a profile directory of its own and needs neither.
+
 ## Environment and credentials
 
 The command environment is an explicit, bounded map rather than a copy of the

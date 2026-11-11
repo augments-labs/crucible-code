@@ -230,11 +230,22 @@ pub struct Initialized {
     resumes: bool,
     /// Whether it can sign out.
     signs_out: bool,
+    /// Whether it answered with an `agentCapabilities` object.
+    capable: Capabilities,
     /// The sign-in methods it offers, by id.
     methods: Vec<Text>,
     /// What it says of each sign-in method run at a terminal, or `None` where
     /// it offered more than `METHODS` of them, when it agrees with no record.
     terminals: Option<Vec<Terminal>>,
+}
+
+/// Whether an answer to initializing carried an `agentCapabilities` object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Capabilities {
+    /// It did.
+    Answered,
+    /// It carried none, or something other than an object.
+    Missing,
 }
 
 /// One sign-in method an agent says is run at a terminal.
@@ -350,7 +361,35 @@ impl Stated {
     }
 }
 
+/// What an agent that answered with a protocol version this client does not
+/// speak is told.
+const UNSPOKEN: &str = "The agent answered with a protocol version this client does not speak.";
+
+/// What a program the user installed that answered with no capabilities is
+/// told.
+pub(crate) const INCAPABLE: &str =
+    "The program did not answer with its capabilities, so it is not taken for an agent.";
+
 impl Initialized {
+    /// What the result of initializing a program the user installed says,
+    /// where it is taken for an agent: it answered with the protocol version
+    /// this client speaks and with an `agentCapabilities` object. Its name and
+    /// version are kept and never compared.
+    ///
+    /// # Errors
+    ///
+    /// A [`Failure`] naming the first way it is not taken for one.
+    pub fn own(result: &Value) -> Result<Self, Failure> {
+        let initialized = Self::read(result);
+        if initialized.protocol != PROTOCOL {
+            return Err(Failure::new(UNSPOKEN));
+        }
+        if !initialized.capable() {
+            return Err(Failure::new(INCAPABLE));
+        }
+        Ok(initialized)
+    }
+
     /// What the result of initializing says.
     pub(crate) fn read(result: &Value) -> Self {
         let named = |value: Option<&Value>| {
@@ -381,6 +420,11 @@ impl Initialized {
             loads: offered(&["loadSession"]),
             resumes: offered(&["sessionCapabilities", "resume"]),
             signs_out: offered(&["auth", "logout"]),
+            capable: if capabilities.is_some_and(Value::is_object) {
+                Capabilities::Answered
+            } else {
+                Capabilities::Missing
+            },
             methods: result
                 .get("authMethods")
                 .and_then(Value::as_array)
@@ -409,6 +453,13 @@ impl Initialized {
     #[must_use]
     pub fn version(&self) -> Option<&str> {
         self.version.as_ref().map(Text::as_str)
+    }
+
+    /// Whether it answered with an `agentCapabilities` object, which is what
+    /// an agent no entry reviewed is taken for one by.
+    #[must_use]
+    pub fn capable(&self) -> bool {
+        self.capable == Capabilities::Answered
     }
 
     /// Whether it can load a session it kept.
@@ -601,9 +652,7 @@ impl Acp {
     fn admitted(&self, result: &Value) -> Result<Initialized, Failure> {
         let initialized = Initialized::read(result);
         if !self.reviewed.versions().contains(&initialized.protocol) {
-            return Err(Failure::new(
-                "The agent answered with a protocol version this client does not speak.",
-            ));
+            return Err(Failure::new(UNSPOKEN));
         }
         self.reviewed.admits(&initialized)?;
         Ok(initialized)
