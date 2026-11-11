@@ -177,8 +177,9 @@ is tried again. A program that changed since its probe, its path leading
 elsewhere or its size or modification time different, is probed again before
 it starts; refused there, it is not started and its record is removed. Every
 start is admitted as the probe was, and an answer that differs from the record
-replaces it. It signs in by the methods its probe answered, and crucible
-runs no sign-in command for it.
+replaces it. It signs in by the methods its probe answered that it handles
+itself; a method that needs a key it would be given is not offered, and
+crucible runs no sign-in command for it.
 
 `/logout` lists each agent named under `externalAgents` after the stored
 credentials, as an external agent instance, and `/logout <name>` takes one

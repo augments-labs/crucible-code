@@ -328,9 +328,10 @@ const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
         "runtime.block_on(initialized(",
         1,
     ),
-    // The try of a program the user installed, a command of the same kind: it
-    // starts that program once, confined, and waits for its answer to
-    // `initialize`.
+    // `own_program::tried`, the try of a program the user installed, which
+    // `crucible agents try` will run as `crucible agents probe` runs its
+    // probe: it starts that program once, confined, on a runtime of its own,
+    // and waits for its answer to `initialize`.
     (
         "crates/crucible-app/src/own_program.rs",
         "runtime.block_on(probe(",
