@@ -206,7 +206,7 @@ impl Glyphs {
     /// The other side of [`Glyphs::square`], for a frame drawn whole, as the
     /// box holding an answer's specimen is.
     #[must_use]
-    pub fn square_closed(self) -> (&'static str, &'static str) {
+    pub(crate) fn square_closed(self) -> (&'static str, &'static str) {
         match self {
             Self::Unicode => ("┐", "┘"),
             Self::Ascii => ("+", "+"),
