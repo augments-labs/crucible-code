@@ -1817,8 +1817,9 @@ pub struct Markdown {
     ///
     /// Carried across lines and cleared with the message, since a definition
     /// is tied to its reference by its label wherever either stands. Bounded
-    /// by [`FOOTNOTE_CAP`] labels of at most [`FOOTNOTE_LABEL_CAP`]
-    /// characters each.
+    /// by [`FOOTNOTE_CAP`] labels, each kept in lower case: at most
+    /// [`FOOTNOTE_LABEL_CAP`] characters as written, and at most twice that
+    /// once lowered, since no character lowers to more than two.
     notes: Vec<Note>,
     /// A `<` and what has followed it, while the characters that say whether
     /// it is one of the tags read here arrive. Bounded by [`TAG_CAP`]; ends
