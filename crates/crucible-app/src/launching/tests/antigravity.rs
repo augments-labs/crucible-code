@@ -597,6 +597,149 @@ async fn a_program_anywhere_in_the_store_is_not_own() {
     }
 }
 
+/// A name that is there but cannot be run does not hide a later one that can:
+/// beside an `agy` that cannot be run, a runnable `antigravity` is found, and
+/// with neither runnable the first there, `agy`, is named as not executable.
+#[cfg(unix)]
+#[test]
+fn a_name_that_cannot_be_run_does_not_hide_one_that_can() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let sample = Sample::new("launch-unrunnable-name");
+    let bin = sample.root().join("bin");
+    fs::create_dir_all(&bin).expect("a directory");
+    let program = |name: &str, mode: u32| {
+        let path = bin.join(name);
+        fs::write(&path, "#!/bin/sh\n").expect("the program");
+        fs::set_permissions(&path, fs::Permissions::from_mode(mode)).expect("its mode");
+        path
+    };
+    let stale = program("agy", 0o644);
+    let working = program("antigravity", 0o755);
+    let names = AgentRow::Built(&ANTIGRAVITY).commands();
+    let path = OsString::from(&bin);
+    let lookup = |variable: &str| (variable == "PATH").then(|| path.clone());
+
+    let found = discover("antigravity", &names, lookup);
+    fs::set_permissions(&working, fs::Permissions::from_mode(0o644)).expect("its mode");
+    let neither = discover("antigravity", &names, lookup);
+
+    assert!(
+        matches!(&found, Discovery::Found(found) if found.path() == working),
+        "{found:?}"
+    );
+    assert!(
+        matches!(&neither, Discovery::NotExecutable(there) if *there == stale),
+        "{neither:?}"
+    );
+}
+
+/// A link outside the install store that leads to a release in it is judged
+/// by where it leads: the store's, so with no profile directory it is refused
+/// as a release is, not started as the user's own program.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_link_into_the_store_is_the_store_s() {
+    let sample = Sample::new("launch-origin-link");
+    let programs = sample.home().join("programs");
+    let version = snapshot_version().unwrap_or("1.3.0");
+    let release = fake_peer::install(
+        &programs.join("antigravity").join(version),
+        "agy_acp_server.par",
+        &Script::of([antigravity_answering(version)]),
+    )
+    .expect("the fake peer");
+    let bin = sample.root().join("bin");
+    fs::create_dir_all(&bin).expect("a directory");
+    let link = bin.join("agy");
+    std::os::unix::fs::symlink(&release, &link).expect("a link");
+    let steps = antigravity_steps(&sample, None);
+    let entry = antigravity_entry(&link.to_string_lossy(), None);
+
+    let refused = steps.refusal(&AgentRow::Built(&ANTIGRAVITY), &entry);
+
+    assert_eq!(Origin::of(&programs, &link), Origin::Stored);
+    assert!(
+        matches!(refused, Some(Unlaunched::Unprofiled { .. })),
+        "{refused:?}"
+    );
+}
+
+/// A link named `agy` outside the store that leads to a file named as a
+/// release's program is, outside the store too, is started as that file's
+/// name says, with the newest release's arguments, not with `acp`.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_link_to_a_file_named_as_a_release_s_is_started_as_its_name_says() {
+    let sample = Sample::new("launch-own-link-release-named");
+    let release = |version: &str, args: &[&str]| {
+        release_of(
+            "antigravity",
+            version,
+            (
+                &format!("https://dl.google.com/agy-extensions/releases/linux/agy-{version}.zip"),
+                &"a".repeat(64),
+                1000,
+            ),
+            [("agy_acp_server.par", 700), ("localharness_external", 300)],
+            args,
+        )
+    };
+    trusting(
+        &sample,
+        2,
+        &[release("1.4.1", &["--new"]), release("1.3.0", &["--old"])],
+    );
+    let named = fake_peer::install(
+        &sample.root().join("unpacked"),
+        "agy_acp_server.par",
+        &Script::of([]),
+    )
+    .expect("the fake peer");
+    let bin = sample.root().join("bin");
+    fs::create_dir_all(&bin).expect("a directory");
+    let link = bin.join("agy");
+    std::os::unix::fs::symlink(&named, &link).expect("a link");
+    let consent = Consent::new(Routes::production());
+    let policy = conversation(&sample);
+    let state = sample.state();
+    let sessions = sample.sessions();
+    let route = Route::External {
+        serves: Serves::Provider("google"),
+        instance: "space".into(),
+        driver: Driver::Antigravity,
+        executable: link.to_string_lossy().into(),
+        profile: None,
+        model: None,
+        effort: None,
+        location: None,
+        enabled: true,
+    };
+    let agent = Agent::routed(&route, &ANTIGRAVITY_REGISTRY, |_| None).expect("a row");
+    let runs = Runs::new(
+        Launcher::new(
+            local(),
+            Handle::current(),
+            &policy,
+            &consent,
+            &state,
+            &sessions,
+        ),
+        Arc::new(SandboxEnablement::new(false, false)),
+        agent,
+        "space",
+        &Controls::default(),
+    );
+
+    let arguments = runs
+        .dialect(Mode::Ask)
+        .expect("asking")
+        .request(Shape::default())
+        .arguments;
+
+    assert_eq!(arguments, ["--new"]);
+}
+
 /// The sentence a store release with no profile directory is refused with.
 const UNPROFILED: &str = "keeps its sign-in in a profile directory of its own, so it is never \
                           one another Google product shares";
