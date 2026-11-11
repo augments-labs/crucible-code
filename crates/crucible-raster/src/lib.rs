@@ -277,11 +277,13 @@ pub fn rasterise(svg: &[u8], width_px: u32, inks: &[(&str, [u8; 3])]) -> Result<
 /// the pages a drawing touches are ever backed by memory.
 const DRAWING_STACK: usize = 32 << 20;
 
-/// How many times [`draw`] has gone on to build a tree, and to draw one: what
-/// the tests read to tell a picture refused before that work from one refused
-/// after it, which no clock can tell on every machine.
+/// How many times [`draw`] has gone on to build a tree: what the tests read to
+/// tell a picture refused before that work from one refused after it, which no
+/// clock can tell on every machine.
 #[cfg(test)]
 static BUILT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// How many times [`draw`] has gone on to draw a tree it built, read as
+/// [`BUILT`] is.
 #[cfg(test)]
 static DRAWN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 

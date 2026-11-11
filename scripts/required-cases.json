@@ -7497,7 +7497,7 @@
       },
       "case": "tests::the_copies_uses_would_make_are_counted_before_any_is_made",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "42cda5ed521e783372521f063e2a70e1d0072658e1524fdc04460091b530d15e",
+      "body_sha256": "fdc93b2886c8c1c31194bc2b642f1d946390c5da7cea5494a42063753d4b5a22",
       "platforms": [
         "linux",
         "macos",
@@ -7533,7 +7533,7 @@
       },
       "case": "tests::a_gradient_costs_its_pixels_and_its_stops_together",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "c68ff5eba18f115772ee13391b237422753e98d93c0cd5956a5e28e07c1fb9e1",
+      "body_sha256": "c8b50e83c61b6264ec43c11bc04249465089bcbf0fae65ec1dd85b1419651c03",
       "platforms": [
         "linux",
         "macos",
@@ -7551,7 +7551,7 @@
       },
       "case": "tests::edges_of_a_stroke_crowded_along_a_row_are_counted_by_the_pixels_each_can_walk",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "30c4bd34da34bcb24395e1efb5c3e74c031fb072aa14f41f766b001efb1da2bc",
+      "body_sha256": "f05099e7854cde98bab568b2a0f2ab9e4fae2a8c1006d370bd74372e02e96700",
       "platforms": [
         "linux",
         "macos",

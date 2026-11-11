@@ -1300,7 +1300,7 @@ fn the_copies_uses_would_make_are_counted_before_any_is_made() {
     let _alone = alone();
     // Five levels of ten uses are 111 110 copies, and six are 1 111 110, past
     // the parser's own count of what it will make: both are refused before a
-    // copy is made, in a moment however many there would be.
+    // copy is made, however many there would be.
     for levels in [5, 6] {
         let (drawn, reached) = refused_in(&nested_uses(levels));
         assert_eq!(drawn, Err(Refused::TooLarge), "{levels} levels");
@@ -1492,7 +1492,7 @@ fn a_gradient_costs_its_pixels_and_its_stops_together() {
     // ceiling for 52 of them, and together they are. Two stops are drawn.
     let (drawn, reached) = refused_in_at(&painted(52, 32), 200);
     assert_eq!(drawn, Err(Refused::TooLarge));
-    assert_ne!(reached, Reached::Drawn, "drawn first");
+    assert_eq!(reached, Reached::Built, "drawn first");
     assert!(rasterise(painted(52, 2).as_bytes(), 200, &[]).is_ok());
 }
 
@@ -1553,7 +1553,7 @@ fn edges_of_a_stroke_crowded_along_a_row_are_counted_by_the_pixels_each_can_walk
     assert_eq!(width, 1_414);
     let (drawn, reached) = refused_in_at(&wide, width);
     assert_eq!(drawn, Err(Refused::TooLarge));
-    assert_ne!(reached, Reached::Drawn, "drawn first");
+    assert_eq!(reached, Reached::Built, "drawn first");
     let (narrower, width) = crowded_stroke(6_000);
     assert_eq!(width, 1_212);
     assert!(rasterise(narrower.as_bytes(), width, &[]).is_ok());
@@ -2147,7 +2147,7 @@ fn a_stroke_reaching_past_a_million_pixels_from_the_origin_is_refused() {
     let far = r##"<g transform="scale(1e5)"><g transform="scale(100)"><circle r="1" fill="none" stroke="#000" stroke-width="1"/></g></g>"##;
     let (drawn, reached) = refused_in_at(&page(far), 20);
     assert_eq!(drawn, Err(Refused::TooLarge), "a stroke far out");
-    assert_ne!(reached, Reached::Drawn, "drawn first");
+    assert_eq!(reached, Reached::Built, "drawn first");
     // The same circle filled is drawn, and so is the stroke nearer in.
     let filled = far.replace(r##"fill="none" stroke="#000" stroke-width="1""##, "");
     assert!(on_page(&filled).is_ok(), "a fill far out");
@@ -2258,7 +2258,7 @@ fn every_stop_of_a_gradient_is_set_up_again_for_each_shape_it_paints() {
     // square of 400 stops are refused, and a thousand drawn.
     let (drawn, reached) = refused_in_at(&used_graded_shapes(40, 50, 400, "userSpaceOnUse"), 100);
     assert_eq!(drawn, Err(Refused::TooLarge), "stops set up");
-    assert_ne!(reached, Reached::Drawn, "drawn first");
+    assert_eq!(reached, Reached::Built, "drawn first");
     let drawn = rasterise(
         used_graded_shapes(40, 25, 400, "userSpaceOnUse").as_bytes(),
         100,
