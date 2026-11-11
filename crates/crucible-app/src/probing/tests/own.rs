@@ -506,6 +506,12 @@ fn only_the_own_probe_policy_asks_for_private_loopback() {
             "{root:?}"
         );
         assert_eq!(probing.network(), &SandboxNetworkPolicy::Closed);
+        // Nothing it may write is the host's, so a socket it binds by path
+        // cannot be one a host process finds.
+        assert!(!probing.filesystem().is_empty(), "{root:?}");
+        for rule in probing.filesystem() {
+            assert_eq!(rule.access(), SandboxFilesystemAccess::ReadOnly, "{root:?}");
+        }
     }
 
     // The store intake probe's policy does not.
