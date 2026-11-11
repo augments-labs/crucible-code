@@ -390,9 +390,31 @@ fn prompt_cache(route: Serving, model: &str) -> PromptCacheCapabilities {
     )
 }
 
-/// The models whose prices were read on [`SOL_LUNA_REVIEWED`].
-fn sol_or_luna(model: &str) -> bool {
-    matches!(model, "gpt-6.1-sol" | "gpt-6-sol" | "gpt-6-luna")
+/// The day `model`'s price was read from OpenAI's pages, with the versions of
+/// its records below and above 272K input tokens.
+fn price_review(model: &str) -> (PricingDate, &'static str, &'static str) {
+    match model {
+        ASTRA => (
+            ASTRA_REVIEWED,
+            "openai-standard-short-2026-09-06",
+            "openai-standard-long-2026-09-06",
+        ),
+        TERRA => (
+            TERRA_REVIEWED,
+            "openai-standard-short-2026-11-05",
+            "openai-standard-long-2026-11-05",
+        ),
+        "gpt-6.1-sol" | "gpt-6-sol" | "gpt-6-luna" => (
+            SOL_LUNA_REVIEWED,
+            "openai-standard-short-2026-11-11",
+            "openai-standard-long-2026-11-11",
+        ),
+        _ => (
+            PRICING_REVIEWED,
+            "openai-standard-short-2026-08-31",
+            "openai-standard-long-2026-08-31",
+        ),
+    }
 }
 
 /// What `asked` costs, priced only at the published API's own address.
@@ -404,15 +426,7 @@ fn price(route: Option<Serving>, asked: Priced<'_>) -> Option<PromptCachePricing
         retention,
         at,
     } = asked;
-    let reviewed = if model == ASTRA {
-        ASTRA_REVIEWED
-    } else if model == TERRA {
-        TERRA_REVIEWED
-    } else if sol_or_luna(model) {
-        SOL_LUNA_REVIEWED
-    } else {
-        PRICING_REVIEWED
-    };
+    let (reviewed, short_version, long_version) = price_review(model);
     if route != Some(Serving::Api) || at < reviewed {
         return None;
     }
@@ -558,27 +572,6 @@ fn price(route: Option<Serving>, asked: Priced<'_>) -> Option<PromptCachePricing
     if !allowed_retention {
         return None;
     }
-    let (short_version, long_version) = if model == ASTRA {
-        (
-            "openai-standard-short-2026-09-06",
-            "openai-standard-long-2026-09-06",
-        )
-    } else if model == TERRA {
-        (
-            "openai-standard-short-2026-11-05",
-            "openai-standard-long-2026-11-05",
-        )
-    } else if sol_or_luna(model) {
-        (
-            "openai-standard-short-2026-11-11",
-            "openai-standard-long-2026-11-11",
-        )
-    } else {
-        (
-            "openai-standard-short-2026-08-31",
-            "openai-standard-long-2026-08-31",
-        )
-    };
     let (rates, minimum, maximum, version) = if input_tokens <= 272_000 {
         (short, 0, Some(272_000), short_version)
     } else {
