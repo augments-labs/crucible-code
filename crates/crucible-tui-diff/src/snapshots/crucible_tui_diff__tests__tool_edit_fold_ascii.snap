@@ -2,34 +2,34 @@
 source: crates/crucible-tui-diff/src/tests.rs
 expression: "dump(&drawn(&change, 64, ASCII), 64)"
 ---
-<Quiet>+-</> <Path>src/parse.rs</> <AddedNumber>+8</> <RemovedNumber>-8</>                                           
+<Quiet>+-</> <Path>src/parse.rs</><Quiet> - </>Added <AddedCount>8</> lines, removed <RemovedCount>8</> lines                
 <Quiet>|</> <Quiet>   1  </> line <Number>1</> of the file                                     
 <Quiet>|</> <Quiet>   2  </> line <Number>2</> of the file                                     
 <Quiet>|</> <Quiet>   3  </> line <Number>3</> of the file                                     
 <Quiet>|</> <Quiet>   4  </> line <Number>4</> of the file                                     
-<Quiet>|</> <RemovedNumber>   5 -</> <Removed>line 5 of the file</><Removed>                                     </>
-<Quiet>|</> <AddedNumber>   5 +</> <Added>line 5 of the </><AddedWord>changed</><Added> file</><Added>                             </>
+<Quiet>|</> <RemovedNumber>   5 - </><Removed>line 5 of the file</><Removed>                                    </> 
+<Quiet>|</> <AddedNumber>   5 + </><Added>line 5 of the </><AddedWord>changed</><Added> file</><Added>                            </> 
 <Quiet>|</> <Quiet>   6  </> line <Number>6</> of the file                                     
 <Quiet>|</> <Quiet>   7  </> line 7 of the file                                     
 <Quiet>|</> <Quiet>   8  </> line 8 of the file                                     
 <Quiet>|</> <Quiet>   9  </> line 9 of the file                                     
-<Quiet>|</> <RemovedNumber>  10 -</> <Removed>line 10 of the file</><Removed>                                    </>
-<Quiet>|</> <AddedNumber>  10 +</> <Added>line 10 of the </><AddedWord>changed</><Added> file</><Added>                            </>
+<Quiet>|</> <RemovedNumber>  10 - </><Removed>line 10 of the file</><Removed>                                   </> 
+<Quiet>|</> <AddedNumber>  10 + </><Added>line 10 of the </><AddedWord>changed</><Added> file</><Added>                           </> 
 <Quiet>|</> <Quiet>  11  </> line 11 of the file                                    
 <Quiet>|</> <Quiet>  12  </> line 12 of the file                                    
 <Quiet>|</> <Quiet>  13  </> line 13 of the file                                    
 <Quiet>|</> <Quiet>  14  </> line 14 of the file                                    
-<Quiet>|</> <RemovedNumber>  15 -</> <Removed>line 15 of the file</><Removed>                                    </>
-<Quiet>|</> <AddedNumber>  15 +</> <Added>line 15 of the </><AddedWord>changed</><Added> file</><Added>                            </>
+<Quiet>|</> <RemovedNumber>  15 - </><Removed>line 15 of the file</><Removed>                                   </> 
+<Quiet>|</> <AddedNumber>  15 + </><Added>line 15 of the </><AddedWord>changed</><Added> file</><Added>                           </> 
 <Quiet>|</> <Quiet>  16  </> line 16 of the file                                    
 <Quiet>|</> <Quiet>  17  </> line 17 of the file                                    
 <Quiet>|</> <Quiet>  18  </> line 18 of the file                                    
 <Quiet>|</> <Quiet>  19  </> line 19 of the file                                    
-<Quiet>|</> <RemovedNumber>  20 -</> <Removed>line 20 of the file</><Removed>                                    </>
-<Quiet>|</> <AddedNumber>  20 +</> <Added>line 20 of the </><AddedWord>changed</><Added> file</><Added>                            </>
+<Quiet>|</> <RemovedNumber>  20 - </><Removed>line 20 of the file</><Removed>                                   </> 
+<Quiet>|</> <AddedNumber>  20 + </><Added>line 20 of the </><AddedWord>changed</><Added> file</><Added>                           </> 
 <Quiet>|</><Quiet>  ...  20 lines folded  ...</>                                    
 <Quiet>|</> <Quiet>  38  </> line 38 of the file                                    
 <Quiet>|</> <Quiet>  39  </> line 39 of the file                                    
-<Quiet>|</> <RemovedNumber>  40 -</> <Removed>line 40 of the file</><Removed>                                    </>
-<Quiet>|</> <AddedNumber>  40 +</> <Added>line 40 of the </><AddedWord>changed</><Added> file</><Added>                            </>
+<Quiet>|</> <RemovedNumber>  40 - </><Removed>line 40 of the file</><Removed>                                   </> 
+<Quiet>|</> <AddedNumber>  40 + </><Added>line 40 of the </><AddedWord>changed</><Added> file</><Added>                           </> 
 <Quiet>+-</>

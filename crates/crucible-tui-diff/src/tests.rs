@@ -74,18 +74,23 @@ fn edited(path: Option<&str>, lines: usize) -> Change {
 }
 
 #[test]
-fn a_change_opens_with_its_path_and_counts_and_closes_its_box() {
+fn a_change_opens_with_its_path_and_its_summary_and_closes_its_box() {
+    // The words are the reader's own ink, the dot is quiet, and each count is
+    // in its side's count slot, which has no ground.
     let change = read(TWO_FILES).expect("the mock is a diff");
     let rows = drawn(&change, 64, UNICODE);
     let pictured = dump(&rows, 64);
     let mut lines = pictured.lines();
     assert_eq!(
         lines.next().map(str::trim_end),
-        Some("<Quiet>╭─</> <Path>src/parse.rs</> <AddedNumber>+3</> <RemovedNumber>−2</>")
+        Some(
+            "<Quiet>╭─</> <Path>src/parse.rs</><Quiet> · </>Added <AddedCount>3</> lines, removed <RemovedCount>2</> lines"
+        )
     );
-    assert!(
-        pictured.contains("<Quiet>├─</> <Path>README.md</> <AddedNumber>+1</>"),
-        "{pictured}"
+    // A later file opens the same way, and one line is a `line`.
+    assert_eq!(
+        pictured.lines().nth(9).map(str::trim_end),
+        Some("<Quiet>├─</> <Path>README.md</><Quiet> · </>Added <AddedCount>1</> line")
     );
     assert_eq!(lines.last().map(str::trim_end), Some("<Quiet>╰─</>"));
     for row in rows.iter().skip(1).take(rows.len() - 2) {
@@ -98,10 +103,30 @@ fn a_change_opens_with_its_path_and_counts_and_closes_its_box() {
 }
 
 #[test]
-fn a_count_of_nothing_is_left_off_the_header() {
-    let change = read("--- a/x\n+++ b/x\n@@ -1,2 +1,1 @@\n a\n-b\n").expect("a diff");
-    let rows = drawn(&change, 64, UNICODE);
-    assert_eq!(texts(&rows).first().map(String::as_str), Some("╭─ x −1"));
+fn a_side_with_no_lines_is_left_out_of_the_summary() {
+    let opener = |lines: &[(usize, Side, &str)]| {
+        let change = Change::new(vec![File::numbered(Some("x"), lines.iter().copied())]);
+        texts(&drawn(&change, 64, UNICODE))
+            .first()
+            .cloned()
+            .unwrap_or_default()
+    };
+    // The side left alone opens the summary, so it takes the capital.
+    assert_eq!(
+        opener(&[(1, Side::Kept, "a"), (2, Side::Removed, "b")]),
+        "╭─ x · Removed 1 line"
+    );
+    assert_eq!(
+        opener(&[(1, Side::Added, "a"), (2, Side::Added, "b")]),
+        "╭─ x · Added 2 lines"
+    );
+    // One line on each side is a `line` on each.
+    assert_eq!(
+        opener(&[(1, Side::Removed, "a"), (1, Side::Added, "b")]),
+        "╭─ x · Added 1 line, removed 1 line"
+    );
+    // Nothing moved: no summary, and no dot left standing for one.
+    assert_eq!(opener(&[(1, Side::Kept, "a")]), "╭─ x");
 }
 
 #[test]
@@ -113,16 +138,125 @@ fn every_line_wears_its_number_its_sign_and_its_ground() {
         "{pictured}"
     );
     assert!(
-        pictured.contains("<Quiet>│</> <AddedNumber>  12 +</> <Added>        tree.mark(at);"),
+        pictured.contains("<Quiet>│</> <AddedNumber>  12 + </><Added>        tree.mark(at);"),
         "{pictured}"
     );
-    // A changed line carries its ground to the last column.
+    // A changed line carries its ground to one column short of the room.
     for row in drawn(&change, 64, UNICODE) {
-        if row
-            .kinds()
-            .any(|slot| slot == Slot::Added || slot == Slot::Removed)
-        {
-            assert_eq!(row.columns(), 64, "{:?}", row.text());
+        if changed(&row) {
+            assert_eq!(row.columns(), 63, "{:?}", row.text());
+        }
+    }
+}
+
+/// Whether `row` is a line that moved.
+fn changed(row: &Row) -> bool {
+    row.kinds()
+        .any(|slot| slot == Slot::Added || slot == Slot::Removed)
+}
+
+#[test]
+fn the_ground_of_a_changed_row_is_unbroken_from_its_number_to_its_edge() {
+    // After the box's bar and the cell beside it, every cell of a changed row
+    // is in a slot that carries its side's ground: a cell in any other slot
+    // is a hole in the band, as the one between the sign and the line was.
+    let change = read(TWO_FILES).expect("a diff");
+    let mut seen = 0;
+    for row in drawn(&change, 64, UNICODE) {
+        if !changed(&row) {
+            continue;
+        }
+        seen += 1;
+        let inside: Vec<(Slot, &str)> = row.spans().skip(2).collect();
+        let added = [Slot::AddedNumber, Slot::Added, Slot::AddedWord];
+        let removed = [Slot::RemovedNumber, Slot::Removed, Slot::RemovedWord];
+        assert!(
+            inside.iter().all(|(slot, _)| added.contains(slot))
+                || inside.iter().all(|(slot, _)| removed.contains(slot)),
+            "{inside:?}"
+        );
+        assert_eq!(
+            row.spans().take(2).collect::<Vec<_>>(),
+            [(Slot::Quiet, "│"), (Slot::Plain, " ")]
+        );
+    }
+    assert_eq!(seen, 6);
+}
+
+/// One file with a short and a long line on each side and a long line that
+/// did not move.
+fn short_and_long() -> Change {
+    let long = "a line that runs on ".repeat(12);
+    Change::new(vec![File::numbered(
+        Some("x"),
+        [
+            (1, Side::Kept, long.as_str()),
+            (2, Side::Removed, "short"),
+            (3, Side::Removed, long.as_str()),
+            (2, Side::Added, "brief"),
+            (3, Side::Added, long.as_str()),
+        ],
+    )])
+}
+
+#[test]
+fn a_changed_row_ends_one_column_short_of_the_room_whatever_its_length() {
+    let change = short_and_long();
+    for (glyphs, more) in [(UNICODE, "…"), (ASCII, "...")] {
+        for columns in [24, 40, 64, 120] {
+            let rows = drawn(&change, columns, glyphs);
+            let moved: Vec<&Row> = rows.iter().filter(|row| changed(row)).collect();
+            assert_eq!(moved.len(), 4, "{}", dump(&rows, columns));
+            for row in &moved {
+                assert_eq!(row.columns(), columns - 1, "{:?}", row.text());
+            }
+            // The long line of each side is cut with the mark on its ground,
+            // in the last cell the ground takes.
+            for (at, ground) in [(1, Slot::Removed), (3, Slot::Added)] {
+                let row = moved.get(at).expect("a long row");
+                assert_eq!(row.spans().last(), Some((ground, more)), "{:?}", row.text());
+            }
+            // A short one is not marked.
+            for at in [0, 2] {
+                let row = moved.get(at).expect("a short row");
+                assert!(!row.text().contains(more), "{:?}", row.text());
+            }
+        }
+    }
+}
+
+#[test]
+fn a_line_cut_where_a_wide_character_does_not_fit_still_ends_in_the_mark_at_the_edge() {
+    // Each character is two columns, so at one of two neighbouring widths
+    // the cut leaves a column over: the ground takes it, before the mark.
+    let wide = "漢字".repeat(60);
+    let change = Change::new(vec![File::numbered(
+        Some("x"),
+        [
+            (1, Side::Kept, wide.as_str()),
+            (2, Side::Removed, wide.as_str()),
+            (2, Side::Added, wide.as_str()),
+        ],
+    )]);
+    for columns in [40, 41] {
+        let rows = drawn(&change, columns, UNICODE);
+        for (at, slot) in [(1, Slot::Quiet), (2, Slot::Removed), (3, Slot::Added)] {
+            let row = rows.get(at).expect("a line");
+            assert_eq!(row.columns(), columns - 1, "{:?}", row.text());
+            assert_eq!(row.spans().last(), Some((slot, "…")), "{:?}", row.text());
+        }
+    }
+}
+
+#[test]
+fn a_line_that_did_not_move_is_cut_at_the_column_the_grounds_end_at() {
+    let change = short_and_long();
+    for (glyphs, more) in [(UNICODE, "…"), (ASCII, "...")] {
+        for columns in [24, 40, 64, 120] {
+            let rows = drawn(&change, columns, glyphs);
+            let kept = rows.get(1).expect("the kept row");
+            assert_eq!(kept.columns(), columns - 1, "{:?}", kept.text());
+            assert_eq!(kept.spans().last(), Some((Slot::Quiet, more)));
         }
     }
 }
@@ -134,13 +268,13 @@ fn a_replaced_word_is_raised_on_both_lines_of_its_pair() {
     let pictured = dump(&drawn(&change, 64, UNICODE), 64);
     assert!(
         pictured.contains(
-            "<RemovedNumber>  11 -</> <Removed>    for </><RemovedWord>line</><Removed> in input.lines() {"
+            "<RemovedNumber>  11 - </><Removed>    for </><RemovedWord>line</><Removed> in input.lines() {"
         ),
         "{pictured}"
     );
     assert!(
         pictured.contains(
-            "<AddedNumber>  11 +</> <Added>    for </><AddedWord>(at, line)</><Added> in input.lines()</><AddedWord>.enumerate()</><Added> {"
+            "<AddedNumber>  11 + </><Added>    for </><AddedWord>(at, line)</><Added> in input.lines()</><AddedWord>.enumerate()</><Added> {"
         ),
         "{pictured}"
     );
@@ -263,7 +397,10 @@ fn lines_the_tool_never_kept_are_a_count_inside_the_box() {
             .dropping(136),
     ]);
     let rows = texts(&drawn(&change, 64, UNICODE));
-    assert_eq!(rows.first().map(String::as_str), Some("╭─ x +100 −100"));
+    assert_eq!(
+        rows.first().map(String::as_str),
+        Some("╭─ x · Added 100 lines, removed 100 lines")
+    );
     assert_eq!(
         rows.get(rows.len() - 2).map(String::as_str),
         Some("│  ⋯  136 lines not shown  ⋯")
@@ -271,14 +408,64 @@ fn lines_the_tool_never_kept_are_a_count_inside_the_box() {
 }
 
 #[test]
-fn a_change_with_no_path_opens_on_its_counts_alone() {
+fn a_change_with_no_path_opens_on_its_summary_alone() {
+    // No path, so no dot to part it from the summary either.
     let change = Change::new(vec![File::numbered(None, [(1, Side::Added, "a")])]);
+    let rows = drawn(&change, 64, UNICODE);
+    assert_eq!(
+        dump(&rows, 64).lines().next().map(str::trim_end),
+        Some("<Quiet>╭─</> Added <AddedCount>1</> line")
+    );
+    let change = Change::new(vec![File::numbered(None, [(1, Side::Removed, "a")])]);
     assert_eq!(
         texts(&drawn(&change, 64, UNICODE))
             .first()
             .map(String::as_str),
-        Some("╭─ +1")
+        Some("╭─ Removed 1 line")
     );
+    // A path that names nothing is no path.
+    let change = Change::new(vec![File::numbered(Some(""), [(1, Side::Added, "a")])]);
+    assert_eq!(
+        texts(&drawn(&change, 64, UNICODE))
+            .first()
+            .map(String::as_str),
+        Some("╭─ Added 1 line")
+    );
+}
+
+#[test]
+fn a_header_too_wide_shortens_its_path_and_then_leaves_its_summary_off_whole() {
+    let path = "a/very/long/path/that/does/not/fit/in/a/narrow/room/parse.rs";
+    let summary = " · Added 1 line, removed 1 line";
+    let change = Change::new(vec![File::numbered(
+        Some(path),
+        [(1, Side::Removed, "a"), (1, Side::Added, "b")],
+    )]);
+    // Room for both: nothing is given up.
+    let wide = texts(&drawn(&change, 120, UNICODE));
+    assert_eq!(
+        wide.first().map(String::as_str),
+        Some(format!("╭─ {path}{summary}").as_str())
+    );
+    // Room for the summary and the end of the path: the path's start goes.
+    let narrow = texts(&drawn(&change, 64, UNICODE));
+    let opener = narrow.first().expect("an opener");
+    assert!(opener.starts_with("╭─ …"), "{opener}");
+    assert!(opener.ends_with(&format!("parse.rs{summary}")), "{opener}");
+    // At every width the summary is whole or absent, its dot with it, and
+    // the row fits.
+    for glyphs in [UNICODE, ASCII] {
+        let dot = format!(" {} ", glyphs.dot());
+        for columns in 0..=120 {
+            let rows = drawn(&change, columns, glyphs);
+            let row = rows.first().expect("an opener");
+            let opener = row.text();
+            assert!(row.columns() <= columns, "{columns}: {opener:?}");
+            let whole = opener.ends_with(&format!("{dot}Added 1 line, removed 1 line"));
+            let absent = !opener.contains("Added") && !opener.contains(&dot);
+            assert!(whole || absent, "{columns}: {opener:?}");
+        }
+    }
 }
 
 #[test]
@@ -403,7 +590,11 @@ fn a_glyph_set_changed_lays_the_same_change_out_in_the_new_one() {
     for mark in ['╭', '├', '╰', '│', '⋯', '−'] {
         assert!(!ascii.contains(mark), "{mark} left in ascii:\n{ascii}");
     }
-    assert!(ascii.starts_with("+- src/parse.rs +3 -2"), "{ascii}");
+    assert_eq!(
+        ascii.lines().next(),
+        Some("+- src/parse.rs - Added 3 lines, removed 2 lines"),
+        "{ascii}"
+    );
 }
 
 #[test]
@@ -482,7 +673,7 @@ fn a_laid_change_says_its_natural_size() {
     assert!(laid.narrow.is_none());
 }
 
-// The pictures, at 64 columns, in both glyph sets.
+// The pictures, at 64 columns and at 120, in both glyph sets.
 
 #[test]
 fn picture_of_a_tool_edit_with_a_fold() {
@@ -509,6 +700,44 @@ fn picture_of_a_two_file_change() {
     let change = read(TWO_FILES).expect("a diff");
     insta::assert_snapshot!("two_files_unicode", dump(&drawn(&change, 64, UNICODE), 64));
     insta::assert_snapshot!("two_files_ascii", dump(&drawn(&change, 64, ASCII), 64));
+}
+
+/// Two files: one whose two changed lines are each cut at 64 columns and the
+/// removed one at 120 too, with one line on each side; and one with nothing
+/// removed.
+const CUT_AND_COUNTED: &str = "--- a/src/parse.rs
++++ b/src/parse.rs
+@@ -3,3 +3,3 @@
+ let width = 8;
+-let message = \"a line that runs well past the right edge of a room of one hundred and twenty columns, so that its ground ends in the mark\";
++let message = \"a line that runs past the right edge of a room of sixty-four columns\";
+ let depth = 1;
+--- a/README.md
++++ b/README.md
+@@ -1,1 +1,2 @@
+ # parse
++A small parser.
+";
+
+#[test]
+fn picture_of_a_cut_line_and_a_summary_of_one_line_a_side_and_of_one_side() {
+    let change = read(CUT_AND_COUNTED).expect("a diff");
+    insta::assert_snapshot!(
+        "cut_and_counted_64_unicode",
+        dump(&drawn(&change, 64, UNICODE), 64)
+    );
+    insta::assert_snapshot!(
+        "cut_and_counted_64_ascii",
+        dump(&drawn(&change, 64, ASCII), 64)
+    );
+    insta::assert_snapshot!(
+        "cut_and_counted_120_unicode",
+        dump(&drawn(&change, 120, UNICODE), 120)
+    );
+    insta::assert_snapshot!(
+        "cut_and_counted_120_ascii",
+        dump(&drawn(&change, 120, ASCII), 120)
+    );
 }
 
 #[test]
