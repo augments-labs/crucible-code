@@ -327,6 +327,9 @@ fn a_batch_submitted_under_a_running_turn_is_accepted_and_goes_once_delivered() 
             &vendor,
         );
         window.types_and_catches("go\r", WAITING);
+        // The reply streams a word at a time; the frames below are pinned
+        // with all of it drawn, not wherever the stream had got to.
+        window.catches("the turn drew on", HELD);
         chooses(&mut window, "/questions\r");
 
         window.types_and_catches("\r", "Review before you submit");
