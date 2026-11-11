@@ -2,8 +2,7 @@
 source: tests/whole_screen/agents.rs
 expression: picture
 ---
-80x40 cursor 39,0 scrollback 2
-|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
+80x40 cursor 39,0 scrollback 3
 |│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No earlier session for this workspace     │|
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
 |│                                  │ ───────────────────────────────────────── │|
@@ -17,6 +16,7 @@ expression: picture
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |› /login                                                                        |
+|                                                                                |
 |                                                                                |
 |                                                                                |
 |                                                                                |

@@ -873,7 +873,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents_published( &case, (size, native), &vendor, Some(&script), &published, )"
       ],
-      "sha256": "bd542c2f1431de65abf337b9f826dd4282ba192350cc8ab81b8ef0b18cb2acd5"
+      "sha256": "cca3d344df3d47e5857b3d03c9df2d8dc9cb6a6e73c2ffe57970b7bbb771daff"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__install_done_80_fullscreen.snap",
@@ -891,7 +891,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents_published( &case, (size, native), &vendor, Some(&script), &published, )"
       ],
-      "sha256": "231ac791e5ba5b7a021926a5c08b26a4ffa2ecd841fb8110fde9b58101555421"
+      "sha256": "4f2cec6f2e049eff60cb3b2bafa2400d6ee0c275886f75c04ad7b8508ba55469"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__install_downloading_40_fullscreen.snap",
@@ -909,7 +909,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents_published( &case, (size, native), &vendor, Some(&script), &published, )"
       ],
-      "sha256": "51cb33d7ae32b0addf0f2e6aae81f228e22a1fcb9bffcbb34ad4147fcc23263a"
+      "sha256": "f6462c862906e5393dd0a898c85e1c46f7ce58ed41ffa4a9282d75d36fb7a0f3"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__install_downloading_80_fullscreen.snap",
@@ -927,7 +927,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents_published( &case, (size, native), &vendor, Some(&script), &published, )"
       ],
-      "sha256": "a0da2e30367aa99c25acf9649c4eb1868db1f889cd60a31f9a30c9da9af3cdfd"
+      "sha256": "7a242f589c767a3f3d87757fe6eb9b07c1937347757fe89eb469aeb3ac951701"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__an_answer_is_committed_above_a_box_that_is_still_where_it_was.snap",

@@ -1283,7 +1283,7 @@ pub enum Origin {
 }
 
 impl Origin {
-    /// Where the program at `program` comes from, judged as [`stored_under`]
+    /// Where the program at `program` comes from, judged as `stored_under`
     /// places it beneath the install store `programs`: own only where it lies
     /// nowhere in the store, so one in another agent's directory or in no
     /// version is still the store's.
