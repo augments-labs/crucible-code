@@ -1828,8 +1828,9 @@ fn the_rows_of_a_source_are_counted_once_for_each_width() {
 fn two_addresses_on_one_line_of_one_length_are_counted_apart() {
     // As many bytes each, and on the same line, but the wide one is two
     // columns a character where the other is one, so at 20 columns it folds
-    // into fewer rows. The view reaches as far down as it would were they
-    // on lines of their own.
+    // into fewer rows. Each is counted at its own rows, and the view reaches
+    // as far down as it does with them on lines of their own, where no two
+    // can share a count.
     let wide = format!("https://example.com/{}", "語".repeat(20));
     let narrow = format!("https://example.com/{}", "a".repeat(60));
     assert_eq!(wide.len(), narrow.len());
@@ -1860,12 +1861,22 @@ fn two_addresses_on_one_line_of_one_length_are_counted_apart() {
             },
         );
         let view = opened(&mut standing);
-        (view.laid, view.counted.addresses.len())
+        let counts: Vec<usize> = view
+            .counted
+            .addresses
+            .iter()
+            .map(|(_, _, rows)| *rows)
+            .collect();
+        (view.laid, counts)
     };
 
     let apart = reach([0, 1]);
-    assert_eq!(apart.1, 2);
-    assert_eq!(reach([0, 0]), apart);
+    let (laid, counts) = reach([0, 0]);
+    assert_eq!(counts.len(), 2);
+    assert!(counts.iter().all(|rows| *rows > 1));
+    assert_ne!(counts.first(), counts.get(1));
+    assert_eq!(counts, apart.1);
+    assert_eq!(laid, apart.0);
 }
 
 #[test]

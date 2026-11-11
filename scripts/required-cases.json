@@ -9163,7 +9163,7 @@
     {
       "id": "CASE-TRANSCRIPT-SHORTENED-VIEW-COUNTED",
       "family": "transcript-sources",
-      "obligation": "Two addresses of one byte length on one line, folding into different numbers of rows at 20 columns, are counted apart, and the view reaches as far as it does with them on lines of their own.",
+      "obligation": "Two addresses of one byte length on one line, each folding into more than one row at 20 columns and into a different number of rows from the other, are each counted at the rows they take on lines of their own, and the view reaches as far as it does with them there.",
       "package": "crucible-code",
       "target": {
         "kind": "bin",
@@ -9171,7 +9171,7 @@
       },
       "case": "cli::converse::expanding::tests::two_addresses_on_one_line_of_one_length_are_counted_apart",
       "source": "src/cli/converse/expanding/tests.rs",
-      "body_sha256": "06e4b1e687c560ad019b318a4bde26991fad862fe0afc43f372ef0a0cda12b8a",
+      "body_sha256": "fd91d66bf7112fcf7eba1d3ead61721e87b7ea745cfcb2a32664d9910b31e07b",
       "platforms": [
         "linux",
         "macos",
