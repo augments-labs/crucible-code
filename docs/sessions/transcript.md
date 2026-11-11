@@ -277,15 +277,17 @@ and a drag in the full screen copies the words without it.
 
 An image, `![the build passing](docs/images/build.png)`, is drawn as the link
 `[image: the build passing]`, or `[image]` with no words, followed by its
-quiet address; nothing is fetched. A `!` before any other bracket, or after a
-backslash, is drawn as itself. An address written as its own words, bare or
-between angle brackets, has nothing after it. In a table's cell a link is drawn
-as it is in prose, a reference included, but with no quiet address: the whole
-of it is in the table's source.
+quiet address; nothing is fetched. A `!` before any other bracket is drawn as
+itself, and so is one after a backslash, which stays in front of it:
+`\![x](y.png)` is drawn `\!x (y.png)`. An address written as its own words,
+bare or between angle brackets, has nothing after it. In a table's cell a link
+is drawn as it is in prose, an address as its reference included, but with
+nothing after its words: the whole of it is in the table's source.
 
-A link in code, a key, a fence, display math, a mermaid diagram or a diff is
-drawn as the model wrote it, and so is every link and image in output with no
-colour, including output that is not a terminal.
+A link in code, a key, a fence, a mermaid diagram or a diff is drawn as the
+model wrote it, and one in display math as its words alone, as before. Every
+link and image in output with no colour, including output that is not a
+terminal, is written as the model wrote it.
 
 <kbd>Ctrl+O</kbd> lists the whole of every address drawn shorter than it was
 written, a reference or a quiet address cut at 24 columns, newest first, each
