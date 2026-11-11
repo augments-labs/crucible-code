@@ -1361,8 +1361,8 @@ impl Runner {
     ///
     /// The checks themselves, for [`Runner::checking_input`] to commit about
     /// an invocation's prompt, and asked as they stand of the person's other
-    /// words: each answer delivered to a question asked without waiting, and
-    /// each line typed while a turn ran. Those join a turn already under way
+    /// words: what they said in each answer delivered to a question asked
+    /// without waiting, and each line typed while a turn ran. Those join a turn already under way
     /// at a pass boundary, are taken once and never retried, and so have no
     /// invocation of their own for a decision to be committed to.
     ///

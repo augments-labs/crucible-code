@@ -2,9 +2,10 @@
 //!
 //! Two checks with the same shape at either end of an invocation. An input
 //! guardrail reads what the caller asked before any of it reaches a provider,
-//! and each answer or steered line the person gives while it runs before that
-//! is recorded; an output guardrail reads the final candidate answer before it is accepted
-//! and written down. Both answer with a [`Decision`], and both may fail to
+//! and, before it is recorded, each line the person steers in while it runs
+//! and what they said in each answer to a question asked without waiting; an
+//! output guardrail reads the final candidate answer before it is accepted and
+//! written down. Both answer with a [`Decision`], and both may fail to
 //! reach one, which is a third answer rather than a refusal.
 //!
 //! What a guardrail is handed is [`AgentContext`] and nothing else: the run it
@@ -146,8 +147,9 @@ impl<'a> AgentContext<'a> {
         self.agent
     }
 
-    /// The words in question: what the caller asked, or an answer or steered
-    /// line the person gave while the invocation ran, for an input check, and
+    /// The words in question: what the caller asked, or a steered line or
+    /// what the person said in an answer to a question asked without waiting,
+    /// given while the invocation ran, for an input check, and
     /// nothing for an output one, whose candidate is handed in separately.
     #[must_use]
     pub const fn said(&self) -> &str {
@@ -526,10 +528,13 @@ pub trait InputGuardrail: std::fmt::Debug + Send + Sync {
     /// Asked once per invocation of what the caller asked: a turn retried
     /// after it failed is answered from the decision this reached the first
     /// time, while the same words said again after a turn has ended are a new
-    /// invocation and are put to this afresh. Also asked of each answer the
-    /// person gave to a question asked without waiting, and of each line they
-    /// steered into a running turn, as it is taken in; those decisions are not
-    /// kept, so an answer refused and given again is judged again.
+    /// invocation and are put to this afresh. Also asked of each line the
+    /// person steered into a running turn, and of what they said in each
+    /// answer to a question asked without waiting (the answers they chose or
+    /// wrote in and the notes they added, not the question's text; an answer
+    /// that says nothing, such as one declined, is not asked about), as it is
+    /// taken in. Those decisions are not kept, so an answer refused and given
+    /// again is judged again.
     ///
     /// # Errors
     ///

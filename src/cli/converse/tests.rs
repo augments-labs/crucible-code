@@ -738,19 +738,23 @@ fn the_whole_queue_goes_into_one_turn_rather_than_one_turn_each() {
     }
 
     // The oldest is the turn's prompt and the rest are offered to that same
-    // turn, which records them together at its first boundary. Nothing is left
-    // waiting, and the bytes they reserved come back with them.
+    // turn, which records them together at its first boundary. They wait in
+    // the panel until the turn says it took them, as a line queued under a
+    // running turn does.
     let steer = crucible_runtime::Steer::new();
     assert_eq!(
         batched(&mut waiting, &steer).as_deref(),
         Some("run the tests")
     );
-    assert_eq!(waiting.waiting_count(), 0);
-    assert_eq!(waiting.bytes, 0);
+    assert_eq!(waiting.waiting_count(), 2);
     assert_eq!(
         steer.take(),
         vec!["then fix what failed", "and say what you did"]
     );
+    assert!(waiting.steered("then fix what failed"));
+    assert!(waiting.steered("and say what you did"));
+    assert_eq!(waiting.waiting_count(), 0);
+    assert_eq!(waiting.bytes, 0);
 }
 
 #[test]
@@ -2174,4 +2178,32 @@ fn answers_a_guardrail_withheld_are_refused_in_the_dock_where_their_batch_waits_
         // model's reply was sent all the same.
         assert_eq!(docked(&did, false), Ok(()));
     }
+}
+
+#[test]
+fn lines_batched_behind_a_prompt_stay_waiting_until_the_turn_says_it_took_them() {
+    // The turn takes every line on offer at once, and one an input check
+    // refuses ends it there: the lines behind that one are never worked in.
+    // The panel is the only thing left holding them once the turn is over, so
+    // it must still be holding them.
+    let mut waiting = Prompts::default();
+    for line in ["plan it", "and the secret is hunter2", "then ship it"] {
+        let mut editor = typed(line);
+        assert_eq!(waiting.accept(&mut editor), Retained::Accepted);
+    }
+
+    let steer = crucible_runtime::Steer::new();
+    assert_eq!(batched(&mut waiting, &steer).as_deref(), Some("plan it"));
+
+    // What the runner does: takes the offer whole, and says it took the line
+    // it refused, which ends the turn before the one behind it.
+    let offered = steer.take();
+    assert_eq!(offered, vec!["and the secret is hunter2", "then ship it"]);
+    assert!(waiting.steered("and the secret is hunter2"));
+
+    assert_eq!(
+        waiting.waiting_all().collect::<Vec<_>>(),
+        vec!["then ship it"],
+        "a line the turn never reached was lost with it"
+    );
 }

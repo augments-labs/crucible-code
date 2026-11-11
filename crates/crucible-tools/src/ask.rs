@@ -958,6 +958,29 @@ impl Delivered {
         }
         text
     }
+
+    /// The person's own words in it, for an input check to judge: each answer
+    /// they chose or wrote in, and each note they added, one to a line.
+    ///
+    /// Not the framing [`Delivered::said`] puts around them, nor the headings,
+    /// questions or answers the model wrote and the person did not choose,
+    /// none of which the person said. A batch they declined whole, or answered
+    /// choosing nothing, says nothing, and this is empty.
+    #[must_use]
+    pub fn replied(&self) -> String {
+        let mut text = String::new();
+        for reply in &self.replies {
+            if let Reply::Answered(answered) = reply {
+                for chosen in answered.chosen() {
+                    let _ = writeln!(text, "{chosen}");
+                }
+                if !answered.note().is_empty() {
+                    let _ = writeln!(text, "{}", answered.note());
+                }
+            }
+        }
+        text
+    }
 }
 
 impl fmt::Display for Part {

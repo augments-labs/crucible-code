@@ -1854,7 +1854,7 @@
       "opened": [
         "Watched::allowing_drawn( &format!(\"native-queue-sent-{named}-{columns}\"), (columns, 48), &vendor, \"bash(*)\", (glyphs, \"native\"), )"
       ],
-      "sha256": "db0cc01b879b07f15a89f66562895eae0b181454354c991903e187bc732b6db7"
+      "sha256": "3a5afacbef67a38e6c0edd5c4bda60584f45b9040b5d34362434fb2e18af5c0f"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__native_queue_sent_all_now_in_unicode_at_80.snap",
@@ -1862,7 +1862,7 @@
       "opened": [
         "Watched::allowing_drawn( &format!(\"native-queue-sent-{named}-{columns}\"), (columns, 48), &vendor, \"bash(*)\", (glyphs, \"native\"), )"
       ],
-      "sha256": "8b64b668d9e1ee570c31ccf5ab8a0cc7681104c34a6f56c075f4dbace6d0b1cd"
+      "sha256": "c05de4dd92ae0b11538c74c1eb5062c5e0b34c88d71adb70603318c89f7e8a78"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__native_queue_sent_highlighted_now_in_ascii_at_40.snap",

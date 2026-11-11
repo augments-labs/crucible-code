@@ -1417,7 +1417,14 @@ fn ctrl_enter_stops_the_turn_and_sends_everything_waiting_then_the_box() {
     // box, is the last of what was sent: the answer's words are already on
     // screen from the turn that was stopped, so they say nothing here.
     window.types_and_catches(CTRL_ENTER, "! stopped");
-    window.catches("the queue sent", &format!("|\u{203a} {IN_THE_BOX}"));
+    // A line batched behind the first prompt stays in the panel until the
+    // turn says it took it, so the panel is gone only once every line is.
+    let sent = format!("|\u{203a} {IN_THE_BOX}");
+    window.catches_where(
+        "the queue sent",
+        &format!("{sent:?} and no panel"),
+        |picture| picture.contains(&sent) && !picture.contains("queued"),
+    );
     let picture = window.picture();
     let stopped = picture.find("! stopped");
     let mut after = stopped;
@@ -1605,7 +1612,13 @@ fn the_queue_ctrl_s_holds_back_still_answers_its_keys_and_keeps_what_is_typed_fo
         );
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
-    window.catches("the rest sent", &format!("|\u{203a} {}", WAITING[2]));
+    // As above: the panel goes only once the turn has taken every line.
+    let sent = format!("|\u{203a} {}", WAITING[2]);
+    window.catches_where(
+        "the rest sent",
+        &format!("{sent:?} and no panel"),
+        |picture| picture.contains(&sent) && !picture.contains("queued"),
+    );
 
     let picture = window.picture();
     let after_the_last = picture.find(&format!("|\u{203a} {}", WAITING[3]));

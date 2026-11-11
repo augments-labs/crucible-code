@@ -1334,3 +1334,27 @@ fn the_saved_form_is_read_and_written_by_the_registry_alone() {
     assert!(Deferred::saved_waiting(&json!({ "next": 0 })).is_empty());
     assert_eq!(Deferred::saved_id(&json!({ "id": 3 })), None);
 }
+
+#[test]
+fn what_the_person_replied_is_their_choices_and_notes_and_nothing_the_model_wrote() {
+    let deferred = Deferred::default();
+    let id = deferred.register(asked("Language")).unwrap();
+    deferred
+        .settle(
+            id,
+            vec![noted(&["Zig"], "for the CLI"), chose(&["lint", "test"])],
+        )
+        .unwrap();
+
+    let replied = only(deferred.take_settled()).replied();
+    assert_eq!(
+        replied.lines().collect::<Vec<_>>(),
+        vec!["Zig", "for the CLI", "lint", "test"]
+    );
+
+    let declined = deferred.register(asked("Language")).unwrap();
+    deferred
+        .settle(declined, vec![Reply::Declined, chose(&[])])
+        .unwrap();
+    assert_eq!(only(deferred.take_settled()).replied(), "");
+}

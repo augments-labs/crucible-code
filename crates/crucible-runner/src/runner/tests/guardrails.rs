@@ -968,7 +968,7 @@ fn a_refusal_is_written_under_the_name_its_check_was_declared_with() {
 fn deferring_under(
     script: Vec<Vec<Delta>>,
     held: &Deferred,
-    typed: Option<(Steer, &'static str)>,
+    typed: Option<(Steer, &'static [&'static str])>,
     check: Arc<Check>,
 ) -> Scripted {
     let scripted = Scripted::built(
@@ -1115,6 +1115,58 @@ fn answers_settled_before_the_one_a_check_refuses_are_delivered_and_it_alone_wai
 }
 
 #[test]
+fn an_answer_is_judged_by_the_persons_words_alone_and_a_decline_says_none() {
+    // The checks hold the person to what they said. The heading, the question
+    // and the framing around an answer are the model's words and the
+    // runner's, so a check that objects to them refuses nothing the person
+    // chose; and a declined batch says nothing at all, so it is not judged.
+    let held = Deferred::default();
+    let (check, saw) = Check::new(
+        "no-storage-talk",
+        Answer::RefuseHolding("Storage", "the words mention storage"),
+    );
+    let mut scripted = deferring_under(
+        vec![
+            calling("c1", "ask", "{}"),
+            calling("c2", "ask", "{}"),
+            saying("two wait"),
+            saying("both answered"),
+        ],
+        &held,
+        None,
+        check,
+    );
+    scripted.turn("plan it").expect("a prompt the check allows");
+    assert_eq!(deferring::waiting_ids(&held), ["q0", "q1"]);
+
+    deferring::settle_oldest(&held, deferring::chose());
+    deferring::settle_oldest(&held, deferring::declined());
+    let turned = delivering(&mut scripted).expect("both answers are allowed");
+
+    assert!(
+        matches!(&turned, Turned::Ran(_)),
+        "an answer was judged by words the person never said: {turned:?}"
+    );
+    assert_eq!(
+        deferring::answers(scripted.runner.transcript()).len(),
+        2,
+        "both answers should be delivered"
+    );
+    let judged: Vec<String> = saw
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|saw| saw.said.clone())
+        .collect();
+    assert_eq!(
+        judged,
+        ["plan it", "SQLite\n"],
+        "the checks were given something other than the person's words"
+    );
+    assert!(deferring::waiting_ids(&held).is_empty());
+}
+
+#[test]
 fn an_answer_no_input_check_could_decide_about_is_never_sent_either() {
     let held = Deferred::default();
     let (check, _saw) = Check::new(
@@ -1183,6 +1235,13 @@ fn an_answer_settled_mid_turn_that_a_check_refuses_ends_the_turn_unsent() {
     );
     assert!(deferring::answers(scripted.runner.transcript()).is_empty());
     assert_eq!(deferring::waiting_ids(&held), ["q0"]);
+    assert!(
+        !scripted
+            .seen
+            .try_iter()
+            .any(|event| matches!(event, Event::TurnFinished { .. })),
+        "a turn refused at a pass boundary said the model stopped"
+    );
 }
 
 #[test]
@@ -1190,7 +1249,9 @@ fn a_line_typed_during_a_turn_that_a_check_refuses_is_never_sent() {
     // A steered line is the person's words too. The check refuses it at the
     // pass boundary it would have joined, the turn ends there, and the line
     // is reported as taken so the screen does not hold it for a turn of its
-    // own that would only be refused again.
+    // own that would only be refused again. A line typed after it is neither
+    // judged, recorded nor reported as taken: it stays the person's, queued
+    // for the next turn.
     let held = Deferred::default();
     let steer = Steer::new();
     let (check, _saw) = Check::new(
@@ -1204,7 +1265,7 @@ fn a_line_typed_during_a_turn_that_a_check_refuses_is_never_sent() {
             saying("did it anyway"),
         ],
         &held,
-        Some((steer, "now drop prod")),
+        Some((steer, &["now drop prod", "then ship it"])),
         check,
     );
 
@@ -1223,15 +1284,27 @@ fn a_line_typed_during_a_turn_that_a_check_refuses_is_never_sent() {
     );
     assert!(
         !scripted.runner.transcript().messages().iter().any(
-            |message| matches!(message, Message::User { text, .. } if text.contains("drop prod"))
+            |message| matches!(message, Message::User { text, .. } if text.contains("drop prod") || text.contains("ship it"))
         ),
-        "the refused line was recorded as the person's words"
+        "a line the turn ended before was recorded as the person's words"
+    );
+    let seen: Vec<Event> = scripted.seen.try_iter().collect();
+    let steered: Vec<&str> = seen
+        .iter()
+        .filter_map(|event| match event {
+            Event::Steered { line } => Some(line.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        steered,
+        ["now drop prod"],
+        "only the refused line is taken; the one behind it stays queued"
     );
     assert!(
-        scripted
-            .seen
-            .try_iter()
-            .any(|event| matches!(event, Event::Steered { line } if line == "now drop prod")),
-        "the refused line was not reported as taken"
+        !seen
+            .iter()
+            .any(|event| matches!(event, Event::TurnFinished { .. })),
+        "a turn refused at a pass boundary said the model stopped"
     );
 }

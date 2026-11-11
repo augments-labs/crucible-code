@@ -143,12 +143,18 @@ impl Runner {
         if let Some(held) = &held {
             let mut settled = held.take_settled().into_iter();
             while let Some(answer) = settled.next() {
-                let said = answer.said();
-                withheld = Ending::withheld(self.judging_input(&said, run));
+                // Judged by what the person said in it alone: the framing and
+                // the headings around it are not theirs, and an answer that
+                // says nothing, such as a batch declined whole, is not judged.
+                let replied = answer.replied();
+                if !replied.is_empty() {
+                    withheld = Ending::withheld(self.judging_input(&replied, run));
+                }
                 if withheld.is_some() {
                     held.withheld(answer, settled.collect());
                     break;
                 }
+                let said = answer.said();
                 // Only the root run holds questions, so this is its task.
                 self.task().answered(&said);
                 self.record(ancestry, Message::said(said)).await?;

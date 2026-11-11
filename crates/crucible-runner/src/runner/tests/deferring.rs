@@ -61,11 +61,11 @@ impl Tool for Asking {
 }
 
 /// A tool that stands in for the person: while it runs, the oldest waiting
-/// batch is settled, and a line may be typed beside it.
+/// batch is settled, and lines may be typed beside it.
 struct Answering {
     held: Deferred,
     reply: fn() -> Reply,
-    typed: Option<(Steer, &'static str)>,
+    typed: Option<(Steer, &'static [&'static str])>,
 }
 
 impl DescribeTool for Answering {
@@ -100,8 +100,10 @@ impl Tool for Answering {
     ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
             settle_oldest(&self.held, (self.reply)());
-            if let Some((steer, line)) = &self.typed {
-                steer.say((*line).to_owned());
+            if let Some((steer, lines)) = &self.typed {
+                for line in *lines {
+                    steer.say((*line).to_owned());
+                }
             }
             Ok(ToolOutput::ok("looked"))
         })
@@ -156,7 +158,7 @@ pub(super) fn settle_oldest(held: &Deferred, reply: Reply) {
 pub(super) fn offered(
     held: &Deferred,
     reply: fn() -> Reply,
-    typed: Option<(Steer, &'static str)>,
+    typed: Option<(Steer, &'static [&'static str])>,
 ) -> Tools {
     let mut offered = Tools::new();
     offered
@@ -409,7 +411,7 @@ fn a_steered_line_and_an_answer_arriving_together_are_both_recorded_and_told_apa
             calling("c2", "answer", "{}"),
             saying("both read"),
         ]),
-        offered(&held, chose, Some((steer.clone(), "use the fast one"))),
+        offered(&held, chose, Some((steer.clone(), &["use the fast one"]))),
         Verdict::Allow,
         Recording::nowhere(),
     );
