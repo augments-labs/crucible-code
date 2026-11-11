@@ -85,10 +85,10 @@ fn a_sign_in_link_during_a_turn_fails_it() {
 /// off, it names `/login` as a release does.
 #[test]
 fn an_own_agy_turn_without_a_sign_in_names_the_two_ways() {
-    let failed = |sandboxed: bool, profile: Option<&Path>| {
+    let failed_where = |sandboxed: bool, required: bool, profile: Option<&Path>| {
         let mut agent =
             Antigravity::own(Path::new("/home/u/.local/bin/agy"), Allowing::Nothing, &[])
-                .sandboxed(sandboxed);
+                .sandboxed(sandboxed, required);
         let _ = agent.request(Shape {
             profile,
             ..Shape::default()
@@ -102,6 +102,7 @@ fn an_own_agy_turn_without_a_sign_in_names_the_two_ways() {
             other => panic!("{other:?}"),
         }
     };
+    let failed = |sandboxed: bool, profile: Option<&Path>| failed_where(sandboxed, false, profile);
     let unreachable = failed(true, None);
     assert!(!unreachable.contains("/login"), "{unreachable}");
     assert!(unreachable.contains("~/.gemini"), "{unreachable}");
@@ -112,6 +113,10 @@ fn an_own_agy_turn_without_a_sign_in_names_the_two_ways() {
             && unreachable.contains("store release"),
         "{unreachable}"
     );
+    // Where a project requires the sandbox, turning it off is not offered.
+    let required = failed_where(true, true, None);
+    assert!(!required.contains("turn the sandbox off"), "{required}");
+    assert!(required.contains("store release"), "{required}");
     for (sandboxed, profile) in [(false, None), (true, Some(Path::new("/profiles/work")))] {
         let failed = failed(sandboxed, profile);
         assert!(failed.contains("/login"), "{failed}");

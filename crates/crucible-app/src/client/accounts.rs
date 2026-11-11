@@ -174,8 +174,9 @@ use super::agents::LISTED;
 use super::deciding::{Confirmation, Front, confirmed};
 use super::performing::{Desk, Performed};
 use crate::Conversation;
-use crate::backends::{AgentRow, Unbelieved};
+use crate::backends::{AgentRow, Started, Unbelieved};
 use crate::launching::{Origin, Unlaunched, quoted};
+use crate::own_program::Platform;
 use crate::remember::{self, RememberError};
 
 /// What came of an account operation, in the application's own values.
@@ -1256,7 +1257,9 @@ impl Releases {
                 crate::backends::CatalogRow::registry(&entry, &target, index.read_date().into())
                     .ok()
             })
-            .map_or_else(Vec::new, |row| AgentRow::Catalog(row).methods())
+            .map_or_else(Vec::new, |row| {
+                AgentRow::Catalog(row).methods(crate::backends::Started::STORED)
+            })
     }
 
     /// The agent `row` runs, where crucible installs its release.
@@ -1621,7 +1624,9 @@ fn methods_of(releases: &Releases, key: &AgentKey, running: Option<&Version>) ->
         .or_else(|| offers.first());
     offer
         .and_then(|offer| crate::backends::CatalogRow::new(&offer.entry, &offer.pin.target).ok())
-        .map_or_else(Vec::new, |row| AgentRow::Catalog(row).methods())
+        .map_or_else(Vec::new, |row| {
+            AgentRow::Catalog(row).methods(crate::backends::Started::STORED)
+        })
 }
 
 /// What a question offering sign-in methods says where it lists fewer than
@@ -1984,14 +1989,31 @@ fn noted(
     row: &AgentRow,
     agent: &ExternalAgent,
 ) -> Option<&'static str> {
+    let started = started(steps, row, agent)?;
+    match started.origin {
+        Origin::Own => row.own_note(started.sandbox.on),
+        Origin::Stored => None,
+    }
+}
+
+/// How the configured `agent` of `row` is started by `steps`: where its
+/// program, found on their `PATH`, comes from, under the sandbox they start
+/// a step under now, and whether it names a profile; nothing where it is not
+/// found or no steps are taken.
+fn started(
+    steps: Option<&crate::launching::Steps>,
+    row: &AgentRow,
+    agent: &ExternalAgent,
+) -> Option<Started> {
     let steps = steps?;
     let Discovery::Found(program) = steps.discover(agent.executable(), &row.commands()) else {
         return None;
     };
-    match steps.origin(program.path()) {
-        Origin::Own => row.own_note(steps.sandboxed()),
-        Origin::Stored => None,
-    }
+    Some(Started {
+        origin: steps.origin(program.path()),
+        sandbox: steps.sandboxing(),
+        profiled: agent.profile().is_some(),
+    })
 }
 
 /// How `row`'s agent is named to a person: as its route is warned about,
@@ -2167,6 +2189,7 @@ async fn connect(
     }
     let unstepped = || Reading::Unreadable(Failure::new("this run takes no agent steps"));
     let note = noted(conversation.steps(), row, agent);
+    let how = started(conversation.steps(), row, agent);
     for _ in 0..CHECKS {
         let status = match conversation.steps() {
             Some(steps) => steps.account(agent, Step::Status).await,
@@ -2187,7 +2210,8 @@ async fn connect(
                 agent,
                 row,
                 capabilities.has(Capability::Install).then_some(written),
-                note,
+                (note, how.unwrap_or(Started::STORED)),
+                Platform::HERE,
             ),
             Reading::Signed(
                 Authentication::Unknown | Authentication::Expired | Authentication::Unverifiable,
@@ -2290,13 +2314,17 @@ fn commit(desk: &Desk<'_>, provider: &str, agent: &ExternalAgent, written: bool)
 /// is written, since the door signs in only an instance the configuration
 /// names; where it is not, it is told they are offered once it is. A client
 /// that does not claim it gives `None` and is offered no move. A `note` on
-/// the user's own program of the agent is said after its profile.
+/// the user's own program of the agent is said after its profile. The methods
+/// offered, and what is said of signing in, are those of its program as it is
+/// `started`, on `platform`.
 fn signed_out(
     agent: &ExternalAgent,
     row: &AgentRow,
     written: Option<bool>,
-    note: Option<&str>,
+    (note, started): (Option<&str>, Started),
+    platform: Platform,
 ) -> (Confirmation, Vec<AgentAction>) {
+    let _ = platform;
     let name = agent.name();
     let told = match row {
         AgentRow::Built(row) => (row.sign_in)(agent.profile().map(Path::new)),
@@ -2314,7 +2342,7 @@ fn signed_out(
     ];
     facts.extend(note.map(str::to_owned));
     facts.push(how);
-    let methods = written.map_or_else(Vec::new, |_| row.methods());
+    let methods = written.map_or_else(Vec::new, |_| row.methods(started));
     let (offered, more) = match written {
         Some(true) => sign_ins(agent, methods, &[CHECK_AGAIN, "Cancel"]),
         Some(false) if !methods.is_empty() => {
@@ -2647,7 +2675,13 @@ mod tests {
         );
         assert_eq!(noted(Some(&steps), &row, &written), Some(note));
         assert_eq!(noted(Some(&beside), &row, &stored_instance), None);
-        let (signed_out, _) = signed_out(&written, &row, None, Some(note));
+        let (signed_out, _) = signed_out(
+            &written,
+            &row,
+            None,
+            (Some(note), Started::STORED),
+            Platform::HERE,
+        );
         assert!(
             signed_out.facts.iter().any(|fact| fact == note),
             "{signed_out:?}"

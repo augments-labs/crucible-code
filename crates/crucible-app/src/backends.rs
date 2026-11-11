@@ -677,6 +677,53 @@ pub fn believed_registry_row(
     })
 }
 
+/// Whether the sandbox confines a start of an agent, and whether a project
+/// requires it to, so that the user cannot turn it off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Sandboxing {
+    /// The sandbox confines it.
+    pub on: bool,
+    /// A project requires the sandbox.
+    pub required: bool,
+}
+
+impl Sandboxing {
+    /// The sandbox a start is made under as `enablement` says now.
+    #[must_use]
+    pub fn of(enablement: &crucible_sandbox::SandboxEnablement) -> Self {
+        Self {
+            on: enablement.enabled(),
+            required: enablement.required(),
+        }
+    }
+}
+
+/// How an agent's program is started, as what it can sign in by depends on
+/// it: where the program comes from, under what sandbox, and whether its
+/// instance names a profile directory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Started {
+    /// Where its program comes from.
+    pub origin: crate::launching::Origin,
+    /// The sandbox it is started under.
+    pub sandbox: Sandboxing,
+    /// Its instance names a profile directory.
+    pub profiled: bool,
+}
+
+impl Started {
+    /// A release from crucible's install store, which signs in by every
+    /// method its row gives wherever it is started.
+    pub const STORED: Self = Self {
+        origin: crate::launching::Origin::Stored,
+        sandbox: Sandboxing {
+            on: false,
+            required: false,
+        },
+        profiled: true,
+    };
+}
+
 /// An agent's row: one built in, or one made from the catalog entry of the
 /// agent an instance names.
 // A row is made for one question and dropped with it, never collected; boxing
@@ -747,11 +794,14 @@ impl AgentRow {
         }
     }
 
-    /// The methods its agent signs in by, in the order offered: a catalog
-    /// agent's entry's, and Antigravity's own four; none for Claude Code,
-    /// which signs in at its own command.
+    /// The methods its agent signs in by, started as `started` says, in the
+    /// order offered: a catalog agent's entry's, and Antigravity's own four;
+    /// none for Claude Code, which signs in at its own command. This is the
+    /// one place that decides them: the question a person is put, the agents
+    /// door and the keys a start is given all read it.
     #[must_use]
-    pub fn methods(&self) -> Vec<AuthMethod> {
+    pub fn methods(&self, started: Started) -> Vec<AuthMethod> {
+        let _ = started;
         match self {
             Self::Built(row) => match row.driver {
                 Driver::Antigravity => antigravity::methods(),
@@ -820,13 +870,19 @@ impl AgentRow {
     /// [`dialect`](Self::dialect) makes it for a release: for Antigravity,
     /// the driver's own program, admitted by what it answers, which reads the
     /// trust state only where its file is named as a release's program is and
-    /// is started with a release's arguments; every other row's wire is the
-    /// same either way.
+    /// is started with a release's arguments, and is told the `sandbox` it is
+    /// started under; every other row's wire is the same either way.
     ///
     /// # Errors
     ///
     /// As [`dialect`](Self::dialect).
-    pub fn own_dialect(&self, mode: Mode, trust: Option<&Trust>, program: &Path) -> Wire {
+    pub fn own_dialect(
+        &self,
+        mode: Mode,
+        trust: Option<&Trust>,
+        program: &Path,
+        sandbox: Sandboxing,
+    ) -> Wire {
         match self {
             Self::Built(row) => match row.driver {
                 Driver::Antigravity => {
@@ -836,11 +892,10 @@ impl AgentRow {
                     } else {
                         Vec::new()
                     };
-                    Ok(Box::new(Antigravity::own(
-                        program,
-                        allowing(mode),
-                        &offered,
-                    )))
+                    Ok(Box::new(
+                        Antigravity::own(program, allowing(mode), &offered)
+                            .sandboxed(sandbox.on, sandbox.required),
+                    ))
                 }
                 Driver::Claude | Driver::Catalog => self.dialect(mode, trust, Some(program)),
             },

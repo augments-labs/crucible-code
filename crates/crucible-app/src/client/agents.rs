@@ -263,8 +263,8 @@ use super::accounts;
 use super::deciding::{self, Confirmation, Front, Shown, mint, turned_away};
 use crate::agent_download::{self, DownloadError, Landing};
 use crate::backends::{
-    AgentRow, CatalogRow, REGISTRY, Unbelieved, believed_registry, believed_registry_row,
-    believed_row, kept_word,
+    AgentRow, CatalogRow, REGISTRY, Sandboxing, Started, Unbelieved, believed_registry,
+    believed_registry_row, believed_row, kept_word,
 };
 use crate::catalog_fetch::{self, FetchError, RegistryRead, RegistrySource, Source, Trigger};
 use crate::content_use::{self, Consent, agent_route};
@@ -2211,12 +2211,14 @@ impl Door<'_> {
             .registry
             .clone()
             .or_else(|| catalog_fetch::cached_registry(self.shelf.home.path()).ok());
+        let settings = Settings::read_home(self.shelf.home)?;
+        let here = Here::of(self.shelf.home, &settings);
         let (row, agent, found) = signing(
             &self.trust,
             &self.store,
             registry.as_ref(),
             configured,
-            method,
+            (method, &here),
         )?;
         let signed = |by| {
             Ok(Outcome::SignedIn {
@@ -2497,7 +2499,14 @@ pub fn keep_key(home: &Home, instance: &str, method: &str, key: Typed) -> Result
     let trust = Trust::load(&catalog_fetch::state_in(home.path()), SystemTime::now());
     let store = Store::new(home.path().join("programs"));
     let registry = catalog_fetch::cached_registry(home.path()).ok();
-    let (_, agent, found) = signing(&trust, &store, registry.as_ref(), configured, method)?;
+    let here = Here::of(home, &settings);
+    let (_, agent, found) = signing(
+        &trust,
+        &store,
+        registry.as_ref(),
+        configured,
+        (method, &here),
+    )?;
     if !matches!(found.method, Method::EnvVar { .. }) {
         return Err(AgentsError::Keyless(quoted(&found.id).into()));
     }
@@ -2538,9 +2547,10 @@ pub fn sign_in_methods(home: &Home, instance: &str) -> Result<Vec<Box<str>>, Age
     let trust = Trust::load(&catalog_fetch::state_in(home.path()), SystemTime::now());
     let store = Store::new(home.path().join("programs"));
     let registry = catalog_fetch::cached_registry(home.path()).ok();
-    let (row, _) = signing_row(&trust, &store, registry.as_ref(), configured)?;
+    let here = Here::of(home, &settings);
+    let (row, _, started) = signing_row(&trust, &store, registry.as_ref(), configured, &here)?;
     Ok(row
-        .methods()
+        .methods(started)
         .into_iter()
         .map(|offered| offered.id)
         .collect())
@@ -2563,7 +2573,14 @@ pub fn runs_a_command(home: &Home, instance: &str, method: &str) -> Result<bool,
     let trust = Trust::load(&catalog_fetch::state_in(home.path()), SystemTime::now());
     let store = Store::new(home.path().join("programs"));
     let registry = catalog_fetch::cached_registry(home.path()).ok();
-    let (_, _, found) = signing(&trust, &store, registry.as_ref(), configured, method)?;
+    let here = Here::of(home, &settings);
+    let (_, _, found) = signing(
+        &trust,
+        &store,
+        registry.as_ref(),
+        configured,
+        (method, &here),
+    )?;
     Ok(matches!(
         found.method,
         Method::Terminal {
@@ -2650,11 +2667,11 @@ fn signing(
     store: &Store,
     registry: Option<&RegistryRead>,
     instance: &ExternalAgent,
-    method: &str,
+    (method, here): (&str, &Here<'_>),
 ) -> Result<(AgentRow, AgentKey, AuthMethod), AgentsError> {
-    let (row, agent) = signing_row(trust, store, registry, instance)?;
+    let (row, agent, started) = signing_row(trust, store, registry, instance, here)?;
     let found = row
-        .methods()
+        .methods(started)
         .into_iter()
         .find(|offered| *offered.id == *method)
         .ok_or_else(|| AgentsError::NoMethod {
@@ -2697,7 +2714,19 @@ fn signing_row(
     store: &Store,
     registry: Option<&RegistryRead>,
     instance: &ExternalAgent,
-) -> Result<(AgentRow, AgentKey), AgentsError> {
+    here: &Here<'_>,
+) -> Result<(AgentRow, AgentKey, Started), AgentsError> {
+    // The user's own program of a catalog agent signs in by what its probe
+    // record answered, as a launch of it is believed.
+    if let (Driver::Catalog, Some(key)) = (instance.driver(), instance.agent()) {
+        let state = catalog_fetch::state_in(here.home.path());
+        if let Some(own) =
+            crate::own_program::believed(instance, key, &state, |name| std::env::var_os(name))
+        {
+            let (row, _) = own.map_err(Unlaunched::from)?;
+            return here.named(AgentRow::Catalog(row), instance);
+        }
+    }
     let row = match instance.driver() {
         Driver::Catalog => {
             let key = instance
@@ -2770,9 +2799,58 @@ fn signing_row(
             .ok_or_else(|| AgentsError::Unsigned(quoted(instance.name()).into()))?,
         Driver::Claude => return Err(AgentsError::Unsigned(quoted(instance.name()).into())),
     };
-    let agent = AgentKey::new(row.named())
-        .map_err(|_| AgentsError::Unsigned(quoted(instance.name()).into()))?;
-    Ok((row, agent))
+    here.named(row, instance)
+}
+
+/// Where this door finds a configured instance's program, and the sandbox a
+/// sign-in through it is started under: crucible's home, and the sandbox the
+/// user's own file says, as [`lending_here`] confines one. A checkout's own
+/// file has no say in it, as it has none at this door.
+struct Here<'a> {
+    /// Crucible's home, whose install store says which programs are its own.
+    home: &'a Home,
+    /// The sandbox a sign-in is started under.
+    sandbox: Sandboxing,
+}
+
+impl<'a> Here<'a> {
+    /// The door at `home`, under the sandbox `settings` say.
+    fn of(home: &'a Home, settings: &Settings) -> Self {
+        Self {
+            home,
+            sandbox: Sandboxing {
+                on: settings.sandbox_enabled(),
+                required: settings.sandbox().required_by_project(),
+            },
+        }
+    }
+
+    /// `row`, the configured `instance`'s, with its agent's name and how its
+    /// program, looked for on this process's `PATH`, is started from here.
+    fn named(
+        &self,
+        row: AgentRow,
+        instance: &ExternalAgent,
+    ) -> Result<(AgentRow, AgentKey, Started), AgentsError> {
+        let agent = AgentKey::new(row.named())
+            .map_err(|_| AgentsError::Unsigned(quoted(instance.name()).into()))?;
+        let found = launching::discover(instance.executable(), &row.commands(), |name| {
+            std::env::var_os(name)
+        });
+        let origin = match found {
+            crucible_external_harnesses::Discovery::Found(program) => {
+                launching::Origin::of(&self.home.path().join("programs"), program.path())
+            }
+            crucible_external_harnesses::Discovery::Missing
+            | crucible_external_harnesses::Discovery::NotExecutable(_) => launching::Origin::Stored,
+        };
+        let started = Started {
+            origin,
+            sandbox: self.sandbox,
+            profiled: instance.profile().is_some(),
+        };
+        Ok((row, agent, started))
+    }
 }
 
 /// What downloading `offer`, `tree`, where it has one, and `builts` takes, in

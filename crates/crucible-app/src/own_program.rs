@@ -49,7 +49,7 @@ use tokio::runtime::Handle;
 
 use crucible_tools::Mode;
 
-use crate::backends::{AgentRow, CatalogRow, Unbelieved, Wire, kept_word};
+use crate::backends::{AgentRow, CatalogRow, Sandboxing, Unbelieved, Wire, kept_word};
 use crate::launching::discovery::{Origin, discover};
 use crate::launching::{
     Guarded, Overlap, PROBING, Reach, Sandbox, beneath, guarded, is_beneath, overlap, read_only,
@@ -88,6 +88,9 @@ pub(crate) enum Platform {
     /// Windows, whose sandbox has not been checked against the Microsoft
     /// Store's aliases.
     Windows,
+    /// Linux, whose sandbox gives a confined program a private home of its
+    /// own.
+    Linux,
     /// Any other.
     Other,
 }
@@ -98,6 +101,8 @@ impl Platform {
         Self::MacOs
     } else if cfg!(windows) {
         Self::Windows
+    } else if cfg!(target_os = "linux") {
+        Self::Linux
     } else {
         Self::Other
     };
@@ -121,7 +126,7 @@ impl Platform {
                      been checked."
                 ))
             }
-            Self::MacOs | Self::Windows | Self::Other => None,
+            Self::MacOs | Self::Windows | Self::Linux | Self::Other => None,
         }
     }
 }
@@ -851,7 +856,7 @@ pub(crate) fn admit(
 ///
 /// Why the agent's wire cannot be made.
 pub fn dialect(row: &AgentRow, program: &Path) -> Wire {
-    row.own_dialect(Mode::Ask, None, program)
+    row.own_dialect(Mode::Ask, None, program, Sandboxing::default())
 }
 
 /// What a refusal of an own program says of `failure`.

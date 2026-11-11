@@ -195,6 +195,9 @@ pub struct Antigravity {
     args: Vec<String>,
     /// Whether it is the user's own program run under the sandbox.
     sandboxed: bool,
+    /// Whether a project requires the sandbox, so turning it off is not one
+    /// of the ways it can be signed in.
+    required: bool,
     /// Whether it was last started under the sandbox with no profile, so the
     /// sign-in it keeps in `~/.gemini` is out of its reach.
     unreachable: bool,
@@ -234,11 +237,13 @@ impl Antigravity {
     }
 
     /// The wire for the user's own program, said to run under the sandbox
-    /// where `sandboxed` holds: started with no profile, it fails a turn it
-    /// is not signed in for by naming [`own_ways`].
+    /// where `sandboxed` holds, which a project requires where `required`
+    /// does: started with no profile, it fails a turn it is not signed in for
+    /// by naming [`own_ways`].
     #[must_use]
-    pub const fn sandboxed(mut self, sandboxed: bool) -> Self {
+    pub const fn sandboxed(mut self, sandboxed: bool, required: bool) -> Self {
         self.sandboxed = sandboxed;
+        self.required = required;
         self
     }
 
@@ -251,6 +256,7 @@ impl Antigravity {
             acp: acp.listing(offered.iter().map(|pin| pin.admits.clone()).collect()),
             args,
             sandboxed: false,
+            required: false,
             unreachable: false,
         }
     }
@@ -280,7 +286,7 @@ impl Dialect for Antigravity {
                 return Ok(vec![Act::Fail(Failure::new(&format!(
                     "Your own Antigravity is not signed in: under the sandbox it cannot \
                      reach the sign-in it keeps in ~/.gemini. {}",
-                    own_ways(false)
+                    own_ways(self.required)
                 )))]);
             }
             return Ok(vec![Act::Fail(Failure::new(

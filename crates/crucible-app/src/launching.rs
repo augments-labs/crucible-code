@@ -303,11 +303,13 @@ use crate::outside::Relaunch;
 use crate::providers;
 
 pub(crate) mod discovery;
+mod keyed;
 #[cfg(unix)]
 mod terminal;
 
 use discovery::stored_under;
 pub use discovery::{Origin, discover};
+pub(crate) use keyed::keyed;
 pub(crate) use discovery::{looked_for, renamed, unfound};
 
 /// Why nothing was started.
@@ -1217,12 +1219,18 @@ impl Agent {
     /// Its wire, fresh for a run in `mode`, admitting the agent as the
     /// releases `trust` offers: a release in the install store `programs` as
     /// its row speaks to one, and the user's own program, named by where its
-    /// path leads, as its row speaks to that.
+    /// path leads, as its row speaks to that under `sandbox`.
     ///
     /// # Errors
     ///
     /// Why the agent does not run in `mode`, or is not admitted.
-    pub(crate) fn dialect(&self, mode: Mode, trust: &Trust, programs: &Path) -> Wire {
+    pub fn dialect(
+        &self,
+        mode: Mode,
+        trust: &Trust,
+        programs: &Path,
+        sandbox: crate::backends::Sandboxing,
+    ) -> Wire {
         let Some(installed) = self.installed() else {
             return self.row.dialect(mode, Some(trust), None);
         };
@@ -1231,7 +1239,7 @@ impl Agent {
             Origin::Own => {
                 let canonical = std::fs::canonicalize(installed);
                 let program = canonical.as_deref().unwrap_or(installed);
-                self.row.own_dialect(mode, Some(trust), program)
+                self.row.own_dialect(mode, Some(trust), program, sandbox)
             }
         }
     }
@@ -1478,47 +1486,6 @@ fn binned(mut request: Request, bin: Option<&str>) -> Request {
 /// `request` with `leading` ahead of its arguments.
 fn led(mut request: Request, leading: &[String]) -> Request {
     request.arguments.splice(0..0, leading.iter().cloned());
-    request
-}
-
-/// `request` with each key the credential store in `home` keeps for `row`'s
-/// agent set in the variable of the method it was typed for, where the agent
-/// still signs in by that method, and that variable taken off the ones whose
-/// value may be shown, so its value is withheld from what the agent says.
-pub(crate) fn keyed(mut request: Request, row: &AgentRow, home: &Path) -> Request {
-    let methods = row.methods();
-    let variables: Vec<(&str, &str)> = methods
-        .iter()
-        .filter_map(|method| match &method.method {
-            Method::EnvVar { var } => Some((&*method.id, &**var)),
-            Method::Agent | Method::Terminal { .. } => None,
-        })
-        .collect();
-    if variables.is_empty() {
-        return request;
-    }
-    let Ok(agent) = AgentKey::new(row.named()) else {
-        return request;
-    };
-    let rows = providers::Rows::production();
-    let stored = crucible_auth::Store::in_home(home)
-        .naming(rows.names())
-        .read();
-    for (id, var) in variables {
-        let Ok(name) = rows.signing_in(&agent, id) else {
-            continue;
-        };
-        if let Some(key) = stored.get(&name) {
-            request.shown.retain(|shown| {
-                if cfg!(windows) {
-                    !shown.eq_ignore_ascii_case(var)
-                } else {
-                    *shown != var
-                }
-            });
-            key.set_in(&mut request.environment, var);
-        }
-    }
     request
 }
 
@@ -3393,7 +3360,15 @@ impl<'a> Launcher<'a> {
         let request = if signing_in.is_some() {
             request
         } else {
-            keyed(request, row, crucible)
+            let started = crate::backends::Started {
+                origin: Origin::of(&programs_beside(self.state), program.path()),
+                sandbox: crate::backends::Sandboxing {
+                    on: self.conversation.enabled(),
+                    required: false,
+                },
+                profiled: agent.profile.is_some(),
+            };
+            keyed(request, row, crucible, started)
         };
         // A registry row records no sign-in hosts, so its sign-in command runs
         // under the conversation's own network policy, as the agent's run
@@ -4566,8 +4541,12 @@ impl Runs {
     /// release installed since is one to be run.
     fn dialect(&self, mode: Mode) -> Result<Box<dyn Dialect>, Failure> {
         let trust = Trust::load(&self.state, SystemTime::now());
-        self.agent
-            .dialect(mode, &trust, &programs_beside(&self.state))
+        self.agent.dialect(
+            mode,
+            &trust,
+            &programs_beside(&self.state),
+            crate::backends::Sandboxing::of(&self.enablement),
+        )
     }
 }
 
@@ -4743,6 +4722,12 @@ impl Steps {
         self.enablement.enabled()
     }
 
+    /// The sandbox a step started now is started under.
+    #[must_use]
+    pub(crate) fn sandboxing(&self) -> crate::backends::Sandboxing {
+        crate::backends::Sandboxing::of(&self.enablement)
+    }
+
     /// The agent the session opened on `opened` goes on on, as [`reopening`]
     /// finds it among `entries`, its program looked for on the `PATH` every
     /// step is, startable in `mode`, and the route that entry is now.
@@ -4912,7 +4897,12 @@ impl Steps {
         // The releases on offer as they are now, which the agent is admitted as.
         let trust = Trust::load(&self.state, SystemTime::now());
         let mut dialect =
-            match chosen.dialect(Mode::default(), &trust, &programs_beside(&self.state)) {
+            match chosen.dialect(
+                Mode::default(),
+                &trust,
+                &programs_beside(&self.state),
+                self.sandboxing(),
+            ) {
                 Ok(dialect) => dialect,
                 Err(refused) => return Reading::Unreadable(refused),
             };
