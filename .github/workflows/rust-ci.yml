@@ -143,6 +143,25 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The tests write their scratch files under TEMP, which a Windows runner
+      # keeps on C:. On windows-latest the runner's own temporary directory
+      # is on D:, beside the checkout, and the tests ran faster with TEMP
+      # there; on windows-11-arm both are on C:, so the step does not run.
+      # D: makes no short 8.3 names, so the folder is given one and TEMP
+      # names it by it, as RUNNER~1 does in the C: profile path. Tests that
+      # a path reached through a short name is resolved before use catch a
+      # path left unresolved only when TEMP holds one.
+      - if: ${{ runner.os == 'Windows' && runner.arch == 'X64' }}
+        name: Keep temporary files on the disk the checkout is on
+        shell: pwsh
+        run: |
+          $long = Join-Path $env:RUNNER_TEMP 'crucible-temporary-files'
+          New-Item -ItemType Directory $long | Out-Null
+          fsutil file setshortname $long CRUCIB~1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $short = Join-Path $env:RUNNER_TEMP 'CRUCIB~1'
+          "TEMP=$short" >> $env:GITHUB_ENV
+          "TMP=$short" >> $env:GITHUB_ENV
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: tests-${{ matrix.os }}
