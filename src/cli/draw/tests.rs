@@ -1342,7 +1342,7 @@ fn starts(number: usize) -> String {
 
 #[test]
 fn the_lines_a_call_moved_are_drawn_where_the_file_puts_them() {
-    // The box a `diff` fence is drawn in: a header that counts what moved, the
+    // The box a `diff` fence is drawn in: a header that says what moved, the
     // number the reader would find each line at, the sign that says which way
     // it went, and what a line is indented by left where it was -- a block is
     // read by comparing one row with the row above it, and where each of them
@@ -1350,7 +1350,7 @@ fn the_lines_a_call_moved_are_drawn_where_the_file_puts_them() {
     assert_eq!(
         texts(&boxed(changed(), NARROW)),
         [
-            "  ╭─ +3 −3",
+            "  ╭─ Added 3 lines, removed 3 lines",
             "  │  303           digest=$(<artifact/digest)",
             "  │  304           scripts/smoke.sh",
             "  │  305",
@@ -1368,20 +1368,22 @@ fn the_lines_a_call_moved_are_drawn_where_the_file_puts_them() {
 }
 
 #[test]
-fn a_line_that_moved_is_carried_to_the_last_column_and_one_that_stayed_is_not() {
+fn a_line_that_moved_is_carried_one_column_short_of_the_edge_and_one_that_stayed_is_not() {
     // A block of colour is what the eye finds before it reads anything, and one
     // that stopped where its text stopped would have a ragged edge meaning
-    // nothing. The lines around it are on the reader's own ground, so the eye
-    // skips them on the way to the change -- which is what they are there for.
+    // nothing. It stops one column short of the window, so the edge it makes is
+    // the block's and not the terminal's. The lines around it are on the
+    // reader's own ground, so the eye skips them on the way to the change --
+    // which is what they are there for.
     for row in boxed(changed(), NARROW) {
         let moved = row.text().contains(" - ") || row.text().contains(" + ");
 
-        assert_eq!(row.columns() == NARROW, moved, "{:?}", row.text());
+        assert_eq!(row.columns() == NARROW - 1, moved, "{:?}", row.text());
     }
 }
 
 #[test]
-fn the_box_header_counts_the_change_rather_than_answering_the_model() {
+fn the_box_header_says_what_moved_rather_than_answering_the_model() {
     // Both are true of the same call and only one of them is about the file: the
     // model asked for a replacement and is told it was made; the reader is
     // looking at what is in the file now. The box says it in its header, where
@@ -1389,7 +1391,11 @@ fn the_box_header_counts_the_change_rather_than_answering_the_model() {
     let output = ToolOutput::ok("changed one.rs, 1 replacements").showing(changed());
     let said = hung(&output, WIDE, Style::plain());
 
-    assert_eq!(said.lines().next(), Some("  ╭─ +3 −3"), "{said}");
+    assert_eq!(
+        said.lines().next(),
+        Some("  ╭─ Added 3 lines, removed 3 lines"),
+        "{said}"
+    );
     assert!(!said.contains("replacements"), "{said}");
     assert!(!said.contains('\u{23bf}'), "{said}");
 }
@@ -1408,7 +1414,7 @@ fn a_tools_change_names_the_file_it_changed_on_the_box_header() {
 
     assert_eq!(
         texts(&rows).first().map(String::as_str),
-        Some("  ╭─ src/a.rs +1 −1")
+        Some("  ╭─ src/a.rs · Added 1 line, removed 1 line")
     );
     // And its name says which language the lines that did not move are
     // coloured as, as a fence's path does.
@@ -1421,7 +1427,7 @@ fn a_tools_change_names_the_file_it_changed_on_the_box_header() {
 }
 
 #[test]
-fn a_change_kept_before_it_named_its_file_opens_on_its_counts_without_colour() {
+fn a_change_kept_before_it_named_its_file_opens_on_its_summary_without_colour() {
     // What a session written before a change named its file gives back: the
     // same box, with nothing to name and no language to colour it as.
     let rows = boxed(
@@ -1432,7 +1438,10 @@ fn a_change_kept_before_it_named_its_file_opens_on_its_counts_without_colour() {
         NARROW,
     );
 
-    assert_eq!(texts(&rows).first().map(String::as_str), Some("  ╭─ +1"));
+    assert_eq!(
+        texts(&rows).first().map(String::as_str),
+        Some("  ╭─ Added 1 line")
+    );
     let kept = rows.get(1).expect("a kept row");
     assert!(
         kept.kinds().all(|slot| slot != Slot::Keyword),
@@ -1446,8 +1455,14 @@ fn a_change_in_one_direction_only_says_the_one_thing_that_happened() {
     let one = |change| ToolOutput::ok("wrote it").showing(Diff::new([Line::new(1, change, "a")]));
     let said = |output| hung(&output, WIDE, Style::plain());
 
-    assert_eq!(said(one(Change::Added)).lines().next(), Some("  ╭─ +1"));
-    assert_eq!(said(one(Change::Removed)).lines().next(), Some("  ╭─ −1"));
+    assert_eq!(
+        said(one(Change::Added)).lines().next(),
+        Some("  ╭─ Added 1 line")
+    );
+    assert_eq!(
+        said(one(Change::Removed)).lines().next(),
+        Some("  ╭─ Removed 1 line")
+    );
 }
 
 #[test]
@@ -1458,7 +1473,10 @@ fn a_block_that_stopped_short_says_so_inside_the_box() {
     let whole = (1..=Diff::LINES + 4).map(|at| Line::new(at, Change::Added, "line"));
     let rows = texts(&boxed(Diff::new(whole), WIDE));
 
-    assert_eq!(rows.first().map(String::as_str), Some("  ╭─ +68"));
+    assert_eq!(
+        rows.first().map(String::as_str),
+        Some("  ╭─ Added 68 lines")
+    );
     assert_eq!(
         rows.iter().rev().nth(1).map(String::as_str),
         Some("  │  ⋯  4 lines not shown  ⋯"),
@@ -1549,14 +1567,20 @@ fn the_gutter_widens_for_a_long_file_and_never_narrows_below_three() {
 
 #[test]
 fn a_line_too_wide_for_the_window_is_cut_inside_it() {
-    // The ground is drawn to the last column, so a row that outgrew the window
-    // is one the terminal wraps itself -- a row the live tail never counted, and
-    // a cursor a row off on every frame after it.
+    // A row that outgrew the window is one the terminal wraps itself -- a row
+    // the live tail never counted, and a cursor a row off on every frame after
+    // it. It is cut where the grounds end, one column short of the window, and
+    // its last cell says there was more.
     let long = Diff::new([Line::new(9, Change::Added, "x".repeat(500))]);
     let rows = boxed(long, 40);
 
     assert!(rows.iter().all(|row| row.columns() <= 40), "{rows:?}");
-    assert_eq!(rows.get(1).map(Row::columns), Some(40), "{rows:?}");
+    assert_eq!(rows.get(1).map(Row::columns), Some(39), "{rows:?}");
+    assert_eq!(
+        rows.get(1).and_then(|row| row.spans().last()),
+        Some((Slot::Added, "\u{2026}")),
+        "{rows:?}"
+    );
 }
 
 #[test]
@@ -2409,6 +2433,50 @@ fn a_result_that_says_the_keys_name_is_not_taken_for_the_offer() {
 }
 
 #[test]
+fn a_change_whose_call_was_cut_offers_the_key_two_columns_after_its_summary() {
+    // The offer is not part of what the summary says, so it stands off from
+    // it: two columns, then the key in brackets, as quiet as a hint and on the
+    // slot that lights under the pointer.
+    let change = Shown::live(ToolOutput::ok("changed a.rs").showing(Diff::new([Line::new(
+        1,
+        Change::Added,
+        "a",
+    )])));
+    let rows = finished_rows(&change, WIDE, Style::plain(), true);
+    let header = rows.first().expect("the row the box opens on");
+
+    assert_eq!(header.text(), "  ╭─ Added 1 line  (ctrl+o to expand)");
+    assert_eq!(
+        header.spans().last(),
+        Some((Slot::Cut, "  (ctrl+o to expand)")),
+        "{header:?}"
+    );
+}
+
+#[test]
+fn a_change_with_no_room_for_its_offer_draws_no_empty_one() {
+    // Two columns of nothing in the slot that lights under the pointer would
+    // be an offer of nothing, and a row the summary filled has no room for more.
+    let change = Shown::live(ToolOutput::ok("changed a.rs").showing(Diff::new([Line::new(
+        1,
+        Change::Added,
+        "a",
+    )])));
+    for width in 0..=20 {
+        let rows = finished_rows(&change, width, Style::plain(), true);
+        let header = rows.first().expect("the row the box opens on");
+
+        assert!(header.columns() <= width.max(2), "{width}: {header:?}");
+        for (slot, text) in header.spans() {
+            assert!(
+                slot != Slot::Cut || !text.trim().is_empty(),
+                "{width}: {header:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_change_offer_clipped_to_the_room_it_had_is_still_taken_off() {
     let change = Shown::live(ToolOutput::ok("changed a.rs").showing(Diff::new([Line::new(
         1,
@@ -2422,7 +2490,7 @@ fn a_change_offer_clipped_to_the_room_it_had_is_still_taken_off() {
         let Some(offer) = rows
             .first()
             .and_then(|row| row.spans().last().map(|(_, text)| text.to_owned()))
-            .filter(|offer| offer.starts_with("(c") && !offer.ends_with(')'))
+            .filter(|offer| offer.starts_with("  (c") && !offer.ends_with(')'))
         else {
             continue;
         };
@@ -2734,9 +2802,21 @@ fn a_tools_name_is_weight_rather_than_the_theme_colour() {
 
 #[test]
 fn the_figures_of_a_change_wear_its_sides_rather_than_the_theme_colour() {
-    // "+3 −3" in the header of the change's box.
-    assert_eq!(ruled_slots("+3"), [Slot::AddedNumber]);
-    assert_eq!(ruled_slots("\u{2212}3"), [Slot::RemovedNumber]);
+    // "Added 3 lines, removed 3 lines" in the header of the change's box, and
+    // in that row alone: a line's number down the side of the box is a figure
+    // of another kind.
+    let rows = ruled_turn(Style::coloured());
+    let opener = rows
+        .iter()
+        .find(|row| row.text().contains("\u{256d}\u{2500} "))
+        .expect("the row the change's box opens on");
+    let figures: Vec<Slot> = opener
+        .spans()
+        .filter(|(_, text)| *text == "3")
+        .map(|(slot, _)| slot)
+        .collect();
+
+    assert_eq!(figures, [Slot::AddedCount, Slot::RemovedCount]);
 }
 
 #[test]
@@ -2824,7 +2904,7 @@ fn with_colour_off_what_colour_draws_in_weight_reads_as_it_was_written() {
                 "| resume.rs | 3 |",
                 "",
                 "\u{25cf} Update(src/cli/converse/resume.rs)",
-                "  \u{256d}\u{2500} +3 \u{2212}3",
+                "  \u{256d}\u{2500} Added 3 lines, removed 3 lines",
             ]
             .map(String::from)[..]
         ),

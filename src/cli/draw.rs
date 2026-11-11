@@ -1715,18 +1715,19 @@ fn count(row: &mut Row, word: &str, lines: usize) {
 /// The change a call made, drawn as a box.
 ///
 /// Through [`Changes`], the one function a `diff` fence in an answer is drawn
-/// by too, so the two cannot drift: a header that counts what moved, the
-/// number each line is found at, the sign that says which way it went, and a
-/// ground carried to the last column under each line that moved. A change
-/// longer than the fold draws its start and its end around a row that counts
-/// the rest, and names no key, since nothing shows them yet; the lines the
-/// tool never kept are one quiet row under the ones it did.
+/// by too, so the two cannot drift: a header that says in words what moved,
+/// the number each line is found at, the sign that says which way it went, and
+/// a ground under each line that moved, carried to one column short of the
+/// window. A change longer than the fold draws its start and its end around a
+/// row that counts the rest, and names no key, since nothing shows them yet;
+/// the lines the tool never kept are one quiet row under the ones it did.
 ///
 /// Hung where the row under a call hangs, with a failure's cross in the call's
 /// own column. Clipped to the window rather than to the ceiling a result line
 /// is held to: that ceiling keeps one event to about one row, and these rows
 /// are the event. Where `details` says the call's own line was cut, the
-/// header offers the key that shows the whole of it.
+/// header offers the key that shows the whole of it, two columns after what
+/// it says, or makes no offer where the row has no room for one.
 fn block(diff: &Diff, failed: bool, window: usize, glyphs: Glyphs, details: bool) -> Vec<Row> {
     let left = columns(glyphs.called()) + 1;
     let room = Room {
@@ -1741,12 +1742,18 @@ fn block(diff: &Diff, failed: bool, window: usize, glyphs: Glyphs, details: bool
         .rows;
 
     if details && let Some(header) = rows.first_mut() {
+        // The lead is written here rather than handed to [`clipped`], which
+        // takes the space off both ends of what it is given.
+        let lead = "  ";
         let offer = clipped(
-            format!(" ({EXPAND})"),
-            room.columns.saturating_sub(header.columns()),
+            format!("({EXPAND})"),
+            room.columns
+                .saturating_sub(header.columns() + columns(lead)),
             glyphs,
         );
-        header.push(Slot::Cut, offer);
+        if !offer.is_empty() {
+            header.push(Slot::Cut, format!("{lead}{offer}"));
+        }
     }
 
     rows.into_iter()
