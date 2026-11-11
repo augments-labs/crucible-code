@@ -2207,3 +2207,29 @@ fn lines_batched_behind_a_prompt_stay_waiting_until_the_turn_says_it_took_them()
         "a line the turn never reached was lost with it"
     );
 }
+
+#[test]
+fn lines_batched_again_after_a_turn_that_never_took_them_are_offered_once() {
+    // A turn can end before its first boundary, refused or stopped, and then
+    // the lines offered to it are still both in the panel and in the steer.
+    // The next batch is taken from the panel, so what the steer still held
+    // must not go to that turn beside it.
+    let mut waiting = Prompts::default();
+    for line in ["plan it", "then test it", "then ship it"] {
+        let mut editor = typed(line);
+        assert_eq!(waiting.accept(&mut editor), Retained::Accepted);
+    }
+
+    let steer = crucible_runtime::Steer::new();
+    assert_eq!(batched(&mut waiting, &steer).as_deref(), Some("plan it"));
+    assert_eq!(
+        batched(&mut waiting, &steer).as_deref(),
+        Some("then test it")
+    );
+
+    assert_eq!(
+        steer.take(),
+        vec!["then ship it"],
+        "a line went to the next turn as its prompt and beside it, or twice"
+    );
+}

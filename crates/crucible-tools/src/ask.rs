@@ -965,7 +965,7 @@ impl Delivered {
     /// Not the framing [`Delivered::said`] puts around them, nor the headings,
     /// questions or answers the model wrote and the person did not choose,
     /// none of which the person said. A batch they declined whole, or answered
-    /// choosing nothing, says nothing, and this is empty.
+    /// choosing nothing and adding no note, says nothing, and this is empty.
     #[must_use]
     pub fn replied(&self) -> String {
         let mut text = String::new();

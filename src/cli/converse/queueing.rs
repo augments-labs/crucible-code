@@ -397,7 +397,8 @@ impl Prompts {
 /// Each reaches it as the line it was typed as; what they share is the turn.
 /// They stay in the panel, as a line queued under a running turn does, and
 /// leave it as the turn says it took each: one an input check refuses ends the
-/// turn there, and the lines behind it are still the reader's, waiting.
+/// turn there, and the lines behind it are still the reader's, sent as the
+/// next turn as soon as this one is over, as lines queued under it would be.
 ///
 /// The one exception is a line Ctrl+S sent: it is the turn alone, and the rest
 /// stay queued and held back from it, to be taken whole after it.
@@ -411,6 +412,10 @@ pub(super) fn batched(queued: &mut Prompts, steer: &Steer) -> Option<String> {
     queued.held = false;
     let said = queued.pop()?;
 
+    // What the steer still holds was offered to a turn that ended before it
+    // took it, and the panel holds it too: offered again beside the panel's,
+    // it would go twice, or beside itself as this turn's prompt.
+    drop(steer.take());
     for behind in &queued.lines {
         steer.say(behind.clone());
     }

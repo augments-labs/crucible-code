@@ -1031,7 +1031,8 @@ fn an_answer_an_input_check_refuses_is_never_sent_and_its_batch_waits_again() {
     let turned = delivering(&mut scripted).expect("a refusal is not a failure");
 
     assert!(
-        matches!(&turned, Turned::Rejected { rejection, stop: None } if rejection.guard() == "no-vendors"),
+        matches!(&turned, Turned::Rejected { rejection, stop: None }
+            if rejection.guard() == "no-vendors"),
         "a refused answer came back as something else: {turned:?}"
     );
     assert!(
@@ -1274,7 +1275,8 @@ fn a_line_typed_during_a_turn_that_a_check_refuses_is_never_sent() {
         .expect("a refusal is not a failure");
 
     assert!(
-        matches!(&turned, Turned::Rejected { rejection, stop: None } if rejection.guard() == "no-prod"),
+        matches!(&turned, Turned::Rejected { rejection, stop: None }
+            if rejection.guard() == "no-prod"),
         "a refused line came back as something else: {turned:?}"
     );
     assert_eq!(
@@ -1283,9 +1285,15 @@ fn a_line_typed_during_a_turn_that_a_check_refuses_is_never_sent() {
         "a request went out carrying the refused line"
     );
     assert!(
-        !scripted.runner.transcript().messages().iter().any(
-            |message| matches!(message, Message::User { text, .. } if text.contains("drop prod") || text.contains("ship it"))
-        ),
+        !scripted
+            .runner
+            .transcript()
+            .messages()
+            .iter()
+            .any(|message| {
+                matches!(message, Message::User { text, .. }
+                    if text.contains("drop prod") || text.contains("ship it"))
+            }),
         "a line the turn ended before was recorded as the person's words"
     );
     let seen: Vec<Event> = scripted.seen.try_iter().collect();

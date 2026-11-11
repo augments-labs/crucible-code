@@ -149,8 +149,8 @@ impl<'a> AgentContext<'a> {
 
     /// The words in question: what the caller asked, or a steered line or
     /// what the person said in an answer to a question asked without waiting,
-    /// given while the invocation ran, for an input check, and
-    /// nothing for an output one, whose candidate is handed in separately.
+    /// given while the invocation ran, for an input check, and nothing for an
+    /// output one, whose candidate is handed in separately.
     #[must_use]
     pub const fn said(&self) -> &str {
         self.said
