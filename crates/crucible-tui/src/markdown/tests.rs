@@ -4291,7 +4291,7 @@ fn a_list_quote_heading_table_fence_or_formula_inside_details_stays_at_the_margi
 }
 
 #[test]
-fn details_left_open_run_to_the_end_of_the_message_and_one_close_ends_any_nesting() {
+fn details_left_open_run_to_the_end_of_the_message_and_the_first_close_ends_nested_ones() {
     assert_eq!(
         drawn_in(Glyphs::Unicode, "<details>\na\n\nb\n"),
         "  a\n\n  b\n"
@@ -4303,7 +4303,7 @@ fn details_left_open_run_to_the_end_of_the_message_and_one_close_ends_any_nestin
 }
 
 #[test]
-fn every_other_tag_and_every_near_miss_of_the_six_is_shown_as_written() {
+fn other_tags_and_near_misses_of_the_six_are_shown_as_written() {
     let answer = "An <article> tag, a <b>bold</b>, <detail>, <kbdx>, <subs>, <br-x>, a < b, a<3\n";
     assert_eq!(drawn_in(Glyphs::Unicode, answer), answer);
 

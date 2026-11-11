@@ -8179,9 +8179,9 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "markdown::tests::every_other_tag_and_every_near_miss_of_the_six_is_shown_as_written",
+      "case": "markdown::tests::other_tags_and_near_misses_of_the_six_are_shown_as_written",
       "source": "crates/crucible-tui/src/markdown/tests.rs",
-      "body_sha256": "6812edcba1b9d451a808a1d4aab75d6c69dc3bf11111ec26d0f9173aa99d4c64",
+      "body_sha256": "da7701612729a5a8789f4ef7225e04db146f06ce0b0943849465456b9faddcea",
       "platforms": [
         "linux",
         "macos",
@@ -8307,7 +8307,7 @@
       },
       "case": "glyphs::tests::every_mark_of_a_footnote_a_details_block_and_a_key_is_ascii_under_ascii",
       "source": "crates/crucible-tui/src/glyphs.rs",
-      "body_sha256": "9084115a3524a4eb30d2e302a16887e58a0b40f28863cc074131b90edae7255c",
+      "body_sha256": "703d9ba08cce1b9276356a0398b84f890712bb013fe6396d7cbcd77c45e3f367",
       "platforms": [
         "linux",
         "macos",

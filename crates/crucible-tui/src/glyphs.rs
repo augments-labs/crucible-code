@@ -944,13 +944,12 @@ mod tests {
 
     #[test]
     fn every_mark_of_a_footnote_a_details_block_and_a_key_is_ascii_under_ascii() {
+        for number in 1..=crate::markdown::FOOTNOTE_CAP {
+            let mark = Glyphs::Ascii.cited(number);
+            assert!(mark.is_ascii(), "{mark:?}");
+        }
         let (open, close) = Glyphs::Ascii.keyed();
-        for mark in [
-            Glyphs::Ascii.cited(64).as_str(),
-            Glyphs::Ascii.folded(),
-            open,
-            close,
-        ] {
+        for mark in [Glyphs::Ascii.folded(), open, close] {
             assert!(mark.is_ascii(), "{mark:?}");
         }
     }
