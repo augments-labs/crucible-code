@@ -753,6 +753,7 @@ fn doing(action: &AgentAction) -> String {
         AgentAction::Update { agent } => format!("updating {}", shown(agent.as_str())),
         AgentAction::Rollback { agent } => format!("rolling back {}", shown(agent.as_str())),
         AgentAction::SignIn { instance, .. } => format!("signing {} in", named(instance.as_str())),
+        AgentAction::TryOwn { agent, .. } => format!("trying your own {}", shown(agent.as_str())),
     }
 }
 

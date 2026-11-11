@@ -447,7 +447,7 @@ pub enum LoginOutcome {
     },
 }
 
-/// A move on an installed agent a client can ask the host for: the four the
+/// A move on an installed agent a client can ask the host for: the five the
 /// agents door carries out, each named as the catalog or the configuration
 /// names what it moves.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -477,6 +477,14 @@ pub enum AgentAction {
         /// The method, by the name the agent gives it.
         method: Name,
     },
+    /// Probe the user's own program for this catalog agent, found on `PATH`,
+    /// once, confined, and add an instance that runs it where it is admitted.
+    TryOwn {
+        /// The agent, by the name the catalog gives it.
+        agent: Name,
+        /// The program, by the path its links lead to, as the move named it.
+        program: Text,
+    },
 }
 
 impl AgentAction {
@@ -497,6 +505,10 @@ impl AgentAction {
             Self::SignIn { instance, method } => Command::SignInAgent {
                 instance: instance.clone(),
                 method: method.clone(),
+            },
+            Self::TryOwn { agent, program } => Command::TryOwnAgent {
+                agent: agent.clone(),
+                program: program.clone(),
             },
         }
     }

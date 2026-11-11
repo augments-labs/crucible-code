@@ -105,7 +105,7 @@ const KEYS: [&str; 79] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 60] = [
+const MORE_KEYS: [&str; 61] = [
     "added",
     "done",
     "install",
@@ -166,6 +166,9 @@ const MORE_KEYS: [&str; 60] = [
     "external",
     "onto",
     "action",
+    // The user's own program a try names, as words the person was shown: the
+    // host compares them with the path it finds and never opens them.
+    "program",
 ];
 
 /// The field names of the inspection document, kept apart for the same reason.
@@ -516,6 +519,10 @@ fn commands() -> Vec<Command> {
             instance: name("work"),
             method: name("oauth"),
         },
+        Command::TryOwnAgent {
+            agent: name("example-agent"),
+            program: Text::cut("/usr/local/bin/example"),
+        },
         Command::Exit,
     ];
     commands.extend(decisions().into_iter().map(Command::Decide));
@@ -625,6 +632,12 @@ fn login_outcomes() -> Vec<Outcome> {
             action: AgentAction::SignIn {
                 instance: name("work"),
                 method: name("api-key"),
+            },
+        }),
+        Outcome::Login(LoginOutcome::AgentChosen {
+            action: AgentAction::TryOwn {
+                agent: name("example-agent"),
+                program: Text::cut("/usr/local/bin/example"),
             },
         }),
         Outcome::Logout(LogoutOutcome::CacheHeld(problem())),
@@ -1259,49 +1272,50 @@ const fn turn_arm(one: &TurnOutcome) -> (usize, usize) {
 
 const fn command_arm(one: &Command) -> (usize, usize) {
     match one {
-        Command::Prompt(_) => (0, 41),
-        Command::Compact => (1, 41),
-        Command::Cancel => (2, 41),
-        Command::Decide(_) => (3, 41),
-        Command::Clear => (4, 41),
-        Command::Resume(_) => (5, 41),
+        Command::Prompt(_) => (0, 42),
+        Command::Compact => (1, 42),
+        Command::Cancel => (2, 42),
+        Command::Decide(_) => (3, 42),
+        Command::Clear => (4, 42),
+        Command::Resume(_) => (5, 42),
         Command::SelectModel {
             effort: Some(_), ..
-        } => (6, 41),
-        Command::SelectModel { effort: None, .. } => (7, 41),
-        Command::SetEffort(_) => (8, 41),
-        Command::SetMode(_) => (9, 41),
-        Command::CycleMode => (10, 41),
-        Command::Login { .. } => (11, 41),
-        Command::Logout { .. } => (12, 41),
-        Command::InspectCache => (13, 41),
-        Command::CleanCache => (14, 41),
-        Command::Sandbox { enabled: true } => (15, 41),
-        Command::Sandbox { enabled: false } => (16, 41),
-        Command::Theme(Theme::Drawing(_)) => (17, 41),
-        Command::Theme(Theme::Syntax(_)) => (18, 41),
-        Command::Help => (19, 41),
-        Command::ReleaseNotes { version: None } => (20, 41),
-        Command::ReleaseNotes { version: Some(_) } => (21, 41),
-        Command::Exit => (22, 41),
-        Command::SetSpeed(_) => (23, 41),
-        Command::Context => (24, 41),
-        Command::Usage => (25, 41),
-        Command::Setting { .. } => (26, 41),
-        Command::AskLimits => (27, 41),
-        Command::Disconnect { .. } => (28, 41),
-        Command::RemoveIntegration { .. } => (29, 41),
-        Command::SignOut { .. } => (30, 41),
-        Command::Connect { instance: Some(_) } => (31, 41),
-        Command::Connect { instance: None } => (32, 41),
-        Command::AgentCatalog => (33, 41),
-        Command::InstallAgent { .. } => (34, 41),
-        Command::UpdateAgent { .. } => (35, 41),
-        Command::RollbackAgent { .. } => (36, 41),
-        Command::RemoveAgent { .. } => (37, 41),
-        Command::VerifyAgent { .. } => (38, 41),
-        Command::SignInAgent { .. } => (39, 41),
-        Command::AddAgent { .. } => (40, 41),
+        } => (6, 42),
+        Command::SelectModel { effort: None, .. } => (7, 42),
+        Command::SetEffort(_) => (8, 42),
+        Command::SetMode(_) => (9, 42),
+        Command::CycleMode => (10, 42),
+        Command::Login { .. } => (11, 42),
+        Command::Logout { .. } => (12, 42),
+        Command::InspectCache => (13, 42),
+        Command::CleanCache => (14, 42),
+        Command::Sandbox { enabled: true } => (15, 42),
+        Command::Sandbox { enabled: false } => (16, 42),
+        Command::Theme(Theme::Drawing(_)) => (17, 42),
+        Command::Theme(Theme::Syntax(_)) => (18, 42),
+        Command::Help => (19, 42),
+        Command::ReleaseNotes { version: None } => (20, 42),
+        Command::ReleaseNotes { version: Some(_) } => (21, 42),
+        Command::Exit => (22, 42),
+        Command::SetSpeed(_) => (23, 42),
+        Command::Context => (24, 42),
+        Command::Usage => (25, 42),
+        Command::Setting { .. } => (26, 42),
+        Command::AskLimits => (27, 42),
+        Command::Disconnect { .. } => (28, 42),
+        Command::RemoveIntegration { .. } => (29, 42),
+        Command::SignOut { .. } => (30, 42),
+        Command::Connect { instance: Some(_) } => (31, 42),
+        Command::Connect { instance: None } => (32, 42),
+        Command::AgentCatalog => (33, 42),
+        Command::InstallAgent { .. } => (34, 42),
+        Command::UpdateAgent { .. } => (35, 42),
+        Command::RollbackAgent { .. } => (36, 42),
+        Command::RemoveAgent { .. } => (37, 42),
+        Command::VerifyAgent { .. } => (38, 42),
+        Command::SignInAgent { .. } => (39, 42),
+        Command::AddAgent { .. } => (40, 42),
+        Command::TryOwnAgent { .. } => (41, 42),
     }
 }
 
@@ -1866,7 +1880,7 @@ fn refused(bytes: &[u8]) -> (Option<u64>, ErrorCode) {
 
 #[test]
 fn a_version_this_build_does_not_speak_is_refused_by_name() {
-    for version in [0, 1, 2, 3, 4, 6, 65_535, 65_536, u64::MAX] {
+    for version in [0, 1, 2, 3, 4, 5, 7, 65_535, 65_536, u64::MAX] {
         let frame = with(asking(&json!({"kind": "help"})), "version", json!(version));
         assert_eq!(
             refused(&framed(&frame)),
@@ -1927,9 +1941,9 @@ fn a_frame_that_is_not_one_whole_request_is_malformed() {
         (b"not json".to_vec(), None),
         (b"[1, 2]".to_vec(), None),
         (b"{\"version\": 2".to_vec(), None),
-        (framed(&json!({"version": 5})), None),
+        (framed(&json!({"version": 6})), None),
         (
-            framed(&json!({"version": 5, "capabilities": [], "correlation": -1, "command": {}})),
+            framed(&json!({"version": 6, "capabilities": [], "correlation": -1, "command": {}})),
             None,
         ),
         (
@@ -1952,7 +1966,7 @@ fn a_frame_that_is_not_one_whole_request_is_malformed() {
             Some(41),
         ),
         (
-            framed(&json!({"version": 5, "capabilities": [], "correlation": 41,
+            framed(&json!({"version": 6, "capabilities": [], "correlation": 41,
                 "command": {"kind": "help"}, "also": true})),
             Some(41),
         ),
@@ -2249,10 +2263,10 @@ fn a_field_nobody_asked_for_refuses_the_frame_wherever_it_is_nested() {
 #[test]
 fn a_key_said_twice_is_refused_rather_than_one_of_them_believed() {
     let twice = [
-        r#"{"version":5,"capabilities":[],"correlation":41,"correlation":42,"command":{"kind":"help"}}"#,
-        r#"{"version":5,"capabilities":[],"correlation":41,"command":{"kind":"interrupt","kind":"help"}}"#,
-        r#"{"version":5,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"id":8,"ruling":"allow","lasting":"once"}}}"#,
-        r#"{"version":5,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"ruling":"deny","ruling":"allow","lasting":"once"}}}"#,
+        r#"{"version":6,"capabilities":[],"correlation":41,"correlation":42,"command":{"kind":"help"}}"#,
+        r#"{"version":6,"capabilities":[],"correlation":41,"command":{"kind":"interrupt","kind":"help"}}"#,
+        r#"{"version":6,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"id":8,"ruling":"allow","lasting":"once"}}}"#,
+        r#"{"version":6,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"ruling":"deny","ruling":"allow","lasting":"once"}}}"#,
     ];
     for frame in twice {
         assert_eq!(
@@ -2262,7 +2276,7 @@ fn a_key_said_twice_is_refused_rather_than_one_of_them_believed() {
         );
     }
 
-    let once = r#"{"version":5,"capabilities":[],"correlation":41,"command":{"kind":"help"}}"#;
+    let once = r#"{"version":6,"capabilities":[],"correlation":41,"command":{"kind":"help"}}"#;
     assert!(Request::decode(once.as_bytes()).is_ok());
 }
 
@@ -2425,7 +2439,7 @@ fn progress_and_a_snapshot_say_their_version_and_another_is_refused_by_name() {
             "{frame}"
         );
 
-        for version in [0, 1, 2, 3, 4, 6, 65_536, u64::MAX] {
+        for version in [0, 1, 2, 3, 4, 5, 7, 65_536, u64::MAX] {
             let other = with(frame.clone(), "version", json!(version));
             assert_eq!(
                 read(&framed(&other)).unwrap_err().code(),
@@ -2629,7 +2643,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // alone moves that number and this digest, and leaves the revision.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (5, 15_958_461_296_867_727_732),
+        (6, 16_156_933_372_501_072_789),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );
@@ -2972,7 +2986,7 @@ fn limit_asking_crosses_as_a_command_of_its_own() {
     );
 }
 
-/// The eight commands the agents door serves and no conversation does.
+/// The nine commands the agents door serves and no conversation does.
 fn install_commands() -> Vec<Command> {
     commands()
         .into_iter()
@@ -3011,6 +3025,12 @@ fn each_install_command_crosses_as_a_word_of_its_own_and_reads_back_as_it_was_wr
         (
             "sign_in_agent",
             json!({"kind": "sign_in_agent", "instance": "work", "method": "oauth"}),
+        ),
+        (
+            "try_own_agent",
+            json!({"kind": "try_own_agent", "agent": "example-agent", "program": {
+                "text": "/usr/local/bin/example", "truncated": false
+            }}),
         ),
     ];
 
@@ -3056,6 +3076,14 @@ fn an_install_command_missing_a_field_or_naming_it_wrongly_is_refused() {
         ),
         (
             json!({"kind": "remove_agent", "agent": 7}),
+            ErrorCode::Malformed,
+        ),
+        (
+            json!({"kind": "try_own_agent", "agent": "x"}),
+            ErrorCode::Malformed,
+        ),
+        (
+            json!({"kind": "try_own_agent", "agent": "x", "program": "/usr/local/bin/x"}),
             ErrorCode::Malformed,
         ),
         (
@@ -3145,6 +3173,16 @@ fn an_agent_move_asks_for_it_with_its_own_command() {
             },
             Command::SignInAgent { instance, method },
         ),
+        (
+            AgentAction::TryOwn {
+                agent: name("example-agent"),
+                program: Text::cut("/usr/local/bin/example"),
+            },
+            Command::TryOwnAgent {
+                agent: name("example-agent"),
+                program: Text::cut("/usr/local/bin/example"),
+            },
+        ),
     ] {
         assert_eq!(action.command(), command, "{action:?}");
         assert_eq!(
@@ -3200,6 +3238,17 @@ fn an_agent_move_chosen_crosses_and_reads_back_as_it_was() {
             "kind": "sign_in", "instance": "work", "method": "api-key"
         }})
     );
+    assert_eq!(
+        crossing(AgentAction::TryOwn {
+            agent: name("example-agent"),
+            program: Text::cut("/usr/local/bin/example"),
+        }),
+        json!({"kind": "agent_chosen", "action": {
+            "kind": "try_own", "agent": "example-agent", "program": {
+                "text": "/usr/local/bin/example", "truncated": false
+            }
+        }})
+    );
 }
 
 #[test]
@@ -3218,7 +3267,7 @@ fn the_install_commands_name_the_capability_a_client_has_to_have_claimed_and_no_
     }
 
     let installs = install_commands();
-    assert_eq!(installs.len(), 8);
+    assert_eq!(installs.len(), 9);
     for command in &installs {
         assert_eq!(command.needs(), Some(Capability::Install), "{command:?}");
     }
@@ -3380,7 +3429,7 @@ fn an_install_report_says_how_much_is_done_of_how_much_and_never_more() {
 fn an_install_report_is_held_to_the_frame_rules_every_other_report_is() {
     let frame = installs().remove(0).written();
 
-    for version in [0, 1, 2, 3, 4, 6, 65_536, u64::MAX] {
+    for version in [0, 1, 2, 3, 4, 5, 7, 65_536, u64::MAX] {
         let other = with(frame.clone(), "version", json!(version));
         assert_eq!(
             InstallProgress::decode(&framed(&other)).unwrap_err().code(),

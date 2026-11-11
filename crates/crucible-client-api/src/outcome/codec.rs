@@ -381,6 +381,9 @@ impl AgentAction {
             Self::SignIn { instance, method } => Writing::kind("sign_in")
                 .with("instance", instance.as_str())
                 .with("method", method.as_str()),
+            Self::TryOwn { agent, program } => Writing::kind("try_own")
+                .with("agent", agent.as_str())
+                .text("program", program),
         }
         .finish()
     }
@@ -401,6 +404,10 @@ impl AgentAction {
             "sign_in" => Self::SignIn {
                 instance: fields.name("instance")?,
                 method: fields.name("method")?,
+            },
+            "try_own" => Self::TryOwn {
+                agent: fields.name("agent")?,
+                program: fields.text("program")?,
             },
             _ => return Err(ErrorCode::Malformed.into()),
         };

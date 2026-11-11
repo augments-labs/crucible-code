@@ -170,6 +170,7 @@ const fn claimed(command: &Command) -> Capabilities {
         | Command::RemoveAgent { .. }
         | Command::VerifyAgent { .. }
         | Command::SignInAgent { .. }
+        | Command::TryOwnAgent { .. }
         | Command::Exit => Capabilities::every(),
     }
 }

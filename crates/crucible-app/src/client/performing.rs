@@ -208,7 +208,8 @@ pub async fn perform(
         | Command::RollbackAgent { .. }
         | Command::RemoveAgent { .. }
         | Command::VerifyAgent { .. }
-        | Command::SignInAgent { .. } => Performed::Refused(ErrorCode::AgentsDoor.into()),
+        | Command::SignInAgent { .. }
+        | Command::TryOwnAgent { .. } => Performed::Refused(ErrorCode::AgentsDoor.into()),
         // No turn is stopped here, so there is no action this could be about.
         Command::Decide(_) => Performed::Refused(ErrorCode::StaleDecision.into()),
         Command::Clear => Performed::Cleared(clear(conversation, desk).await),
@@ -340,7 +341,8 @@ pub fn keep(request: &Request, desk: &Desk<'_>) -> Performed {
         | Command::RollbackAgent { .. }
         | Command::RemoveAgent { .. }
         | Command::VerifyAgent { .. }
-        | Command::SignInAgent { .. } => Performed::Refused(ErrorCode::AgentsDoor.into()),
+        | Command::SignInAgent { .. }
+        | Command::TryOwnAgent { .. } => Performed::Refused(ErrorCode::AgentsDoor.into()),
         Command::Prompt(_)
         | Command::Compact
         | Command::Cancel

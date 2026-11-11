@@ -1481,6 +1481,13 @@ fn before_the_door_reports_anything_the_panel_says_which_move_is_under_way() {
             },
             "signing \"work\" in",
         ),
+        (
+            AgentAction::TryOwn {
+                agent: name("goose"),
+                program: crucible_client_api::Text::cut("/usr/local/bin/goose"),
+            },
+            "trying your own goose",
+        ),
     ];
     for (action, says) in &moves {
         assert_eq!(doing(action), *says);

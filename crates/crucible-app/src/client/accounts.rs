@@ -593,7 +593,8 @@ pub async fn account(
         | Command::RollbackAgent { .. }
         | Command::RemoveAgent { .. }
         | Command::VerifyAgent { .. }
-        | Command::SignInAgent { .. } => Performed::Refused(Refusal::from(ErrorCode::AgentsDoor)),
+        | Command::SignInAgent { .. }
+        | Command::TryOwnAgent { .. } => Performed::Refused(Refusal::from(ErrorCode::AgentsDoor)),
         Command::Prompt(_)
         | Command::Compact
         | Command::Cancel
