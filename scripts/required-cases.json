@@ -8245,7 +8245,7 @@
     {
       "id": "CASE-TRANSCRIPT-OTHER-TAGS",
       "family": "transcript-blocks",
-      "obligation": "A tag that is not one of the six, a near miss of one of them and a bare `<` are drawn exactly as written, and an autolink in angle brackets is still a link.",
+      "obligation": "A tag that is not one of the six, a near miss of one of them and a bare `<` are drawn exactly as written, and an address in angle brackets is a link drawn without its brackets.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
@@ -8253,7 +8253,7 @@
       },
       "case": "markdown::tests::other_tags_and_near_misses_of_the_six_are_shown_as_written",
       "source": "crates/crucible-tui/src/markdown/tests.rs",
-      "body_sha256": "da7701612729a5a8789f4ef7225e04db146f06ce0b0943849465456b9faddcea",
+      "body_sha256": "c5f8508f135a40e36d5a05060cfc69787c34499fd01e11c32f6d81a01948dab2",
       "platforms": [
         "linux",
         "macos",
@@ -8344,6 +8344,186 @@
       "case": "render::native::tests::a_native_hostile_tag_key_or_footnote_label_writes_no_escape_nor_a_tag_or_label_a_picture_cell",
       "source": "crates/crucible-tui/src/render/native/tests.rs",
       "body_sha256": "d237bc9c3da4ec756556c5aea67559b092c4c509ddddf68588e68088937acff2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-REFERENCE-LINKS",
+      "family": "transcript-blocks",
+      "obligation": "A reference link, `[words][label]`, `[words][]` or `[label]`, whose label an earlier line defined as one address is drawn as its words, a link to that address, and the definition line is drawn as its address, a link.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_reference_link_defined_earlier_reads_as_its_words",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "f111e6bd9aa4a61eec881f5ee2d612667337099f703f9a97aa81746db98ca86a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-REFERENCE-UNDEFINED",
+      "family": "transcript-blocks",
+      "obligation": "Brackets whose label no earlier line defined, a definition written after its reference, and `[TODO]` or `arr[0]`, are drawn exactly as written and link nothing.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::brackets_with_no_earlier_definition_stay_as_written",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "772e13816a69d93b85671039c5ee31444e372f4ae70463b794491cbc75bd4a24",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-REFERENCE-FIRST",
+      "family": "transcript-blocks",
+      "obligation": "When one label is defined twice, the first definition is the address its references point to.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::the_first_definition_of_a_label_wins",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "a5c4156a29f406cf677f64c0031c9f65d3447744668b870d08f462ce9ffa2040",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-REFERENCE-CAP",
+      "family": "transcript-blocks",
+      "obligation": "A definition that is the one past the definition cap links nothing and is shown as written, and a label it would have defined stays as written in a reference.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_definition_past_the_definition_cap_links_nothing_and_is_shown_as_written",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "2692ea91054cb4e264807fde026785ec2d34fc4d589eefad024f7ab428678ada",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-REFERENCE-BYTES",
+      "family": "transcript-blocks",
+      "obligation": "A definition that would take the kept labels and addresses past the byte cap links nothing and is shown as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::definitions_past_the_byte_cap_link_nothing_and_are_shown_as_written",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "c54b748aa1e0ae8376c5a1abc478241132a2da7905f31a562b0c1b3747c870e6",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ANGLE-ADDRESS",
+      "family": "transcript-blocks",
+      "obligation": "`<https://\u2026>`, `<http://\u2026>` and `<name@host>` are drawn without their brackets, as links to the address without them, an e-mail address as a `mailto:` one.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::an_angle_bracket_address_drops_its_brackets_from_text_and_link",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "db1805e0b5e386f45139d527287f235fd697213bb7f4b44c681c6459328cadab",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-WWW-ADDRESS",
+      "family": "transcript-blocks",
+      "obligation": "`www.` and a host in prose is a link to the `https://` address that begins with it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_www_address_in_prose_links_to_its_https_address",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "6d7dbe1f57183a67c28bac556126c516a07aa96abfa861b06b9178b2c8e443be",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-REFERENCE-CUT",
+      "family": "transcript-blocks",
+      "obligation": "An answer with reference definitions, references and angle addresses, cut in two at any character, draws the same text, links and slots as whole.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::an_answer_cut_anywhere_draws_the_reference_links_and_angle_addresses_the_whole_answer_draws",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "db693b8e582833fa5017827cdbb138e33645774645d89f51193d1039c866e4a6",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ADDRESS-HOSTILE",
+      "family": "transcript-blocks",
+      "obligation": "Escapes and controls written in a reference definition, an angle address or a `www.` address, and an image placeholder in a label, reach the terminal as nothing but a percent-escaped link target, in the unicode and the ascii glyph set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::notes::a_hostile_reference_angle_or_www_address_writes_no_escape_nor_a_picture_cell",
+      "source": "crates/crucible-tui/src/render/tests/notes.rs",
+      "body_sha256": "5c876d8fb3c8e3ad54594b585279aedb43e11b6f3627d7d06fc866215d20bc15",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ADDRESS-HOSTILE-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In the native screen, escapes and controls written in a reference definition, an angle address or a `www.` address, and an image placeholder in a label, reach the terminal as nothing but a percent-escaped link target.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_hostile_reference_angle_or_www_address_writes_no_escape_nor_a_picture_cell",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "bcdaa62c8e6edfaa7c67b99b77699fc9f453563abe25389b5432cf840197c036",
       "platforms": [
         "linux",
         "macos",

@@ -42,6 +42,66 @@ fn a_hostile_tag_key_or_footnote_label_writes_no_escape_nor_a_tag_or_label_a_pic
     }
 }
 
+/// Reference definitions, angle addresses and `www.` words as a model might
+/// write them to carry an escape or a picture, in the address and in the words.
+const HOSTILE_ADDRESSES: [&str; 5] = [
+    "[a]: https://x.test/\u{1b}]0;t\u{7}\nsee [a] and [a\u{1b}]0;t\u{7}][a]\n",
+    "<https://x.test/\u{1b}]8;;https://evil.invalid\u{1b}\\> and <a\u{1b}]0;t\u{7}@b.test>\n",
+    "www.x.test/\u{1b}]0;t\u{7} and www.\u{1b}_Gi=1;AAAA\u{1b}\\x.test and www.y.test\u{8}\u{85}\n",
+    "[a\u{1b}]0;t\u{7}]: https://x.test/a\nsee [a\u{1b}]0;t\u{7}] and [w\u{8}][a\u{1b}]0;t\u{7}]\n",
+    concat!(
+        "[\u{10eeee}\u{305}x]: https://x.test\n",
+        "see [words][\u{10eeee}\u{305}x]\n",
+    ),
+];
+
+/// What `written` says with the hyperlink sequences it carries taken out, each
+/// of which must hold printable ASCII and nothing that ends it early.
+fn without_links(written: &str) -> String {
+    let mut rest = written;
+    let mut kept = String::new();
+    while let Some(at) = rest.find("\u{1b}]8;") {
+        kept.push_str(rest.get(..at).unwrap_or_default());
+        let after = rest.get(at.saturating_add(4)..).unwrap_or_default();
+        let end = after.find("\u{1b}\\").unwrap_or(after.len());
+        let sequence = after.get(..end).unwrap_or_default();
+        assert!(
+            sequence.bytes().all(|byte| byte.is_ascii_graphic()),
+            "a link sequence carried {sequence:?} in {written:?}"
+        );
+        rest = after.get(end.saturating_add(2)..).unwrap_or_default();
+    }
+    kept.push_str(rest);
+    kept
+}
+
+#[test]
+fn a_hostile_reference_angle_or_www_address_writes_no_escape_nor_a_picture_cell() {
+    for answer in HOSTILE_ADDRESSES {
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let mut drawn = Drawn::new(64, 12);
+            drawn.wears(colourful().addressing(true));
+            drawn.render.images(kitty_in(9, 18));
+            drawn.render.draws(glyphs);
+            drawn.answer(answer);
+
+            let written = without_links(drawn.render.terminal.written());
+            for hostile in [
+                "\u{1b}]", "\u{1b}P", "\u{1b}_", "\u{7}", "\u{8}", "\u{85}", "\u{9c}",
+            ] {
+                assert!(
+                    !written.contains(hostile),
+                    "{hostile:?} reached the terminal for {answer:?} with {glyphs:?}"
+                );
+            }
+            assert!(
+                !written.contains('\u{10eeee}'),
+                "a picture cell was placed for {answer:?} with {glyphs:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn an_entity_inside_a_key_is_drawn_as_written() {
     let rows = drawn_at_thirty("<kbd>&amp; &lt;</kbd>\n", Glyphs::Unicode);
