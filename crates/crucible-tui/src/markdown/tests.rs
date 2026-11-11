@@ -3938,3 +3938,415 @@ fn alerts_64_unicode() {
 fn alerts_64_ascii() {
     insta::assert_snapshot!(corpus_pictures::picture(ALERT_KINDS, 64, Glyphs::Ascii));
 }
+
+/// The slots the runs written exactly `text` were said under, in order.
+fn worn(said: &[(Slot, String)], text: &str) -> Vec<Slot> {
+    said.iter()
+        .filter(|(_, run)| run == text)
+        .map(|(slot, _)| *slot)
+        .collect()
+}
+
+/// `answer` read whole in both glyph sets and ended, as the text drawn.
+fn drawn_in(glyphs: Glyphs, answer: &str) -> String {
+    drawn(&ended_as(glyphs, &[answer]))
+}
+
+#[test]
+fn a_footnote_reference_is_a_plain_superscript_number_and_its_definition_a_quiet_note() {
+    let said = ended_as(Glyphs::Unicode, &["A claim.[^1]\n\n[^1]: the source\n"]);
+
+    assert_eq!(drawn(&said), "A claim.¹\n\n¹ the source\n");
+    assert_eq!(worn(&said, "¹"), [Slot::Plain, Slot::Quiet]);
+    assert_eq!(worn(&said, " the source"), [Slot::Quiet]);
+}
+
+#[test]
+fn under_ascii_a_footnote_reference_and_its_note_are_a_quiet_bracketed_number() {
+    let said = ended_as(Glyphs::Ascii, &["A claim.[^1]\n\n[^1]: the source\n"]);
+
+    assert_eq!(drawn(&said), "A claim.[1]\n\n[1] the source\n");
+    assert_eq!(worn(&said, "[1]"), [Slot::Quiet, Slot::Quiet]);
+    assert_eq!(worn(&said, " the source"), [Slot::Quiet]);
+}
+
+#[test]
+fn footnotes_are_numbered_in_the_order_their_labels_first_appear() {
+    // A definition after its reference takes the reference's number, and a
+    // label used twice is one note.
+    let answer = "a[^why] b[^ex] c[^why]\n\n[^ex]: example\n[^why]: reason\n";
+
+    assert_eq!(
+        drawn_in(Glyphs::Unicode, answer),
+        "a¹ b² c¹\n\n² example\n¹ reason\n"
+    );
+    assert_eq!(
+        drawn_in(Glyphs::Ascii, answer),
+        "a[1] b[2] c[1]\n\n[2] example\n[1] reason\n"
+    );
+}
+
+#[test]
+fn a_footnote_reference_with_no_definition_and_a_definition_with_no_reference_are_both_drawn() {
+    // Nothing looks ahead, so a reference is drawn as the number it is given
+    // whether or not its definition ever arrives.
+    assert_eq!(drawn_in(Glyphs::Unicode, "a[^gone] b\n"), "a¹ b\n");
+    assert_eq!(
+        drawn_in(Glyphs::Unicode, "[^alone]: a note\n"),
+        "¹ a note\n"
+    );
+}
+
+#[test]
+fn a_second_definition_of_one_label_is_shown_as_written() {
+    assert_eq!(
+        drawn_in(Glyphs::Unicode, "[^1]: one\n[^1]: two\n"),
+        "¹ one\n[^1]: two\n"
+    );
+}
+
+#[test]
+fn a_footnote_past_the_cap_is_shown_as_written() {
+    let cited = (1..=FOOTNOTE_CAP)
+        .map(|n| format!("[^{n}]"))
+        .collect::<Vec<_>>()
+        .concat();
+    let answer = format!(
+        "{cited}[^{}][^1]\n\n[^{}]: late\n",
+        FOOTNOTE_CAP + 1,
+        FOOTNOTE_CAP + 2
+    );
+
+    let drawn = drawn_in(Glyphs::Ascii, &answer);
+    let numbered = (1..=FOOTNOTE_CAP)
+        .map(|n| format!("[{n}]"))
+        .collect::<Vec<_>>()
+        .concat();
+    assert_eq!(
+        drawn,
+        format!(
+            "{numbered}[^{}][1]\n\n[^{}]: late\n",
+            FOOTNOTE_CAP + 1,
+            FOOTNOTE_CAP + 2
+        )
+    );
+}
+
+#[test]
+fn a_footnote_label_longer_than_the_label_cap_is_shown_as_written() {
+    let longest = "x".repeat(FOOTNOTE_LABEL_CAP);
+    let longer = "x".repeat(FOOTNOTE_LABEL_CAP + 1);
+
+    assert_eq!(
+        drawn_in(Glyphs::Ascii, &format!("a[^{longest}]\n")),
+        "a[1]\n"
+    );
+    assert_eq!(
+        drawn_in(Glyphs::Ascii, &format!("a[^{longer}]\n")),
+        format!("a[^{longer}]\n")
+    );
+}
+
+#[test]
+fn a_bracket_that_is_almost_a_footnote_is_shown_as_written() {
+    for written in ["[^]", "[^a b]", "[^\u{1b}]", "[ ^1]", "[^1"] {
+        let answer = format!("a {written} b\n");
+        assert_eq!(drawn_in(Glyphs::Unicode, &answer), answer, "{written:?}");
+    }
+
+    // A link's words that open with a caret are still a link's.
+    let said = ended_as(Glyphs::Unicode, &["a [^1](https://example.test/) b\n"]);
+    assert_eq!(drawn(&said), "a ^1 b\n");
+    assert_eq!(worn(&said, "^1"), [Slot::Link]);
+}
+
+#[test]
+fn a_footnote_is_shown_as_written_in_a_heading_a_span_of_code_a_fence_and_a_table_cell() {
+    let heading = ended_as(Glyphs::Unicode, &["# Title[^1]\n"]);
+    assert!(drawn(&heading).starts_with("Title[^1]\n"), "{heading:?}");
+
+    let code = ended_as(Glyphs::Unicode, &["a `[^1]` b\n"]);
+    assert_eq!(worn(&code, "[^1]"), [Slot::Code]);
+
+    let fence = drawn_in(Glyphs::Unicode, "```\n[^1]: x\n```\n");
+    assert!(fence.contains("[^1]: x"), "{fence:?}");
+
+    let table = drawn_in(Glyphs::Unicode, "| a[^1] |\n|---|\n| b |\n");
+    assert!(table.contains("a[^1]"), "{table:?}");
+}
+
+#[test]
+fn a_footnote_is_read_in_a_quote_a_list_item_and_emphasis_where_it_is_only_ever_a_reference() {
+    // A definition is a line that opens with its label, so after a quote's
+    // mark or a bullet the label is a reference and the colon is prose.
+    assert_eq!(drawn_in(Glyphs::Ascii, "> a[^1]\n"), "| a[1]\n");
+    assert_eq!(drawn_in(Glyphs::Ascii, "> [^1]: x\n"), "| [1]: x\n");
+    assert_eq!(drawn_in(Glyphs::Ascii, "- [^1]: x\n"), "- [1]: x\n");
+
+    let said = ended_as(Glyphs::Unicode, &["**bold[^1]**\n"]);
+    assert_eq!(drawn(&said), "bold¹\n");
+    assert_eq!(worn(&said, "¹"), [Slot::Bold]);
+}
+
+#[test]
+fn a_kbd_tag_draws_its_key_in_the_code_slot_bare_and_in_brackets_under_ascii() {
+    let answer = "Press <kbd>Ctrl</kbd>+<kbd>O</kbd>.\n";
+
+    let unicode = ended_as(Glyphs::Unicode, &[answer]);
+    assert_eq!(drawn(&unicode), "Press Ctrl+O.\n");
+    assert_eq!(worn(&unicode, "Ctrl"), [Slot::Code]);
+    assert_eq!(worn(&unicode, "O"), [Slot::Code]);
+
+    let ascii = ended_as(Glyphs::Ascii, &[answer]);
+    assert_eq!(drawn(&ascii), "Press [Ctrl]+[O].\n");
+    assert_eq!(worn(&ascii, "[Ctrl]"), [Slot::Code]);
+    assert_eq!(worn(&ascii, "[O]"), [Slot::Code]);
+}
+
+#[test]
+fn what_a_kbd_tag_holds_is_drawn_as_written_in_the_code_slot() {
+    let inside = "*a* &amp; `b` [c](d) \\x <sub>2</sub> [^1]";
+    let said = ended_as(Glyphs::Unicode, &[&format!("<kbd>{inside}</kbd>\n")]);
+
+    assert_eq!(drawn(&said), format!("{inside}\n"));
+    assert!(
+        said.iter()
+            .filter(|(_, text)| text != "\n")
+            .all(|(slot, _)| *slot == Slot::Code),
+        "{said:?}"
+    );
+}
+
+#[test]
+fn a_kbd_tag_left_open_ends_with_its_line() {
+    assert_eq!(drawn_in(Glyphs::Ascii, "a <kbd>b\nc\n"), "a [b]\nc\n");
+    let said = ended_as(Glyphs::Unicode, &["a <kbd>b\nc\n"]);
+    assert_eq!(worn(&said, "c"), [Slot::Plain]);
+}
+
+#[test]
+fn a_tag_is_read_in_any_letter_case_with_attributes_and_self_closed() {
+    assert_eq!(drawn_in(Glyphs::Ascii, "<KBD>x</Kbd>\n"), "[x]\n");
+    assert_eq!(
+        drawn_in(Glyphs::Unicode, "a<br/>b<br />c<BR>d\n"),
+        "a\nb\nc\nd\n"
+    );
+    assert_eq!(
+        drawn_in(
+            Glyphs::Unicode,
+            "<details open>\n<summary class=\"x\">S</summary>\nbody\n</details>\n"
+        ),
+        "▸ S\n  body\n"
+    );
+}
+
+#[test]
+fn sub_and_superscript_runs_are_quiet_unicode_characters_in_both_glyph_sets() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let said = ended_as(glyphs, &["H<sub>2</sub>O and x<sup>n+1</sup>\n"]);
+        assert_eq!(drawn(&said), "H₂O and xⁿ⁺¹\n", "{glyphs:?}");
+        assert_eq!(worn(&said, "₂"), [Slot::Quiet], "{glyphs:?}");
+        assert_eq!(worn(&said, "ⁿ⁺¹"), [Slot::Quiet], "{glyphs:?}");
+    }
+}
+
+#[test]
+fn a_script_run_with_a_character_that_has_no_such_form_is_drawn_as_its_plain_text() {
+    // Whole or not at all: a run is never half converted.
+    let said = ended_as(
+        Glyphs::Unicode,
+        &["the 1<sup>st</sup> and H<sub>2 a</sub>\n"],
+    );
+    assert_eq!(drawn(&said), "the 1st and H2 a\n");
+    assert_eq!(slots(&said), [Slot::Plain]);
+}
+
+#[test]
+fn a_script_run_that_is_empty_crossed_unclosed_or_past_its_cap_is_drawn_as_its_plain_text() {
+    assert_eq!(drawn_in(Glyphs::Unicode, "x<sup></sup>y\n"), "xy\n");
+    assert_eq!(drawn_in(Glyphs::Unicode, "x<sub>2</sup>y\n"), "x2y\n");
+    assert_eq!(drawn_in(Glyphs::Unicode, "x<sup>2\ny\n"), "x2\ny\n");
+    assert_eq!(drawn_in(Glyphs::Unicode, "x<sup>2"), "x2");
+    assert_eq!(
+        drawn_in(Glyphs::Unicode, "<sub><sup>2</sup></sub>\n"),
+        "²\n"
+    );
+
+    let long = "1".repeat(SCRIPT_CAP + 1);
+    assert_eq!(
+        drawn_in(Glyphs::Unicode, &format!("x<sup>{long}</sup>y\n")),
+        format!("x{long}y\n")
+    );
+}
+
+#[test]
+fn a_tag_crossed_with_a_kbd_tag_is_a_character_of_the_key() {
+    let said = ended_as(Glyphs::Unicode, &["<kbd><sub></kbd></sub>2\n"]);
+    assert_eq!(drawn(&said), "<sub>2\n");
+    assert_eq!(worn(&said, "<sub>"), [Slot::Code]);
+}
+
+#[test]
+fn a_line_break_tag_breaks_the_line_and_a_quote_keeps_its_bar_on_the_row_after_it() {
+    assert_eq!(drawn_in(Glyphs::Unicode, "one<br>two\n"), "one\ntwo\n");
+    assert_eq!(drawn_in(Glyphs::Ascii, "> one<br>two\n"), "| one\n| two\n");
+}
+
+#[test]
+fn a_line_break_tag_with_nothing_after_it_on_its_line_breaks_it_once() {
+    assert_eq!(drawn_in(Glyphs::Unicode, "one<br>\ntwo\n"), "one\ntwo\n");
+    assert_eq!(drawn_in(Glyphs::Unicode, "one<br>"), "one");
+    assert_eq!(
+        drawn_in(Glyphs::Unicode, "one<br><br>two\n"),
+        "one\n\ntwo\n"
+    );
+    assert_eq!(drawn_in(Glyphs::Unicode, "one<br>[two\n"), "one\n[two\n");
+}
+
+#[test]
+fn a_line_break_tag_in_a_heading_or_a_table_cell_is_a_space() {
+    let heading = drawn_in(Glyphs::Unicode, "# one<br>two\n");
+    assert!(heading.starts_with("one two\n"), "{heading:?}");
+
+    let table = drawn_in(Glyphs::Unicode, "| a<br>b |\n|---|\n| c |\n");
+    assert!(table.contains("a b"), "{table:?}");
+}
+
+#[test]
+fn a_line_a_break_or_details_tag_has_broken_is_neither_a_bare_tables_header_nor_a_title() {
+    // The row the break ended is out and cannot be taken back, so the line is
+    // prose and the line under it is read as the line it would be after one.
+    assert_eq!(
+        drawn_in(Glyphs::Unicode, "a<br>b | c\n- | -\n"),
+        "a\nb | c\n• | -\n"
+    );
+    assert_eq!(drawn_in(Glyphs::Unicode, "a<br>b\n===\n"), "a\nb\n===\n");
+    assert_eq!(
+        drawn_in(Glyphs::Unicode, "<details> | c\n- | -\n"),
+        "   | c\n• | -\n"
+    );
+}
+
+#[test]
+fn a_details_tag_draws_its_summary_bold_behind_a_quiet_mark_and_its_body_two_columns_in() {
+    let answer = "<details><summary>Why it is</summary>\nthe body\n</details>\nafter\n";
+
+    let unicode = ended_as(Glyphs::Unicode, &[answer]);
+    assert_eq!(drawn(&unicode), "▸ Why it is\n  the body\nafter\n");
+    assert_eq!(worn(&unicode, "▸"), [Slot::Quiet]);
+    assert_eq!(worn(&unicode, "Why it is"), [Slot::Bold]);
+
+    let ascii = ended_as(Glyphs::Ascii, &[answer]);
+    assert_eq!(drawn(&ascii), "Details: Why it is\n  the body\nafter\n");
+    assert_eq!(worn(&ascii, "Details:"), [Slot::Quiet]);
+    assert_eq!(worn(&ascii, "Why it is"), [Slot::Bold]);
+}
+
+#[test]
+fn a_block_inside_details_stays_at_the_margin() {
+    let drawn = drawn_in(Glyphs::Ascii, "<details>\n```\ncode\n```\n</details>\n");
+    assert!(drawn.lines().all(|row| !row.starts_with(' ')), "{drawn:?}");
+    assert!(drawn.contains("code"), "{drawn:?}");
+}
+
+#[test]
+fn details_left_open_run_to_the_end_of_the_message_and_one_close_ends_any_nesting() {
+    assert_eq!(
+        drawn_in(Glyphs::Unicode, "<details>\na\n\nb\n"),
+        "  a\n\n  b\n"
+    );
+    assert_eq!(
+        drawn_in(Glyphs::Unicode, "<details>\n<details>\na\n</details>\nb\n"),
+        "  a\nb\n"
+    );
+}
+
+#[test]
+fn every_other_tag_and_every_near_miss_of_the_six_is_shown_as_written() {
+    let answer = "An <article> tag, a <b>bold</b>, <detail>, <kbdx>, <subs>, <br-x>, a < b, a<3\n";
+    assert_eq!(drawn_in(Glyphs::Unicode, answer), answer);
+
+    let said = ended_as(Glyphs::Unicode, &["<https://example.test/a>\n"]);
+    assert_eq!(drawn(&said), "<https://example.test/a>\n");
+    // The address is read as it was before any tag was: the bracket that
+    // closes it is part of the word it ends.
+    assert_eq!(worn(&said, "https://example.test/a>"), [Slot::Link]);
+}
+
+#[test]
+fn a_tag_longer_than_the_tag_cap_is_shown_as_written() {
+    let attribute = "x".repeat(TAG_CAP);
+    let answer = format!("<kbd data=\"{attribute}\">k</kbd>\n");
+    // The opening tag is written out; its closing one, with nothing open, is
+    // read away.
+    assert_eq!(
+        drawn_in(Glyphs::Ascii, &answer),
+        format!("<kbd data=\"{attribute}\">k\n")
+    );
+}
+
+#[test]
+fn a_tag_is_shown_as_written_in_a_span_of_code_and_a_fence() {
+    let said = ended_as(Glyphs::Unicode, &["`<kbd>x</kbd>`\n"]);
+    assert_eq!(worn(&said, "<kbd>x</kbd>"), [Slot::Code]);
+
+    let fence = drawn_in(Glyphs::Unicode, "```\n<br>\n```\n");
+    assert!(fence.contains("<br>"), "{fence:?}");
+}
+
+#[test]
+fn a_line_of_tags_alone_written_with_spaces_in_front_is_an_empty_row_whole_or_cut() {
+    // The spaces go out as they arrive when the answer is cut in front of the
+    // tag, so the row they are on stands; whole, it stands as well. Rows are
+    // compared without their trailing spaces, which are all that differs.
+    let rows = |drawn: &str| -> Vec<String> {
+        drawn.lines().map(|row| row.trim_end().to_owned()).collect()
+    };
+    for (answer, expected) in [
+        ("b\n   <details>\nc\n", ["b", "", "  c"].as_slice()),
+        ("# h\n   <details>\nc\n", &["h", "━", "", "  c"]),
+        ("> q\n   <details>\nc\n", &["│ q", "", "  c"]),
+        ("b\n\n   <details>\nc\n", &["b", "", "", "  c"]),
+    ] {
+        assert_eq!(
+            rows(&drawn_in(Glyphs::Unicode, answer)),
+            expected,
+            "{answer:?} whole"
+        );
+        let pieces: Vec<String> = answer.chars().map(String::from).collect();
+        let pieces: Vec<&str> = pieces.iter().map(String::as_str).collect();
+        let cut = drawn(&ended_as(Glyphs::Unicode, &pieces));
+        assert_eq!(
+            rows(&cut),
+            expected,
+            "{answer:?} cut before every character"
+        );
+    }
+}
+
+#[test]
+fn an_answer_cut_anywhere_draws_the_footnotes_and_tags_the_whole_answer_draws() {
+    // Inside a footnote's label, inside each tag, and between a definition's
+    // bracket and its colon: each is held until the character that decides it.
+    let answer = "A claim[^1] with <kbd>Ctrl</kbd>, H<sub>2</sub>O<br>and x<sup>2</sup>.\n\n\
+                  <details><summary>Why</summary>\nthe body\n</details>\n\n[^1]: the note\n";
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let whole = ended_as(glyphs, &[answer]);
+        assert!(
+            !drawn(&whole).contains('<'),
+            "{glyphs:?} drew a tag: {whole:?}"
+        );
+        assert!(
+            !drawn(&whole).contains("[^"),
+            "{glyphs:?} drew a label: {whole:?}"
+        );
+
+        for cut in (1..answer.len()).filter(|cut| answer.is_char_boundary(*cut)) {
+            let (first, second) = answer.split_at(cut);
+            let said = ended_as(glyphs, &[first, second]);
+
+            assert_eq!(drawn(&said), drawn(&whole), "{glyphs:?} cut at {cut}");
+            assert_eq!(slots(&said), slots(&whole), "{glyphs:?} cut at {cut}");
+        }
+    }
+}

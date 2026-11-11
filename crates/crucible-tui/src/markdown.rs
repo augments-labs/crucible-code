@@ -85,6 +85,35 @@
 //! Every other quote, including one naming a kind that is not one of the five,
 //! is drawn as it always was.
 //!
+//! A link's brackets holding a caret and a label, `[^1]` or `[^note]`, are a
+//! footnote, numbered in the order the answer first writes each label: a
+//! reference is drawn as its number in superscript, or under ascii as `[1]`,
+//! quiet. Where the brackets are the first thing a line says and a colon
+//! follows them, they are the note's definition, and the line is drawn quiet
+//! behind the number. A label is remembered until the message ends, so a
+//! definition takes its reference's number wherever either stands. The
+//! brackets are shown as written in a heading, a table's cell, code, a link's
+//! words and a block laid out again; for a label that is empty, longer than
+//! its cap, or holds whitespace or a control character; for a second
+//! definition of one label; and for a label first written past the cap.
+//!
+//! Six tags, `<details>`, `<summary>`, `<br>`, `<kbd>`, `<sub>` and `<sup>`, in
+//! any letter case and with attributes, are read where prose is, and never in
+//! code or a link's words; any other `<` is shown as written, and so is one of
+//! the six that runs past its cap or its line. A paragraph's line inside a
+//! `<details>` block is drawn two columns in until `</details>` or the
+//! message's end, and a `<summary>` is drawn bold behind a mark; both are
+//! shown as written in a heading, a table's cell and a block laid out again.
+//! `<br>` breaks the line, and is a space in a heading, a table's cell and a
+//! block laid out again. A line that a `<br>`, `<details>` or `<summary>` is
+//! read on is neither the header of a table written without outer bars nor
+//! the title of a heading. What `<kbd>` holds is a key, in the code slot and
+//! under ascii in brackets, with nothing in it read; a `<sub>` or `<sup>` run
+//! is drawn quiet in sub or superscript characters where every one of its
+//! characters has one, and as its plain text where one does not. A tag is
+//! read away, and a line written at the margin that holds nothing but tags
+//! draws no row.
+//!
 //! On the way out, each settled run is told by the kind of thing it is, which
 //! is what a design colours: a span of code that names a file is a path, and a
 //! word of prose can be a version, a hash, a figure or a list's number. That
@@ -157,6 +186,35 @@ pub(crate) const MERMAID_CAP: usize = 16 * 1024;
 
 /// The most of a diff fence held before it is shown as written.
 pub(crate) const DIFF_CAP: usize = 16 * 1024;
+
+/// The most footnotes one answer numbers.
+///
+/// A label is remembered from the first time it is written, as a reference or
+/// as a definition, so a definition written after its reference is tied to the
+/// number the reference was drawn with. Past this many labels, a reference
+/// and a definition with a label not yet numbered are shown as written.
+pub(crate) const FOOTNOTE_CAP: usize = 64;
+
+/// The most characters a footnote's label is written with, after its `^`.
+///
+/// Every label is remembered for the rest of the answer, so each is bounded as
+/// well as how many there are. A longer one is no footnote and is shown as
+/// written.
+pub(crate) const FOOTNOTE_LABEL_CAP: usize = 32;
+
+/// The most of a tag held while the characters that say whether it is one of
+/// the six read here arrive, `<` and `>` included.
+///
+/// Far longer than `<details open>`; a tag that runs past it is shown as
+/// written.
+pub(crate) const TAG_CAP: usize = 64;
+
+/// The most of a `<sub>` or `<sup>` run's text held until its closing tag
+/// says whether it can be drawn with sub or superscript characters.
+///
+/// A run past it is drawn as its plain text, as is one that has a character
+/// with no such form.
+pub(crate) const SCRIPT_CAP: usize = 64;
 
 /// A kind of block the reader holds back until it closes.
 ///
@@ -1043,6 +1101,10 @@ impl Alert {
 /// where the paragraph does: a blank line ends it, a block mark opening the
 /// next line ends it, and a fence ends it. An unclosed marker then costs the
 /// paragraph it was written in rather than the rest of the answer.
+// Each bool is a fact about the line that holds whatever the others are, a
+// key inside a summary on a note's line among them; one state for them all
+// would have to name every combination.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Default, Clone, Copy)]
 struct Line {
     heading: bool,
@@ -1058,6 +1120,40 @@ struct Line {
     /// Owed until the line has something to put it in front of, or ends: a
     /// blank line of code still stands in its frame.
     gutter: Gutter,
+    /// Whether the line is a footnote's definition, from its number on, so
+    /// the rest of it is a note and quiet.
+    noted: bool,
+    /// Whether a `<kbd>` tag is open, so what follows is a key, drawn in the
+    /// code slot as written until its closing tag or the end of the line.
+    key: bool,
+    /// Whether a `<summary>` tag is open, so what follows is the summary of a
+    /// `<details>` block, drawn bold.
+    summary: bool,
+    /// Whether one of the tags read here has been read on the line, so a line
+    /// that held nothing else draws no row at all.
+    tagged: bool,
+    /// Whether anything has gone out on the line, the spaces in front of its
+    /// first word included: those go out as they arrive where nothing holds
+    /// them, before the line has started.
+    spoke: bool,
+    /// Whether a `<br>` is owed: the row it breaks to stands only once
+    /// something is drawn on it, since the line's own end breaks it as well.
+    broken: bool,
+    /// Whether the line has been set two columns in as part of the body of a
+    /// `<details>` block, or that has been decided against.
+    fold: Fold,
+}
+
+/// Whether a line inside a `<details>` block has been set in from the margin.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Fold {
+    /// Not decided until the first thing on the line reaches the terminal.
+    #[default]
+    Owed,
+    /// Two spaces went out in front of the line.
+    Drawn,
+    /// The line is no line of a body, or is blank, and stays where it is.
+    Not,
 }
 
 /// Whether a line of code has put its gutter out yet.
@@ -1207,6 +1303,9 @@ struct Link {
     part: Part,
     label: String,
     target: String,
+    /// Whether the bracket opened the line, where a footnote's label is its
+    /// definition rather than a reference to it.
+    first: bool,
 }
 
 impl Link {
@@ -1329,7 +1428,164 @@ fn spelled(text: &str) -> Spelled {
     }
 }
 
+/// A footnote's label, as the answer wrote it, and whether its definition has
+/// been read.
+#[derive(Debug, Clone)]
+struct Note {
+    label: String,
+    defined: bool,
+}
+
+/// Whether what a link held is a footnote's label: a caret, then one to
+/// [`FOOTNOTE_LABEL_CAP`] characters that are neither whitespace nor control
+/// characters.
+fn footnote(label: &str) -> bool {
+    let Some(name) = label.strip_prefix('^') else {
+        return false;
+    };
+    let length = name.chars().count();
+    (1..=FOOTNOTE_LABEL_CAP).contains(&length)
+        && name
+            .chars()
+            .all(|character| !character.is_whitespace() && !character.is_control())
+}
+
+/// The text of a `<sub>` or `<sup>` run, until its closing tag.
+#[derive(Debug, Clone)]
+struct Script {
+    /// `<sup>` rather than `<sub>`.
+    raised: bool,
+    text: String,
+}
+
+/// The tags read here, by name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Name {
+    Details,
+    Summary,
+    Br,
+    Kbd,
+    Sub,
+    Sup,
+}
+
+impl Name {
+    /// Every name, as it is written in lower case.
+    const ALL: [(&'static str, Self); 6] = [
+        ("details", Self::Details),
+        ("summary", Self::Summary),
+        ("br", Self::Br),
+        ("kbd", Self::Kbd),
+        ("sub", Self::Sub),
+        ("sup", Self::Sup),
+    ];
+}
+
+/// One of the six tags, whole.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Tag {
+    name: Name,
+    /// Written `</name>`.
+    closing: bool,
+}
+
+/// How much of a tag the characters held from a `<` have spelled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Shape {
+    /// No tag read here, and none on the way to one.
+    Not,
+    /// One of them so far, with more of it to come.
+    Partly,
+    Whole(Tag),
+}
+
+/// How much of a tag `written`, from its `<` on, has spelled.
+///
+/// A name in any letter case, then `>` straight after it or after whitespace
+/// and attributes that hold no `<`; and `<br/>` or `<br />`. A closing tag is
+/// the same with a `/` after the `<`.
+fn shape(written: &str) -> Shape {
+    let Some(rest) = written.strip_prefix('<') else {
+        return Shape::Not;
+    };
+    let (closing, rest) = match rest.strip_prefix('/') {
+        Some(rest) => (true, rest),
+        None => (false, rest),
+    };
+    let named = rest.len()
+        - rest
+            .trim_start_matches(|c: char| c.is_ascii_alphabetic())
+            .len();
+    let (name, after) = rest.split_at(named);
+    let name = name.to_ascii_lowercase();
+
+    let Some(after) = after.chars().next().map(|first| (first, after)) else {
+        let partly = Name::ALL.iter().any(|(whole, _)| whole.starts_with(&name));
+        return if partly { Shape::Partly } else { Shape::Not };
+    };
+    let Some(&(_, name)) = Name::ALL.iter().find(|(whole, _)| *whole == name) else {
+        return Shape::Not;
+    };
+    let whole = Shape::Whole(Tag { name, closing });
+    match after {
+        ('>', ">") => whole,
+        ('/', "/") if name == Name::Br && !closing => Shape::Partly,
+        ('/', "/>") if name == Name::Br && !closing => whole,
+        (first, attributes) if first.is_whitespace() => {
+            if attributes.ends_with('>') {
+                whole
+            } else if attributes.contains('<') {
+                Shape::Not
+            } else {
+                Shape::Partly
+            }
+        }
+        _ => Shape::Not,
+    }
+}
+
+/// The character `character` is written with in a `<sub>` run, or in a
+/// `<sup>` run where `raised`, where Unicode has one.
+fn scripted(character: char, raised: bool) -> Option<char> {
+    const LOWERED: [char; 10] = ['₀', '₁', '₂', '₃', '₄', '₅', '₆', '₇', '₈', '₉'];
+    const RAISED: [char; 10] = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
+    if let Some(digit) = character.to_digit(10) {
+        let digits = if raised { &RAISED } else { &LOWERED };
+        return digits.get(usize::try_from(digit).ok()?).copied();
+    }
+    match (raised, character) {
+        (false, '+') => Some('₊'),
+        (false, '-') => Some('₋'),
+        (false, '=') => Some('₌'),
+        (false, '(') => Some('₍'),
+        (false, ')') => Some('₎'),
+        (false, 'a') => Some('ₐ'),
+        (false, 'e') => Some('ₑ'),
+        (false, 'o') => Some('ₒ'),
+        (false, 'x') => Some('ₓ'),
+        (false, 'h') => Some('ₕ'),
+        (false, 'k') => Some('ₖ'),
+        (false, 'l') => Some('ₗ'),
+        (false, 'm') => Some('ₘ'),
+        (false, 'n') => Some('ₙ'),
+        (false, 'p') => Some('ₚ'),
+        (false, 's') => Some('ₛ'),
+        (false, 't') => Some('ₜ'),
+        (true, '+') => Some('⁺'),
+        (true, '-') => Some('⁻'),
+        (true, '=') => Some('⁼'),
+        (true, '(') => Some('⁽'),
+        (true, ')') => Some('⁾'),
+        (true, 'n') => Some('ⁿ'),
+        (true, 'i') => Some('ⁱ'),
+        _ => None,
+    }
+}
+
 /// Reads markdown out of a stream of deltas.
+// Each bool is a fact the others say nothing of: a reader holding no block
+// can be inside a `<details>` block with a backslash owed on a started line.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Default)]
 pub struct Markdown {
     /// A run of markers whose meaning the next character decides.
@@ -1448,7 +1704,9 @@ pub struct Markdown {
     /// Whether this reader draws every block the way it streams, holding none.
     ///
     /// What lays a block out, and what reads a table's cell: both are reading
-    /// something already held, and holding it again would never end.
+    /// something already held, and holding it again would never end. Such a
+    /// reader numbers no footnote and reads no `<details>` or `<summary>`,
+    /// and a `<br>` is a space to it.
     unheld: bool,
     /// Why the fence being read was not drawn, where it is a held fence that
     /// ran past its cap, so the frame it opens says so.
@@ -1495,6 +1753,26 @@ pub struct Markdown {
     /// because the line after them decides whether they were the block's or
     /// stood after it. Counted rather than kept: a blank line is a blank line.
     gap: usize,
+    /// The footnote labels the answer has written, in the order they first
+    /// appeared, which is the order they are numbered in.
+    ///
+    /// Carried across lines and cleared with the message, since a definition
+    /// is tied to its reference by its label wherever either stands. Bounded
+    /// by [`FOOTNOTE_CAP`] labels of at most [`FOOTNOTE_LABEL_CAP`]
+    /// characters each.
+    notes: Vec<Note>,
+    /// A `<` and what has followed it, while the characters that say whether
+    /// it is one of the tags read here arrive. Bounded by [`TAG_CAP`]; ends
+    /// with the line.
+    tag: Option<String>,
+    /// A `<sub>` or `<sup>` run, held until its closing tag says whether it
+    /// can be drawn in sub or superscript characters. Bounded by
+    /// [`SCRIPT_CAP`]; ends with the line.
+    script: Option<Script>,
+    /// Whether a `<details>` block is open, so a paragraph line is drawn two
+    /// columns in. Carried across lines until `</details>` or the end of the
+    /// message; one closing tag ends any nesting.
+    folded: bool,
 }
 
 /// The most of one line of code that is held back to be read.
@@ -1817,6 +2095,20 @@ impl Markdown {
                 run = at;
             }
 
+            // Held text, not a run, for the reason a reference is.
+            if self.tag.is_some() {
+                if self.tagged(character, say) {
+                    run = next;
+                    continue;
+                }
+                // Not one of the tags read here. What was held has gone out
+                // as written, and this character starts the run.
+                run = at;
+            }
+
+            // A backslash in front of a `<` keeps it from opening a tag, and
+            // stays itself.
+            let mut kept = false;
             if std::mem::take(&mut self.escaped) {
                 if Self::escapes(character) {
                     self.say(delta.get(at..next).unwrap_or_default(), say);
@@ -1833,15 +2125,39 @@ impl Markdown {
                 self.say("\\", say);
                 self.started = true;
                 self.previous = '\\';
+                kept = true;
             }
 
             if character == '\n' {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
                 self.end_line(room, say);
                 run = next;
+            } else if self.script.is_some() && character != '<' {
+                run = if self.raises(character, say) {
+                    next
+                } else {
+                    at
+                };
+            } else if self.line.key && character != '<' {
+                // What a key holds is written as it is: no marker, bracket or
+                // backslash inside one means anything.
+                self.previous = character;
+            } else if !kept && self.opens_tag(character) {
+                // Spaces in front of a tag that opens the line are its
+                // indentation, as they are a marker's.
+                if self.started {
+                    self.say(delta.get(run..at).unwrap_or_default(), say);
+                } else {
+                    self.indent += delta.get(run..at).map_or(0, str::len);
+                }
+                self.tag = Some(String::from(character));
+                run = next;
             } else if self.opens_link(character) {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
-                self.link = Some(Link::default());
+                self.link = Some(Link {
+                    first: !self.started,
+                    ..Link::default()
+                });
                 self.started = true;
                 run = next;
             } else if self.opens_table(character) {
@@ -1927,6 +2243,7 @@ impl Markdown {
                     && self.link.is_none()
                     && self.address.is_none()
                     && self.reference.is_none()
+                    && self.tag.is_none()
                     && !self.escaped
             }
         }
@@ -2527,6 +2844,7 @@ impl Markdown {
             && self.link.is_none()
             && self.address.is_none()
             && self.reference.is_none()
+            && self.tag.is_none()
             && !self.escaped
             && !character.is_whitespace()
             && !matches!(
@@ -2710,6 +3028,8 @@ impl Markdown {
         self.link = None;
         self.address = None;
         self.reference = None;
+        self.tag = None;
+        self.script = None;
         self.escaped = false;
         self.indent = 0;
         self.previous = '\0';
@@ -2742,7 +3062,9 @@ impl Markdown {
     /// whole, a bracket that turned out not to be one, or the break of an item
     /// with nothing after its marker at all.
     fn pay(&mut self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        self.broke(say);
         self.pay_bar(say);
+        self.fold(say);
         if self.line.marked != Marked::Owed {
             return;
         }
@@ -2892,8 +3214,12 @@ impl Markdown {
                 self.tick(&link.label, say);
                 return true;
             }
-            // `[TODO] fix this`, and every other bracket somebody meant.
+            // `[TODO] fix this`, and every other bracket somebody meant,
+            // where it is no footnote.
             _ => {
+                if let Some(taken) = self.cites(&link, character, say) {
+                    return taken;
+                }
                 self.pay(say);
                 spill(&link, say);
                 return false;
@@ -3098,6 +3424,345 @@ impl Markdown {
         self.previous = words.chars().next_back().unwrap_or(')');
     }
 
+    /// Whether footnotes are read where the scan stands.
+    ///
+    /// Not in a heading, and not by a reader that lays out a block or reads a
+    /// table's cell: there a label is shown as written, and the numbers stay
+    /// the answer's own.
+    fn notes(&self) -> bool {
+        !self.unheld && !self.line.heading && self.passing.is_none()
+    }
+
+    /// The number of the footnote `label`, numbering it if it is new, or
+    /// `None` where it is to be shown as written: a second definition of one
+    /// label, or a new label past [`FOOTNOTE_CAP`].
+    fn number(&mut self, label: &str, defining: bool) -> Option<usize> {
+        if let Some(at) = self.notes.iter().position(|note| note.label == label) {
+            let note = self.notes.get_mut(at)?;
+            if defining {
+                if note.defined {
+                    return None;
+                }
+                note.defined = true;
+            }
+            return Some(at + 1);
+        }
+        if self.notes.len() >= FOOTNOTE_CAP {
+            return None;
+        }
+        self.notes.push(Note {
+            label: label.to_owned(),
+            defined: defining,
+        });
+        Some(self.notes.len())
+    }
+
+    /// Reads what `link` held as a footnote, given the character after its
+    /// `]`. Answers `None` where it is not one, and otherwise whether
+    /// `character` was taken.
+    ///
+    /// A label that opened its line and has a colon after it is the
+    /// definition: its number stands in for the label and the colon, and the
+    /// rest of the line is the note, quiet. Anywhere else the label is a
+    /// reference, drawn as its number in superscript, or under ascii in
+    /// brackets and quiet, and `character` is the caller's.
+    fn cites(
+        &mut self,
+        link: &Link,
+        character: char,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) -> Option<bool> {
+        if link.part != Part::Between || !self.notes() || !footnote(&link.label) {
+            return None;
+        }
+        let defining = character == ':' && link.first;
+        let cited = self.glyphs.cited(self.number(&link.label, defining)?);
+        self.started = true;
+        self.previous = ']';
+        if defining {
+            self.line.noted = true;
+            self.say(&cited, say);
+            return Some(true);
+        }
+        match self.glyphs {
+            Glyphs::Unicode => self.say(&cited, say),
+            Glyphs::Ascii => {
+                self.spend(say);
+                self.pay(say);
+                say(Slot::Quiet, &cited, None);
+            }
+        }
+        Some(false)
+    }
+
+    /// Whether `character` opens a tag where the scan stands.
+    ///
+    /// Prose only, and not inside a span of code or display math shown as
+    /// written, for the reason a link is.
+    fn opens_tag(&self, character: char) -> bool {
+        character == '<'
+            && self.inside == Inside::Prose
+            && !self.line.code
+            && self.passing.is_none()
+    }
+
+    /// Reads `character` into the tag being held. Answers whether it was
+    /// taken.
+    ///
+    /// `false` says the tag was none of the six, or ran past [`TAG_CAP`] or
+    /// the line: what was held has gone out as written, and `character` is
+    /// the caller's again.
+    fn tagged(&mut self, character: char, say: &mut dyn FnMut(Slot, &str, Option<&str>)) -> bool {
+        let Some(mut written) = self.tag.take() else {
+            return false;
+        };
+        if character == '\n' || written.len() + character.len_utf8() > TAG_CAP {
+            self.untag(&written, say);
+            return false;
+        }
+        written.push(character);
+        match shape(&written) {
+            Shape::Partly => {
+                self.tag = Some(written);
+                true
+            }
+            Shape::Not => {
+                written.pop();
+                self.untag(&written, say);
+                false
+            }
+            Shape::Whole(tag) => {
+                self.reads(tag, &written, say);
+                true
+            }
+        }
+    }
+
+    /// Holds `character` in the open `<sub>` or `<sup>` run. Answers whether
+    /// it was held.
+    ///
+    /// Past [`SCRIPT_CAP`] the run is plain text, and so is the rest of it:
+    /// what was held goes out as written, and `character` is the caller's.
+    fn raises(&mut self, character: char, say: &mut dyn FnMut(Slot, &str, Option<&str>)) -> bool {
+        let Some(script) = self.script.as_mut() else {
+            return false;
+        };
+        if script.text.len() + character.len_utf8() <= SCRIPT_CAP {
+            script.text.push(character);
+            return true;
+        }
+        let text = std::mem::take(&mut script.text);
+        self.script = None;
+        self.say(&text, say);
+        self.previous = character;
+        false
+    }
+
+    /// Hands on held text that turned out to be no tag, as written: into the
+    /// run of a `<sub>` or `<sup>` open around it, or out.
+    fn untag(&mut self, written: &str, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        self.started = true;
+        self.previous = written.chars().next_back().unwrap_or('<');
+        if let Some(script) = self.script.as_mut() {
+            if script.text.len() + written.len() <= SCRIPT_CAP {
+                script.text.push_str(written);
+                return;
+            }
+            let text = std::mem::take(&mut script.text);
+            self.script = None;
+            self.say(&text, say);
+        }
+        self.say(written, say);
+    }
+
+    /// Reads a whole tag, `written` as it was.
+    fn reads(&mut self, tag: Tag, written: &str, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        // Inside a key only its closing tag is read, and any other is one
+        // more thing the key holds.
+        if self.line.key
+            && tag
+                != (Tag {
+                    name: Name::Kbd,
+                    closing: true,
+                })
+        {
+            self.untag(written, say);
+            return;
+        }
+
+        // A run of sub or superscript ends at its own closing tag, and at any
+        // other tag as the plain text it was.
+        if let Some(script) = self.script.take() {
+            let own = if script.raised { Name::Sup } else { Name::Sub };
+            if tag
+                == (Tag {
+                    name: own,
+                    closing: true,
+                })
+            {
+                self.line.tagged = true;
+                self.scripts(&script, say);
+                return;
+            }
+            self.say(&script.text, say);
+        }
+
+        // A `<details>` block and its summary belong to the answer, so they
+        // are read only where the answer is: a heading, and a reader laying
+        // out a block or a cell, show them as written.
+        let lays = self.unheld || self.line.heading;
+        if lays && matches!(tag.name, Name::Details | Name::Summary) {
+            self.untag(written, say);
+            return;
+        }
+
+        self.line.tagged = true;
+        // Neither a break nor a block of its own is the header of a table or
+        // the title of a heading, and the line is not watched for either.
+        if matches!(tag.name, Name::Details | Name::Summary | Name::Br)
+            && self.table.take_if(|table| table.mirrors()).is_some()
+        {
+            self.header = Header::Declined;
+        }
+        match (tag.name, tag.closing) {
+            (Name::Details, closing) => self.folded = !closing,
+            (Name::Summary, false) => {
+                self.line.summary = true;
+                self.spend(say);
+                self.pay(say);
+                say(Slot::Quiet, self.glyphs.folded(), None);
+                say(Slot::Plain, " ", None);
+                self.started = true;
+                self.previous = '>';
+            }
+            (Name::Summary, true) => {
+                self.line.summary = false;
+                self.previous = '>';
+            }
+            // A break with no line to break, in a heading or a cell, is the
+            // space between the words either side of it.
+            (Name::Br, false) if lays => {
+                self.say(" ", say);
+                self.started = true;
+                self.previous = ' ';
+            }
+            (Name::Br, false) => self.breaks(say),
+            (Name::Kbd, false) => {
+                self.line.key = true;
+                self.started = true;
+                self.previous = '>';
+                let (open, _) = self.glyphs.keyed();
+                self.say(open, say);
+            }
+            (Name::Kbd, true) => {
+                self.previous = '>';
+                if self.line.key {
+                    let (_, close) = self.glyphs.keyed();
+                    self.say(close, say);
+                    self.line.key = false;
+                }
+            }
+            (Name::Sub | Name::Sup, false) => {
+                self.script = Some(Script {
+                    raised: tag.name == Name::Sup,
+                    text: String::new(),
+                });
+                self.started = true;
+                self.previous = '>';
+            }
+            // A closing tag with nothing open is read away.
+            (Name::Br | Name::Sub | Name::Sup, true) => self.previous = '>',
+        }
+    }
+
+    /// Hands on a run of sub or superscript that has closed: in those
+    /// characters, quiet, where every character of it has one, and as its
+    /// plain text where one does not.
+    fn scripts(&mut self, script: &Script, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        self.previous = '>';
+        let drawn: Option<String> = script
+            .text
+            .chars()
+            .map(|character| scripted(character, script.raised))
+            .collect();
+        match drawn {
+            Some(drawn) if !drawn.is_empty() => {
+                self.spend(say);
+                self.pay(say);
+                say(Slot::Quiet, &drawn, None);
+            }
+            Some(_) => {}
+            None => self.say(&script.text, say),
+        }
+    }
+
+    /// Owes a break where a `<br>` stands, after whatever the line owed
+    /// before it.
+    fn breaks(&mut self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        self.spend(say);
+        self.pay(say);
+        self.line.broken = true;
+        self.started = true;
+        self.previous = '>';
+    }
+
+    /// Breaks the line where a `<br>` owed it, now something is drawn on the
+    /// row after, and stands that row where the line's own stood: behind a
+    /// quote's bar, and two columns in inside a `<details>` block.
+    fn broke(&mut self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        if !std::mem::take(&mut self.line.broken) {
+            return;
+        }
+        say(self.slot(), "\n", None);
+        if matches!(self.line.quoted, Quoted::Plain | Quoted::Alert) {
+            self.bar(say);
+        }
+        if self.line.fold == Fold::Drawn {
+            say(Slot::Plain, "  ", None);
+        }
+    }
+
+    /// Lets go of a tag, a run of sub or superscript and a key, which a line's
+    /// end does as well as a message's: a tag and a run as written, and a key
+    /// with the bracket that closes it.
+    fn untags(&mut self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        if let Some(written) = self.tag.take() {
+            self.untag(&written, say);
+        }
+        if let Some(script) = self.script.take() {
+            self.say(&script.text, say);
+        }
+        if self.line.key {
+            let (_, close) = self.glyphs.keyed();
+            self.say(close, say);
+            self.line.key = false;
+        }
+    }
+
+    /// Sets a line of a `<details>` block's body two columns in, once, before
+    /// the first thing on it.
+    ///
+    /// A paragraph's line only: a quote, an item of a list, a heading, a
+    /// summary, code and every block are drawn where they always are.
+    fn fold(&mut self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        if self.line.fold != Fold::Owed {
+            return;
+        }
+        let folds = self.folded
+            && self.inside == Inside::Prose
+            && self.line.quoted == Quoted::Not
+            && self.line.marked == Marked::Nothing
+            && self.item == Item::Shut
+            && !self.line.heading
+            && !self.line.summary;
+        self.line.fold = if folds {
+            say(Slot::Plain, "  ", None);
+            Fold::Drawn
+        } else {
+            Fold::Not
+        };
+    }
+
     /// Lets go of whatever was still being held when the message ended.
     ///
     /// A link goes back as the characters it was written with; a table is drawn
@@ -3150,6 +3815,9 @@ impl Markdown {
             });
         }
         self.passing = None;
+        // What the answer numbered and left open ends with it.
+        self.notes.clear();
+        self.folded = false;
         self.hand_on(room, &mut kinds, say);
         kinds.flush(&mut |slot, text, link| say(Said::Run { slot, text, link }));
         self.kinds = kinds;
@@ -3224,6 +3892,10 @@ impl Markdown {
             self.say("\\", say);
         }
 
+        // The `>` that would have ended a tag never arrived, nor the closing
+        // tag of a run or a key.
+        self.untags(say);
+
         // The end of the message is the break the marker of an alert was
         // waiting for, and the header is drawn before the bar it owes is.
         if let Some(alert) = self.link.as_ref().and_then(|link| self.alerts(link)) {
@@ -3231,12 +3903,26 @@ impl Markdown {
             self.headline(alert, say);
         }
 
+        // A line that has said nothing by now is blank, or a tag's alone,
+        // and is not set in; what is still held is said below, and is.
+        // A break with nothing after it on its line is the line's own.
+        if self.link.is_none() && !matches!(self.probe, Probe::Probing(_)) {
+            self.line.broken = false;
+            if self.line.fold == Fold::Owed {
+                self.line.fold = Fold::Not;
+            }
+        }
+
         // After the settle above, so a fence at the very end of a message has
         // had its chance to take the spaces in front of it with it.
         self.spend(say);
         self.pay(say);
 
-        if let Some(link) = self.link.take() {
+        // A footnote's label the end of the message came straight after is a
+        // reference, as one a break came after is.
+        if let Some(link) = self.link.take()
+            && self.cites(&link, '\n', say).is_none()
+        {
             spill(&link, say);
         }
         if let Some(table) = self.table.take() {
@@ -3254,9 +3940,18 @@ impl Markdown {
     fn end_line(&mut self, room: usize, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         let ended = self.inside;
         let heading = self.atx.take();
+        // A line of prose written at the margin that held nothing but tags read
+        // away draws no row. One with spaces in front stands: those may have
+        // gone out already, as they arrived, and the row is theirs.
+        let vanishes = ended == Inside::Prose
+            && !self.started
+            && self.line.tagged
+            && self.indent == 0
+            && !self.line.spoke;
         // Belt and braces: the line break puts a link back before it gets here,
         // and the reset below would drop what one was holding without a sound.
         self.close(room, say);
+        let gone = vanishes && !self.started;
 
         // The line of code is complete, so this is the moment it can be read.
         // A blank one has said nothing yet and still stands in its frame.
@@ -3358,13 +4053,17 @@ impl Markdown {
             passing: self.passing.take(),
             // Nor what the line said about the next one: whether it was blank,
             // and whether an item it was under is still open.
-            above: if ended == Inside::Prose && !self.started {
+            above: if ended == Inside::Prose && !self.started && !gone {
                 Above::Blank
             } else {
                 Above::Written
             },
             item: self.item,
             quoting: self.line.quoted,
+            // Nor what the answer has said about the lines after it: the
+            // footnotes it has numbered, and a `<details>` block still open.
+            notes: std::mem::take(&mut self.notes),
+            folded: self.folded,
             ..Self::default()
         };
 
@@ -3375,7 +4074,7 @@ impl Markdown {
         if let Some(edge) = edge {
             say(Slot::Quiet, &edge, None);
             say(Slot::Quiet, "\n", None);
-        } else if !matches!(ended, Inside::Opening | Inside::Closing) && !blocked {
+        } else if !matches!(ended, Inside::Opening | Inside::Closing) && !blocked && !gone {
             say(self.slot(), "\n", None);
         }
 
@@ -3437,6 +4136,7 @@ impl Markdown {
     /// Hands on a run under the slot the line is wearing, or into the block
     /// being read where one is open.
     fn wears(&mut self, text: &str, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        self.line.spoke = true;
         self.gutter(say);
         if self.syntax.is_some() && self.inside == Inside::Fence && self.code.len() < MOST {
             self.code.push_str(text);
@@ -3476,11 +4176,12 @@ impl Markdown {
 
     /// The slot everything read right now is written under.
     fn slot(&self) -> Slot {
-        if self.inside != Inside::Prose {
+        if self.inside != Inside::Prose || self.line.noted {
+            // A footnote's note is quiet, as what frames a block is.
             Slot::Quiet
         } else if matches!(self.line.quoted, Quoted::Owed | Quoted::Plain) {
             Slot::Quote
-        } else if self.line.code {
+        } else if self.line.code || self.line.key {
             // Above everything a phrase can otherwise be: backticks say the
             // reader is being handed something to copy or go and find, and
             // that is worth more to them than the weight around it.
@@ -3497,8 +4198,9 @@ impl Markdown {
             // A heading of its own, so a design can tell it from a phrase
             // the answer raised; weight alone until one does.
             Slot::Heading
-        } else if self.line.emphasis.raised {
+        } else if self.line.emphasis.raised || self.line.summary {
             // Weight in the reader's own foreground, not the theme's colour.
+            // A summary is the one line of a folded block shown as a title.
             Slot::Bold
         } else if self.line.emphasis.leant {
             Slot::Emphasis

@@ -478,6 +478,48 @@ impl Glyphs {
         }
     }
 
+    /// The mark a footnote is drawn as, at its reference and in front of its
+    /// note: the number written in superscript digits, or in brackets where the
+    /// set has none.
+    #[must_use]
+    pub(crate) fn cited(self, number: usize) -> String {
+        const RAISED: [char; 10] = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
+        match self {
+            Self::Unicode => number
+                .to_string()
+                .chars()
+                .map(|digit| {
+                    digit
+                        .to_digit(10)
+                        .and_then(|at| RAISED.get(at as usize))
+                        .copied()
+                        .unwrap_or(digit)
+                })
+                .collect(),
+            Self::Ascii => format!("[{number}]"),
+        }
+    }
+
+    /// The mark in front of the summary of a `<details>` block: a triangle
+    /// pointing at what it opens onto, or a word where the set has none.
+    #[must_use]
+    pub(crate) fn folded(self) -> &'static str {
+        match self {
+            Self::Unicode => "\u{25b8}",
+            Self::Ascii => "Details:",
+        }
+    }
+
+    /// What stands either side of a key a `<kbd>` tag names: nothing where the
+    /// code slot sets the key apart, and brackets under ascii.
+    #[must_use]
+    pub(crate) fn keyed(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Unicode => ("", ""),
+            Self::Ascii => ("[", "]"),
+        }
+    }
+
     /// The mark of a note, which is [`Glyphs::told`] as a shape and is its own
     /// method so that neither follows the other.
     #[must_use]
@@ -872,6 +914,44 @@ mod tests {
                 marks,
                 "{glyphs:?}"
             );
+        }
+    }
+
+    #[test]
+    fn a_footnote_is_cited_in_superscript_digits_and_under_ascii_in_brackets() {
+        assert_eq!(Glyphs::Unicode.cited(1), "¹");
+        assert_eq!(Glyphs::Unicode.cited(64), "⁶⁴");
+        assert_eq!(Glyphs::Unicode.cited(1_234_567_890), "¹²³⁴⁵⁶⁷⁸⁹⁰");
+        assert_eq!(Glyphs::Ascii.cited(1), "[1]");
+        assert_eq!(Glyphs::Ascii.cited(64), "[64]");
+        for number in [1, 9, 10, 64] {
+            assert_eq!(
+                columns(&Glyphs::Unicode.cited(number)),
+                number.to_string().len(),
+                "{number}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_details_mark_and_the_key_brackets_are_exactly_these_in_both_sets() {
+        assert_eq!(Glyphs::Unicode.folded(), "▸");
+        assert_eq!(Glyphs::Ascii.folded(), "Details:");
+        assert_eq!(Glyphs::Unicode.keyed(), ("", ""));
+        assert_eq!(Glyphs::Ascii.keyed(), ("[", "]"));
+        assert_eq!(columns(Glyphs::Unicode.folded()), 1);
+    }
+
+    #[test]
+    fn every_mark_of_a_footnote_a_details_block_and_a_key_is_ascii_under_ascii() {
+        let (open, close) = Glyphs::Ascii.keyed();
+        for mark in [
+            Glyphs::Ascii.cited(64).as_str(),
+            Glyphs::Ascii.folded(),
+            open,
+            close,
+        ] {
+            assert!(mark.is_ascii(), "{mark:?}");
         }
     }
 
