@@ -24,6 +24,14 @@
 //! reads its home from, the profile directory a launch gives is that
 //! variable's value, as given, and the shell's value of it is never passed.
 //!
+//! A program the user installed themselves, which a row proposes as an
+//! [`OwnEntry`], is run under [`CatalogProfile::from_own`]: its own arguments
+//! and environment, and the hosts, sign-in places and methods of the entry it
+//! stands for where a signed one is given. Nothing reviewed it, so it is
+//! admitted by what shows it speaks the protocol, an answer in the protocol
+//! version this client speaks with an `agentCapabilities` object, and its name
+//! and version are kept to be shown, never compared.
+//!
 //! An entry whose admitted name or version is as long as an answer to
 //! initializing is cut to gives no profile, so an answer is compared only
 //! whole and a longer one cut to the same bytes is never taken for it.
@@ -66,7 +74,7 @@ use crucible_sandbox::{
 };
 use crucible_types::AgentKey;
 
-use super::{Admits, AuthMethod, Entry, Method, Target, Variable};
+use super::{Admits, AuthMethod, Entry, Method, OwnEntry, Target, Variable};
 use crate::Request;
 use crate::acp::{Initialized, NAME_BYTES, PROTOCOL, SignIn};
 
@@ -105,8 +113,8 @@ pub(crate) const PASSED: [&str; 15] = [
 pub struct CatalogProfile {
     /// The agent, as its instance names it.
     key: AgentKey,
-    /// The `agentInfo` it must answer initializing with.
-    admits: Admits,
+    /// What its answer to initializing must show.
+    admits: Admitting,
     /// The methods it signs in with once asked through `authenticate`, in the
     /// order its entry gives them.
     sign_in: Vec<SignIn>,
@@ -119,6 +127,16 @@ pub struct CatalogProfile {
     /// How it is signed in and where it keeps that, held apart so a profile
     /// stays small where it is carried by value.
     signing: Box<Signing>,
+}
+
+/// What an agent's answer to initializing must show for it to be run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Admitting {
+    /// The `agentInfo` its entry reviewed.
+    Reviewed(Admits),
+    /// An `agentCapabilities` object, for a program the user installed, which
+    /// nothing reviewed.
+    Capable,
 }
 
 /// How an agent the catalog reviewed is signed in, and where it keeps that.
@@ -188,17 +206,10 @@ impl CatalogProfile {
         };
         let reach = hosts("reach", &entry.reach)?;
         let sign_in_hosts = hosts("sign_in_hosts", &entry.sign_in_hosts)?;
-        let sign_in = entry
-            .auth_methods
-            .iter()
-            .filter_map(|method| match &method.method {
-                Method::Agent => Some(SignIn::owned(&method.id)),
-                Method::EnvVar { .. } | Method::Terminal { .. } => None,
-            })
-            .collect();
+        let sign_in = owned(&entry.auth_methods);
         Ok(Self {
             key: entry.key.clone(),
-            admits: entry.admits.clone(),
+            admits: Admitting::Reviewed(entry.admits.clone()),
             sign_in,
             args: target.args.clone(),
             env: target.env.clone(),
@@ -208,6 +219,54 @@ impl CatalogProfile {
                 hosts: sign_in_hosts,
                 profile_env: entry.profile_env.clone(),
                 state_paths: entry.state_paths.clone(),
+            }),
+        })
+    }
+
+    /// The profile of the program the user installed for `key`, started with
+    /// what `own` proposes and signed in by `methods`. Where `entry` is the
+    /// signed entry it stands for, the hosts it reaches, those a sign-in link
+    /// may open, its profile variable and its sign-in places are that entry's;
+    /// otherwise it has none of them.
+    ///
+    /// # Errors
+    ///
+    /// [`Unprofiled`] for the first host `entry` lists that is an address, is
+    /// not one a sandbox can name, or names every host.
+    pub fn from_own(
+        key: AgentKey,
+        own: &OwnEntry,
+        entry: Option<&Entry>,
+        methods: Vec<AuthMethod>,
+    ) -> Result<Self, Unprofiled> {
+        let hosts = |field: &'static str, listed: &[Box<str>]| {
+            listed
+                .iter()
+                .enumerate()
+                .map(|(index, host)| granted(field, index, host))
+                .collect::<Result<Vec<_>, _>>()
+        };
+        let (reach, sign_in_hosts) = match entry {
+            Some(entry) => (
+                hosts("reach", &entry.reach)?,
+                hosts("sign_in_hosts", &entry.sign_in_hosts)?,
+            ),
+            None => (Vec::new(), Vec::new()),
+        };
+        Ok(Self {
+            key,
+            admits: Admitting::Capable,
+            sign_in: owned(&methods),
+            args: own.args().to_vec(),
+            env: own.env().to_vec(),
+            reach,
+            signing: Box::new(Signing {
+                methods,
+                hosts: sign_in_hosts,
+                profile_env: entry.and_then(|entry| entry.profile_env.clone()),
+                state_paths: entry
+                    .map(|entry| entry.state_paths.clone())
+                    .unwrap_or_default(),
             }),
         })
     }
@@ -225,13 +284,22 @@ impl CatalogProfile {
     }
 
     /// Whether the agent, as it described itself, is the one its entry
-    /// reviewed.
+    /// reviewed, or, for a program the user installed, one that speaks the
+    /// protocol.
     ///
     /// # Errors
     ///
     /// A [`Failure`] naming the first way it is not.
     pub fn admits(&self, initialized: &Initialized) -> Result<(), Failure> {
-        let Admits { name, version } = &self.admits;
+        let Admitting::Reviewed(Admits { name, version }) = &self.admits else {
+            if initialized.capable() {
+                return Ok(());
+            }
+            return Err(Failure::new(
+                "The program did not answer with its capabilities, so it is not taken for \
+                 an agent.",
+            ));
+        };
         if initialized.name() != Some(&**name) {
             return Err(Failure::new(&format!(
                 "The program is not {name}: it calls itself {}.",
@@ -421,6 +489,18 @@ impl CatalogProfile {
         }
         request
     }
+}
+
+/// The methods of `methods` an agent carries out once asked through
+/// `authenticate`, in the order given.
+fn owned(methods: &[AuthMethod]) -> Vec<SignIn> {
+    methods
+        .iter()
+        .filter_map(|method| match &method.method {
+            Method::Agent => Some(SignIn::owned(&method.id)),
+            Method::EnvVar { .. } | Method::Terminal { .. } => None,
+        })
+        .collect()
 }
 
 /// The host `field[index]` names, as the sandbox's parser reads it, where it

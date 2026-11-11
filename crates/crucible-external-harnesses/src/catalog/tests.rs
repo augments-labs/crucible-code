@@ -3813,3 +3813,49 @@ fn an_entry_whose_artifact_has_no_sha256_is_still_refused() {
         refused.map(|_| "believed")
     );
 }
+
+/// A program the user installed is run with its own arguments, under the
+/// hosts of the signed entry it stands for, and is admitted by answering in
+/// the protocol with an `agentCapabilities` object, whatever it calls itself.
+#[test]
+fn an_own_profile_is_admitted_by_its_capabilities_and_never_by_its_name() {
+    let mut goose = binary();
+    set(&mut goose, "/targets/0/cmd", json!("bin/goose"));
+    let goose = entry_here(goose);
+    let own = OwnEntry::catalog(&goose).expect("read").expect("here");
+    let profile = CatalogProfile::from_own(
+        goose.key.clone(),
+        &own,
+        Some(&goose),
+        goose.auth_methods.clone(),
+    )
+    .expect("a profile");
+    assert_eq!(
+        profile.reach(),
+        CatalogProfile::from_entry(&goose, goose.here().expect("here"))
+            .expect("a store profile")
+            .reach()
+    );
+    let registry =
+        CatalogProfile::from_own(goose.key.clone(), &own, None, Vec::new()).expect("a profile");
+    assert!(registry.reach().is_empty() && registry.sign_in_hosts().is_empty());
+    assert!(registry.state_paths().is_empty() && registry.profile_env().is_none());
+    for answer in [
+        json!({"protocolVersion": 1, "agentCapabilities": {}}),
+        json!({"protocolVersion": 1, "agentCapabilities": {"loadSession": true},
+               "agentInfo": {"name": "someone-else", "version": "0.0.1"}}),
+    ] {
+        let initialized = crate::acp::Initialized::read(&answer);
+        assert!(profile.admits(&initialized).is_ok(), "{answer}");
+    }
+    for answer in [
+        json!({"protocolVersion": 1}),
+        json!({"protocolVersion": 1, "agentCapabilities": null}),
+        json!({"protocolVersion": 1, "agentCapabilities": []}),
+    ] {
+        let initialized = crate::acp::Initialized::read(&answer);
+        assert!(profile.admits(&initialized).is_err(), "{answer}");
+    }
+    let request = profile.request(Vec::new(), None);
+    assert_eq!(request.arguments, ["acp"]);
+}

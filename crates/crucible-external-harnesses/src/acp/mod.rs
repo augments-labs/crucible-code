@@ -230,11 +230,22 @@ pub struct Initialized {
     resumes: bool,
     /// Whether it can sign out.
     signs_out: bool,
+    /// Whether it answered with an `agentCapabilities` object.
+    capable: Capabilities,
     /// The sign-in methods it offers, by id.
     methods: Vec<Text>,
     /// What it says of each sign-in method run at a terminal, or `None` where
     /// it offered more than `METHODS` of them, when it agrees with no record.
     terminals: Option<Vec<Terminal>>,
+}
+
+/// Whether an answer to initializing carried an `agentCapabilities` object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Capabilities {
+    /// It did.
+    Answered,
+    /// It carried none, or something other than an object.
+    Missing,
 }
 
 /// One sign-in method an agent says is run at a terminal.
@@ -381,6 +392,11 @@ impl Initialized {
             loads: offered(&["loadSession"]),
             resumes: offered(&["sessionCapabilities", "resume"]),
             signs_out: offered(&["auth", "logout"]),
+            capable: if capabilities.is_some_and(Value::is_object) {
+                Capabilities::Answered
+            } else {
+                Capabilities::Missing
+            },
             methods: result
                 .get("authMethods")
                 .and_then(Value::as_array)
@@ -409,6 +425,13 @@ impl Initialized {
     #[must_use]
     pub fn version(&self) -> Option<&str> {
         self.version.as_ref().map(Text::as_str)
+    }
+
+    /// Whether it answered with an `agentCapabilities` object, which is what
+    /// an agent no entry reviewed is taken for one by.
+    #[must_use]
+    pub fn capable(&self) -> bool {
+        self.capable == Capabilities::Answered
     }
 
     /// Whether it can load a session it kept.
