@@ -385,7 +385,9 @@ impl Lining<'_> {
         // so a line longer than the room costs no more than one as wide as
         // it; `cut` is the columns a wide character that did not fit left
         // over before the mark. Where the number itself does not fit, the
-        // line is cut to the room and the row is cut as a whole later.
+        // line is cut to the edge and the row is cut as a whole at that same
+        // edge: here where the line did not move, and where its ground is
+        // filled where it did.
         let edge = edge(self.room);
         let more = self.room.glyphs.ellipsis();
         let (shown, cut) = if columns <= edge {
@@ -433,6 +435,12 @@ impl Lining<'_> {
                 ground
             };
             row.push(mark, more);
+            return Drawn::Fitted { row, columns };
+        }
+        // A row on no ground is otherwise given the whole room, which is
+        // one column more than the lines that moved around it take.
+        if side == Side::Kept && columns > edge {
+            let row = clipped(row, edge, self.room.glyphs, Slot::Quiet);
             return Drawn::Fitted { row, columns };
         }
         Drawn::Body {

@@ -262,6 +262,34 @@ fn a_line_that_did_not_move_is_cut_at_the_column_the_grounds_end_at() {
 }
 
 #[test]
+fn a_line_that_did_not_move_is_cut_where_the_grounds_end_in_a_room_too_narrow_for_its_number() {
+    // Where the number and the mark do not both fit, the row is cut as a
+    // whole, and a line that did not move is cut at the same column as the
+    // lines that did: none of them takes the room's last column.
+    let change = short_and_long();
+    for (glyphs, more) in [(UNICODE, "…"), (ASCII, "...")] {
+        for columns in 0..=13_usize {
+            let rows = drawn(&change, columns, glyphs);
+            let kept = rows.get(1).expect("the kept row");
+            let removed = rows.get(3).expect("the long removed row");
+            let added = rows.get(5).expect("the long added row");
+            let edge = columns.saturating_sub(1);
+
+            assert_eq!(kept.columns(), edge, "{columns}: {:?}", kept.text());
+            assert_eq!(removed.columns(), edge, "{columns}: {:?}", removed.text());
+            assert_eq!(added.columns(), edge, "{columns}: {:?}", added.text());
+            assert_eq!(
+                kept.text().ends_with(more),
+                removed.text().ends_with(more),
+                "{columns}: {:?} against {:?}",
+                kept.text(),
+                removed.text()
+            );
+        }
+    }
+}
+
+#[test]
 fn a_replaced_word_is_raised_on_both_lines_of_its_pair() {
     // The removed line's word, and what replaced it on the added line.
     let change = read(TWO_FILES).expect("a diff");
