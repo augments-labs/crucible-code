@@ -1792,7 +1792,7 @@ pub enum Overlap {
 
 impl Overlap {
     /// How the refusal says it.
-    const fn says(self) -> &'static str {
+    pub(crate) const fn says(self) -> &'static str {
         match self {
             Self::Is => "is",
             Self::Within => "lies within",
@@ -1804,7 +1804,7 @@ impl Overlap {
 
 /// How far a place of [`NEVER_WRITABLE`] reaches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Reach {
+pub(crate) enum Reach {
     /// The place and everything beneath it.
     Beneath,
     /// The place itself only, and what contains it: the directories that hold
@@ -2383,7 +2383,7 @@ fn with_home(mut request: Request, home: &Path) -> Request {
 }
 
 /// `path` relative to `home`, as the list writes it: a component at a time.
-fn beneath(home: &Path, path: &str) -> PathBuf {
+pub(crate) fn beneath(home: &Path, path: &str) -> PathBuf {
     path.split('/')
         .fold(home.to_path_buf(), |joined, name| joined.join(name))
 }
@@ -2419,7 +2419,7 @@ fn ended(name: &OsStr, trims: bool) -> &[u8] {
 
 /// Whether `path` is `base` or lies beneath it, compared by components and
 /// not by how their text begins, as the file system compares their names.
-fn is_beneath(path: &Path, base: &Path) -> bool {
+pub(crate) fn is_beneath(path: &Path, base: &Path) -> bool {
     is_beneath_as(path, base, cfg!(any(windows, target_os = "macos")))
 }
 
@@ -2438,7 +2438,7 @@ fn is_beneath_as(path: &Path, base: &Path, folds: bool) -> bool {
 /// ignored whatever the file system, since a place that cannot be written must
 /// not be named by a spelling that only some file system takes for it, and a
 /// file system that tells the spellings apart is refused for nothing.
-fn overlap(path: &Path, place: &Path, reach: Reach) -> Option<Overlap> {
+pub(crate) fn overlap(path: &Path, place: &Path, reach: Reach) -> Option<Overlap> {
     match (
         is_beneath_as(path, place, true),
         is_beneath_as(place, path, true),
@@ -2453,16 +2453,16 @@ fn overlap(path: &Path, place: &Path, reach: Reach) -> Option<Overlap> {
 
 /// A place no state path may make writable, as it is written for the user's
 /// `home`, and everywhere it lies once links are followed.
-struct Guarded {
+pub(crate) struct Guarded {
     /// What the refusal calls it.
-    place: String,
+    pub(crate) place: String,
     /// How far it reaches.
-    reach: Reach,
+    pub(crate) reach: Reach,
     /// Why it is guarded.
-    why: &'static str,
+    pub(crate) why: &'static str,
     /// Where it lies: as written, under the home once its links are followed,
     /// and where it leads itself.
-    at: Vec<PathBuf>,
+    pub(crate) at: Vec<PathBuf>,
 }
 
 impl Guarded {
@@ -2494,7 +2494,7 @@ impl Guarded {
 
 /// Every place no state path under `home` may make writable: those of
 /// [`NEVER_WRITABLE`], the `crucible` home and the `sessions` directory.
-fn guarded(home: &Path, crucible: &Path, sessions: &Path) -> Vec<Guarded> {
+pub(crate) fn guarded(home: &Path, crucible: &Path, sessions: &Path) -> Vec<Guarded> {
     let real = resolved(home).ok();
     let listed = NEVER_WRITABLE.iter().map(|place| {
         Guarded::new(

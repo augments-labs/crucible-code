@@ -97,3 +97,5 @@ fn an_agent_that_refuses_initialize_is_told_with_what_it_said() {
 
     assert_eq!(refused.to_string(), "the agent refused initialize: no");
 }
+
+mod own;
