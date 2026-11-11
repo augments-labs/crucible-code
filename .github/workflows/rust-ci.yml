@@ -181,10 +181,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       # On Windows, a common initialized MSYS parent prevents concurrent Git
       # Bash children from racing while creating their shared mount table
-      # (add_item EPERM). The documentation examples run beside the first part.
+      # (add_item EPERM). The tests run as the gate runs them, and the
+      # documentation examples run beside the first part.
       - shell: bash
         run: |
-          cargo nextest run --workspace --locked --no-fail-fast --partition hash:${{ matrix.shard }}/${{ matrix.shards }}
+          bash scripts/sh/rust-checks.sh --only tests --partition hash:${{ matrix.shard }}/${{ matrix.shards }}
           if [[ ${{ matrix.shard }} == 1 ]]; then cargo test --workspace --locked --doc; fi
         env:
           CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1

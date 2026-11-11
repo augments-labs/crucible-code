@@ -17,8 +17,9 @@ cargo run -- --help
 ```
 
 The gate runs the tests through [cargo-nextest](https://nexte.st), which runs
-each test in a process of its own and many at once. Install the version CI
-uses:
+each test in a process of its own and many at once: at most one per processor
+for the tests that keep a processor busy, and several per processor beside them
+for the tests that mostly wait. Install the version CI uses:
 
 ```bash
 cargo install cargo-nextest --version '=0.9.146' --locked
@@ -143,10 +144,11 @@ every section but that one, and `--only tests --partition hash:1/4` the first
 quarter of the suite. CI spreads the gate over machines this way; run without
 arguments, it is the whole gate.
 
-`scripts/sh/repo-checks.sh` and the required-cases section of
+`scripts/sh/repo-checks.sh` and the tests and required-cases sections of
 `scripts/sh/rust-checks.sh` need `python3` 3.11 or later: the crate-layering
-check reads Cargo manifests and configuration, and the required-cases check
-reads nextest's test groups, with the standard library's `tomllib`.
+check reads Cargo manifests and configuration, the tests section reads how many
+slots nextest's gate profile gives a test, and the required-cases check reads
+nextest's test groups, with the standard library's `tomllib`.
 
 A script lives under `scripts/sh` if a shell runs it and `scripts/python` if
 python3 does, so looking for one language means opening one directory. A new

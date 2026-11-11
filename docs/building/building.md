@@ -16,8 +16,8 @@ tree. The packages below carry a C++ compiler because that is how they are
 shipped, not because a build asks for one.
 
 **A POSIX shell and Python 3.11, to run the gate.** `scripts/sh/check.sh` is bash,
-and some of the checks it runs are Python scripts; the crate-layering and
-required-cases ones need Python 3.11 or later. On Windows the shell means Git
+and some of the checks it runs are Python scripts; the crate-layering, tests
+and required-cases ones need Python 3.11 or later. On Windows the shell means Git
 Bash or a Windows Subsystem for Linux shell; the build itself needs neither.
 
 Nothing else: no OpenSSL, no `pkg-config`, no cmake, no node, and no Python for
