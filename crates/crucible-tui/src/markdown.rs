@@ -86,12 +86,13 @@
 //! is drawn as it always was.
 //!
 //! A link's brackets holding a caret and a label, `[^1]` or `[^note]`, are a
-//! footnote, numbered in the order the answer first writes each label: a
-//! reference is drawn as its number in superscript, or under ascii as a quiet
-//! `[1]`. Where the brackets are the first thing a line says and a colon
-//! follows them, they are the note's definition, and the line is drawn quiet
-//! behind the number. A label is remembered until the message ends, so a
-//! definition takes its reference's number wherever either stands. The
+//! footnote, numbered in the order the answer first writes each label, in any
+//! letter case: a reference is drawn as its number in superscript, or under
+//! ascii as a quiet `[1]`. Where the brackets are the first thing a line says
+//! and a colon follows them, they are the note's definition, and the line is
+//! drawn quiet behind the number and one space, however many followed the
+//! colon. A label is remembered until the message ends, so a definition takes
+//! its reference's number wherever either stands. The
 //! brackets are shown as written in a heading, a table's cell, code, from a
 //! `[` to the next `]` or the line's end, and a block laid out again; for a
 //! label that is empty, longer than its cap, or holds whitespace or a control
@@ -99,11 +100,12 @@
 //! written past the cap.
 //!
 //! Six tags, `<details>`, `<summary>`, `<br>`, `<kbd>`, `<sub>` and `<sup>`, in
-//! any letter case and with attributes holding no `<` or `>`, are read where
-//! prose is, and never in code or from a `[` to the next `]` or the line's
-//! end; any other `<` is shown as written, and so is one of the six that runs
-//! past its cap or its line. A paragraph's line inside a `<details>` block is
-//! drawn two columns in until `</details>` or the message's end, and a
+//! any letter case and with attributes holding `<` or `>` only inside a quoted
+//! value, are read where prose is, and never in code or from a `[` to the next
+//! `]` or the line's end; any other `<` is shown as written, and so is one of
+//! the six that runs past its cap or its line, a quote left open included. A
+//! paragraph's line inside a `<details>` block is drawn two columns in, on
+//! every row it wraps onto, until `</details>` or the message's end, and a
 //! `<summary>` is drawn bold behind a mark; both are shown as written in a
 //! heading, a table's cell and a block laid out again.
 //! `<br>` breaks the line, and is a space in a heading, a table's cell and a
@@ -115,6 +117,8 @@
 //! characters has one, and as its plain text where one does not or the run
 //! passes its cap or its line. A tag is read away, and a line written at the
 //! margin that holds nothing but `<details>` and closing tags draws no row.
+//! Inside a `<details>` block, a line of nothing but `</details>` ends a table
+//! written without outer bars and is no row of it.
 //!
 //! On the way out, each settled run is told by the kind of thing it is, which
 //! is what a design colours: a span of code that names a file is a path, and a
@@ -192,8 +196,8 @@ pub(crate) const DIFF_CAP: usize = 16 * 1024;
 /// The most footnotes one answer numbers.
 ///
 /// A label is remembered from the first time it is written, as a reference or
-/// as a definition, so a definition written after its reference is tied to the
-/// number the reference was drawn with. Past this many labels, a reference
+/// as a definition, in any letter case, so a definition written after its
+/// reference is tied to the number the reference was drawn with. Past this many labels, a reference
 /// and a definition with a label not yet numbered are shown as written.
 pub(crate) const FOOTNOTE_CAP: usize = 64;
 
@@ -204,18 +208,19 @@ pub(crate) const FOOTNOTE_CAP: usize = 64;
 /// written.
 pub(crate) const FOOTNOTE_LABEL_CAP: usize = 32;
 
-/// The most of a tag held while the characters that say whether it is one of
-/// the six read here arrive, `<` and `>` included.
+/// The most characters of a tag held while the ones that say whether it is one
+/// of the six read here arrive, `<` and `>` included.
 ///
 /// Far longer than `<details open>`; a tag that runs past it is shown as
 /// written.
 pub(crate) const TAG_CAP: usize = 64;
 
-/// The most of a `<sub>` or `<sup>` run's text held until its closing tag
-/// says whether it can be drawn with sub or superscript characters.
+/// The most bytes of a `<sub>` or `<sup>` run's text held until its closing
+/// tag says whether it can be drawn with sub or superscript characters.
 ///
-/// A run past it is drawn as its plain text, as is one that has a character
-/// with no such form.
+/// Every character that has such a form is one byte, so for a run that can be
+/// drawn so it is as many characters. A run past it is drawn as its plain
+/// text, as is one that has a character with no such form.
 pub(crate) const SCRIPT_CAP: usize = 64;
 
 /// A kind of block the reader holds back until it closes.
@@ -577,15 +582,20 @@ pub(crate) struct Hang {
     pub(crate) columns: usize,
 }
 
-/// How the line `row` hangs when it wraps, where it opens with a quote's bar
-/// or an item's mark.
+/// What a line of a `<details>` block's body stands in front of its words
+/// with: two quiet columns, so it is told apart from prose that is indented.
+const BODY_LEAD: &str = "  ";
+
+/// How the line `row` hangs when it wraps, where it opens with a quote's bar,
+/// an item's mark or the lead of a `<details>` block's body.
 ///
 /// The bar of a quote or of an alert, the mark of a bullet or a task and the
 /// number of a numbered item are what this reader draws in front of an item's
 /// words, each followed by the space that parts it from them. Rows after the
 /// first stand the bar again where there was one and leave the columns of the
 /// rest blank, so a number of two digits hangs two columns further than one of
-/// one, and the indentation that nested the item is kept with it.
+/// one, and the indentation that nested the item is kept with it. The two
+/// columns a `<details>` block's body is set in by are left blank the same way.
 ///
 /// `None` for a line that opens with none of them: it wraps flush, as prose
 /// does. A mark with no space after it is not one.
@@ -596,7 +606,12 @@ pub(crate) fn hang(row: &Row) -> Option<Hang> {
     let mut spans = row.spans().peekable();
 
     while let Some(&(slot, text)) = spans.peek() {
-        if text.bytes().all(|byte| byte == b' ') {
+        if slot == Slot::Quiet && text == BODY_LEAD {
+            prefix.push(Slot::Quiet, text);
+            lead += text.len();
+            columns += text.len();
+            hung = true;
+        } else if text.bytes().all(|byte| byte == b' ') {
             prefix.push(Slot::Plain, text);
             lead += text.len();
             columns += text.len();
@@ -1125,6 +1140,10 @@ struct Line {
     /// Whether the line is a footnote's definition, from its number on, so
     /// the rest of it is a note and quiet.
     noted: bool,
+    /// Whether the one space between a note's number and its text is still
+    /// owed: whatever spaces were written after the colon are not drawn, and
+    /// this one is, before the first thing that is.
+    gap: bool,
     /// Whether a `<kbd>` tag is open, so what follows is a key, drawn in the
     /// code slot as written until its closing tag or the end of the line.
     key: bool,
@@ -1430,8 +1449,8 @@ fn spelled(text: &str) -> Spelled {
     }
 }
 
-/// A footnote's label, as the answer wrote it, and whether its definition has
-/// been read.
+/// A footnote's label, in lower case, and whether its definition has been
+/// read.
 #[derive(Debug, Clone)]
 struct Note {
     label: String,
@@ -1504,8 +1523,10 @@ enum Shape {
 /// How much of a tag `written`, from its `<` on, has spelled.
 ///
 /// A name in any letter case, then `>` straight after it or after whitespace
-/// and attributes that hold no `<`; and `<br/>` or `<br />`. A closing tag is
-/// the same with a `/` after the `<`.
+/// and attributes; and `<br/>` or `<br />`. A closing tag is the same with a
+/// `/` after the `<`. A value quoted after an `=` is passed over to its
+/// closing quote, so a `<` or `>` in it neither spoils nor ends the tag, and
+/// one left open leaves the tag never whole.
 fn shape(written: &str) -> Shape {
     let Some(rest) = written.strip_prefix('<') else {
         return Shape::Not;
@@ -1533,17 +1554,53 @@ fn shape(written: &str) -> Shape {
         ('>', ">") => whole,
         ('/', "/") if name == Name::Br && !closing => Shape::Partly,
         ('/', "/>") if name == Name::Br && !closing => whole,
-        (first, attributes) if first.is_whitespace() => {
-            if attributes.ends_with('>') {
-                whole
-            } else if attributes.contains('<') {
-                Shape::Not
-            } else {
-                Shape::Partly
-            }
-        }
+        (first, attributes) if first.is_whitespace() => match ended(attributes) {
+            Some(true) => whole,
+            Some(false) => Shape::Partly,
+            None => Shape::Not,
+        },
         _ => Shape::Not,
     }
+}
+
+/// The tag that closes a `<details>` block.
+const CLOSES_DETAILS: Tag = Tag {
+    name: Name::Details,
+    closing: true,
+};
+
+/// Whether `line` is nothing but the tag that closes a `<details>` block,
+/// written at the margin and no longer than [`TAG_CAP`], with only blanks
+/// after it.
+fn closes_details(line: &str) -> bool {
+    let line = line.trim_end_matches([' ', '\t']);
+    line.chars().count() <= TAG_CAP && shape(line) == Shape::Whole(CLOSES_DETAILS)
+}
+
+/// Whether a tag's `attributes` end it: `Some(true)` where its `>` is the last
+/// of them, `Some(false)` where more may follow, and `None` where a `<` or a
+/// `>` before the last spoils the tag. Neither counts inside a quoted value.
+fn ended(attributes: &str) -> Option<bool> {
+    let (mut quote, mut valued) = (None, false);
+    let mut characters = attributes.chars().peekable();
+    while let Some(character) = characters.next() {
+        if let Some(open) = quote {
+            if character == open {
+                quote = None;
+            }
+            continue;
+        }
+        match character {
+            '"' | '\'' if valued => quote = Some(character),
+            '>' => return characters.peek().is_none().then_some(true),
+            '<' => return None,
+            _ => {}
+        }
+        if !character.is_whitespace() {
+            valued = character == '=';
+        }
+    }
+    Some(false)
 }
 
 /// The character `character` is written with in a `<sub>` run, or in a
@@ -2953,6 +3010,15 @@ impl Markdown {
         room: usize,
         say: &mut dyn FnMut(Slot, &str, Option<&str>),
     ) -> bool {
+        if character == '\n'
+            && let Some((rows, line)) = self.closed_under(&table)
+        {
+            self.lays(&Table::of(&rows), room, say);
+            self.line = Line::default();
+            self.started = false;
+            self.reads(CLOSES_DETAILS, &line, say);
+            return false;
+        }
         let lines = table.lined();
         match table.sees(character) {
             Sight::Keep => {
@@ -2990,6 +3056,19 @@ impl Markdown {
                 }
             }
         }
+    }
+
+    /// What a bare table's body holds before the line it is filling, and that
+    /// line, where the line is nothing but the tag that closes the
+    /// `<details>` block the table stands in: it ends the table, and is no row
+    /// of it.
+    fn closed_under(&self, table: &Table) -> Option<(String, String)> {
+        if !self.folded || table.lined() < 2 {
+            return None;
+        }
+        let source = table.source();
+        let (rows, line) = source.rsplit_once('\n')?;
+        closes_details(line).then(|| (format!("{rows}\n"), line.to_owned()))
     }
 
     /// Takes the line a row of `=` or `-` stood under back, to be said again as
@@ -3057,7 +3136,8 @@ impl Markdown {
         }
     }
 
-    /// Draws the bullet's own mark, where one is owed.
+    /// Draws the bullet's own mark, where one is owed, and the space a note's
+    /// number owes its text.
     ///
     /// Called immediately before the first thing on the item reaches the
     /// terminal, whichever path that is — a run of prose, a link that arrived
@@ -3067,6 +3147,9 @@ impl Markdown {
         self.broke(say);
         self.pay_bar(say);
         self.fold(say);
+        if std::mem::take(&mut self.line.gap) {
+            say(self.slot(), " ", None);
+        }
         if self.line.marked != Marked::Owed {
             return;
         }
@@ -3438,7 +3521,11 @@ impl Markdown {
     /// The number of the footnote `label`, numbering it if it is new, or
     /// `None` where it is to be shown as written: a second definition of one
     /// label, or a new label past [`FOOTNOTE_CAP`].
+    ///
+    /// A label is the same label in any letter case, so it is kept in lower
+    /// case and each counts once against the cap.
     fn number(&mut self, label: &str, defining: bool) -> Option<usize> {
+        let label: String = label.chars().flat_map(char::to_lowercase).collect();
         if let Some(at) = self.notes.iter().position(|note| note.label == label) {
             let note = self.notes.get_mut(at)?;
             if defining {
@@ -3453,7 +3540,7 @@ impl Markdown {
             return None;
         }
         self.notes.push(Note {
-            label: label.to_owned(),
+            label,
             defined: defining,
         });
         Some(self.notes.len())
@@ -3484,6 +3571,7 @@ impl Markdown {
         if defining {
             self.line.noted = true;
             self.say(&cited, say);
+            self.line.gap = true;
             return Some(true);
         }
         match self.glyphs {
@@ -3518,7 +3606,7 @@ impl Markdown {
         let Some(mut written) = self.tag.take() else {
             return false;
         };
-        if character == '\n' || written.len() + character.len_utf8() > TAG_CAP {
+        if character == '\n' || written.chars().count() >= TAG_CAP {
             self.untag(&written, say);
             return false;
         }
@@ -3720,7 +3808,7 @@ impl Markdown {
             self.bar(say);
         }
         if self.line.fold == Fold::Drawn {
-            say(Slot::Plain, "  ", None);
+            say(Slot::Quiet, BODY_LEAD, None);
         }
     }
 
@@ -3742,7 +3830,7 @@ impl Markdown {
     }
 
     /// Sets a line of a `<details>` block's body two columns in, once, before
-    /// the first thing on it.
+    /// the first thing on it, with a lead every row it wraps onto hangs under.
     ///
     /// A paragraph's line only: a quote, an item of a list, a heading, a
     /// summary, code and every block are drawn where they always are.
@@ -3758,7 +3846,7 @@ impl Markdown {
             && !self.line.heading
             && !self.line.summary;
         self.line.fold = if folds {
-            say(Slot::Plain, "  ", None);
+            say(Slot::Quiet, BODY_LEAD, None);
             Fold::Drawn
         } else {
             Fold::Not
@@ -3907,9 +3995,11 @@ impl Markdown {
 
         // A line that has said nothing by now is blank, or a tag's alone,
         // and is not set in; what is still held is said below, and is.
-        // A break with nothing after it on its line is the line's own.
+        // A break with nothing after it on its line is the line's own, and a
+        // note with no text owes no space after its number.
         if self.link.is_none() && !matches!(self.probe, Probe::Probing(_)) {
             self.line.broken = false;
+            self.line.gap = false;
             if self.line.fold == Fold::Owed {
                 self.line.fold = Fold::Not;
             }
@@ -3928,7 +4018,12 @@ impl Markdown {
             spill(&link, say);
         }
         if let Some(table) = self.table.take() {
-            self.lays(&table, room, say);
+            match self.closed_under(&table) {
+                // The tag closes the block, which the message's end does as
+                // well, so only the rows above it are drawn.
+                Some((rows, _)) => self.lays(&Table::of(&rows), room, say),
+                None => self.lays(&table, room, say),
+            }
         }
 
         // A line that could have opened display math and never said more.
@@ -4098,6 +4193,18 @@ impl Markdown {
     /// out, which is every run in every answer that is not code.
     fn say(&mut self, text: &str, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         if text.is_empty() {
+            return;
+        }
+
+        // A note's text stands one space after its number, however many
+        // were written after the colon, and the space goes out with it.
+        if self.line.gap {
+            let text = text.trim_start_matches([' ', '\t']);
+            if text.is_empty() {
+                return;
+            }
+            self.line.gap = false;
+            self.say(&format!(" {text}"), say);
             return;
         }
 

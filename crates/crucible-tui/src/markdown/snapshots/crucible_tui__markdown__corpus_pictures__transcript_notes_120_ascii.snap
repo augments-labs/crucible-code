@@ -5,7 +5,7 @@ expression: "pictured(\"notes\", 120, Glyphs::Ascii)"
 A claim with a source.<Quiet>[1]</> Another claim, defined later.<Quiet>[2]</>                                                              
                                                                                                                         
 <Quiet>Details:</> <Bold>More</>                                                                                                           
-  hidden                                                                                                                
+<Quiet>  </>hidden                                                                                                                
                                                                                                                         
 A line broken                                                                                                           
 inside it, a key <Code>[Ctrl]</>, and H<Quiet>₂</>O with x<Quiet>²</>.                                                                               

@@ -3464,3 +3464,50 @@ fn a_native_underline_makes_only_the_last_line_of_a_paragraph_the_heading() {
         ["first line", "second line", "━━━━━━━━━━━"]
     );
 }
+
+#[test]
+fn a_native_details_body_wider_than_the_window_is_two_columns_in_on_every_row() {
+    let wide = format!("<details><summary>Why</summary>\n{LONG_ITEM}\n</details>\nafter\n");
+    let broken =
+        format!("<details><summary>Why</summary>\nthe body<br>{LONG_ITEM}\n</details>\nafter\n");
+    for answer in [wide, broken] {
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            for rows in at_thirty_and_narrowed(glyphs, &answer) {
+                let body = rows
+                    .get(1..rows.len().saturating_sub(1))
+                    .unwrap_or_default();
+                assert!(body.len() > 2, "{glyphs:?} drew {rows:#?}");
+                for row in body {
+                    assert_eq!(indent_of(row), 2, "{glyphs:?} drew {row:?} in {rows:#?}");
+                }
+                assert_eq!(rows.last().map(String::as_str), Some("after"), "{rows:#?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_native_closing_details_tag_after_a_bare_table_is_no_row_of_it_whole_or_cut() {
+    let answer = "<details>\n<summary>S</summary>\n\na | b\n--|--\n1 | 2\n</details>\nafter\n";
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let whole = kept_natively(40, glyphs, &[answer]);
+        assert!(
+            whole.iter().all(|row| !row.contains("details")),
+            "{glyphs:?} drew {whole:#?}"
+        );
+        assert!(
+            whole.iter().any(|row| row.contains('2')),
+            "{glyphs:?} drew {whole:#?}"
+        );
+        assert_eq!(
+            whole.last().map(String::as_str),
+            Some("after"),
+            "{whole:#?}"
+        );
+
+        for cut in (1..answer.len()).filter(|cut| answer.is_char_boundary(*cut)) {
+            let rows = kept_natively(40, glyphs, &[&answer[..cut], &answer[cut..]]);
+            assert_eq!(rows, whole, "{glyphs:?} cut at {cut} of {answer:?}");
+        }
+    }
+}

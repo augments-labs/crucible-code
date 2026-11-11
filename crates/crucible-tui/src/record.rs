@@ -25,11 +25,12 @@
 //! *flows*: the model's answer and a tool's output were written as text and a
 //! wrap is the only thing deciding where a row ends, so the width they are
 //! folded at is whatever the window is now. A line that opens with a quote's
-//! bar or an item's mark is folded under it: the bar is stood again and the
-//! words hang where the first row's began. A component whose source is still
-//! held is *responsive*: a prompt, a diff, or a command's answer drawn from
-//! figures it still holds is laid out again at the new width, and one drawn in
-//! a glyph set, such as a tool's change, in a new glyph set too. A block of an
+//! bar, an item's mark or the two columns a `<details>` block's body is set in
+//! by is folded under it: the bar is stood again and the words hang where the
+//! first row's began. A component whose source is still held is
+//! *responsive*: a prompt, a diff, or a command's answer drawn from figures it
+//! still holds is laid out again at the new width, and one drawn in a glyph
+//! set, such as a tool's change, in a new glyph set too. A block of an
 //! answer is *drawn*: a table, a rule or the rule under a heading arrives as
 //! the source it was written as, which is kept beside what it was laid out as,
 //! and laid out again for a new width or a new glyph set; a new theme only
@@ -1789,9 +1790,10 @@ impl Record {
 
 /// The display rows a flowed line comes to at `columns`.
 ///
-/// A line that opens with a quote's bar or an item's mark continues under its
-/// words rather than under its mark, which is [`markdown::hang`]'s to say: the
-/// bar is stood again and the mark's columns are left blank. Any other line is
+/// A line that opens with a quote's bar, an item's mark or a `<details>`
+/// block's body lead continues under its words rather than under its mark,
+/// which is [`markdown::hang`]'s to say: the bar is stood again and the
+/// columns of a mark or a lead are left blank. Any other line is
 /// folded flush, as prose is. A hang as wide as the window leaves the words no
 /// room, so it is not kept and the line folds flush instead. A row of code in
 /// its frame breaks wherever the room runs out, which is

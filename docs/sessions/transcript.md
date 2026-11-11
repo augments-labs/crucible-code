@@ -200,16 +200,19 @@ line of a list item, as in `- > [!NOTE]`.
 A footnote reference such as `[^1]` or `[^note]` is drawn as a number: in
 superscript, `¹`, in the unicode glyph set, and as `[1]` in the quiet grey in
 the ASCII one. Numbers count up from 1 in the order the answer first writes each
-label, whatever the label says. A line that opens with the brackets and a
-colon, after nothing but spaces, as in `[^1]: the source`, is that footnote's
-note, and is drawn quiet behind its number: `¹ the source`. A note written
+label, whatever the label says, and a label is the same label in any letter
+case: `[^Note]` and `[^note]` are one footnote. A line that opens with the
+brackets and a colon, after nothing but spaces, as in `[^1]: the source`, is
+that footnote's note, and is drawn quiet behind its number and one space,
+however many spaces follow the colon: `¹ the source`. A note written
 before or after the reference that uses it takes the same number. In a quote
 or a list item, the brackets are a reference even where a colon follows them.
 
 ## Tags
 
 Six HTML tags are read instead of drawn, in any letter case and with or
-without attributes, so long as those hold no `<` or `>`:
+without attributes, so long as those hold `<` or `>` only inside a quoted
+value, as in `<kbd title="a>b">`:
 
 | Written | Unicode | ASCII |
 | --- | --- | --- |
@@ -217,7 +220,7 @@ without attributes, so long as those hold no `<` or `>`:
 | `H<sub>2</sub>O`, `x<sup>2</sup>` | `H₂O`, `x²` | `H₂O`, `x²` |
 | `a<br>b`, `<br/>`, `<br />` | `b` on the next row | the same |
 | `<summary>Why</summary>` | `▸ Why` | `Details: Why` |
-| `<details>` … `</details>` | the prose between, two columns in | the same |
+| `<details>` … `</details>` | the prose between, two columns in on every row | the same |
 
 A key is drawn in the colour of code, and what it holds is drawn as written:
 `<kbd>&amp;</kbd>` shows `&amp;`. A `<sub>` or `<sup>` is drawn in the quiet
@@ -226,9 +229,11 @@ digits, `+ - = ( )` and a few letters, in both glyph sets. When any character
 between the tags has none, as in `x<sup>2a</sup>`, the text is drawn plain and
 the tags are dropped; so it is when the text runs past 64 characters or its
 closing tag is not on its line. A summary's words are bold behind the mark. A
-paragraph inside `<details>` is drawn two columns in until the first
-`</details>` or the end of the answer; a list, quote, heading, table, code
-block or display formula inside it is drawn where it would be without it.
+paragraph inside `<details>` is drawn two columns in, on every row it wraps
+onto, until the first `</details>` or the end of the answer; a list, quote,
+heading, table, code block or display formula inside it is drawn where it
+would be without it. A line of nothing but `</details>` ends a table written
+without outer bars inside the block, and is never one of its rows.
 
 A line written at the left edge that holds nothing but `<details>` and closing
 tags, such as `</details>` or `</summary>`, draws no row. A line
@@ -252,8 +257,9 @@ Some text is drawn exactly as the model wrote it, rather than as a block:
   whole, and are then shown as written.
 - **A table without its outer bars.** A line such as `name | since` over a
   delimiter row such as `--|--` with the same number of cells is a table. Its
-  rows are the lines after them up to the first blank line, so a table written
-  this way needs a blank line before whatever follows it. A delimiter row with
+  rows are the lines after them up to the first blank line, or inside
+  `<details>` a line of nothing but `</details>`, so a table written this way
+  needs a blank line before whatever follows it. A delimiter row with
   another number of cells, a lone `---`, or a line that only looks like a
   delimiter row in the middle of prose leaves both lines as prose. Nothing
   marks the first line as a header until the delimiter row has arrived, so
@@ -275,7 +281,8 @@ Some text is drawn exactly as the model wrote it, rather than as a block:
   for a label that already has one; and a label first written after 64 others.
 - **Any other tag.** A tag that is not one of the six, such as `<article>` or
   `<b>`, is shown as written, and so is one of the six whose `>` does not come
-  on its line or within 64 characters of its `<`.
+  on its line or within 64 characters of its `<`, as when a quoted value is
+  left open.
 
 A table with more columns than the window can hold is still drawn as a table,
 with each cell folded into the room its column has, however narrow.

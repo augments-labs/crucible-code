@@ -3999,6 +3999,33 @@ fn under_ascii_a_footnote_reference_and_its_note_are_a_quiet_bracketed_number() 
 }
 
 #[test]
+fn a_footnote_label_is_the_same_label_in_any_letter_case() {
+    let answer = "A claim[^Note], again[^NOTE] and[^other].\n\n[^note]: the note\n";
+    assert_eq!(
+        drawn_in(Glyphs::Unicode, answer),
+        "A claim¹, again¹ and².\n\n¹ the note\n"
+    );
+    assert_eq!(
+        drawn_in(Glyphs::Ascii, answer),
+        "A claim[1], again[1] and[2].\n\n[1] the note\n"
+    );
+}
+
+#[test]
+fn a_note_is_its_number_one_space_and_its_text_whatever_followed_the_colon() {
+    for written in ["[^1]:no space\n", "[^1]: no space\n", "[^1]:   no space\n"] {
+        let said = ended_as(Glyphs::Unicode, &[written]);
+        assert_eq!(drawn(&said), "¹ no space\n", "{written:?}");
+        assert_eq!(worn(&said, " no space"), [Slot::Quiet], "{written:?}");
+        assert_eq!(
+            drawn_in(Glyphs::Ascii, written),
+            "[1] no space\n",
+            "{written:?}"
+        );
+    }
+}
+
+#[test]
 fn footnotes_are_numbered_in_the_order_their_labels_first_appear() {
     // A definition after its reference takes the reference's number, and a
     // label used twice is one note.
@@ -4268,6 +4295,65 @@ fn a_details_tag_draws_its_summary_bold_behind_a_quiet_mark_and_its_body_two_col
     assert_eq!(drawn(&ascii), "Details: Why it is\n  the body\nafter\n");
     assert_eq!(worn(&ascii, "Details:"), [Slot::Quiet]);
     assert_eq!(worn(&ascii, "Why it is"), [Slot::Bold]);
+
+    // A body line wider than the window, and the row a `<br>` breaks it onto,
+    // hang under the two columns on every row they fold onto.
+    let wide = "a body line long enough that it has to wrap onto another row";
+    for body in [wide.to_owned(), format!("the body<br>{wide}")] {
+        let answer = format!("<details><summary>Why</summary>\n{body}\n</details>\nafter\n");
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let rows: Vec<String> = corpus_pictures::laid(&answer, 30, glyphs)
+                .iter()
+                .map(Row::text)
+                .collect();
+            let body = rows
+                .get(1..rows.len().saturating_sub(1))
+                .unwrap_or_default();
+            assert!(body.len() > 2, "{glyphs:?} drew {rows:#?}");
+            for row in body {
+                let indent = row.len() - row.trim_start().len();
+                assert_eq!(indent, 2, "{glyphs:?} drew {row:?} in {rows:#?}");
+            }
+            assert_eq!(rows.last().map(String::as_str), Some("after"), "{rows:#?}");
+        }
+    }
+}
+
+#[test]
+fn a_closing_details_tag_alone_on_its_line_ends_a_bare_table_and_is_never_one_of_its_rows() {
+    let table = "<details>\n<summary>S</summary>\n\na | b\n--|--\n1 | 2\n</details>";
+    for answer in [
+        format!("{table}\nafter\n"),
+        format!("{table}\n"),
+        table.to_owned(),
+    ] {
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let rows: Vec<String> = corpus_pictures::laid(&answer, 40, glyphs)
+                .iter()
+                .map(|row| row.text().trim_end().to_owned())
+                .collect();
+            assert!(
+                rows.iter().all(|row| !row.contains("details")),
+                "{glyphs:?} drew {rows:#?} for {answer:?}"
+            );
+            assert!(
+                rows.iter().any(|row| row.contains('2')),
+                "{glyphs:?} drew {rows:#?} for {answer:?}"
+            );
+            if answer.contains("after") {
+                assert_eq!(rows.last().map(String::as_str), Some("after"), "{rows:#?}");
+            }
+
+            for cut in (1..answer.len()).filter(|cut| answer.is_char_boundary(*cut)) {
+                let pieces = [&answer[..cut], &answer[cut..]];
+                assert_eq!(
+                    drawn(&ended_as(glyphs, &pieces)),
+                    drawn(&ended_as(glyphs, &[&answer])),
+                    "{glyphs:?} cut at {cut} of {answer:?}"
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -4324,6 +4410,35 @@ fn a_tag_longer_than_the_tag_cap_is_shown_as_written() {
         drawn_in(Glyphs::Ascii, &answer),
         format!("<kbd data=\"{attribute}\">k\n")
     );
+}
+
+#[test]
+fn the_tag_cap_counts_characters_so_wide_ones_inside_a_tag_spend_one_each() {
+    // `<kbd data="` and `">` are thirteen characters of the tag.
+    let fits = "é".repeat(TAG_CAP - 13);
+    assert_eq!(
+        drawn_in(Glyphs::Ascii, &format!("<kbd data=\"{fits}\">k</kbd>\n")),
+        "[k]\n"
+    );
+
+    let over = "é".repeat(TAG_CAP - 12);
+    assert_eq!(
+        drawn_in(Glyphs::Ascii, &format!("<kbd data=\"{over}\">k</kbd>\n")),
+        format!("<kbd data=\"{over}\">k\n")
+    );
+}
+
+#[test]
+fn a_bracket_inside_a_quoted_attribute_value_neither_ends_nor_spoils_the_tag() {
+    for value in ["\"a>b\"", "'a>b'", "\"a<b\"", "'a<b'"] {
+        let answer = format!("<kbd title={value}>K</kbd>\n");
+        assert_eq!(drawn_in(Glyphs::Ascii, &answer), "[K]\n", "{answer:?}");
+    }
+
+    // A quote left open runs to the end of the line, so the tag never ends
+    // and is shown as written.
+    let open = "<kbd title=\"a>K</kbd>\n";
+    assert_eq!(drawn_in(Glyphs::Ascii, open), open);
 }
 
 #[test]

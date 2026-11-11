@@ -8137,7 +8137,7 @@
     {
       "id": "CASE-TRANSCRIPT-DETAILS",
       "family": "transcript-blocks",
-      "obligation": "A `<details>` block draws its summary bold behind a quiet `\u25b8` in the unicode glyph set and a quiet `Details:` in the ascii one, its body two columns in, and what follows `</details>` at the margin.",
+      "obligation": "A `<details>` block draws its summary bold behind a quiet `\u25b8` in the unicode glyph set and a quiet `Details:` in the ascii one, its body two columns in on every row a line wider than the window folds onto, a `<br>`'s row included, in both glyph sets, and what follows `</details>` at the margin.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
@@ -8145,7 +8145,7 @@
       },
       "case": "markdown::tests::a_details_tag_draws_its_summary_bold_behind_a_quiet_mark_and_its_body_two_columns_in",
       "source": "crates/crucible-tui/src/markdown/tests.rs",
-      "body_sha256": "032ce372380abaf21f80eec74ecb51ae9b1ba1245d63e88c7cb977b89bb832ab",
+      "body_sha256": "d44855bcdaf7d632522e0dafcffe8a54d18878dfd87ee7cf5d7aa5810ad22090",
       "platforms": [
         "linux",
         "macos",
