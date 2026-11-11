@@ -18,10 +18,20 @@ use crate::own_program::{
 };
 use crate::sample::Sample;
 
+/// The top of the file system, where a path that starts there is a full path
+/// on this platform.
+fn top() -> PathBuf {
+    if cfg!(windows) {
+        PathBuf::from("C:\\")
+    } else {
+        PathBuf::from("/")
+    }
+}
+
 /// A home, crucible's home within it and its session logs, none of which is
 /// read from disk.
 fn places() -> (PathBuf, PathBuf, PathBuf) {
-    let home = Path::new("/").join("home").join("someone");
+    let home = top().join("home").join("someone");
     let crucible = home.join(".crucible");
     let sessions = crucible.join("sessions");
     (home, crucible, sessions)
@@ -52,11 +62,11 @@ fn the_own_probe_refuses_a_root_that_is_home_or_never_writable() {
     let (home, _, _) = places();
     let refused = [
         home.join("agent"),
-        Path::new("/").join("agent"),
+        top().join("agent"),
         under(&home, &[".ssh", "agent"]),
         under(&home, &[".rustup", "toolchains", "stable", "bin", "agent"]),
         under(&home, &[".cargo", "agent"]),
-        Path::new("/").join("home").join("agent"),
+        top().join("home").join("agent"),
         under(&home, &["bin", "nested", "agent"]),
     ];
     for program in &refused {
@@ -130,6 +140,31 @@ fn a_guarded_place_at_a_home_search_directory_is_refused() {
         panic!("{decided:?}");
     };
     assert!(why.contains("crucible's own home"), "{why}");
+}
+
+/// A home that is no full path, which no directory compares against, refuses
+/// every root, naming the home, rather than judging it against nothing.
+#[test]
+fn a_root_judged_against_a_relative_home_is_refused() {
+    let tool = under(&top(), &["opt", "tool", "bin"]);
+    for home in [Path::new("someone").to_path_buf(), PathBuf::new()] {
+        let crucible = home.join(".crucible");
+        let sessions = crucible.join("sessions");
+
+        let decided = decided(
+            &tool.join("agent"),
+            &home,
+            &guarded(&home, &crucible, &sessions),
+            Platform::Other,
+            &[],
+        );
+
+        let Root::Refused(why) = decided else {
+            panic!("{decided:?} against {}", home.display());
+        };
+        assert!(why.contains("not a full path"), "{why}");
+        assert!(why.contains(&format!("`{}`", home.display())), "{why}");
+    }
 }
 
 #[test]

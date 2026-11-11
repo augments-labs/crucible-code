@@ -3,14 +3,15 @@
 //!
 //! An own program is no release crucible pinned or reviewed, so the directory
 //! it lies in is decided once, here, for the probe that admits it and for
-//! every launch alike. That directory is refused when it is the user's home or
-//! the top of the file system, or is, lies within or contains a place no agent
-//! is made able to write; the one exception is a home search directory such as
+//! every launch alike. That directory is refused when the user's home it is
+//! judged against is no full path, when it is that home or the top of the
+//! file system, or when it is, lies within or contains a place no agent is
+//! made able to write; the one exception is a home search directory such as
 //! `~/.local/bin`, which may itself be read though it is listed as one, where
-//! no other such place lies there. A directory the sandbox already
-//! lets every program read gets no rule of its own, and any other is given
-//! read-only, never writable. Everything in that directory is readable to the
-//! agent while it runs.
+//! no other such place lies there. A directory the sandbox already lets every
+//! program read gets no rule of its own, and any other is given read-only,
+//! never writable. Everything in that directory is readable to the agent
+//! while it runs.
 //!
 //! [`probe`] is what admits one: started confined, with the network closed and
 //! never without the sandbox, it is sent `initialize` alone, and it is taken
@@ -251,7 +252,8 @@ fn signing_in(row: &AgentRow, started: Started, platform: Platform) -> Told {
 }
 
 /// What the sandbox is told of the directory `program`, a canonical path,
-/// lies in, for its probe and its launch alike: refused where that directory
+/// lies in, for its probe and its launch alike: refused where `home` is no
+/// full path, or where that directory
 /// is `home`, contains it, is `/`, or is, lies within or contains a place no
 /// agent is made able to write, crucible's own home `crucible` and its session
 /// logs `sessions` among them, but for a home search directory against its
@@ -277,6 +279,16 @@ pub(crate) fn decided(
     platform: Platform,
     runtime: &[&str],
 ) -> Root {
+    // A relative home matches no canonical root, so every place under it
+    // would be judged against nothing.
+    if !home.is_absolute() {
+        return Root::Refused(format!(
+            "Your home, `{}`, is not a full path, so no directory can be judged against it, and \
+             the directory of {} is not given to an agent.",
+            home.display(),
+            program.display()
+        ));
+    }
     let Some(root) = program.parent().filter(|root| root.parent().is_some()) else {
         return Root::Refused(format!(
             "{} lies at the top of the file system, which holds every file on it, so its \
