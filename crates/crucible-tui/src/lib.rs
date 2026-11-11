@@ -114,7 +114,7 @@ pub use terminal::ground::asked;
 pub use terminal::keyboard::{Pasting, Spelling};
 pub use terminal::keys::{Characters, Pressed, characters, pressed, waiting};
 pub use terminal::mouse::Reporting;
-pub use terminal::raw::{Raw, RawError};
+pub use terminal::raw::{Raw, RawError, keyed};
 pub use terminal::screen::{Screen, ScreenError};
 #[cfg(unix)]
 pub use terminal::suspend::Suspend;

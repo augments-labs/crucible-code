@@ -25,8 +25,8 @@ sessions never write a plan or ask a question about the world.
 There is nothing to install. What you configure is which calls get through, and
 that is [Permissions](../permissions/index.md).
 
-`ask_user` is always in the list, except in a run whose output is not a
-terminal: there is nobody to ask, so it is neither advertised nor held back. A
+`ask_user` is always in the list, except in a run whose input or output is not
+a terminal: there is nobody to ask, so it is neither advertised nor held back. A
 program driving crucible through its client protocol is the exception to that:
 one that holds questions for later is offered it, as [Asking
 you](asking.md#from-a-program-with-no-terminal) says. It is never held back,

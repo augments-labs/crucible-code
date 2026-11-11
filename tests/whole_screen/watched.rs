@@ -2001,23 +2001,7 @@ impl Watched {
     /// these logs answer can be asked: what is on the disk once nothing is left
     /// to put more there.
     pub(crate) fn recorded(&self) -> String {
-        fn gather(directory: &Path, into: &mut String) {
-            let Ok(entries) = fs::read_dir(directory) else {
-                return;
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    gather(&path, into);
-                } else if path.extension().is_some_and(|kind| kind == "jsonl") {
-                    into.push_str(&fs::read_to_string(&path).unwrap_or_default());
-                }
-            }
-        }
-
-        let mut logs = String::new();
-        gather(&self.home().join("sessions"), &mut logs);
-        logs
+        recorded_in(&self.home())
     }
 
     /// The screen, ready to be compared against the one checked in beside it.
@@ -2325,6 +2309,95 @@ impl Drop for Watched {
         let _ = self.child.wait();
         let _ = fs::remove_dir_all(&self.scratch);
     }
+}
+
+/// Every session log under `home`, one after another.
+fn recorded_in(home: &Path) -> String {
+    fn gather(directory: &Path, into: &mut String) {
+        let Ok(entries) = fs::read_dir(directory) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                gather(&path, into);
+            } else if path.extension().is_some_and(|kind| kind == "jsonl") {
+                into.push_str(&fs::read_to_string(&path).unwrap_or_default());
+            }
+        }
+    }
+
+    let mut logs = String::new();
+    gather(&home.join("sessions"), &mut logs);
+    logs
+}
+
+/// Runs crucible answered by `vendor` with `input` piped in and its output on
+/// a terminal, as `echo go | crucible` does in a window, until it ends, and
+/// gives back every session log it wrote.
+///
+/// Not a [`Watched`]: with nobody at the keys there is no screen to settle on,
+/// only what the run did once it had read its input to the end.
+pub(crate) fn piped_to_a_terminal(case: &str, vendor: &Vendor, input: &[u8]) -> String {
+    let scratch = scratch(case);
+    let home = scratch.join("home");
+    let workspace = working(&scratch);
+    fs::create_dir_all(&home).expect("a scratch home directory");
+    fs::create_dir_all(&workspace).expect("a scratch working directory");
+    fs::write(
+        home.join("config.json"),
+        fixture_document(&document(Some(vendor), None)),
+    )
+    .expect("a configuration file");
+
+    let (near, inside) = pair(80, 24, false);
+    let second = inside.try_clone().expect("a second handle on the far side");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_crucible"))
+        .args(["--model", "anthropic/claude-test-1"])
+        .current_dir(&workspace)
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("HOME", &scratch)
+        .env("TERM", "xterm-256color")
+        .env("NO_COLOR", "1")
+        .env("CRUCIBLE_CODE_HOME", &home)
+        .env("CRUCIBLE_CODE_PROOF_REGISTRY", "empty")
+        .env("ANTHROPIC_API_KEY", "not-a-key-and-nothing-reads-it")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::from(inside))
+        .stderr(Stdio::from(second))
+        .spawn()
+        .expect("crucible starts");
+    child
+        .stdin
+        .take()
+        .expect("its input")
+        .write_all(input)
+        .expect("the input written");
+
+    // Drained so a full terminal never stops it writing; the read ends once
+    // crucible has let go of the far side.
+    let (sender, _drawn) = mpsc::channel();
+    std::thread::spawn(move || read(near, &sender, &AtomicUsize::new(0)));
+
+    let deadline = Instant::now() + CEILING;
+    while child
+        .try_wait()
+        .expect("crucible can be waited on")
+        .is_none()
+    {
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            let logs = recorded_in(&home);
+            let _ = fs::remove_dir_all(&scratch);
+            panic!("crucible was still running {CEILING:?} after its input ended\n{logs}");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let logs = recorded_in(&home);
+    let _ = fs::remove_dir_all(&scratch);
+    logs
 }
 
 /// Opens the pair, sets its size, and puts the far side in raw mode unless

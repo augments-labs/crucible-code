@@ -1413,8 +1413,11 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // the same generation. A registration committed after this point is for the
     // next reader to see, not for a runner already built.
     let catalogue = terms.providers.snapshot();
+    // Settled by the same rule that decides whether keys are read as they are
+    // pressed: a screen with its input from a pipe has nobody to answer on it.
+    let keyed = crucible_tui::keyed();
     let conversation = assemble(&Startup {
-        questions: dock_questions(renderer.is_terminal()),
+        questions: dock_questions(keyed),
         services,
         leaving,
         providers: &catalogue,
@@ -1433,7 +1436,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         plan: &plan,
         asking: std::sync::Arc::new(putting.clone()),
         hosting: &cli.with_mcp,
-        terminal: renderer.is_terminal(),
+        terminal: keyed,
         from: &from,
         stored: &keys,
         subscriptions: &subscriptions,
@@ -1464,11 +1467,11 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
 /// Where the model's questions asked without waiting are held for the dock
 /// over the box, which reads them back through the conversation.
 ///
-/// Nothing where output is not a terminal: there is no dock to answer from,
-/// and a run given no registry and no terminal is not offered the tool for
-/// asking at all.
-fn dock_questions(terminal: bool) -> Option<crucible_app::client::Questions> {
-    terminal.then(crucible_app::client::Questions::new)
+/// Nothing unless the session is a terminal at both ends: with no keys there
+/// is no dock to answer from, and a run given no registry and nobody at the
+/// keys is not offered the tool for asking at all.
+fn dock_questions(keyed: bool) -> Option<crucible_app::client::Questions> {
+    keyed.then(crucible_app::client::Questions::new)
 }
 
 /// What is asked again once the first frame is on the screen, or nothing where

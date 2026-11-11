@@ -763,3 +763,17 @@ fn a_blocking_ask_still_stands_where_the_prompt_was() {
         vendor.ends_the_turn();
     }
 }
+
+#[test]
+fn a_run_reading_its_input_from_a_pipe_is_not_offered_the_question_tool() {
+    // Its output is a terminal, so there is a screen, but there are no keys to
+    // answer from: the dock cannot be reached and a question would only wait.
+    let vendor = Vendor::calling("ask_user", LATER, ENDED);
+    let log = crate::watched::piped_to_a_terminal("docking-piped", &vendor, b"go\n");
+
+    assert!(log.contains(ENDED), "the turn ran to its end\n{log}");
+    assert!(
+        log.contains("no tool named ask_user"),
+        "the question tool was offered with nobody at the keys\n{log}"
+    );
+}
