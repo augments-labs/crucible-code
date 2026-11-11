@@ -1375,7 +1375,7 @@ removable=(
     # translation, the accounts, the test build's registry, the `agent:` rows,
     # the writes, the start-up arm, the switch, and the refusals they raise.
     crates/crucible-app/src/{access,backends,launching,external,outside,probing}.rs
-    crates/crucible-app/src/launching/terminal.rs
+    crates/crucible-app/src/launching/{discovery,terminal}.rs
     crates/crucible-app/src/{proof,content_use,remember,startup,switching}.rs
     crates/crucible-app/src/{conversation,error,lib,client}.rs
     crates/crucible-app/src/client/{accounts,performing,reading}.rs
