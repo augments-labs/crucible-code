@@ -235,6 +235,47 @@ fn deepseek_rows_show_the_version_its_pricing_page_names() {
     );
 }
 
+/// The OpenAI models offered with no price on the published API, each beside
+/// why: one OpenAI's own pages do not price. Every other offered model must be
+/// priced.
+const UNPRICED_OPENAI: &[(&str, &str)] = &[];
+
+#[test]
+fn every_offered_openai_model_is_priced_or_says_why_not() {
+    // The offer list and the price records are written in different crates,
+    // and a model offered with no record runs while `/usage` reads `not
+    // priced`. It is asked on the newest day a record was read, so a record
+    // reviewed since an older day is never read as missing.
+    let openai = serving("openai");
+    let provider = built(openai, &Settings::default());
+    let unpriced: Vec<&str> = openai
+        .models
+        .iter()
+        .map(|model| model.name)
+        .filter(|&name| {
+            let record = provider.prompt_cache_capabilities(name);
+            provider
+                .prompt_cache_pricing(
+                    name,
+                    record.model_revision(),
+                    Some(64_000),
+                    PromptCacheRetentionClass::ProviderDefault,
+                    OpenAi::prices_reviewed(),
+                )
+                .expect("a compiled record is never ambiguous")
+                .is_none()
+        })
+        .collect();
+    let excused: Vec<&str> = UNPRICED_OPENAI.iter().map(|&(name, _)| name).collect();
+
+    assert_eq!(
+        unpriced, excused,
+        "offered with no price on the published API on the newest day in \
+         `PRICES_REVIEWED`: give the model a record in force on that day, or list \
+         it in `UNPRICED_OPENAI` with why"
+    );
+}
+
 #[test]
 fn a_provider_holding_a_key_both_ways_is_one_provider_rather_than_two() {
     // Somebody who logged in and then exported the same key — which is what

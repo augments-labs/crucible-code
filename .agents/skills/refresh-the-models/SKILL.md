@@ -96,12 +96,22 @@ Read the provider's own pages for each line of the report:
    report names and the reason to `PASSED_FAMILIES`. That quiets every model of
    it, one released later included, until the row is removed, so remove it
    when the family is worth another look. To decline only one model of the
-   family, add that model to `PASSED` with the reason instead. The check never
-   adds a family: it is chosen by hand.
+   family, add that model to `PASSED` with the reason instead; a `labs-` model
+   of Mistral is settled by 8, not by a `PASSED` row. The check never adds a
+   family: it is chosen by hand.
 7. **A revised model.** The database dates an offered model after the
    provider's `reviewed` day, so the vendor released or revised it under the
    same name. Re-read the model's records against the vendor's pages as in 1,
    then set the provider's `reviewed` as in 5.
+8. **A Preview model by its name.** Mistral's terms count a `labs-` model as a
+   Preview model it may train on, so the check reports each one the database
+   lists, whatever it can do, until it is held or declined; a family declined
+   in 6 does not quiet it. Hold it by name as the content-use hold in 1 says,
+   and, where crucible does not offer it, add it to `HELD_UNOFFERED` in
+   `crates/crucible-app/src/content_use/tests.rs`. A name typed in `/model` is
+   sent as typed, so a model only declined is sent with nothing asked first:
+   add it to `PASSED` with the reason only where the vendor's terms no longer
+   count it a Preview model.
 
 ## Regenerate and prove
 
