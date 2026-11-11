@@ -780,7 +780,8 @@ pub enum AgentsError {
     /// Trying the user's own program of the agent starts it, and no
     /// conversation lent the steps that start it.
     #[error(
-        "trying your own {0} starts it, which needs a conversation to start it in; nothing          was started"
+        "trying your own {0} starts it, which needs a conversation to start it in; \
+         nothing was started"
     )]
     Untried(AgentKey),
     /// The method's key has no name to be kept under.
@@ -4257,5 +4258,16 @@ mod tests {
         assert!(!reviewed(true, How::Installed, Released::Catalog));
         assert!(!reviewed(false, How::Updated, Released::Catalog));
         assert!(reviewed(true, How::Updated, Released::Catalog));
+    }
+
+    #[test]
+    fn a_try_with_no_conversation_says_so_in_one_sentence() {
+        let agent = AgentKey::new("goose").expect("a key");
+
+        assert_eq!(
+            AgentsError::Untried(agent).to_string(),
+            "trying your own goose starts it, which needs a conversation to start it in; \
+             nothing was started"
+        );
     }
 }
