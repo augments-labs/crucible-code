@@ -4393,11 +4393,11 @@ fn other_tags_and_near_misses_of_the_six_are_shown_as_written() {
     let answer = "An <article> tag, a <b>bold</b>, <detail>, <kbdx>, <subs>, <br-x>, a < b, a<3\n";
     assert_eq!(drawn_in(Glyphs::Unicode, answer), answer);
 
+    // An address in angle brackets is no tag: it is read as the address it is,
+    // without its brackets.
     let said = ended_as(Glyphs::Unicode, &["<https://example.test/a>\n"]);
-    assert_eq!(drawn(&said), "<https://example.test/a>\n");
-    // The address is read as it was before any tag was: the bracket that
-    // closes it is part of the word it ends.
-    assert_eq!(worn(&said, "https://example.test/a>"), [Slot::Link]);
+    assert_eq!(drawn(&said), "https://example.test/a\n");
+    assert_eq!(worn(&said, "https://example.test/a"), [Slot::Link]);
 }
 
 #[test]
@@ -4503,6 +4503,479 @@ fn an_answer_cut_anywhere_draws_the_footnotes_and_tags_the_whole_answer_draws() 
 
             assert_eq!(drawn(&said), drawn(&whole), "{glyphs:?} cut at {cut}");
             assert_eq!(slots(&said), slots(&whole), "{glyphs:?} cut at {cut}");
+        }
+    }
+}
+
+/// Where an answer's links point, as one answer cut into these deltas draws
+/// them.
+fn pointing_in(deltas: &[&str]) -> Vec<(Slot, String, Option<String>)> {
+    let mut markdown = Markdown::default();
+    let mut said = Vec::new();
+    let mut into = |slot, text: &str, link: Option<&str>| {
+        said.push((slot, text.to_owned(), link.map(str::to_owned)));
+    };
+    for delta in deltas {
+        markdown.read_runs(delta, ROOM, &mut into);
+    }
+    markdown.finish_runs(ROOM, &mut into);
+    said
+}
+
+#[test]
+fn a_reference_link_defined_earlier_reads_as_its_words() {
+    let said =
+        pointing("[docs]: https://example.test/d\nsee [the guide][docs], [docs][] and [Docs].\n");
+
+    assert_eq!(
+        wrote(&said),
+        "https://example.test/d\nsee the guide, docs and Docs.\n"
+    );
+    assert_eq!(
+        points(&said),
+        [
+            ("https://example.test/d", "https://example.test/d"),
+            ("the guide", "https://example.test/d"),
+            ("docs", "https://example.test/d"),
+            ("Docs", "https://example.test/d"),
+        ]
+    );
+}
+
+#[test]
+fn a_reference_link_is_read_in_a_quote_a_list_item_and_emphasis() {
+    let said = pointing("[d]: https://example.test/d\n> a [d]\n- a *[d][d]*\n");
+
+    assert_eq!(wrote(&said), "https://example.test/d\n│ a d\n• a d\n");
+    assert_eq!(
+        points(&said)
+            .iter()
+            .filter(|(text, _)| *text == "d")
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn the_first_definition_of_a_label_wins() {
+    let said = pointing("[a]: https://one.test\n[A]: https://two.test\nsee [a]\n");
+
+    assert_eq!(wrote(&said), "https://one.test\nhttps://two.test\nsee a\n");
+    assert_eq!(
+        points(&said),
+        [
+            ("https://one.test", "https://one.test"),
+            ("https://two.test", "https://two.test"),
+            ("a", "https://one.test"),
+        ]
+    );
+}
+
+#[test]
+fn brackets_with_no_earlier_definition_stay_as_written() {
+    for written in [
+        "[TODO] fix this\n",
+        "an array is arr[0] and no more\n",
+        "see [guide][g] and [guide][] and [guide]\n",
+        "[x]: not an address\n",
+        "[x]: https://example.test is an address and some prose\n",
+        "[x]:\n",
+    ] {
+        let said = pointing(written);
+        assert_eq!(wrote(&said), written, "{written:?}");
+        assert!(
+            points(&said)
+                .iter()
+                .all(|(text, _)| text.starts_with("http")),
+            "{written:?} linked {:?}",
+            points(&said)
+        );
+    }
+
+    // A definition after its reference ties nothing up: the reference was
+    // drawn before the definition was read.
+    let said = pointing("see [guide]\n\n[guide]: https://example.test/g\n");
+    assert!(wrote(&said).starts_with("see [guide]\n\n"), "{said:?}");
+    assert_eq!(
+        points(&said),
+        [("https://example.test/g", "https://example.test/g")]
+    );
+}
+
+#[test]
+fn a_label_nobody_defined_stays_written_beside_one_somebody_did() {
+    let said = pointing("[a]: https://example.test/a\nsee [b] and [b][a] and [a][b]\n");
+
+    assert_eq!(
+        wrote(&said),
+        "https://example.test/a\nsee [b] and b and [a][b]\n"
+    );
+}
+
+#[test]
+fn a_definition_that_is_no_single_address_is_shown_as_written() {
+    // A title or prose after the address, an address in angle brackets and a
+    // target that is no address make no definition: the line is as it was
+    // before definitions were read, and nothing is tied to it.
+    for written in [
+        "[a]: https://example.test/a \"The title\"\nsee [a]\n",
+        "[a]: some prose\nsee [a]\n",
+        "[a]: https://\nsee [a]\n",
+        "[a]:https://example.test/a extra\nsee [a]\n",
+    ] {
+        assert_eq!(wrote(&pointing(written)), written, "{written:?}");
+    }
+
+    // The same line with its blanks only is one.
+    let said = pointing("[a]:   https://example.test/a  \t\nsee [a]\n");
+    assert_eq!(wrote(&said), "https://example.test/a\nsee a\n");
+}
+
+#[test]
+fn a_definition_line_keeps_the_markup_a_line_that_is_not_one_would_have() {
+    let said = pointing("[TODO]: **fix** the `thing`\n");
+
+    assert_eq!(wrote(&said), "[TODO]: fix the thing\n");
+    assert_eq!(
+        slots_of(&said),
+        [
+            Slot::Plain,
+            Slot::Bold,
+            Slot::Plain,
+            Slot::Code,
+            Slot::Plain
+        ]
+    );
+}
+
+/// The slots a run of `pointing`'s said, with runs of the same one collapsed.
+fn slots_of(said: &[(Slot, String, Option<String>)]) -> Vec<Slot> {
+    said.iter().fold(Vec::new(), |mut worn, (slot, ..)| {
+        if worn.last() != Some(slot) {
+            worn.push(*slot);
+        }
+        worn
+    })
+}
+
+#[test]
+fn a_definition_past_the_definition_cap_links_nothing_and_is_shown_as_written() {
+    let defined: Vec<String> = (0..=DEFINITION_CAP)
+        .map(|at| format!("[l{at}]: https://example.test/{at}\n"))
+        .collect();
+    let answer = format!("{}see [l0] and [l{DEFINITION_CAP}]\n", defined.concat());
+
+    let said = pointing(&answer);
+    let last = format!("[l{DEFINITION_CAP}]: https://example.test/{DEFINITION_CAP}\n");
+    assert!(wrote(&said).contains(&last), "{said:?}");
+    assert!(
+        wrote(&said).ends_with(&format!("see l0 and [l{DEFINITION_CAP}]\n")),
+        "{said:?}"
+    );
+    assert!(
+        points(&said)
+            .iter()
+            .any(|(text, link)| *text == "l0" && *link == "https://example.test/0")
+    );
+    assert!(
+        points(&said)
+            .iter()
+            .all(|(text, _)| *text != format!("l{DEFINITION_CAP}")),
+        "{said:?}"
+    );
+}
+
+#[test]
+fn definitions_past_the_byte_cap_link_nothing_and_are_shown_as_written() {
+    let path = "p".repeat(1000);
+    let each = DEFINITION_BYTES / 1000 + 1;
+    let defined: Vec<String> = (0..each)
+        .map(|at| format!("[b{at}]: https://example.test/{path}\n"))
+        .collect();
+    let answer = format!("{}see [b0] and [b{}]\n", defined.concat(), each - 1);
+
+    let said = pointing(&answer);
+    let last = format!("[b{}]: https://example.test/{path}\n", each - 1);
+    assert!(
+        wrote(&said).contains(&last),
+        "past the cap it is written out"
+    );
+    assert!(
+        wrote(&said).ends_with(&format!("see b0 and [b{}]\n", each - 1)),
+        "the first is tied and the last is not"
+    );
+}
+
+#[test]
+fn an_angle_bracket_address_drops_its_brackets_from_text_and_link() {
+    let said = pointing(
+        "see <https://example.test/a>, <http://example.test/b?x=1> and <me@example.test>.\n",
+    );
+
+    assert_eq!(
+        wrote(&said),
+        "see https://example.test/a, http://example.test/b?x=1 and me@example.test.\n"
+    );
+    assert_eq!(
+        points(&said),
+        [
+            ("https://example.test/a", "https://example.test/a"),
+            ("http://example.test/b?x=1", "http://example.test/b?x=1"),
+            ("me@example.test", "mailto:me@example.test"),
+        ]
+    );
+}
+
+#[test]
+fn an_angle_bracket_that_is_no_address_is_shown_as_written() {
+    for written in [
+        "<https://>\n",
+        "<https://x y>\n",
+        "<https://x\n",
+        "<me@>\n",
+        "<@example.test>\n",
+        "<a@b@c.test>\n",
+        "<a b@c.test>\n",
+        "<foo>\n",
+        "a < b and c > d\n",
+        "Vec<String> and x<y\n",
+        "<<https\n",
+        "<sub@\n",
+    ] {
+        let said = pointing(written);
+        assert_eq!(wrote(&said), written, "{written:?}");
+        assert!(
+            points(&said)
+                .iter()
+                .all(|(_, link)| !link.starts_with("mailto:")),
+            "{written:?} linked {:?}",
+            points(&said)
+        );
+    }
+
+    // What the line held is still read as the line would have been: the
+    // address inside it is as bare as any other.
+    let said = pointing("<https://x.test/a and more\n");
+    assert_eq!(points(&said), [("https://x.test/a", "https://x.test/a")]);
+}
+
+#[test]
+fn an_angle_bracket_address_is_shown_as_written_in_code_and_inside_a_key_or_script() {
+    for written in [
+        "`<https://x.test>`\n",
+        "```\n<https://x.test>\n```\n",
+        "<kbd><https://x.test></kbd>\n",
+    ] {
+        let said = pointing(written);
+        assert!(wrote(&said).contains("https://x.test"), "{written:?}");
+        assert!(
+            points(&said).iter().all(|(_, link)| !link.is_empty()),
+            "{written:?}"
+        );
+        assert!(
+            points(&said).iter().all(|(text, _)| !text.contains('>')),
+            "{written:?}"
+        );
+    }
+    assert!(wrote(&pointing("`<https://x.test>`\n")).starts_with("<https://x.test>"));
+}
+
+#[test]
+fn an_angle_bracket_address_past_the_most_a_hold_may_keep_is_shown_as_written() {
+    let long = format!("<https://example.test/{}>\n", "a".repeat(MOST));
+    let said = pointing(&long);
+
+    assert_eq!(wrote(&said), long);
+    assert!(points(&said).iter().all(|(text, _)| !text.contains('>')));
+}
+
+#[test]
+fn a_www_address_in_prose_links_to_its_https_address() {
+    let said = pointing("see www.example.test/docs, (www.example.test) and\nwww.example.test.\n");
+
+    assert_eq!(
+        wrote(&said),
+        "see www.example.test/docs, (www.example.test) and\nwww.example.test.\n"
+    );
+    assert_eq!(
+        points(&said),
+        [
+            ("www.example.test/docs", "https://www.example.test/docs"),
+            ("www.example.test", "https://www.example.test"),
+            ("www.example.test", "https://www.example.test"),
+        ]
+    );
+}
+
+#[test]
+fn a_word_that_only_looks_like_a_www_address_is_left_where_it_was() {
+    for written in [
+        "the www is wide\n",
+        "awww.example.test\n",
+        "see www. and www.-x and www\n",
+        "x.www.example.test\n",
+        "`www.example.test` and [www.example.test](https://other.test)\n",
+    ] {
+        let said = pointing(written);
+        assert!(
+            points(&said)
+                .iter()
+                .all(|(text, link)| !text.starts_with("www") || *link == "https://other.test"),
+            "{written:?} linked {:?}",
+            points(&said)
+        );
+    }
+    assert_eq!(
+        wrote(&pointing("awww.example.test\n")),
+        "awww.example.test\n"
+    );
+}
+
+#[test]
+fn an_answer_cut_anywhere_draws_the_reference_links_and_angle_addresses_the_whole_answer_draws() {
+    // Inside a definition's label, between its bracket and its colon, inside a
+    // reference's two labels, and inside each angle address.
+    let answer = "[Docs]: https://example.test/d\n\
+                  see [the guide][docs] and [docs][] and [docs] and [no][docs.\n\
+                  at <https://example.test/a>, <me@example.test>, <https://x y> and www.example.test.\n";
+    let whole = pointing_in(&[answer]);
+    assert!(
+        points(&whole)
+            .iter()
+            .any(|(text, link)| { *text == "the guide" && *link == "https://example.test/d" }),
+        "{whole:?}"
+    );
+    assert!(
+        points(&whole)
+            .iter()
+            .any(|(_, link)| *link == "mailto:me@example.test")
+    );
+
+    for cut in (1..answer.len()).filter(|cut| answer.is_char_boundary(*cut)) {
+        let (first, second) = answer.split_at(cut);
+        let said = pointing_in(&[first, second]);
+        assert_eq!(wrote(&said), wrote(&whole), "cut at {cut}");
+        assert_eq!(points(&said), points(&whole), "cut at {cut}");
+        assert_eq!(slots_of(&said), slots_of(&whole), "cut at {cut}");
+    }
+
+    let mut markdown = Markdown::default();
+    let mut said = Vec::new();
+    let mut into = |slot, text: &str, link: Option<&str>| {
+        said.push((slot, text.to_owned(), link.map(str::to_owned)));
+    };
+    for character in answer.chars() {
+        let mut delta = [0; 4];
+        markdown.read_runs(character.encode_utf8(&mut delta), ROOM, &mut into);
+    }
+    markdown.finish_runs(ROOM, &mut into);
+    assert_eq!(wrote(&said), wrote(&whole));
+    assert_eq!(points(&said), points(&whole));
+}
+
+/// The blocks and the standing text of an answer arriving as these deltas.
+fn headed_in(deltas: &[&str]) -> (Vec<Block>, String) {
+    let mut markdown = Markdown::default();
+    let (mut blocks, mut runs) = (Vec::new(), String::new());
+    let mut say = |said: Said<'_>| match said {
+        Said::Run { text, .. } => runs.push_str(text),
+        Said::Block(block) => blocks.push(block),
+        Said::Retract => runs.push_str(RETRACTED),
+    };
+    for delta in deltas {
+        markdown.read(delta, ROOM, &mut say);
+    }
+    markdown.finish(ROOM, &mut say);
+    (blocks, standing_text(&runs))
+}
+
+#[test]
+fn a_title_or_a_header_keeps_every_character_of_the_address_or_bracket_it_held() {
+    // The block is laid out from the source the line was written as, so what
+    // a held address, definition or bracket took must be in it, however the
+    // answer is cut. Each answer names its last block: a heading over the
+    // lines after the first `skip`, or the table that is the whole answer.
+    let headings = [
+        ("See <https://a.test/x> now\n===\n", Level::One, 0),
+        ("[a]: https://a.test/x\n===\n", Level::One, 0),
+        ("<me@a.test> now\n---\n", Level::Two, 0),
+        ("# See <https://a b c>\n", Level::One, 0),
+        ("See <https://a b c>\n===\n", Level::One, 0),
+        ("[a]: https://a.test/x and\n---\n", Level::Two, 0),
+        ("[d]: https://d.test\n[a][b] [c][d\n===\n", Level::One, 1),
+        ("[a]: see <https://x.test/p> now\n===\n", Level::One, 0),
+        ("[1]: <https://x.test/p>\n---\n", Level::Two, 0),
+        ("[a]: x <yy z\n===\n", Level::One, 0),
+    ];
+    let tables = [
+        "<https://a.test/x> | b\n--- | ---\n1 | 2\n",
+        "[a]: https://a.test/x | b\n--- | ---\n1 | 2\n",
+        "<https://a b | c\n--- | ---\n1 | 2\n",
+        "[a]: <https://x.test/p> | b\n--- | ---\n1 | 2\n",
+        "[a]: me <me@a.test> | b\n--- | ---\n1 | 2\n",
+        "[a]: x <yy | z\n--- | ---\n1 | 2\n",
+    ];
+    let wanted = headings
+        .map(|(answer, level, skip)| {
+            let lines: Vec<&str> = answer.lines().skip(skip).collect();
+            (answer, heading(level, &lines.join("\n")))
+        })
+        .into_iter()
+        .chain(tables.map(|answer| {
+            let kind = Kind::Table;
+            let source = answer.to_owned();
+            (
+                answer,
+                Block {
+                    kind,
+                    source,
+                    closed: true,
+                },
+            )
+        }));
+    for (answer, block) in wanted {
+        let whole = headed_in(&[answer]);
+        assert_eq!(whole.0.last(), Some(&block), "{answer:?}");
+        for cut in (1..answer.len()).filter(|cut| answer.is_char_boundary(*cut)) {
+            let (first, second) = answer.split_at(cut);
+            assert_eq!(
+                headed_in(&[first, second]),
+                whole,
+                "{answer:?} cut at {cut}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_link_or_a_footnote_reference_after_brackets_reads_as_it_does_with_no_definition_above() {
+    for written in [
+        "see [a][b](https://x.test/p) now\n",
+        "A claim [x][^1].\n\n[^1]: note\n",
+        "see [a][b] and [c][^1]\n\n[^1]: note\n",
+    ] {
+        let with = pointing(&format!("[d]: https://d.test\n{written}"));
+        let without = pointing(written);
+        assert_eq!(
+            wrote(&with).strip_prefix("https://d.test\n"),
+            Some(wrote(&without).as_str()),
+            "{written:?}"
+        );
+        assert_eq!(
+            points(&with)
+                .into_iter()
+                .filter(|(_, link)| *link != "https://d.test")
+                .collect::<Vec<_>>(),
+            points(&without),
+            "{written:?}"
+        );
+
+        let answer = format!("[d]: https://d.test\n{written}");
+        for cut in (1..answer.len()).filter(|cut| answer.is_char_boundary(*cut)) {
+            let (first, second) = answer.split_at(cut);
+            let said = pointing_in(&[first, second]);
+            assert_eq!(wrote(&said), wrote(&with), "{written:?} cut at {cut}");
+            assert_eq!(points(&said), points(&with), "{written:?} cut at {cut}");
         }
     }
 }

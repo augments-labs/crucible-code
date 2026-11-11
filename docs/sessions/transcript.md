@@ -208,6 +208,36 @@ however many spaces follow the colon: `¹ the source`. A note written
 before or after the reference that uses it takes the same number. In a quote
 or a list item, the brackets are a reference even where a colon follows them.
 
+## Reference links and addresses
+
+A line that is a label in brackets, a colon and one address, such as
+`[docs]: https://example.com/docs`, defines that label, and is drawn as the
+address, a link. A reference written after it, `[the docs][docs]`,
+`[the docs][]` or `[docs]`, is drawn as its words, a link to that address. A
+label is the same label in any letter case, as a footnote's is: `[Docs]` and
+`[docs]` are one. A label defined twice keeps its first address.
+
+Only a label defined above the reference ties up. A definition written after
+the reference, or none, leaves the brackets as written, so `[TODO]` and `arr[0]`
+stay as they are. An answer keeps 64 definitions, and 16 KiB of their labels
+and addresses; the 65th definition, or the one that would pass the 16 KiB,
+links nothing and is shown as written. That is far more than an answer defines,
+and a line is held for at most 4 KiB while it may be one. A definition with a
+title after its address, an address in angle brackets, or an address that is not
+spelled with a scheme such as `https://` is not read: the line is drawn as
+written. References and definitions are read where footnotes are, and shown as
+written in a heading, a table's cell and a block drawn as written.
+
+An address in angle brackets, `<https://example.com/a>`, `<http://example.com/a>`
+or `<name@example.com>`, is drawn without its brackets, a link to the address
+without them; an e-mail address links to `mailto:name@example.com`. One that
+holds a space or a control character, runs past 4 KiB, or stands in code, a key
+or a `<sub>` or `<sup>` run is shown as written. A word that begins `www.`, at
+the start of a line or after a space, an opening bracket or the mark of
+emphasis, is a link to the `https://` address that begins with it:
+`www.example.com` points to `https://www.example.com`. The address of every
+link is written as safe characters only, whatever a model put in it.
+
 ## Tags
 
 Six HTML tags are read instead of drawn, in any letter case and with or
@@ -281,6 +311,9 @@ Some text is drawn exactly as the model wrote it, rather than as a block:
 - **A footnote crucible will not number.** An empty label, `[^]`; one holding
   a space or a control character; one longer than 32 characters; a second note
   for a label that already has one; and a label first written after 64 others.
+- **A reference or definition crucible will not tie up.** A label with no
+  definition above it, a definition past the 64th or past 16 KiB, and a
+  definition line that holds more than its address.
 - **Any other tag.** A tag that is not one of the six, such as `<article>` or
   `<b>`, is shown as written, and so is one of the six whose `>` does not come
   on its line or within 64 characters of its `<`, as when a quoted value is

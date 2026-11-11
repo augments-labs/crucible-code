@@ -99,10 +99,33 @@
 //! character; for a second definition of one label; and for a label first
 //! written past the cap.
 //!
+//! A line that is a label in brackets, a colon and one address, a scheme and
+//! what follows it and nothing else but blanks, defines that label. It is
+//! drawn as the address, a link, and a reference written after it, `[words]`,
+//! `[words][label]` or `[words][]`, is drawn as its words, a link to that
+//! address; a label compares in any letter case, and the first definition of
+//! one is the one kept. A definition written after its reference, or none, ties
+//! nothing up: the brackets are shown as written, as `[TODO]` and `arr[0]` are.
+//! The definition line is held to its end, as a link's words are, and is read
+//! as the line it is where it turns out to be none, where it has a title, an
+//! address in angle brackets or one written without a scheme, where it runs
+//! past `MOST`, and where it is the one past `DEFINITION_CAP` definitions
+//! or `DEFINITION_BYTES` bytes of them. Definitions and references are read
+//! where footnotes are, and shown as written everywhere those are.
+//!
+//! An address in angle brackets, `<https://…>`, `<http://…>` or `<name@host>`,
+//! is drawn without its brackets as a link to the address without them, an
+//! e-mail address as a `mailto:` one; one that runs past `MOST`, holds a
+//! blank or a control character, or stands in code, a key or sub or
+//! superscript, is shown as written. A word written as `www.` and a host, after
+//! a space, an opening bracket or a mark of emphasis, is a link to the `https://`
+//! address that begins with it.
+//!
 //! Six tags, `<details>`, `<summary>`, `<br>`, `<kbd>`, `<sub>` and `<sup>`, in
 //! any letter case and with attributes holding `<` or `>` only inside a quoted
 //! value, are read where prose is, and never in code or from a `[` to the next
-//! `]` or the line's end; any other `<` is shown as written, and so is one of
+//! `]` or the line's end; any other `<`, an address in angle brackets aside, is
+//! shown as written, and so is one of
 //! the six that runs past its cap or its line, a quote left open included. A
 //! paragraph's line inside a `<details>` block is drawn two columns in, on
 //! every row it wraps onto, until `</details>` or the message's end, and a
@@ -209,6 +232,23 @@ pub(crate) const FOOTNOTE_CAP: usize = 64;
 /// well as how many there are. A longer one is no footnote and is shown as
 /// written.
 pub(crate) const FOOTNOTE_LABEL_CAP: usize = 32;
+
+/// The most reference definitions one answer keeps.
+///
+/// A definition is kept from the line that wrote it, so a reference after it
+/// reads as its words. The first definition of a label is the one kept, and
+/// each label counts once, in any letter case. Past this many, a definition is
+/// shown as written and links nothing. An answer defines a handful of links;
+/// this is as many as it numbers footnotes.
+pub(crate) const DEFINITION_CAP: usize = 64;
+
+/// The most bytes of labels and addresses one answer's definitions keep, so
+/// that a few long addresses are bounded as well as how many there are.
+///
+/// Sixty-four definitions of a label and a long address of a couple of
+/// hundred bytes each fit; a definition that would pass it is shown as
+/// written and links nothing.
+pub(crate) const DEFINITION_BYTES: usize = 16 * 1024;
 
 /// The most characters of a tag held while the ones that say whether it is one
 /// of the six read here arrive, `<` and `>` included.
@@ -1312,6 +1352,9 @@ enum Part {
     Between,
     /// Between `(` and the `)` that ends it.
     Target,
+    /// Between the `[` that follows the `]` and the `]` that ends it: the
+    /// label of a reference, held in the target's place.
+    Second,
 }
 
 /// A link's words and its address, while the shape that decides them is still
@@ -1429,6 +1472,12 @@ fn repository(pending: &str) -> Option<usize> {
 /// a colon in them, and the ones a reader can act on in a terminal are these.
 const SCHEMES: [&str; 2] = ["https://", "http://"];
 
+/// What an address written without a scheme starts with.
+///
+/// Read as an address of its own in prose, and linked to the `https` address
+/// it names, so that following it never leaves the encrypted web.
+const WWW: &str = "www.";
+
 /// How much of a scheme a run of characters has spelled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Spelled {
@@ -1442,9 +1491,13 @@ enum Spelled {
 
 /// How much of a scheme `text` has spelled.
 fn spelled(text: &str) -> Spelled {
-    if SCHEMES.iter().any(|scheme| text.starts_with(scheme)) {
+    if SCHEMES.iter().any(|scheme| text.starts_with(scheme)) || text.starts_with(WWW) {
         Spelled::Whole
-    } else if SCHEMES.iter().any(|scheme| scheme.starts_with(text)) {
+    } else if SCHEMES
+        .iter()
+        .chain([&WWW])
+        .any(|scheme| scheme.starts_with(text))
+    {
         Spelled::Partly
     } else {
         Spelled::Nothing
@@ -1457,6 +1510,23 @@ fn spelled(text: &str) -> Spelled {
 struct Note {
     label: String,
     defined: bool,
+}
+
+/// A reference definition kept for the rest of the answer: its label in lower
+/// case, and the address it names.
+#[derive(Debug, Clone)]
+struct Definition {
+    label: String,
+    address: String,
+}
+
+/// A definition line being read, from the colon after its label on: the rest of
+/// the line, held until the line says whether it is one address and nothing
+/// else. Bounded by [`MOST`]; ends with the line.
+#[derive(Debug, Clone)]
+struct Defining {
+    label: String,
+    rest: String,
 }
 
 /// Whether what a link held is a footnote's label: a caret, then one to
@@ -1570,6 +1640,46 @@ const CLOSES_DETAILS: Tag = Tag {
     name: Name::Details,
     closing: true,
 };
+
+/// Whether `character` can be part of an e-mail address written between angle
+/// brackets, on either side of its `@`.
+fn email(character: char) -> bool {
+    character.is_ascii_alphanumeric() || ".!#$%&'*+=?^_`{|}~-".contains(character)
+}
+
+/// Whether `body`, what stands after a `<`, could still be an address in angle
+/// brackets: a scheme and then no whitespace, control character or `<`, or an
+/// e-mail address's characters.
+fn angles(body: &str) -> bool {
+    match spelled(body) {
+        Spelled::Nothing => body
+            .chars()
+            .all(|character| email(character) || character == '@'),
+        _ => body.chars().all(|character| {
+            !character.is_whitespace() && !character.is_control() && !matches!(character, '<' | '>')
+        }),
+    }
+}
+
+/// Where the address `body`, written between angle brackets, points: itself
+/// where it is a web address, and `mailto:` and itself where it is an e-mail
+/// address. `None` where it is neither.
+fn angle_target(body: &str) -> Option<String> {
+    if spelled(body) == Spelled::Whole && !body.starts_with(WWW) {
+        return (!SCHEMES.contains(&body)).then(|| body.to_owned());
+    }
+    let (local, host) = body.split_once('@')?;
+    let local = !local.is_empty() && local.chars().all(email);
+    let host = host.split('.').all(|label| {
+        !label.is_empty()
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '-')
+    });
+    (local && host).then(|| format!("mailto:{body}"))
+}
 
 /// Whether `line` is nothing but the tag that closes a `<details>` block,
 /// written at the margin and no longer than [`TAG_CAP`], with only blanks
@@ -1823,6 +1933,25 @@ pub struct Markdown {
     /// [`FOOTNOTE_LABEL_CAP`] characters as written, and at most twice that
     /// once lowered, since no character lowers to more than two.
     notes: Vec<Note>,
+    /// The reference definitions the answer has written so far, a label once.
+    ///
+    /// Carried across lines and cleared with the message, since a reference is
+    /// tied to a definition written before it, wherever either stands. Bounded
+    /// by [`DEFINITION_CAP`] labels and [`DEFINITION_BYTES`] bytes.
+    definitions: Vec<Definition>,
+    /// A line that opened with a label and a colon, held until its end says
+    /// whether it is a definition.
+    defining: Option<Defining>,
+    /// A `<` and what has followed it, once it can no longer be one of the six
+    /// tags and could still be an address in angle brackets. Bounded by
+    /// [`MOST`]; ends with the line.
+    angle: Option<String>,
+    /// Whether the text being read is text read again, which the heading line
+    /// and the watch on the line have been told already as it arrived.
+    told: bool,
+    /// How many bytes of `angle` arrived as a possible tag, and so have been
+    /// seen by the watch on the line already.
+    angle_seen: usize,
     /// A `<` and what has followed it, while the characters that say whether
     /// it is one of the tags read here arrive. Bounded by [`TAG_CAP`]; ends
     /// with the line.
@@ -2024,6 +2153,7 @@ impl Markdown {
             // What a heading is written with is kept for the rule under it.
             if let Some((_, line)) = self.atx.as_mut()
                 && character != '\n'
+                && !self.told
                 && line.len() < MOST
             {
                 line.push(character);
@@ -2074,6 +2204,18 @@ impl Markdown {
                 run = at;
             }
 
+            // Held text, not a run, for the reason a link's words are: the rest
+            // of a line that may be a definition, and a `<` that may be an
+            // address. Before the title watch, which would hold the break that
+            // ends them, and before the links and addresses below, because what
+            // they hand back is read again as if it were arriving, and may
+            // leave one of those open for this character to carry on. The run
+            // is empty while either is held, so none of it is left behind.
+            if self.holds_text(character, room, say) {
+                run = next;
+                continue;
+            }
+
             // A paragraph line is watched from its first character, and read
             // like any other: it is prose until the line under it says it was
             // the header of a table written without outer bars, or the title of
@@ -2081,17 +2223,7 @@ impl Markdown {
             // the line under it, until that says what it was. After the probe,
             // so that a line that opens like display math and is not is watched
             // from the character it opened with.
-            if self.opens_title(character) {
-                // Spaces in front of a line do not say whether it leaves the
-                // quote. The first character after them says that: `margin`
-                // hands it to `leaves_quote`, or, when it is a quote mark, the
-                // mark reader decides.
-                if character != ' ' {
-                    self.leaves_quote(character);
-                }
-                self.table = Some(Table::bare());
-            }
-            if self.table.as_ref().is_some_and(Table::mirrors) && self.mirrored(character) {
+            if self.watched(character) {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
                 run = next;
                 continue;
@@ -2122,7 +2254,7 @@ impl Markdown {
             // cannot be handed on where they stand, so while one is arriving
             // the run is empty and every character is decided below.
             if self.link.is_some() {
-                if self.links(character, say) {
+                if self.links(character, room, say) {
                     run = next;
                     continue;
                 }
@@ -2228,7 +2360,7 @@ impl Markdown {
                 self.table = Some(Table::opening());
                 self.tabled(character, room, say);
                 run = next;
-            } else if self.opens_address(character) {
+            } else if self.opens_address(character, delta.get(at..).unwrap_or_default()) {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
                 self.address = Some(String::from(character));
                 run = next;
@@ -3112,6 +3244,8 @@ impl Markdown {
         self.link = None;
         self.address = None;
         self.reference = None;
+        self.defining = None;
+        self.angle = None;
         self.tag = None;
         self.script = None;
         self.escaped = false;
@@ -3265,7 +3399,12 @@ impl Markdown {
     /// `false` says the shape was not a link: what was held has already gone
     /// back out as the text it turned out to be, and `character` is the
     /// caller's again.
-    fn links(&mut self, character: char, say: &mut dyn FnMut(Slot, &str, Option<&str>)) -> bool {
+    fn links(
+        &mut self,
+        character: char,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) -> bool {
         let Some(mut link) = self.link.take() else {
             return false;
         };
@@ -3279,12 +3418,33 @@ impl Markdown {
         match (link.part, character) {
             (Part::Label, ']') if carries => link.part = Part::Between,
             (Part::Between, '(') if carries => link.part = Part::Target,
+            // A second label only where there is a definition to name: with
+            // none, the bracket after `]` is as ordinary as it ever was.
+            (Part::Between, '[') if carries && self.reads_definitions() => {
+                link.part = Part::Second;
+            }
+            (Part::Between, ':') if carries && self.opens_definition(&link) => {
+                self.defining = Some(Defining {
+                    label: link.label,
+                    rest: String::new(),
+                });
+                return true;
+            }
             (Part::Target, ')') if carries => {
                 self.wrote_link(&link, say);
                 return true;
             }
+            (Part::Second, ']') if carries => {
+                self.wrote_reference_link(&link, room, say);
+                return true;
+            }
             (Part::Label, held) if carries => link.label.push(held),
-            (Part::Target, held) if carries => link.target.push(held),
+            (Part::Target | Part::Second, held) if carries => link.target.push(held),
+            // A second label that is not one: it is read again, below.
+            (Part::Second, _) => {
+                self.retaken(&link, character, room, say);
+                return true;
+            }
             // The marker of an alert is the whole of its line. The break
             // is the character that says so, and is the caller's again: the
             // header is drawn in place of the marker and the line ends as any
@@ -3308,6 +3468,9 @@ impl Markdown {
                 if let Some(taken) = self.cites(&link, character, say) {
                     return taken;
                 }
+                if self.ties(&link, say) {
+                    return false;
+                }
                 self.pay(say);
                 spill(&link, say);
                 return false;
@@ -3321,12 +3484,26 @@ impl Markdown {
     /// Whether an address could start here.
     ///
     /// At the start of a word only: `shttps://` is not an address, and neither
-    /// is the second half of one a link already named.
-    fn opens_address(&self, character: char) -> bool {
-        SCHEMES.iter().any(|scheme| scheme.starts_with(character))
-            && self.inside == Inside::Prose
-            && !self.line.code
-            && !self.previous.is_alphanumeric()
+    /// is the second half of one a link already named. `www.` too, but where
+    /// the word before it ended, since it is found in more places.
+    ///
+    /// `ahead` is what this delta has from `character` on. A `w` that this
+    /// delta already shows to be the start of some other word is not held,
+    /// which would split the word into two runs for nothing.
+    fn opens_address(&self, character: char, ahead: &str) -> bool {
+        let starts = if character == 'w' {
+            // Narrower than a scheme's: a `www.` is read after a space, an
+            // opening bracket or the mark of emphasis, and a `.www.` or a
+            // `-www.` is part of a longer word.
+            (self.previous == '\0'
+                || self.previous.is_whitespace()
+                || matches!(self.previous, '(' | '*' | '_' | '~'))
+                && (ahead.starts_with(WWW) || WWW.starts_with(ahead))
+        } else {
+            SCHEMES.iter().any(|scheme| scheme.starts_with(character))
+                && !self.previous.is_alphanumeric()
+        };
+        starts && self.inside == Inside::Prose && !self.line.code
     }
 
     /// Reads one character into the address being held. Answers whether that
@@ -3379,16 +3556,23 @@ impl Markdown {
         let ends = address.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '"']);
 
         // A scheme and nothing after it is a word somebody wrote, not somewhere
-        // anybody can go.
-        if spelled(ends) != Spelled::Whole || SCHEMES.contains(&ends) {
+        // anybody can go, and `www.` needs a host to start with a letter or a
+        // digit.
+        let target = if let Some(host) = ends.strip_prefix(WWW) {
+            host.starts_with(|character: char| character.is_ascii_alphanumeric())
+                .then(|| format!("https://{ends}"))
+        } else {
+            (spelled(ends) == Spelled::Whole && !SCHEMES.contains(&ends)).then(|| ends.to_owned())
+        };
+        let Some(target) = target else {
             self.say(address, say);
             self.started = true;
             self.previous = address.chars().next_back().unwrap_or('/');
             return;
-        }
+        };
 
         self.pay(say);
-        say(Slot::Link, ends, Some(ends));
+        say(Slot::Link, ends, Some(&target));
         self.started = true;
         self.previous = ends.chars().next_back().unwrap_or('/');
         self.say(&address[ends.len()..], say);
@@ -3512,6 +3696,338 @@ impl Markdown {
         self.previous = words.chars().next_back().unwrap_or(')');
     }
 
+    /// Whether a reference can be tied to a definition where the scan stands:
+    /// one has been written, and this is where footnotes are read.
+    fn reads_definitions(&self) -> bool {
+        !self.definitions.is_empty() && self.notes()
+    }
+
+    /// Whether the colon after `link`'s `]` opens a definition: the brackets
+    /// are the first thing the line says, hold a label that is no footnote's,
+    /// and this is where footnotes are read.
+    fn opens_definition(&self, link: &Link) -> bool {
+        link.first && !link.label.is_empty() && !footnote(&link.label) && self.notes()
+    }
+
+    /// Reads `character` into the line held as a definition or the angle
+    /// address held, whichever is open. Answers whether it was taken.
+    ///
+    /// `false` says what was held is settled: drawn as what it was, or read as
+    /// it would have been had it not been held, and `character` is the
+    /// caller's again.
+    fn holds_text(
+        &mut self,
+        character: char,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) -> bool {
+        (self.defining.is_some() && self.defines(character, room, say))
+            || (self.angle.is_some() && self.angled(character, room, say))
+    }
+
+    /// Shows the watch on the line, for a title or the header of a table,
+    /// `text` that was held while it arrived and has now been drawn.
+    ///
+    /// The block such a line turns out to be is laid out from what the watch
+    /// saw. A held text that is drawn as a link never goes back through the
+    /// scan, so it is told here, in the order it was written; one that is read
+    /// again is seen by the watch as that reading goes. Text read again was
+    /// told to the watch before it was, so while one is read nothing is told.
+    fn watches(&mut self, text: &str) {
+        if self.told {
+            return;
+        }
+        for character in text.chars() {
+            if !self.table.as_ref().is_some_and(Table::mirrors) {
+                return;
+            }
+            self.mirrored(character);
+        }
+    }
+
+    /// Whether the watch on the line holds `character`, the start of a title
+    /// or a header being opened first. Text read again was told to the watch as
+    /// it arrived, so it is not told twice.
+    fn watched(&mut self, character: char) -> bool {
+        if self.told {
+            return false;
+        }
+        if self.opens_title(character) {
+            // Spaces in front of a line do not say whether it leaves the
+            // quote. The first character after them says that: `margin`
+            // hands it to `leaves_quote`, or, when it is a quote mark, the
+            // mark reader decides.
+            if character != ' ' {
+                self.leaves_quote(character);
+            }
+            self.table = Some(Table::bare());
+        }
+        self.table.as_ref().is_some_and(Table::mirrors) && self.mirrored(character)
+    }
+
+    /// Reads `text` again as if it were arriving, where the heading line and
+    /// the watch on the line have been told it already.
+    fn again(&mut self, text: &str, room: usize, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        let told = std::mem::replace(&mut self.told, true);
+        self.scan(text, room, say);
+        self.told = told;
+    }
+
+    /// Reads `character` into the line being held as a definition. Answers
+    /// whether it was taken.
+    ///
+    /// `false` says the line is over, or past its bound: what was held has been
+    /// drawn as the definition it was, or read as the line it turned out to be,
+    /// and `character` is the caller's again.
+    fn defines(
+        &mut self,
+        character: char,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) -> bool {
+        let Some(mut held) = self.defining.take() else {
+            return false;
+        };
+        if character != '\n' && held.rest.len() < MOST {
+            held.rest.push(character);
+            self.defining = Some(held);
+            return true;
+        }
+        self.defined(held, character == '\n', room, say);
+        false
+    }
+
+    /// Settles a line that opened with a label and a colon, `whole` saying
+    /// whether it ended at a break rather than at its bound.
+    ///
+    /// A definition is the label, a colon, and then one address and nothing
+    /// else but blanks. It is drawn as that address, a link, and kept for the
+    /// references after it: the first of a label is the one kept, and one past
+    /// [`DEFINITION_CAP`] or [`DEFINITION_BYTES`] is no definition. Whatever
+    /// else the line says is shown as written, and read as any other line
+    /// would have been.
+    fn defined(
+        &mut self,
+        held: Defining,
+        whole: bool,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) {
+        let address = held.rest.trim_matches([' ', '\t']);
+        let spelled_out = whole
+            && spelled(address) == Spelled::Whole
+            && !address.starts_with(WWW)
+            && !SCHEMES.contains(&address)
+            && address
+                .chars()
+                .all(|character| !character.is_whitespace() && !character.is_control());
+
+        if spelled_out && self.keeps(&held.label, address) {
+            self.pay(say);
+            say(Slot::Link, address, Some(address));
+            self.previous = address.chars().next_back().unwrap_or(':');
+            self.watches(&held.rest);
+            return;
+        }
+
+        // The brackets, and then the rest of the line as it arrived, read
+        // again: its markup and its addresses are what they would have been
+        // had nothing been held.
+        self.pay(say);
+        spill(
+            &Link {
+                part: Part::Between,
+                label: held.label,
+                ..Link::default()
+            },
+            say,
+        );
+        say(Slot::Plain, ":", None);
+        self.previous = ':';
+        self.watches(&held.rest);
+        self.again(&held.rest, room, say);
+    }
+
+    /// Whether `address` can be drawn as the definition of `label`: it is
+    /// kept, or the label was defined before, and the first is the one kept.
+    fn keeps(&mut self, label: &str, address: &str) -> bool {
+        let label: String = label.chars().flat_map(char::to_lowercase).collect();
+        if self.definitions.iter().any(|kept| kept.label == label) {
+            return true;
+        }
+        let bytes: usize = self
+            .definitions
+            .iter()
+            .map(|kept| kept.label.len() + kept.address.len())
+            .sum();
+        if self.definitions.len() >= DEFINITION_CAP
+            || bytes + label.len() + address.len() > DEFINITION_BYTES
+        {
+            return false;
+        }
+        self.definitions.push(Definition {
+            label,
+            address: address.to_owned(),
+        });
+        true
+    }
+
+    /// The address a definition written before this point gave `label`, in any
+    /// letter case, where references are read.
+    fn defined_as(&self, label: &str) -> Option<&str> {
+        if !self.reads_definitions() {
+            return None;
+        }
+        let label: String = label.chars().flat_map(char::to_lowercase).collect();
+        self.definitions
+            .iter()
+            .find(|kept| kept.label == label)
+            .map(|kept| kept.address.as_str())
+    }
+
+    /// Draws `link` as a reference to a definition, where its label has one
+    /// and nothing but the label follows it. Answers whether it did.
+    fn ties(&mut self, link: &Link, say: &mut dyn FnMut(Slot, &str, Option<&str>)) -> bool {
+        if link.part != Part::Between {
+            return false;
+        }
+        let Some(address) = self.defined_as(&link.label).map(str::to_owned) else {
+            return false;
+        };
+        self.wrote_reference_to(&link.label, &address, say);
+        true
+    }
+
+    /// Draws a reference written with a second label, `[words][label]` or
+    /// `[words][]`, as its words where the label has a definition, and as it
+    /// was written where it has none.
+    fn wrote_reference_link(
+        &mut self,
+        link: &Link,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) {
+        let label = if link.target.is_empty() {
+            &link.label
+        } else {
+            &link.target
+        };
+        if let Some(address) = self.defined_as(label).map(str::to_owned) {
+            self.wrote_reference_to(&link.label, &address, say);
+        } else {
+            self.retaken(link, ']', room, say);
+        }
+    }
+
+    /// Settles a second label that names no definition, `ended` being the
+    /// character that closed it or that it could not carry on past.
+    ///
+    /// The first brackets are shown as written. The second, and `ended`, are
+    /// read again as if they were arriving, which is what they would have been
+    /// had nothing been looked for: the opening of a link with its address
+    /// after it, or of a footnote's reference, as it is where no definition
+    /// has been written.
+    fn retaken(
+        &mut self,
+        link: &Link,
+        ended: char,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) {
+        self.pay(say);
+        spill(
+            &Link {
+                part: Part::Between,
+                label: link.label.clone(),
+                ..Link::default()
+            },
+            say,
+        );
+        self.previous = ']';
+        let mut again = String::from('[');
+        again.push_str(&link.target);
+        again.push(ended);
+        self.again(&again, room, say);
+    }
+
+    /// Hands on a reference's `words`, carrying the `address` its definition
+    /// gave, the way a link written out is.
+    fn wrote_reference_to(
+        &mut self,
+        words: &str,
+        address: &str,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) {
+        self.pay(say);
+        let words = if words.is_empty() { address } else { words };
+        say(Slot::Link, words, Some(address));
+        self.previous = words.chars().next_back().unwrap_or(']');
+    }
+
+    /// Reads `character` into the angle address being held. Answers whether it
+    /// was taken.
+    ///
+    /// `false` says it was no address: what was held has been read as it would
+    /// have been had no address been looked for, and `character` is the
+    /// caller's again. The `>` that ends one is taken with it, and is no part
+    /// of the words or of where they point.
+    fn angled(
+        &mut self,
+        character: char,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) -> bool {
+        let Some(mut written) = self.angle.take() else {
+            return false;
+        };
+        if character == '>' {
+            // Inside a key or a run of sub or superscript a link has no place,
+            // so there the address is shown as written.
+            let address = written.get(1..).and_then(angle_target);
+            if let (Some(target), None, false) = (address, &self.script, self.line.key) {
+                self.pay(say);
+                say(
+                    Slot::Link,
+                    written.get(1..).unwrap_or_default(),
+                    Some(&target),
+                );
+                self.started = true;
+                self.previous = '>';
+                self.watches(written.get(self.angle_seen..).unwrap_or_default());
+                self.watches(">");
+                return true;
+            }
+        } else if written.len() < MOST {
+            written.push(character);
+            let body = written.get(1..).unwrap_or_default();
+            let carries = match spelled(body) {
+                Spelled::Nothing => email(character) || character == '@',
+                _ => !character.is_whitespace() && !character.is_control() && character != '<',
+            };
+            if carries {
+                self.angle = Some(written);
+                return true;
+            }
+            written.pop();
+        }
+        self.unangle(&written, room, say);
+        false
+    }
+
+    /// Reads what an angle address was held as, as it would have been read had
+    /// none been looked for: the `<` is text, and what followed it arrives
+    /// again.
+    fn unangle(
+        &mut self,
+        written: &str,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) {
+        self.untag("<", say);
+        self.watches(written.get(self.angle_seen..).unwrap_or_default());
+        self.again(written.get(1..).unwrap_or_default(), room, say);
+    }
+
     /// Whether footnotes are read where the scan stands.
     ///
     /// Not in a heading, and not by a reader that lays out a block or reads a
@@ -3604,7 +4120,8 @@ impl Markdown {
     ///
     /// `false` says the tag was none of the six, or ran past [`TAG_CAP`] or
     /// the line: what was held has gone out as written, and `character` is
-    /// the caller's again.
+    /// the caller's again. What is no tag but starts like an address in angle
+    /// brackets is handed to the hold that reads those.
     fn tagged(&mut self, character: char, say: &mut dyn FnMut(Slot, &str, Option<&str>)) -> bool {
         let Some(mut written) = self.tag.take() else {
             return false;
@@ -3620,6 +4137,13 @@ impl Markdown {
                 true
             }
             Shape::Not => {
+                // It may yet be an address in angle brackets, which is read
+                // from here on by its own hold.
+                if written.get(1..).is_some_and(angles) {
+                    self.angle_seen = written.len();
+                    self.angle = Some(written);
+                    return true;
+                }
                 written.pop();
                 self.untag(&written, say);
                 false
@@ -3910,6 +4434,7 @@ impl Markdown {
         self.passing = None;
         // What the answer numbered and left open ends with it.
         self.notes.clear();
+        self.definitions.clear();
         self.folded = false;
         self.hand_on(room, &mut kinds, say);
         kinds.flush(&mut |slot, text, link| say(Said::Run { slot, text, link }));
@@ -3943,6 +4468,17 @@ impl Markdown {
     /// Lets go of whatever the scan was still holding, which a line's end does
     /// as well as a message's.
     fn close(&mut self, room: usize, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        // The line the message ended in is as complete as a break would have
+        // made it, and the `>` that would have ended an address never came.
+        // First, since what they hand back is read again and may leave an
+        // address, a link or a run of markers for what follows to let go of.
+        if let Some(held) = self.defining.take() {
+            self.defined(held, true, room, say);
+        }
+        if let Some(written) = self.angle.take() {
+            self.unangle(&written, room, say);
+        }
+
         // A header still waiting for its delimiter row is the prose it was
         // read as until then, and what was held back with it is read before
         // anything else is let go of, since the line it begins is what the
@@ -4017,6 +4553,7 @@ impl Markdown {
         // reference, as one a break came after is.
         if let Some(link) = self.link.take()
             && self.cites(&link, '\n', say).is_none()
+            && !self.ties(&link, say)
         {
             spill(&link, say);
         }
@@ -4163,6 +4700,7 @@ impl Markdown {
             // Nor what the answer has said about the lines after it: the
             // footnotes it has numbered, and a `<details>` block still open.
             notes: std::mem::take(&mut self.notes),
+            definitions: std::mem::take(&mut self.definitions),
             folded: self.folded,
             ..Self::default()
         };
@@ -4334,11 +4872,14 @@ fn spill(link: &Link, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
     if link.part != Part::Label {
         say(Slot::Plain, "]", None);
     }
-    if link.part == Part::Target {
-        say(Slot::Plain, "(", None);
-        if !link.target.is_empty() {
-            say(Slot::Plain, &link.target, None);
-        }
+    let opening = match link.part {
+        Part::Label | Part::Between => return,
+        Part::Target => "(",
+        Part::Second => "[",
+    };
+    say(Slot::Plain, opening, None);
+    if !link.target.is_empty() {
+        say(Slot::Plain, &link.target, None);
     }
 }
 

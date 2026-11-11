@@ -3000,6 +3000,69 @@ fn a_native_answer_cut_anywhere_draws_the_footnotes_and_tags_the_whole_answer_dr
     }
 }
 
+#[test]
+fn a_native_hostile_reference_angle_or_www_address_writes_no_escape_nor_a_picture_cell() {
+    for answer in [
+        "[a]: https://x.test/\u{1b}]0;t\u{7}\nsee [a] and [a\u{1b}]0;t\u{7}][a]\n",
+        "<https://x.test/\u{1b}]8;;https://evil.invalid\u{1b}\\> and <a\u{1b}]0;t\u{7}@b.test>\n",
+        "www.x.test/\u{1b}]0;t\u{7} and www.\u{1b}_Gi=1;AAAA\u{1b}\\x.test and www.y.test\u{8}\u{85}\n",
+        "[a\u{1b}]0;t\u{7}]: https://x.test/a\nsee [a\u{1b}]0;t\u{7}] and [w\u{8}][a\u{1b}]0;t\u{7}]\n",
+        concat!(
+            "[\u{10eeee}\u{305}x]: https://x.test\n",
+            "see [words][\u{10eeee}\u{305}x]\n",
+        ),
+    ] {
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let window = Window::new(64, 12);
+            let mut render = native(&window);
+            render.images(crate::terminal::graphics::Capability::Graphics {
+                protocol: crate::terminal::graphics::Protocol::Kitty,
+                cell: crate::terminal::graphics::Cell {
+                    width: 9,
+                    height: 18,
+                },
+            });
+            render.draws(glyphs);
+            render.wears(colourful().addressing(true));
+            stands(&mut render);
+            render.stream(answer).unwrap();
+            render.settle().unwrap();
+            render.seal().unwrap();
+
+            // Each hyperlink sequence is taken out first: it may hold
+            // printable ASCII and nothing that ends it early.
+            let written = window.written();
+            let mut rest = written.as_str();
+            let mut kept = String::new();
+            while let Some(at) = rest.find("\u{1b}]8;") {
+                kept.push_str(&rest[..at]);
+                let after = &rest[at + 4..];
+                let end = after.find("\u{1b}\\").unwrap_or(after.len());
+                assert!(
+                    after[..end].bytes().all(|byte| byte.is_ascii_graphic()),
+                    "a link sequence carried {:?} for {answer:?}",
+                    &after[..end]
+                );
+                rest = &after[(end + 2).min(after.len())..];
+            }
+            kept.push_str(rest);
+
+            for hostile in [
+                "\u{1b}]", "\u{1b}P", "\u{1b}_", "\u{7}", "\u{8}", "\u{85}", "\u{9c}",
+            ] {
+                assert!(
+                    !kept.contains(hostile),
+                    "{hostile:?} reached the terminal for {answer:?} with {glyphs:?}"
+                );
+            }
+            assert!(
+                !kept.contains('\u{10eeee}'),
+                "a picture cell was placed for {answer:?} with {glyphs:?}"
+            );
+        }
+    }
+}
+
 /// How many columns of blank stand in front of `row`'s first word.
 fn indent_of(row: &str) -> usize {
     row.len() - row.trim_start().len()
