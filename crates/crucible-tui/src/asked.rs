@@ -421,8 +421,10 @@ impl Asked<'_> {
     /// The box's rows on their own, for standing beside the answers.
     fn aside(&self, beside: Beside, glyphs: Glyphs) -> Vec<Row> {
         let Beside { wide, tall, .. } = beside;
-        let bar = glyphs.horizontal();
-        let mut rows = vec![Row::new().then(Slot::Quiet, format!("┌{}┐", bar.repeat(wide + 2)))];
+        let bar = glyphs.horizontal().repeat(wide + 2);
+        let (top_left, bottom_left) = glyphs.square();
+        let (top_right, bottom_right) = glyphs.square_closed();
+        let mut rows = vec![Row::new().then(Slot::Quiet, format!("{top_left}{bar}{top_right}"))];
 
         let shows = self.shows();
         let marked = shows.get(self.marked).copied();
@@ -436,7 +438,7 @@ impl Asked<'_> {
             rows.push(row.then(Slot::Quiet, glyphs.vertical()));
         }
 
-        rows.push(Row::new().then(Slot::Quiet, format!("└{}┘", bar.repeat(wide + 2))));
+        rows.push(Row::new().then(Slot::Quiet, format!("{bottom_left}{bar}{bottom_right}")));
 
         rows
     }
@@ -811,13 +813,15 @@ pub(crate) fn under<S: AsRef<str>>(
     };
     let marked = every.get(marked).copied();
 
-    let bar = glyphs.horizontal();
+    let bar = glyphs.horizontal().repeat(wide + 2);
+    let (top_left, bottom_left) = glyphs.square();
+    let (top_right, bottom_right) = glyphs.square_closed();
     let mut rows = Vec::new();
     if opening {
         rows.push(framed(Row::new(), inner, glyphs));
     }
     rows.push(framed(
-        said(PAYLOAD, Slot::Quiet, &format!("┌{}┐", bar.repeat(wide + 2))),
+        said(PAYLOAD, Slot::Quiet, &format!("{top_left}{bar}{top_right}")),
         inner,
         glyphs,
     ));
@@ -840,7 +844,11 @@ pub(crate) fn under<S: AsRef<str>>(
     }
 
     rows.push(framed(
-        said(PAYLOAD, Slot::Quiet, &format!("└{}┘", bar.repeat(wide + 2))),
+        said(
+            PAYLOAD,
+            Slot::Quiet,
+            &format!("{bottom_left}{bar}{bottom_right}"),
+        ),
         inner,
         glyphs,
     ));
