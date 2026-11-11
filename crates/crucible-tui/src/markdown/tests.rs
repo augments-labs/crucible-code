@@ -157,8 +157,8 @@ fn one_marker_is_emphasis_and_two_are_weight() {
     );
     assert_eq!(
         slots(&whole("a ***both*** word")),
-        vec![Slot::Plain, Slot::Bold, Slot::Plain],
-        "three markers are both, and weight is the louder"
+        vec![Slot::Plain, Slot::BoldEmphasis, Slot::Plain],
+        "three markers are both, and both are shown"
     );
 }
 
@@ -707,10 +707,10 @@ fn a_retraction_outranks_the_weight_it_was_written_in() {
 #[test]
 fn a_tilde_that_is_not_a_pair_is_left_exactly_where_it_was() {
     // A home directory and an approximation. Neither is a retraction and both
-    // are text: one tilde is a character somebody wrote, and it takes exactly
-    // two to put a phrase under one.
-    assert_eq!(drawn(&whole("look in ~/Projects")), "look in ~/Projects");
-    assert_eq!(drawn(&whole("about ~40 lines")), "about ~40 lines");
+    // are text: a tilde nothing closes is a character somebody wrote. Read to
+    // the end of the answer, because until then a closing tilde could arrive.
+    assert_eq!(drawn(&ended("look in ~/Projects")), "look in ~/Projects");
+    assert_eq!(drawn(&ended("about ~40 lines")), "about ~40 lines");
 }
 
 #[test]
@@ -4981,3 +4981,4 @@ fn a_link_or_a_footnote_reference_after_brackets_reads_as_it_does_with_no_defini
 }
 
 mod escapes;
+mod strikes;

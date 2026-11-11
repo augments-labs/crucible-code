@@ -151,7 +151,9 @@
 //! does, both bounded, and changes a slot and never a character.
 
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::ops::Range;
+use std::rc::Rc;
 
 use crate::chrome::{self, Frame, Label, Undrawn};
 use crate::color::Slot;
@@ -164,6 +166,7 @@ use crate::width;
 
 mod escapes;
 mod kind;
+mod strikes;
 mod table;
 
 use crate::syntax::Syntax;
@@ -211,6 +214,10 @@ pub(crate) const HEADER_CAP: usize = 128;
 /// Smaller than the others because a formula is a line or two, and one that
 /// runs on for pages is prose with dollars in it.
 pub(crate) const MATH_CAP: usize = 4 * 1024;
+
+/// The most source bytes held after a single tilde, waiting for the one that
+/// closes it: a closer not among them strikes nothing.
+pub(crate) const STRIKE_CAP: usize = 4 * 1024;
 
 /// The most of a mermaid fence held before it is shown as written.
 pub(crate) const MERMAID_CAP: usize = 16 * 1024;
@@ -1980,6 +1987,12 @@ pub struct Markdown {
     /// columns in. Carried across lines until `</details>` or the end of the
     /// message; one closing tag ends any nesting.
     folded: bool,
+    /// What is held after single tildes that may open a phrase. See
+    /// [`strikes`]; carried across lines, and made on the first read.
+    strikes: Option<Rc<RefCell<strikes::Strikes>>>,
+    /// Whether the scan about to run reads source as it arrives, rather than
+    /// text read again, so it is what the hold of a phrase counts.
+    fresh: bool,
 }
 
 /// The most of one line of code that is held back to be read.
@@ -2105,12 +2118,16 @@ impl Markdown {
     /// anyway.
     pub fn read(&mut self, delta: &str, room: usize, say: &mut dyn FnMut(Said<'_>)) {
         let mut kinds = std::mem::take(&mut self.kinds);
+        let strikes = self.shared_strikes();
         let mut rest = delta;
         loop {
+            self.fresh = true;
             let resume = self.scan(rest, room, &mut |slot, text, link| {
-                kinds.tell(slot, text, link, &mut |slot, text, link| {
-                    say(Said::Run { slot, text, link });
-                });
+                if !strikes.borrow_mut().keep(slot, text, link) {
+                    kinds.tell(slot, text, link, &mut |slot, text, link| {
+                        say(Said::Run { slot, text, link });
+                    });
+                }
             });
             self.hand_on(room, &mut kinds, say);
             match resume {
@@ -2124,6 +2141,12 @@ impl Markdown {
     /// Hands on the block that has just closed, after every run before it, and
     /// the line it takes back before either.
     fn hand_on(&mut self, room: usize, kinds: &mut kind::Kinds, say: &mut dyn FnMut(Said<'_>)) {
+        // A phrase is not held across a line taken back or a block.
+        if self.retract == Retract::Owed || self.retitle.is_some() || self.ready.is_some() {
+            self.unstrike(&mut |slot, text, link| {
+                kinds.tell(slot, text, link, &mut |slot, text, link| say(Said::Run { slot, text, link }));
+            });
+        }
         if self.retract == Retract::Owed {
             self.retract = Retract::Allowed;
             kinds.flush(&mut |slot, text, link| say(Said::Run { slot, text, link }));
@@ -2164,6 +2187,7 @@ impl Markdown {
     ) -> Option<usize> {
         // Where the text not yet handed on begins.
         let mut run = 0;
+        let fresh = std::mem::take(&mut self.fresh);
 
         for (at, character) in delta.char_indices() {
             let next = at.saturating_add(character.len_utf8());
@@ -2173,6 +2197,10 @@ impl Markdown {
             if self.ready.is_some() || self.retract == Retract::Owed {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
                 return Some(at);
+            }
+
+            if fresh && self.holds_a_phrase() {
+                self.feeds(character, say);
             }
 
             // What a heading is written with is kept for the rule under it.
@@ -2870,7 +2898,7 @@ impl Markdown {
             // The hashes and the one space after them are the marker, and what
             // is left of the line is the heading itself.
             '#' if next == ' ' => {
-                self.opens_block();
+                self.opens_block(say);
                 self.line.heading = true;
                 let level = match held.count {
                     1 => Some(Level::One),
@@ -2916,7 +2944,7 @@ impl Markdown {
             // indentation before it has already gone out, so a nested item
             // stays nested. Owed rather than drawn here: see [`Line::owed`].
             '-' | '+' | '*' if held.opened && held.count == 1 && next == ' ' => {
-                self.opens_block();
+                self.opens_block(say);
                 self.line.marked = Marked::Owed;
                 self.item = Item::Open;
                 true
@@ -2931,7 +2959,7 @@ impl Markdown {
             // the quote is: an alert's header has a bar of its own. A line
             // that goes on with a quote knows already.
             '>' if held.opened && held.count == 1 && next == ' ' => {
-                self.opens_block();
+                self.opens_block(say);
                 self.line.quoted = match self.quoting {
                     Quoted::Plain => Quoted::Plain,
                     Quoted::Alert => Quoted::Alert,
@@ -2951,17 +2979,29 @@ impl Markdown {
                 self.line.emphasis.struck = !self.line.emphasis.struck;
                 false
             }
+            // One, in prose that is not shown as written: see [`strikes`].
+            '~' if held.count == 1 && !self.unescaped && self.inside == Inside::Prose => {
+                self.tilde(held, next, say);
+                false
+            }
             // One marker is emphasis and two are weight, which is what markdown
             // has always meant by them and what a model writes expecting to be
-            // read that way. Three or more are both, and the louder of the two
-            // is the one worth a reader's attention.
+            // read that way. Three or more are both, and shown as both.
             '*' | '_' if self.emphasises(held, next) => {
-                let worn = if held.count >= 2 {
-                    &mut self.line.emphasis.raised
-                } else {
-                    &mut self.line.emphasis.leant
-                };
-                *worn = !*worn;
+                let emphasis = &mut self.line.emphasis;
+                match held.count {
+                    1 => emphasis.leant = !emphasis.leant,
+                    2 => emphasis.raised = !emphasis.raised,
+                    // Closes whichever of the two is open, or opens both.
+                    _ if emphasis.raised != emphasis.leant => *emphasis = Emphasis {
+                        struck: emphasis.struck,
+                        ..Emphasis::default()
+                    },
+                    _ => {
+                        emphasis.raised = !emphasis.raised;
+                        emphasis.leant = !emphasis.leant;
+                    }
+                }
                 false
             }
             _ => {
@@ -2975,9 +3015,11 @@ impl Markdown {
     /// Drops the emphasis carried out of the line before this one.
     ///
     /// A block mark opens something of its own, and what it opens is not the
-    /// paragraph an unclosed marker was left open in. See [`Line`].
-    fn opens_block(&mut self) {
+    /// paragraph an unclosed marker was left open in, nor the paragraph a
+    /// phrase is held in. See [`Line`].
+    fn opens_block(&mut self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         self.line.emphasis = Emphasis::default();
+        self.unstrike(say);
     }
 
     /// Whether a run of three or more `mark` is this line's fence.
@@ -2986,50 +3028,6 @@ impl Markdown {
     /// the block its own marker opened. See [`Markdown::fenced`].
     fn fences(&self, mark: char) -> bool {
         self.inside != Inside::Fence || self.fenced == mark
-    }
-
-    /// Whether a run of two tildes followed by `next` turns a retraction on or
-    /// off.
-    ///
-    /// The same rule the stars are held to, for the same reason: something has
-    /// to follow on the same line for a run to open, so a pair left dangling at
-    /// the end of one strikes nothing.
-    fn strikes(&self, next: char) -> bool {
-        self.line.emphasis.struck || !next.is_whitespace()
-    }
-
-    /// Whether a run of markers followed by `next` turns emphasis on or off.
-    fn emphasises(&self, held: HeldMarks, next: char) -> bool {
-        // Whichever of the two this run would close, since what a marker may do
-        // depends on whether its own is already open.
-        let open = if held.count >= 2 {
-            self.line.emphasis.raised
-        } else {
-            self.line.emphasis.leant
-        };
-
-        if held.mark == '_' {
-            return if open {
-                // Closes at the end of a word rather than inside one, so
-                // `_borrowed_ from` closes and `_borrowed_from` does not.
-                !next.is_alphanumeric()
-            } else {
-                // Opens only between two words rather than beside one: a
-                // word must not already be under way, and one has to start
-                // here. `read_to_string` is a function far more often than it
-                // is a sentence with emphasis in the middle of it -- and
-                // `Ok(_)` is a pattern far more often than it is the start of
-                // one, which the whitespace this used to ask about could not
-                // tell apart, since the bracket that closes it is not
-                // whitespace either.
-                !self.previous.is_alphanumeric() && next.is_alphanumeric()
-            };
-        }
-
-        // Something has to follow on the same line for a run to open. That is
-        // what leaves `* item` a bullet instead of turning the rest of the
-        // paragraph bold.
-        open || !next.is_whitespace()
     }
 
     /// Whether `character` opens a block of bars where the scan stands.
@@ -4425,14 +4423,19 @@ impl Markdown {
     /// text still held when that happens is text the reader never sees.
     pub fn finish(&mut self, room: usize, say: &mut dyn FnMut(Said<'_>)) {
         let mut kinds = std::mem::take(&mut self.kinds);
+        let strikes = self.shared_strikes();
         let mut tell = |slot: Slot, text: &str, link: Option<&str>| {
-            kinds.tell(slot, text, link, &mut |slot, text, link| {
-                say(Said::Run { slot, text, link });
-            });
+            if !strikes.borrow_mut().keep(slot, text, link) {
+                kinds.tell(slot, text, link, &mut |slot, text, link| {
+                    say(Said::Run { slot, text, link });
+                });
+            }
         };
         // Before what the rest of the line held, since the spaces came first.
         self.unindent(room, &mut tell);
         self.close(room, &mut tell);
+        // The end of the message ends the paragraph a phrase was held in.
+        self.unstrike(&mut tell);
 
         // A fence's own line that the message ended in the middle of is a line
         // that ended all the same, so its edge is drawn: a frame is shut by the
@@ -4484,17 +4487,22 @@ impl Markdown {
     /// What the watch held back is read as written, and nothing is watched for
     /// after. The rest of a message is read as it would have been had the line
     /// ended there, so a table that straddles it is not one, and a row of `=`
-    /// or `-` that follows is no underline.
+    /// or `-` that follows is no underline. A phrase held after a single tilde
+    /// is drawn as written, since its closer can no longer reach it either.
     pub fn undoubted(&mut self, room: usize, say: &mut dyn FnMut(Said<'_>)) {
         let mut kinds = std::mem::take(&mut self.kinds);
+        let strikes = self.shared_strikes();
         let mut tell = |slot: Slot, text: &str, link: Option<&str>| {
-            kinds.tell(slot, text, link, &mut |slot, text, link| {
-                say(Said::Run { slot, text, link });
-            });
+            if !strikes.borrow_mut().keep(slot, text, link) {
+                kinds.tell(slot, text, link, &mut |slot, text, link| {
+                    say(Said::Run { slot, text, link });
+                });
+            }
         };
         while let Some(table) = self.table.take_if(|table| table.pending()) {
             self.release(&table, room, &mut tell);
         }
+        self.unstrike(&mut tell);
         self.hand_on(room, &mut kinds, say);
         kinds.flush(&mut |slot, text, link| say(Said::Run { slot, text, link }));
         self.kinds = kinds;
@@ -4655,6 +4663,9 @@ impl Markdown {
         let emphasis = if ended == Inside::Prose && self.started {
             self.line.emphasis
         } else {
+            // Nor is a phrase held: what is held goes out as written, before
+            // the line ends.
+            self.unstrike(say);
             Emphasis::default()
         };
 
@@ -4746,6 +4757,7 @@ impl Markdown {
             notes: std::mem::take(&mut self.notes),
             definitions: std::mem::take(&mut self.definitions),
             folded: self.folded,
+            strikes: self.strikes.take(),
             ..Self::default()
         };
 
@@ -4865,41 +4877,6 @@ impl Markdown {
                 }
             }),
             None => say(Slot::Quiet, code.trim_end_matches('\n'), None),
-        }
-    }
-
-    /// The slot everything read right now is written under.
-    fn slot(&self) -> Slot {
-        if self.inside != Inside::Prose || self.line.noted {
-            // A footnote's note is quiet, as what frames a block is.
-            Slot::Quiet
-        } else if matches!(self.line.quoted, Quoted::Owed | Quoted::Plain) {
-            Slot::Quote
-        } else if self.line.code || self.line.key {
-            // Above everything a phrase can otherwise be: backticks say the
-            // reader is being handed something to copy or go and find, and
-            // that is worth more to them than the weight around it.
-            Slot::Code
-        } else if self.line.marked == Marked::Done {
-            Slot::Done
-        } else if self.line.emphasis.struck {
-            // Above weight and emphasis both. A slot says one thing, and of the
-            // things a phrase can be at once, the one a reader most needs is
-            // that it was taken back -- bold words the answer has retracted are
-            // worse than plain ones it has not.
-            Slot::Struck
-        } else if self.line.heading {
-            // A heading of its own, so a design can tell it from a phrase
-            // the answer raised; weight alone until one does.
-            Slot::Heading
-        } else if self.line.emphasis.raised || self.line.summary {
-            // Weight in the reader's own foreground, not the theme's colour.
-            // A summary is the one line of a folded block shown as a title.
-            Slot::Bold
-        } else if self.line.emphasis.leant {
-            Slot::Emphasis
-        } else {
-            Slot::Plain
         }
     }
 }

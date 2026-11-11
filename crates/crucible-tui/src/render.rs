@@ -904,7 +904,9 @@ impl<T: Terminal> Renderer<T> {
     /// transcript band: while a block is held, for as long as the reader is at
     /// the foot to see it, in a band with a row to put it in.
     fn holds_row(&self, bands: &Bands) -> bool {
-        self.markdown.holding().is_some() && self.record.following() && !bands.transcript.is_empty()
+        (self.markdown.holding().is_some() || self.markdown.holds_a_phrase())
+            && self.record.following()
+            && !bands.transcript.is_empty()
     }
 
     /// How many of the transcript band's rows the record is shown in: the
@@ -1434,7 +1436,7 @@ impl<T: Terminal> Renderer<T> {
     /// heading as the prose it was said to be, for a call that is about to end
     /// the line it is on.
     fn undoubted(&mut self) -> Result<(), TerminalError> {
-        if !self.markdown.in_doubt() {
+        if !self.markdown.in_doubt() && !self.markdown.holds_a_phrase() {
             return Ok(());
         }
 
@@ -2570,15 +2572,17 @@ impl<T: Terminal> Renderer<T> {
         self.written_out(false)
     }
 
-    /// The row that tells of a block the reader is holding, drawn `columns`
-    /// wide; `None` while nothing is held.
+    /// The row that tells of a block the reader is holding, or shows the
+    /// phrase it holds after a single tilde, drawn `columns` wide; `None`
+    /// while nothing is held.
     ///
-    /// Shown in place of the block until it closes, in both screen modes: the
-    /// block itself is not drawn until it can be drawn whole.
+    /// Shown in place of what is held until it settles, in both screen modes:
+    /// none of it is drawn until it can be drawn as it will stand.
     fn holding(&self, columns: usize) -> Option<Row> {
         self.markdown
             .holding()
             .map(|holding| holding.row(columns, self.glyphs))
+            .or_else(|| self.markdown.striking(columns))
     }
 
     /// One frame.
