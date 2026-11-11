@@ -8,9 +8,12 @@
 //! admission. That proposal is read by [`OwnEntry`](super::OwnEntry), which
 //! asks for no hash. An entry is offered only
 //! for the platform this build runs on and only where that platform's target
-//! carries a SHA-256 and an archive the hardened unpacker reads; every other
-//! entry is absent and says why. There is no review, revocation, serial or key,
-//! so nothing here consults [`Trust`](super::Trust) or [`KEYS`](super::KEYS).
+//! carries a SHA-256 and an archive the hardened unpacker reads. One whose
+//! target here has no hash, or an archive of another format, is never offered
+//! or installed: it is listed with why, so that it can be shown only as the
+//! user's own program where its command is found on `PATH`. An entry with no
+//! target here is absent and says why. There is no review, revocation, serial
+//! or key, so nothing here consults [`Trust`](super::Trust) or [`KEYS`](super::KEYS).
 //!
 //! The text is JSON: a `version` whose major is [`SCHEMA`], and `agents`, each
 //! an `id`, a `name`, a `version`, a `license` and a `distribution` whose
@@ -136,6 +139,19 @@ impl RegistryIndex {
         self.agents
             .iter()
             .filter_map(|entry| entry.offered(&platform()).ok())
+            .collect()
+    }
+
+    /// Every entry with a target for the platform this build runs on, in
+    /// registry order, each with its offer or why it is not offered; an entry
+    /// with no target here is absent.
+    #[must_use]
+    pub fn listed(&self) -> Vec<(&RegistryEntry, Result<RegistryOffer<'_>, Unoffered>)> {
+        let platform = platform();
+        self.agents
+            .iter()
+            .filter(|entry| entry.target(&platform).is_some())
+            .map(|entry| (entry, entry.offered(&platform)))
             .collect()
     }
 
