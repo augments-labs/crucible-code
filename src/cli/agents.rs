@@ -1,7 +1,7 @@
 //! `crucible agents`: the agent catalog's commands, from a command line.
 //!
-//! `search`, `install`, `add`, `update`, `rollback`, `remove`, `verify` and
-//! `sign-in` are each a request to [`crucible_app::client::agents::run`], the
+//! `search`, `install`, `add`, `update`, `rollback`, `remove`, `verify`,
+//! `sign-in` and `try` are each a request to [`crucible_app::client::agents::run`], the
 //! door every front end asks, sent with no conversation: the door is lent
 //! [`super::client::shelf`] with nothing to start an agent with. The door asks
 //! before anything is fetched or changed, and the question is asked here, on
@@ -29,6 +29,17 @@
 //! error, written [`failing`]. What the catalog says is hostile, so whatever
 //! of it is written is escaped first.
 //!
+//! `search` and `try` are lent a launcher and its steps, under the sandbox the
+//! user's own file says, as a sign-in run as a command is: the listing then
+//! names, beside each agent, the user's own program of it found on `PATH`, and
+//! the user's own Antigravity after them with what it sees of its sign-in. A
+//! search that cannot be lent them lists as before, naming none. `try` takes
+//! the program the listing names for its agent and sends the door that move,
+//! which asks on this terminal, as an install does, before the program is
+//! started once, confined with the network closed, and writes the instance
+//! that runs it once it answers as an agent; where the listing names none, it
+//! is refused and nothing is started.
+//!
 //! `crucible agents unpack-check`, which the help leaves out, is the agent
 //! catalog's intake asking how a download, or a package tree from its lock
 //! and tarballs, unpacks by the rules an install holds it to; the file list
@@ -50,8 +61,8 @@ use std::time::Duration;
 
 use crucible_app::catalog_fetch::trust_in;
 use crucible_app::client::agents::{
-    self as door, AgentsError, HandoverFailed, How, Listed, Outcome, SaidLine, Shelf,
-    SignInChannel, SignInTerminal, Typed, Typing,
+    self as door, AgentsError, HandoverFailed, How, Listed, Outcome, OwnAntigravity, SaidLine,
+    Shelf, SignInChannel, SignInTerminal, Typed, Typing,
 };
 use crucible_app::client::{Confirmation, Front, Shown};
 use crucible_app::installing;
@@ -59,7 +70,7 @@ use crucible_app::probing::{self, Mode};
 use crucible_app::services::{Services, serving};
 use crucible_client_api::{
     Capabilities, Capability, Command, Correlation, Decision, ErrorCode, InstallProgress, Name,
-    Pending, Refusal, Request, Said,
+    Pending, Refusal, Request, Said, Text,
 };
 use crucible_config::Home;
 use crucible_runtime::{BoxFuture, Cancel};
@@ -127,6 +138,7 @@ fn served(action: &AgentsAction) -> ExitCode {
             terminal,
             answer,
             console: console_where(streams, services),
+            services: Some(services),
         }
         .carried(action, &mut typed),
         Err(unstarted) => Answer::Refused(caused(&unstarted)),
@@ -239,6 +251,10 @@ struct Desk<'a> {
     /// process has a terminal at standard input and both outputs to run it on.
     /// With none, the door is lent nothing and refuses one.
     console: Option<&'a Services>,
+    /// What a launcher and its steps are lent from, so that a listing finds
+    /// the user's own programs and a try starts one; with none, a listing
+    /// names none and a try is refused.
+    services: Option<&'a Services>,
 }
 
 impl Desk<'_> {
@@ -254,9 +270,7 @@ impl Desk<'_> {
             Err(refusal) => Answer::Refused(refusal.to_string()),
         };
         match action {
-            AgentsAction::Search { text } => {
-                self.answered(self.ask(Command::AgentCatalog), text.as_deref())
-            }
+            AgentsAction::Search { text } => self.answered(self.listed(), text.as_deref()),
             AgentsAction::Install { agent, version } => {
                 self.installed(agent, version.as_deref(), How::Installed)
             }
@@ -272,6 +286,7 @@ impl Desk<'_> {
             AgentsAction::SignIn { instance, method } => {
                 self.signed_in(instance, method.as_deref(), key)
             }
+            AgentsAction::Try { agent } => self.tried(agent),
             // The catalog's intake runs these, and they ask the door nothing.
             AgentsAction::UnpackCheck { .. } | AgentsAction::Probe { .. } => Answer::Refused(
                 "the catalog's intake runs this command, which asks the agents door nothing"
@@ -389,15 +404,85 @@ impl Desk<'_> {
         self.answered(self.ask(command), None)
     }
 
+    /// The catalog's listing, with the user's own programs found on the
+    /// `PATH` a launch here looks on where a launcher can be lent; where none
+    /// can, the listing names none of them.
+    fn listed(&self) -> Result<Outcome, AgentsError> {
+        let lent = self.services.and_then(|services| {
+            door::lending_here(self.home, services, self.runtime, |launcher, steps| {
+                let lending = super::client::shelf(self.home, Some(launcher), Some(steps));
+                self.asked(
+                    &install_request(Command::AgentCatalog),
+                    &lending,
+                    None,
+                    None,
+                )
+            })
+            .ok()
+        });
+        lent.unwrap_or_else(|| self.ask(Command::AgentCatalog))
+    }
+
+    /// Tries the user's own program of `agent`, the one the catalog's
+    /// listing finds for it here, with a launcher and its steps lent to start
+    /// it: the door asks on this terminal before it is started.
+    fn tried(&self, agent: &str) -> Answer {
+        let Ok(name) = Name::new(agent) else {
+            return Answer::Refused(format!("{} is not an agent's name", escaped(agent)));
+        };
+        let Some(services) = self.services else {
+            return Answer::Refused(UNSTARTED.to_owned());
+        };
+        let tried = door::lending_here(self.home, services, self.runtime, |launcher, steps| {
+            let lending = super::client::shelf(self.home, Some(launcher), Some(steps));
+            let listed = self.asked(
+                &install_request(Command::AgentCatalog),
+                &lending,
+                None,
+                None,
+            );
+            let program = match listed {
+                Ok(Outcome::Catalog {
+                    agents,
+                    antigravity,
+                    ..
+                }) => match antigravity.filter(|own| own.agent.as_str() == agent) {
+                    Some(own) => own.program,
+                    None => match agents
+                        .into_iter()
+                        .find(|listed| listed.agent.as_str() == agent)
+                    {
+                        Some(Listed {
+                            own: Some(program), ..
+                        }) => program,
+                        Some(_) => return Answer::Refused(unfound(agent)),
+                        None => {
+                            return Answer::Refused(format!(
+                                "the agent catalog lists no agent named {}, so nothing was tried",
+                                escaped(agent)
+                            ));
+                        }
+                    },
+                },
+                other => return self.answered(other, None),
+            };
+            let program = Text::cut(&program.to_string_lossy());
+            if program.truncated() {
+                return Answer::Refused(unfound(agent));
+            }
+            let request = install_request(Command::TryOwnAgent {
+                agent: name,
+                program,
+            });
+            self.answered(self.asked(&request, &lending, None, None), None)
+        });
+        tried.unwrap_or_else(|refused| Answer::Refused(caused(&refused)))
+    }
+
     /// `command` carried out at the agents door, asked on this terminal, with
     /// how far a download has come said as it comes.
     fn ask(&self, command: Command) -> Result<Outcome, AgentsError> {
-        let request = Request::new(
-            Capabilities::none().with(Capability::Install),
-            Correlation::new(1),
-            command,
-        );
-        self.asked(&request, &self.shelf, None, None)
+        self.asked(&install_request(command), &self.shelf, None, None)
     }
 
     /// `command`, a sign-in the agent runs as a command, carried out with the
@@ -475,6 +560,7 @@ impl Desk<'_> {
                 more,
                 unrefreshed,
                 registry,
+                antigravity,
             } => {
                 if let Some(why) = unrefreshed {
                     (self.said)(&failing(&format!(
@@ -485,7 +571,7 @@ impl Desk<'_> {
                 if let Some(line) = registry {
                     (self.said)(&failing(line.as_ref()));
                 }
-                Answer::Done(listing(&agents, more, matching))
+                Answer::Done(listing(&agents, antigravity.as_ref(), more, matching))
             }
             Outcome::Undecided if self.answer.is_some() => {
                 Answer::Refused("nothing was confirmed, so nothing was changed".to_owned())
@@ -690,12 +776,41 @@ fn joined(values: &[Box<str>]) -> String {
         .join(", ")
 }
 
+/// `command` as this command line sends it: claiming install alone.
+fn install_request(command: Command) -> Request {
+    Request::new(
+        Capabilities::none().with(Capability::Install),
+        Correlation::new(1),
+        command,
+    )
+}
+
+/// Why a try of `agent` is refused where no program of the user's own is
+/// found for it.
+fn unfound(agent: &str) -> String {
+    format!(
+        "no program of your own for {} was found on PATH outside crucible's install store, so \
+         nothing was tried",
+        escaped(agent)
+    )
+}
+
+/// Why a try is refused where nothing can be lent to start a program with.
+const UNSTARTED: &str = "trying your own program starts it, and this command cannot start one \
+                         here, so nothing was tried";
+
 /// The most paths a `verify` names of one version before it counts the rest.
 const NAMED: usize = 8;
 
-/// The lines a listing of `agents` is written as, keeping only those whose
-/// name holds `matching`, ignoring case, where it is given.
-fn listing(agents: &[Listed], more: bool, matching: Option<&str>) -> String {
+/// The lines a listing of `agents` is written as, with the user's own
+/// Antigravity, `antigravity`, after them where one was found, keeping only
+/// those whose name holds `matching`, ignoring case, where it is given.
+fn listing(
+    agents: &[Listed],
+    antigravity: Option<&OwnAntigravity>,
+    more: bool,
+    matching: Option<&str>,
+) -> String {
     let wanted = matching.map(str::to_lowercase);
     let mut said = String::new();
     for listed in agents.iter().filter(|listed| {
@@ -716,7 +831,30 @@ fn listing(agents: &[Listed], more: bool, matching: Option<&str>) -> String {
                 escaped(why)
             ),
         };
-        let _ = writeln!(said, "{}: {offered}; {installed}", listed.agent.as_str());
+        let _ = write!(said, "{}: {offered}; {installed}", listed.agent.as_str());
+        if let Some(own) = &listed.own {
+            let _ = write!(
+                said,
+                "; your own at {} (crucible agents try {})",
+                escaped(&own.display().to_string()),
+                listed.agent.as_str()
+            );
+        }
+        said.push('\n');
+    }
+    if let Some(own) = antigravity.filter(|own| {
+        wanted
+            .as_deref()
+            .is_none_or(|wanted| own.agent.as_str().contains(wanted))
+    }) {
+        let _ = writeln!(
+            said,
+            "{}: your own at {} (crucible agents try {}). {}",
+            own.agent.as_str(),
+            escaped(&own.program.display().to_string()),
+            own.agent.as_str(),
+            own.note
+        );
     }
     if said.is_empty() {
         said = match matching {

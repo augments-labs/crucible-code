@@ -1013,6 +1013,16 @@ fn carried(
     action: &AgentAction,
     picking: &mut Picking,
 ) -> Result<Result<Door, AgentsError>, Failed> {
+    at_door(tree, conversation, action.command(), picking)
+}
+
+/// What the agents door answers `command`, asked as [`carried`] asks a move.
+fn at_door(
+    tree: &Tree,
+    conversation: &Conversation,
+    command: Command,
+    picking: &mut Picking,
+) -> Result<Result<Door, AgentsError>, Failed> {
     use crucible_app::client::agents::{Shelf, Watching, run};
     use crucible_client_api::{Correlation, Request};
 
@@ -1029,7 +1039,7 @@ fn carried(
         smoke: None,
         steps: conversation.steps(),
     };
-    let request = Request::new(Asking::every(), Correlation::new(2), action.command());
+    let request = Request::new(Asking::every(), Correlation::new(2), command);
     let mut progress = |_| {};
     let cancel = crucible_runtime::Cancel::new();
     let link = |_: crucible_execution::Text| {};
@@ -1421,24 +1431,10 @@ fn the_facts_say_the_programs_directory_is_readable() -> Result<(), Failed> {
 /// that runs it by the path its links lead to, with no profile directory.
 #[test]
 fn trying_your_own_agy_writes_an_antigravity_instance_with_no_profile() -> Result<(), Failed> {
-    use crucible_external_harnesses::acp::SignIn;
-    use crucible_external_harnesses::antigravity::{self, Manifest};
-    use crucible_external_harnesses::fake_peer::scripts::acp;
+    use crucible_external_harnesses::antigravity;
 
     let tree = Tree::new("external-choosing-own-agy")?;
-    let shipped = SNAPSHOT.entries().first().ok_or("the snapshot's entry")?;
-    let reviewed = acp::initialized(
-        &shipped.admits.name,
-        &shipped.admits.version,
-        Manifest::REVIEWED.sign_in.first().map_or("", SignIn::id),
-    );
-    let program = fake_peer::install(
-        &tools(&tree),
-        "agy",
-        &Peer::once(Reply::new().hear(1).say(reviewed.as_str())),
-    )?;
-    let program = std::fs::canonicalize(program)?;
-    let mut conversation = own_sandboxed(&tree)?;
+    let (mut conversation, program) = agy_of_your_own(&tree)?;
 
     let (action, put) = chose_own(&tree, &mut conversation, "{}", "Antigravity")?;
 
@@ -1468,4 +1464,78 @@ fn trying_your_own_agy_writes_an_antigravity_instance_with_no_profile() -> Resul
         }))
     );
     Ok(())
+}
+
+/// What the agents door answers `command`, asked as [`carried`] asks a move
+/// by a client that says yes to the door's question about a try.
+pub(crate) fn tried_at_door(
+    tree: &Tree,
+    conversation: &Conversation,
+    command: Command,
+) -> Result<Result<Door, AgentsError>, Failed> {
+    at_door(
+        tree,
+        conversation,
+        command,
+        &mut Picking::of([Some("Try it")]),
+    )
+}
+
+/// A tree whose catalog offers goose and whose user installed their own goose
+/// on the `PATH` a conversation's steps look on, which answers as an agent;
+/// that conversation, and the path the program's links lead to.
+pub(crate) fn goose_of_your_own(tree: &Tree) -> Result<(Conversation, PathBuf), Failed> {
+    trusting(tree, &[entry("goose", "1.0.0", ONE)])?;
+    let program = own_goose(&tools(tree), true)?;
+    Ok((own_sandboxed(tree)?, program))
+}
+
+/// A tree whose user installed their own Antigravity on the `PATH` a
+/// conversation's steps look on, which answers as the reviewed release does;
+/// that conversation, and the path the program's links lead to.
+pub(crate) fn agy_of_your_own(tree: &Tree) -> Result<(Conversation, PathBuf), Failed> {
+    use crucible_external_harnesses::acp::SignIn;
+    use crucible_external_harnesses::antigravity::Manifest;
+    use crucible_external_harnesses::fake_peer::scripts::acp;
+
+    let shipped = SNAPSHOT.entries().first().ok_or("the snapshot's entry")?;
+    let reviewed = acp::initialized(
+        &shipped.admits.name,
+        &shipped.admits.version,
+        Manifest::REVIEWED.sign_in.first().map_or("", SignIn::id),
+    );
+    let program = fake_peer::install(
+        &tools(tree),
+        "agy",
+        &Peer::once(Reply::new().hear(1).say(reviewed.as_str())),
+    )?;
+    Ok((own_sandboxed(tree)?, std::fs::canonicalize(program)?))
+}
+
+/// The instance `/login` writes in `tree`, set up by `of_your_own`, where the
+/// client picks the agent shown as `agent`, then "Try your own", and says yes
+/// to the door's question: as written, with the directory the user's own
+/// programs lie in written `<tools>`.
+pub(crate) fn tried_through_login(
+    tree: &Tree,
+    of_your_own: fn(&Tree) -> Result<(Conversation, PathBuf), Failed>,
+    agent: &'static str,
+) -> Result<String, Failed> {
+    let (mut conversation, _) = of_your_own(tree)?;
+    let (action, _) = chose_own(tree, &mut conversation, "{}", agent)?;
+    let tried = tried_at_door(tree, &conversation, action.command())?;
+    let Ok(Door::Tried { instance, .. }) = tried else {
+        return Err(format!("the door answered {tried:?}").into());
+    };
+    instance_written(tree, &instance)
+}
+
+/// The instance the user file in `tree`'s home names `name`, as written, with
+/// the directory the user's own programs lie in written `<tools>`.
+pub(crate) fn instance_written(tree: &Tree, name: &str) -> Result<String, Failed> {
+    let instance = written(tree, name)?.ok_or("no instance was written")?;
+    let tools = std::fs::canonicalize(tools(tree))?;
+    Ok(instance
+        .to_string()
+        .replace(&tools.to_string_lossy().replace('\\', "\\\\"), "<tools>"))
 }

@@ -289,7 +289,7 @@ use crate::own_program::Unowned;
 use crate::providers::{Rows, Unnamed};
 use crate::remember::{self, RememberError};
 use crate::services::Services;
-use trying::own_refusal;
+use trying::{own_antigravity, own_refusal};
 
 mod trying;
 
@@ -371,6 +371,23 @@ pub struct Listed {
     /// The probe record the newest offered version was installed under, where
     /// it is a registry release installed under one.
     pub probed: Option<Probe>,
+    /// The path the user's own program of it leads to, where the door was
+    /// lent a conversation's steps and found one on their `PATH` as a try of
+    /// it finds one: the program a configured instance of it runs, else the
+    /// one its entry's guessed name finds. Nothing is started to find it.
+    pub own: Option<PathBuf>,
+}
+
+/// The user's own Antigravity, found on the `PATH` a conversation's steps
+/// look on, as a listing names it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnAntigravity {
+    /// The key a try of it names it by.
+    pub agent: AgentKey,
+    /// The path its links lead to.
+    pub program: PathBuf,
+    /// What it sees of the sign-in it keeps, as it would be launched now.
+    pub note: &'static str,
 }
 
 /// Which move a confirmed switch was.
@@ -406,6 +423,9 @@ pub enum Outcome {
         /// why it was the cached one where it was not verified, or why none
         /// could be read.
         registry: Option<Box<str>>,
+        /// The user's own Antigravity, where the door was lent a
+        /// conversation's steps and found one.
+        antigravity: Option<OwnAntigravity>,
     },
     /// Nobody said yes, so nothing was fetched or changed.
     Undecided,
@@ -1132,6 +1152,7 @@ impl Door<'_> {
     /// the native runner is spelled with: the entry that backs a built-in is
     /// that driver's, and is no catalog row.
     fn listing(&self, unrefreshed: Option<FetchError>) -> Outcome {
+        let trying = self.shelf.steps.map(Steps::trying);
         let mut agents: Vec<Listed> = Vec::new();
         let mut more = false;
         for offer in self.trust.offers(None) {
@@ -1161,6 +1182,7 @@ impl Door<'_> {
                 keeps_no_sign_in,
                 registry: false,
                 probed: None,
+                own: trying.as_ref().and_then(|trying| self.own(trying, key)),
             });
         }
         // The ACP Registry's agents, after what the signed catalog offers: a
@@ -1191,6 +1213,9 @@ impl Door<'_> {
                     keeps_no_sign_in: true,
                     registry: true,
                     probed,
+                    // A registry release is proposed as no program of the
+                    // user's own.
+                    own: None,
                 });
             }
         }
@@ -1204,6 +1229,7 @@ impl Door<'_> {
             more,
             unrefreshed,
             registry,
+            antigravity: trying.as_ref().and_then(own_antigravity),
         }
     }
 

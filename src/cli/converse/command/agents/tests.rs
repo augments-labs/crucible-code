@@ -19,6 +19,7 @@ fn listed(key: &str, offered: &[&str], license: &str, installed: &[&str]) -> doo
         keeps_no_sign_in: false,
         registry: false,
         probed: None,
+        own: None,
     }
 }
 

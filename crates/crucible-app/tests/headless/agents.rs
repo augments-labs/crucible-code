@@ -78,6 +78,8 @@ mod piped;
 pub(crate) mod registry;
 #[path = "agents/shipped_hold.rs"]
 mod shipped_hold;
+#[path = "agents/trying.rs"]
+mod trying;
 #[path = "agents/uvx.rs"]
 mod uvx;
 
@@ -1187,6 +1189,7 @@ fn a_listing_fetches_the_catalog_even_where_updates_are_never_checked() -> Resul
         more: false,
         unrefreshed: None,
         registry: None,
+        antigravity: None,
     }) = outcome
     else {
         return Err(format!("a listing, not {}", shape(&outcome)).into());

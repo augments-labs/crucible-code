@@ -623,6 +623,7 @@ impl Bench {
             terminal: false,
             answer,
             console: None,
+            services: None,
         }
     }
 
@@ -1678,4 +1679,87 @@ fn a_commands_line_is_marked_whatever_it_holds() {
             );
         }
     }
+}
+
+/// The command a launch's refusal of an unprobed own program names, and the
+/// install it names beside it, are each a `crucible agents` verb that parses
+/// to what the sentence says it does.
+#[test]
+fn the_command_own_unprobed_names_exists() {
+    let key = AgentKey::new("goose").expect("an agent key");
+    let said = crucible_app::backends::Unbelieved::OwnUnprobed { key }.to_string();
+    let named: Vec<&str> = said.split('`').skip(1).step_by(2).collect();
+    assert_eq!(
+        named,
+        ["crucible agents try goose", "crucible agents install goose"]
+    );
+    let parsed: Vec<Option<AgentsAction>> = named
+        .iter()
+        .map(
+            |command| match Cli::try_parse_from(command.split(' ')).ok()?.command {
+                Some(Command::Agents { action }) => Some(action),
+                _ => None,
+            },
+        )
+        .collect();
+    assert!(
+        matches!(
+            parsed.as_slice(),
+            [
+                Some(AgentsAction::Try { agent: tried }),
+                Some(AgentsAction::Install { agent: installed, version: None }),
+            ] if tried == "goose" && installed == "goose"
+        ),
+        "{said} names {parsed:?}"
+    );
+}
+
+/// `search` marks an agent whose own program was found on `PATH` with the
+/// path its links lead to and the command that tries it, and writes the
+/// user's own Antigravity after the catalog's agents with its note, each
+/// path escaped and each kept only where its name holds what is searched for.
+#[test]
+fn search_marks_a_program_of_your_own_found_on_path() {
+    let goose = Listed {
+        agent: AgentKey::new("goose").expect("an agent key"),
+        offered: vec!["1.0.0".into()],
+        license: "Apache-2.0".into(),
+        terms: None,
+        caution: None,
+        installed: Ok(Vec::new()),
+        keeps_no_sign_in: false,
+        registry: false,
+        probed: None,
+        own: Some(PathBuf::from("/opt/tools/goose\u{1b}")),
+    };
+    let antigravity = OwnAntigravity {
+        agent: AgentKey::new("antigravity").expect("an agent key"),
+        program: PathBuf::from("/opt/tools/agy"),
+        note: "A note.",
+    };
+
+    let every = listing(
+        std::slice::from_ref(&goose),
+        Some(&antigravity),
+        false,
+        None,
+    );
+    let matched = listing(
+        std::slice::from_ref(&goose),
+        Some(&antigravity),
+        false,
+        Some("GOO"),
+    );
+
+    assert_eq!(
+        every,
+        "goose: offers 1.0.0; not installed; your own at /opt/tools/goose\\u{1b} (crucible \
+         agents try goose)\nantigravity: your own at /opt/tools/agy (crucible agents try \
+         antigravity). A note.\n"
+    );
+    assert_eq!(
+        matched,
+        "goose: offers 1.0.0; not installed; your own at /opt/tools/goose\\u{1b} (crucible \
+         agents try goose)\n"
+    );
 }

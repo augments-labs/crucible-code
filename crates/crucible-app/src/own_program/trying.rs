@@ -97,6 +97,11 @@ impl Trying {
         })
     }
 
+    /// Whether the sandbox confines a launch started now.
+    pub(crate) fn sandboxed(&self) -> bool {
+        self.sandboxed
+    }
+
     /// Removes the record kept for the instance named `name`, where one is.
     ///
     /// # Errors

@@ -5,12 +5,13 @@ use std::path::{Path, PathBuf};
 
 use crucible_client_api::{ErrorCode, Text};
 use crucible_config::{Driver, ExternalAgent};
+use crucible_external_harnesses::antigravity;
 use crucible_types::AgentKey;
 use crucible_types::shown::escaped;
 
-use super::{AgentsError, Confirmation, Door, Front, Outcome, confirmed};
+use super::{AgentsError, Confirmation, Door, Front, Outcome, OwnAntigravity, confirmed};
 use crate::backends::ANTIGRAVITY;
-use crate::own_program::Unowned;
+use crate::own_program::{Trying, Unowned};
 use crate::remember;
 
 /// The key the user's own Antigravity is tried under, which names no catalog
@@ -44,7 +45,32 @@ pub(super) fn own_refusal(agent: &AgentKey, program: &Path, why: &Unowned) -> St
     }
 }
 
+/// The user's own Antigravity `trying` finds, as a listing names it.
+pub(super) fn own_antigravity(trying: &Trying) -> Option<OwnAntigravity> {
+    let trial = trying.antigravity(&ANTIGRAVITY)?;
+    Some(OwnAntigravity {
+        agent: AgentKey::new(ANTIGRAVITY_KEY).ok()?,
+        program: trial.canonical().to_owned(),
+        note: antigravity::own_note(trying.sandboxed()),
+    })
+}
+
 impl Door<'_> {
+    /// The path the user's own program of the catalog agent `key` leads to,
+    /// as `trying` finds it and a try of it would take it: the one a
+    /// configured instance of it runs, else the one its entry's guessed name
+    /// finds.
+    pub(super) fn own(&self, trying: &Trying, key: &AgentKey) -> Option<PathBuf> {
+        self.instances
+            .iter()
+            .filter(|instance| {
+                instance.driver() == Driver::Catalog && instance.agent() == Some(key)
+            })
+            .find_map(|instance| trying.catalog(key, Some(instance.executable())))
+            .or_else(|| trying.catalog(key, None))
+            .map(|trial| trial.canonical().to_owned())
+    }
+
     /// Tries the user's own `program` of `agent`, a catalog agent's or
     /// Antigravity's, as the instance that already runs it or a new one: the
     /// program must be the one a launch of that instance would find, its

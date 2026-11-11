@@ -142,6 +142,9 @@ pub(super) fn run<T: Terminal>(
                 more,
                 unrefreshed,
                 registry,
+                // The panel lists what the catalog offers; `/login` is where
+                // the user's own program of an agent is offered.
+                antigravity: _,
             }) => Listing::new(agents, more, unrefreshed.as_ref(), registry.as_deref()),
             Ok(door::Outcome::Refused(refusal)) => return say(renderer, &format!("! {refusal}")),
             Ok(_) => return say(renderer, ASTRAY),
