@@ -328,6 +328,14 @@ const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
         "runtime.block_on(initialized(",
         1,
     ),
+    // The try of a program the user installed, a command of the same kind: it
+    // starts that program once, confined, and waits for its answer to
+    // `initialize`.
+    (
+        "crates/crucible-app/src/own_program.rs",
+        "runtime.block_on(probe(",
+        1,
+    ),
     ("crates/crucible-runner/src/fake.rs", ".block_on(self)", 1),
     // The probes' `Driver::answer`, which their `main` reaches and no turn
     // does: a probe is a program of its own, not a part of crucible.

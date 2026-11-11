@@ -726,7 +726,9 @@ pub(crate) fn launch_policy(
 /// `conversation`'s policy as a launch of the user's own `program` of `row`'s
 /// agent is started under, with its directory decided against `places` as
 /// the probe's was: a catalog agent's own program and Antigravity's. Every
-/// other row's program is started under `conversation` unchanged.
+/// other row's program, and every program where `conversation` has the
+/// sandbox off, is started under `conversation` unchanged: the decision says
+/// what a confined program may read, and an unconfined one reads it all.
 ///
 /// # Errors
 ///
@@ -742,7 +744,7 @@ pub(crate) fn launched(
         AgentRow::Catalog(catalog) => catalog.is_own(),
         AgentRow::Built(built) => built.driver == crucible_config::Driver::Antigravity,
     };
-    if !decided {
+    if !decided || !conversation.enabled() {
         return Ok(conversation.clone());
     }
     let canonical =
