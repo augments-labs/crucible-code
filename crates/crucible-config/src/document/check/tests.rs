@@ -526,7 +526,8 @@ fn an_instance_needs_a_driver_and_an_executable() {
 
 /// An antigravity agent with no profile of its own is read: whether it needs
 /// one depends on whether its program is a release from the store, which only
-/// its launch knows, and the user's own `agy` uses the sign-in it already has.
+/// its launch knows, and the user's own `agy` is given none, so it looks for
+/// its sign-in in its usual home.
 #[test]
 fn an_antigravity_instance_without_a_profile_is_read() {
     let read =

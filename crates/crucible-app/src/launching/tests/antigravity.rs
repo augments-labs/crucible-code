@@ -779,7 +779,7 @@ async fn a_store_antigravity_without_a_profile_is_refused_at_launch() {
 }
 
 /// The user's own Antigravity with no profile directory is not refused for
-/// it: it uses the sign-in its user already gave it.
+/// it: it is given none, so it looks for its sign-in in its usual home.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_own_antigravity_without_a_profile_is_not_refused_for_it() {
     let sample = Sample::new("launch-own-unprofiled");

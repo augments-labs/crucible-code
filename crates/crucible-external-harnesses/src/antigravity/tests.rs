@@ -25,8 +25,8 @@ fn variable<'a>(request: &'a crate::Request, name: &str) -> Option<&'a str> {
 }
 
 /// The user's own `agy` is started as `agy acp`, keeps its token in a file and
-/// is given no home or temporary directory, so it reads the sign-in it keeps
-/// where it always does.
+/// is given no home or temporary directory, so it looks for its sign-in in
+/// its usual home.
 #[test]
 fn an_own_agy_is_started_with_file_storage_and_no_gemini_home() {
     let request = Antigravity::own(Path::new("/opt/bin/agy"), Allowing::Nothing, &[])
