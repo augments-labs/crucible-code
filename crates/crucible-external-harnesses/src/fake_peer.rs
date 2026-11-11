@@ -6,9 +6,12 @@
 //! [`install`] puts it in a test's directory under the name a dialect looks
 //! for, with its [`Script`] in a file named `script` beside it, and the path it
 //! returns is the executable the test configures. The peer reads that file
-//! through its own path and ignores its environment, and acts on no argument,
-//! so the arguments a dialect builds and the empty environment a launch starts
-//! from reach it unchanged.
+//! through its own path and ignores its environment. It acts on an argument
+//! only when it comes first: it answers `--stamp`, copies itself on
+//! `--copy-to` with exactly one path after it, beats in the directory after
+//! `--linger`, and fails on a `--linger` with nothing after it. Every other
+//! start plays its script, so the arguments a dialect builds and the empty
+//! environment a launch starts from reach it unchanged.
 //!
 //! A script is a sequence of [`Reply`] values, one for each start: a probe, an
 //! account step and a turn each consume the next. The peer keeps its place in a
@@ -86,6 +89,10 @@ const ARGUED: &str = "argued";
 
 /// The file a lingering grandchild beats into.
 const LINGERING: &str = "lingering";
+
+/// The first argument that asks the peer to copy its own executable to the
+/// one path after it, which is how [`install`] puts it in place.
+const COPY: &str = "--copy-to";
 
 /// The longest a grandchild lingers, so one nothing stopped still ends.
 const LINGER: Duration = Duration::from_mins(1);
@@ -539,12 +546,26 @@ pub(crate) fn installed(
     }
     // A copy, never a link: a link shares the built peer's one inode, and
     // every other test's link and unlink moves that inode's change time,
-    // which a launch compares with the time it found. The copy is written and
-    // closed here before anything runs it, and std opens it close-on-exec; the
-    // exposure left is a process forked by another test thread while it is
-    // open for writing, which holds that descriptor until it executes and can
-    // make running this one fail with "text file busy" for that moment.
-    fs::copy(peer, &target)?;
+    // which a launch compares with the time it found. The peer writes the
+    // copy in a process of its own, never this one: a process another test
+    // thread forks while this one holds the copy open for writing keeps that
+    // descriptor until it executes, and running the copy meanwhile fails with
+    // "text file busy". The writer has exited before this returns, so no
+    // process holds the copy open for writing once anything runs it.
+    let copied = Command::new(peer)
+        .arg(COPY)
+        .arg(&target)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .output()?;
+    if !copied.status.success() {
+        return Err(Unbuilt::Io(io::Error::other(format!(
+            "{} could not copy itself to {}: {}",
+            peer.display(),
+            target.display(),
+            String::from_utf8_lossy(&copied.stderr).trim()
+        ))));
+    }
     fs::write(directory.join(SCRIPT), script.encoded())?;
     Ok(target)
 }
@@ -690,11 +711,31 @@ pub fn entry() -> ExitCode {
                 Err(_) => ExitCode::FAILURE,
             }
         }
+        // Taken for a copy only as the first argument with exactly one more
+        // after it; every other start beginning with it is still played to.
+        Some(first) if first == COPY && arguments.len() == 1 => match arguments.next() {
+            Some(target) => copied_to(Path::new(&target)),
+            None => ExitCode::FAILURE,
+        },
         Some(first) if first == "--linger" => match arguments.next() {
             Some(directory) => linger(Path::new(&directory)),
             None => ExitCode::FAILURE,
         },
         _ => play(),
+    }
+}
+
+/// Copies this executable to `target`, saying on standard error what failed.
+fn copied_to(target: &Path) -> ExitCode {
+    match std::env::current_exe().and_then(|itself| fs::copy(itself, target)) {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(problem) => refuse(
+            &format!(
+                "fake peer: cannot copy itself to {}: {problem}",
+                target.display()
+            ),
+            1,
+        ),
     }
 }
 
