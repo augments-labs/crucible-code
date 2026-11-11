@@ -12,6 +12,7 @@ fn listed(key: &str, offered: &[&str], license: &str, installed: &[&str]) -> doo
     door::Listed {
         agent: AgentKey::new(key).expect("an agent key"),
         offered: offered.iter().map(|&version| version.into()).collect(),
+        unoffered: None,
         license: license.into(),
         terms: None,
         caution: None,
@@ -296,6 +297,36 @@ fn with_no_list_to_stand_each_agent_is_printed_on_a_line_of_its_own_escaped_and_
             format!("aider 2.1\\u{{1b}}[2J · {cut} · not installed"),
             MORE.to_owned(),
         ]
+    );
+}
+
+/// `/catalog` lists what crucible installs: an agent the door listed only
+/// as the user's own program, since crucible installs no version of it, is
+/// left out, neither counted among those offered nor said to be one more.
+#[test]
+fn catalog_leaves_out_an_entry_crucible_does_not_install() {
+    let cursor = door::Listed {
+        unoffered: Some("the ACP Registry gives cursor no SHA-256".into()),
+        own: Some(std::path::PathBuf::from("/opt/tools/cursor-agent")),
+        registry: true,
+        ..listed("cursor", &[], "Proprietary", &[])
+    };
+    let mut listing = Listing::new(
+        vec![listed("goose", &["1.0.0"], "Apache-2.0", &[]), cursor],
+        false,
+        None,
+        None,
+    );
+
+    let rows = drawn(&mut listing, 100, 30).join("\n");
+
+    assert!(rows.contains("ACP Registry · 1 of 1 offered"), "{rows}");
+    assert!(!rows.contains("cursor"), "{rows}");
+    assert!(!rows.contains(MORE), "{rows}");
+    assert_eq!(kept(&listing), ["goose"]);
+    assert_eq!(
+        said(&listing, 400),
+        ["goose 1.0.0 · Apache-2.0 · not installed"]
     );
 }
 

@@ -290,11 +290,14 @@ use crate::own_program::Unowned;
 use crate::providers::{Rows, Unnamed};
 use crate::remember::{self, RememberError};
 use crate::services::Services;
+pub(super) use trying::own_of;
 use trying::{own_antigravity, own_refusal};
 
 mod trying;
 
-/// The most catalog agents a listing names; one with more says so.
+/// The most catalog agents a listing names as offered; one with more says
+/// so. An agent listed only as the user's own program, since crucible installs
+/// no version of it, is not counted.
 pub const LISTED: usize = 32;
 
 /// The most bytes a key typed for an agent may have.
@@ -353,6 +356,11 @@ pub struct Listed {
     pub agent: AgentKey,
     /// The versions offered for this platform, newest source first.
     pub offered: Vec<Box<str>>,
+    /// Why crucible installs no version of it, where its entry has a target
+    /// for this platform that crucible does not install: such a row is listed
+    /// only where the user's own program of it was found, offers no version,
+    /// and is reached only as that program.
+    pub unoffered: Option<Box<str>>,
     /// The licence of the newest offered.
     pub license: Box<str>,
     /// Where its terms are published, where it has any.
@@ -1252,6 +1260,7 @@ impl Door<'_> {
             agents.push(Listed {
                 agent: key.clone(),
                 offered: vec![offer.pin.version],
+                unoffered: None,
                 license: offer.entry.license,
                 terms: offer.entry.terms,
                 caution: offer.entry.caution,
@@ -1266,21 +1275,52 @@ impl Door<'_> {
         // key it lists once is not listed twice, and a key a built-in driver
         // is spelled with gets no registry row.
         let mut from_registry = false;
+        let mut counted = agents.len();
         if let Some(view) = &self.registry {
-            for offer in view.index.offers() {
-                let key = &offer.entry().id;
+            for (entry, offer) in view.index.listed() {
+                let key = &entry.id;
                 if kept_word(key.as_str()) || agents.iter().any(|listed| listed.agent == *key) {
                     continue;
                 }
-                if agents.len() == LISTED {
+                let offer = match offer {
+                    Ok(offer) => offer,
+                    // An entry crucible installs no version of is listed only
+                    // as the user's own program, where one is found. It is
+                    // not counted toward the most a listing names, nor said to
+                    // be one more, since a list of what crucible installs
+                    // leaves it out; the index bounds how many there are.
+                    Err(why) => {
+                        let Some(own) = trying.as_ref().and_then(|trying| self.own(trying, key))
+                        else {
+                            continue;
+                        };
+                        agents.push(Listed {
+                            agent: key.clone(),
+                            offered: Vec::new(),
+                            unoffered: Some(why.to_string().into()),
+                            license: entry.license.clone(),
+                            terms: entry.terms.clone(),
+                            caution: None,
+                            installed: self.installed(key),
+                            keeps_no_sign_in: true,
+                            registry: true,
+                            probed: None,
+                            own: Some(own),
+                        });
+                        continue;
+                    }
+                };
+                if counted == LISTED {
                     more = true;
                     continue;
                 }
+                counted += 1;
                 let probed = self.probed(key, offer.version());
                 from_registry = true;
                 agents.push(Listed {
                     agent: key.clone(),
                     offered: vec![offer.version().into()],
+                    unoffered: None,
                     license: offer.entry().license.clone(),
                     terms: offer.entry().terms.clone(),
                     caution: None,

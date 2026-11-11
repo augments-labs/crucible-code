@@ -1723,6 +1723,7 @@ fn search_marks_a_program_of_your_own_found_on_path() {
     let goose = Listed {
         agent: AgentKey::new("goose").expect("an agent key"),
         offered: vec!["1.0.0".into()],
+        unoffered: None,
         license: "Apache-2.0".into(),
         terms: None,
         caution: None,
@@ -1761,6 +1762,52 @@ fn search_marks_a_program_of_your_own_found_on_path() {
         matched,
         "goose: offers 1.0.0; not installed; your own at /opt/tools/goose\\u{1b} (crucible \
          agents try goose)\n"
+    );
+}
+
+/// `search` says of an agent crucible installs no version of, listed because
+/// the user's own program of it was found on `PATH`, that it offers nothing
+/// crucible installs and why, escaped, beside that program and the command
+/// that tries it.
+#[test]
+fn search_says_why_an_unhashed_entry_of_your_own_offers_nothing() {
+    use crucible_external_harnesses::catalog::registry::Unoffered;
+
+    let unhashed = Unoffered::Unhashed {
+        id: AgentKey::new("cursor").expect("an agent key"),
+        platform: "linux-x86_64".into(),
+    }
+    .to_string();
+    let cursor = Listed {
+        agent: AgentKey::new("cursor").expect("an agent key"),
+        offered: Vec::new(),
+        unoffered: Some(unhashed.as_str().into()),
+        license: "Proprietary".into(),
+        terms: None,
+        caution: None,
+        installed: Ok(Vec::new()),
+        keeps_no_sign_in: true,
+        registry: true,
+        probed: None,
+        own: Some(PathBuf::from("/opt/tools/cursor-agent")),
+    };
+    let hostile = Listed {
+        agent: AgentKey::new("zipped").expect("an agent key"),
+        unoffered: Some("its archive is agent.rar\u{1b}".into()),
+        own: Some(PathBuf::from("/opt/tools/zipped")),
+        ..cursor.clone()
+    };
+
+    let said = listing(&[cursor, hostile], None, false, None);
+
+    assert_eq!(
+        said,
+        format!(
+            "cursor: offers nothing crucible installs: {unhashed}; not installed; your own at \
+             /opt/tools/cursor-agent (crucible agents try cursor)\nzipped: offers nothing \
+             crucible installs: its archive is agent.rar\\u{{1b}}; not installed; your own at \
+             /opt/tools/zipped (crucible agents try zipped)\n"
+        )
     );
 }
 

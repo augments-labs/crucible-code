@@ -283,7 +283,15 @@ impl Listing {
             notice.push(shown(line));
         }
         Self {
-            agents: agents.into_iter().map(Entry::new).collect(),
+            // The door also lists an agent crucible installs no version of
+            // where the user's own program of it was found; this list is what
+            // crucible installs, so it is left out, and the door never counts
+            // one such toward `more`.
+            agents: agents
+                .into_iter()
+                .filter(|listed| listed.unoffered.is_none())
+                .map(Entry::new)
+                .collect(),
             notice,
             query: Editor::new(),
             marked: 0,

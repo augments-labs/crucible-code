@@ -172,7 +172,7 @@ use crucible_external_harnesses::{
 };
 use crucible_types::AgentKey;
 
-use super::agents::LISTED;
+use super::agents::{LISTED, own_of};
 use super::deciding::{Confirmation, Front, confirmed};
 use super::performing::{Desk, Performed};
 use crate::Conversation;
@@ -1080,8 +1080,10 @@ async fn choose(
     let rows: Vec<&'static crate::backends::Row> = conversation.agents().shipping().collect();
     let shown = |row: &'static crate::backends::Row| shown_as(conversation, &AgentRow::Built(row));
     let releases = Releases::of(capabilities, desk);
-    let (cataloged, more) = releases.as_ref().map_or_else(Default::default, listed);
     let trying = conversation.steps().map(crate::launching::Steps::trying);
+    let (cataloged, more) = releases.as_ref().map_or_else(Default::default, |releases| {
+        listed(releases, trying.as_ref())
+    });
     for _ in 0..CHECKS {
         let mut choices: Vec<(String, String)> = rows
             .iter()
@@ -1342,13 +1344,21 @@ impl Releases {
     }
 }
 
+/// A catalog agent a connect lists, with the first version offered of it, or
+/// none where crucible does not install it and the user's own program of it
+/// was found.
+type Cataloged = (AgentKey, Option<Box<str>>);
+
 /// The catalog agents a connect naming no instance lists after the shipping
 /// agents, as the agents door lists them: each agent the signed catalog
 /// offers, then each the ACP Registry offers, once, by its key, with the first
 /// version offered, but one whose key is a word a built-in driver is spelled
 /// with; at most [`LISTED`], and whether more are offered than are listed.
-fn listed(releases: &Releases) -> (Vec<(AgentKey, Box<str>)>, bool) {
-    let mut agents: Vec<(AgentKey, Box<str>)> = Vec::new();
+/// Among the registry's, an entry with a target here that crucible does not
+/// install is listed with no version, and only where `trying` finds the user's
+/// own program of it, as the door finds it; it is not counted.
+fn listed(releases: &Releases, trying: Option<&Trying>) -> (Vec<Cataloged>, bool) {
+    let mut agents: Vec<Cataloged> = Vec::new();
     let mut more = false;
     for offer in releases.trust.offers(None) {
         let key = offer.entry.key;
@@ -1361,37 +1371,47 @@ fn listed(releases: &Releases) -> (Vec<(AgentKey, Box<str>)>, bool) {
             more = true;
             continue;
         }
-        agents.push((key, offer.pin.version));
+        agents.push((key, Some(offer.pin.version)));
     }
+    let mut counted = agents.len();
     // The ACP Registry's offers come after the signed catalog's: a signed or
     // compiled entry is never shadowed by the unsigned registry.
     if let Some(index) = &releases.registry {
-        for offer in index.offers() {
-            let key = offer.entry().id.clone();
+        for (entry, offer) in index.listed() {
+            let key = entry.id.clone();
             if crate::backends::kept_word(key.as_str())
                 || agents.iter().any(|(listed, _)| *listed == key)
             {
                 continue;
             }
-            if agents.len() == LISTED {
+            let Ok(offer) = offer else {
+                let instances = instances_of(releases, &key).unwrap_or_default();
+                if trying.is_some_and(|trying| own_of(trying, &key, &instances).is_some()) {
+                    agents.push((key, None));
+                }
+                continue;
+            };
+            if counted == LISTED {
                 more = true;
                 continue;
             }
-            agents.push((key, offer.version().into()));
+            counted += 1;
+            agents.push((key, Some(offer.version().into())));
         }
     }
     (agents, more)
 }
 
 /// Adds to `choices` a row for each catalog agent in `cataloged`, named by
-/// its key and saying the version the catalog offers first, with the note on
+/// its key and saying the version the catalog offers first, or, where it
+/// offers none, that crucible does not install it, with the note on
 /// the one instance of it configured, where one is, or that the instances could
 /// not be read; but not one whose name is a choice already. Answers the agent
 /// of each row added, in order.
 fn catalog_rows<'a>(
     releases: &Releases,
     trying: Option<&Trying>,
-    cataloged: &'a [(AgentKey, Box<str>)],
+    cataloged: &'a [Cataloged],
     choices: &mut Vec<(String, String)>,
 ) -> Vec<&'a AgentKey> {
     let mut keys = Vec::new();
@@ -1400,10 +1420,16 @@ fn catalog_rows<'a>(
         if name == "Cancel" || choices.iter().any(|(taken, _)| *taken == name) {
             continue;
         }
-        let said = format!(
-            "Manage {name}, which the catalog offers at {}.",
-            quoted(version)
-        );
+        let said = match version {
+            Some(version) => format!(
+                "Manage {name}, which the catalog offers at {}.",
+                quoted(version)
+            ),
+            None => format!(
+                "Manage {name}, which Crucible does not install; your own program of it was \
+                 found."
+            ),
+        };
         let note = match instances_of(releases, key).as_deref() {
             Ok([one]) => catalog_note(releases, trying, key, one),
             Ok(_) => None,
