@@ -968,8 +968,9 @@ pub struct Model {
     /// asked before a switch, and the usage a client is told about.
     pub shown: &'static str,
     /// What a row of the `/model` shelf lists it by. Its wire name, so a row
-    /// reads as what is typed to ask for it, except where that name names no
-    /// version: there the row names the version behind it, which is `shown`.
+    /// reads as what is typed to ask for it, except where that name does not
+    /// name the dated release behind it: there the row names that release, as
+    /// the vendor's pricing page names it, which is `shown`.
     pub listed: &'static str,
     /// The rungs of [`Effort`] this model serves, weakest first, as its
     /// vendor's documentation had them when this was built.
@@ -1004,8 +1005,9 @@ impl Model {
         }
     }
 
-    /// One entry whose wire identifier names no version, shown and listed by
-    /// the version behind it.
+    /// One entry whose wire identifier does not name the dated release behind
+    /// it, shown and listed by that release as the vendor's pricing page names
+    /// it.
     const fn versioned(
         name: &'static str,
         version: &'static str,
