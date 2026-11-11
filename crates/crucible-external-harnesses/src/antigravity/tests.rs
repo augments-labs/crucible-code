@@ -48,7 +48,7 @@ fn an_own_program_named_as_a_release_is_started_with_the_releases_arguments() {
         newest.target.args.iter().map(ToString::to_string).collect()
     });
 
-    for name in ["agy_acp_server.par", "antigravity"] {
+    for name in ["agy_acp_server.par", "agy_acp_server.exe", "antigravity"] {
         let program = Path::new("/opt/bin").join(name);
 
         let request =

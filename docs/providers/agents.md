@@ -589,13 +589,15 @@ or remove.
 crucible's `programs/` directory, is run as your own program. An entry whose
 `executable` is `antigravity` or `agy` is found as `agy` on your `PATH`, then
 as `antigravity`; one installed under another name is found when the entry's
-`executable` names it or its path. It is started as `agy acp`, except a program
-whose file is named `agy_acp_server.par` or `antigravity`, which is started as
-the newest release on offer is. It is admitted by what it answers, never by its
-name or version: protocol version 1, loading and resuming a session, signing
-out, and the `oauth-personal` sign-in; a program that lacks any of these is
-sent nothing more and refused naming what is missing. The name and version it
-gives are shown, or "did not say" where it gives none. Without a `profileDir`
+`executable` names it or its path. It is started as `agy acp` and uses no
+release, so a trust state that cannot be used does not stop it. A program whose
+file is named `agy_acp_server.par`, `agy_acp_server.exe` or `antigravity` is the
+exception: it is started as the newest release on offer is, and is refused
+while the trust state cannot be used, as a release is. It is admitted by what
+it answers, never by its name or version: protocol version 1, loading and
+resuming a session, signing out, and the `oauth-personal` sign-in; a program
+that lacks any of these is sent nothing more and refused naming what is
+missing. Without a `profileDir`
 it is given no profile, so it uses the sign-in it keeps in `~/.gemini`, which
 another Google product may share; `/login` says so before you choose it and
 whenever it asks about such an entry. Under the sandbox it does not see that

@@ -757,8 +757,10 @@ impl AgentRow {
     /// Its wire for the user's own `program`, one that lies outside
     /// crucible's install store, fresh for a run in `mode`, as
     /// [`dialect`](Self::dialect) makes it for a release: for Antigravity,
-    /// the driver's own program, admitted by what it answers; every other
-    /// row's wire is the same either way.
+    /// the driver's own program, admitted by what it answers, which reads the
+    /// trust state only where its file is named as a release's program is and
+    /// is started with a release's arguments; every other row's wire is the
+    /// same either way.
     ///
     /// # Errors
     ///
@@ -767,8 +769,12 @@ impl AgentRow {
         match self {
             Self::Built(row) => match row.driver {
                 Driver::Antigravity => {
-                    unusable(row, trust)?;
-                    let offered = antigravity_offered(trust, Some(program))?;
+                    let offered = if antigravity::named_as_release(program) {
+                        unusable(row, trust)?;
+                        antigravity_offered(trust, Some(program))?
+                    } else {
+                        Vec::new()
+                    };
                     Ok(Box::new(Antigravity::own(
                         program,
                         allowing(mode),

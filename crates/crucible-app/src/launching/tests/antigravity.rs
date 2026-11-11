@@ -408,6 +408,30 @@ async fn antigravity_is_found_as_agy_and_started_with_acp() {
     assert_eq!(fake_peer::argued(&here), [["acp"]]);
 }
 
+/// The user's own `agy` uses no release, so a trust state that cannot be used
+/// does not hold it back: it is started as `agy acp` and admitted by what it
+/// answers.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_own_agy_is_admitted_while_the_trust_state_cannot_be_used() {
+    let sample = Sample::new("launch-own-agy-untrusted");
+    let file = trust_of(&sample).file();
+    std::fs::create_dir_all(file.parent().expect("a directory")).expect("a directory");
+    std::fs::write(&file, "not a trust state").expect("the file");
+    let here = sample.root().join("bin");
+    let program = fake_peer::install(
+        &here,
+        "agy",
+        &Script::of([answering_as("Antigravity ACP Server", "1.5.5")]),
+    )
+    .expect("the fake peer");
+    let steps = antigravity_steps(&sample, None);
+
+    let read = antigravity_read(&steps, &program.to_string_lossy(), None).await;
+
+    assert!(matches!(read, Reading::Signed(_)), "{read:?}");
+    assert_eq!(fake_peer::argued(&here), [["acp"]]);
+}
+
 /// The status the user's own Antigravity, outside the install store, reads
 /// as when it answers initializing with `reply`, and how many times it was
 /// started.

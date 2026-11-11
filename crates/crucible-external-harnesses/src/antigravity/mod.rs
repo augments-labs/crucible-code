@@ -132,8 +132,19 @@ fn admits(initialized: &Initialized, offered: &[Admits]) -> Result<(), Failure> 
 /// for: Google's command-line program, then the release's own name.
 pub const COMMANDS: &[&str] = &["agy", PROGRAM];
 
-/// The file a release's program is unpacked as.
-const RELEASED_FILE: &str = "agy_acp_server.par";
+/// The name, less its extension, of the file a release's program is
+/// unpacked as.
+const RELEASED_FILE: &str = "agy_acp_server";
+
+/// Whether the program at `program` is named as a release's program is, as
+/// its unpacked file or by the release's command, whatever extension the
+/// platform gives it: such a program is started with a release's arguments.
+#[must_use]
+pub fn named_as_release(program: &std::path::Path) -> bool {
+    program
+        .file_stem()
+        .is_some_and(|stem| stem == RELEASED_FILE || stem == PROGRAM)
+}
 
 /// The arguments the user's own program is started with, which serve the
 /// protocol from Google's command-line program.
@@ -188,12 +199,8 @@ impl Antigravity {
     /// already keeps; one the user names is its home, as for a release.
     #[must_use]
     pub fn own(program: &std::path::Path, allowing: Allowing, offered: &[OwnedPin]) -> Self {
-        let released = program
-            .file_name()
-            .is_some_and(|name| name == RELEASED_FILE)
-            || program.file_stem().is_some_and(|stem| stem == PROGRAM);
         let mut own = Self::new(Acp::allowing(OWN_PROFILE, allowing), offered);
-        if !released {
+        if !named_as_release(program) {
             own.args = OWN_ARGUMENTS.iter().map(ToString::to_string).collect();
         }
         own
