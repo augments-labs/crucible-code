@@ -1413,10 +1413,8 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // the same generation. A registration committed after this point is for the
     // next reader to see, not for a runner already built.
     let catalogue = terms.providers.snapshot();
-    // The model's questions asked without waiting are held here for the
-    // dock over the box, which reads them back through the conversation.
     let conversation = assemble(&Startup {
-        questions: Some(crucible_app::client::Questions::new()),
+        questions: dock_questions(renderer.is_terminal()),
         services,
         leaving,
         providers: &catalogue,
@@ -1461,6 +1459,16 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     draw::parting(&mut renderer, &outcome?, terms.style())?;
 
     Ok(())
+}
+
+/// Where the model's questions asked without waiting are held for the dock
+/// over the box, which reads them back through the conversation.
+///
+/// Nothing where output is not a terminal: there is no dock to answer from,
+/// and a run given no registry and no terminal is not offered the tool for
+/// asking at all.
+fn dock_questions(terminal: bool) -> Option<crucible_app::client::Questions> {
+    terminal.then(crucible_app::client::Questions::new)
 }
 
 /// What is asked again once the first frame is on the screen, or nothing where

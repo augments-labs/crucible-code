@@ -897,3 +897,17 @@ fn arm_with_asking_arms_both_checks_only_when_the_closure_runs() {
     );
     assert!(shutdown.is_ok(), "{shutdown:?}");
 }
+
+#[test]
+fn a_run_whose_output_is_not_a_terminal_holds_no_questions_for_a_dock() {
+    // A registry handed to the conversation is what offers the model `ask_user`
+    // with no terminal; a redirected run has no dock to answer it from.
+    assert!(
+        dock_questions(false).is_none(),
+        "a redirected run was given a registry"
+    );
+    assert!(
+        dock_questions(true).is_some(),
+        "the dock over the box needs a registry"
+    );
+}
