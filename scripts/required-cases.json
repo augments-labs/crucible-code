@@ -1825,6 +1825,114 @@
       ]
     },
     {
+      "id": "CASE-TRANSCRIPT-CHANGE-BOX-HEADER",
+      "family": "transcript-blocks",
+      "obligation": "A change opens a box on each file's path and its added and removed counts, and closes it.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_change_opens_with_its_path_and_counts_and_closes_its_box",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "97e182c4f9d8c3956652ed550cccd413a5cb1cbd2bab0d02aa0d133d3b5a95b7",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-BOX-FOLD",
+      "family": "transcript-blocks",
+      "obligation": "A file of more than thirty-two rows draws its first twenty-four and last four around one row counting the rest, which names no key and offers nothing.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_file_longer_than_the_fold_shows_its_head_and_tail_and_counts_the_rest",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "68f66746ecebe298563f147bf7204b9ddcbab2c5caeca6a5384201559fb3d2fe",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-BOX-NOT-SHOWN",
+      "family": "transcript-blocks",
+      "obligation": "Lines a tool never kept are counted inside the box, and the header counts the change whole.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::lines_the_tool_never_kept_are_a_count_inside_the_box",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "24b73bbac471c874010c4e5665446ba774d1d2eb707c4551210960032d5e1a9f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-BOX-NO-PATH",
+      "family": "transcript-blocks",
+      "obligation": "A change recorded without a path opens on its counts alone.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_change_with_no_path_opens_on_its_counts_alone",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "8a9b5f3cecfd69bb37c3a90d1a95a5b6fe9457150a1822d234b67c15297c86f8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-PAST-CAPS",
+      "family": "transcript-blocks",
+      "obligation": "A diff past the reader's line or byte cap is refused before it is read.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_diff_past_its_caps_is_refused_before_it_is_read",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "69a944489464fd7582c73a8b91d607309d6a7e06d609b4052c7a52e088d9d54e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-MISLEADING-PATH",
+      "family": "transcript-blocks",
+      "obligation": "A path carrying bidirectional, isolate, control or private-use characters is drawn with each replaced.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_misleading_path_is_drawn_with_what_would_mislead_replaced",
+      "source": "crates/crucible-tui-diff/tests/hostile.rs",
+      "body_sha256": "0036e2d35559d857d9770f41b7c608e8f90ff866536efd85166e161c99aaa65f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
       "id": "CASE-TRANSCRIPT-PICTURE-TABLES-40-UNICODE",
       "family": "transcript-corpus",
       "obligation": "The corpus's tables answer lays out at 40 columns in the unicode glyph set as the picture accepted for it.",
@@ -4103,7 +4211,7 @@
       },
       "case": "render::tests::every_cut_of_an_answer_draws_what_the_whole_answer_draws",
       "source": "crates/crucible-tui/src/render/tests.rs",
-      "body_sha256": "6d73b733755f811788f1d6ecf31f7209b3d719e2876a8eb4012d26c8dd9cf40a",
+      "body_sha256": "4eb27c8fb6b9c868f37f6bc52db5dbff1be24305d4706062fe59c7b7d973bc3e",
       "platforms": [
         "linux",
         "macos",
@@ -4983,7 +5091,7 @@
       },
       "case": "transcript_sources_80_fullscreen",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "f48e4d35960f1400e2fc255d6483a5b6722826cc688d9e5d49aa2940bb347923",
+      "body_sha256": "4645898313dc671f0380884be0c0dc91bbd55539676dca33cb719c71722af3ef",
       "platforms": [
         "linux"
       ]
@@ -4999,9 +5107,1449 @@
       },
       "case": "transcript_sources_80_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "0c3afa06d4d3426a1f33d0b757da86336c74555513b2368674b6106d0862a0c5",
+      "body_sha256": "139aa993b2b33521c8c4bb29c6ec5b65a4cda8920194fb5c6b07f36ba18faf6e",
       "platforms": [
         "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE",
+      "family": "transcript-blocks",
+      "obligation": "a table written without outer bars (a | b over --|--) is drawn as a table in the window: its structure rows are there and the bare delimiter row is not.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_table_written_without_outer_bars_is_drawn_as_a_table",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "ce47eba7aaa432281219cbc38eea575c20083ecc66339940f4f72775eb57fd84",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode a table written without outer bars is drawn as a table in the scrollback the same way.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_table_written_without_outer_bars_is_drawn_as_a_table",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "055cd7b64d66d3fa913bbcb1a27fe2fa6be757332187e46a5a9e88ae386f375d",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-NARROWED",
+      "family": "transcript-blocks",
+      "obligation": "A table written without outer bars and then narrowed is the table a window that narrow draws, at the same rows.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_table_written_without_outer_bars_narrowed_is_the_table_a_window_that_narrow_draws",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "abb41b2a8fe5700ae74ed19fca18dc6eae86905703ceb62a07a4e4fd655eeee3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-NARROWED-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode a table written without outer bars and then narrowed is the table a window that narrow draws.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_table_written_without_outer_bars_narrowed_is_the_table_a_window_that_narrow_draws",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "1f2077bde0a92dd6ea246cd105471027b5d0562f293f7d7b64847ce3d2e7beaa",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-GLYPHS",
+      "family": "transcript-blocks",
+      "obligation": "With output.glyphs set to ascii a table written without outer bars is drawn with ASCII structure only.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_table_written_without_outer_bars_draws_its_structure_in_the_glyphs_worn",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "fb2a4e87b6727733a0c5c6f146e089ff890b0d01133b473a9e14fffa52c1cf34",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-GLYPHS-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode output.glyphs ascii gives a table written without outer bars ASCII structure only.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_table_written_without_outer_bars_draws_its_structure_in_the_glyphs_worn",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "d3b0dc8097a5220cdae2a900ad34a8dcb9e3b26ec753eea8a81f5a210b45b6f8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-CORPUS",
+      "family": "transcript-blocks",
+      "obligation": "The corpus tables answer draws its table written without outer bars as a table at 40, 80 and 120 columns.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::the_corpus_table_written_without_outer_bars_is_drawn_as_a_table",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "614185d6b67b0555720574ab861dd95426b5b4455a72eaaf1bd66f8a3c30e43e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-CUT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode a table written without outer bars, cut into deltas anywhere including mid-delimiter, draws what the whole answer draws.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_answer_cut_anywhere_draws_the_table_written_without_outer_bars_the_whole_answer_draws",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "ff75715211c3bc82f6ca0325ed685435478262f802ac6caf32eaa748d480c003",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-COPY",
+      "family": "transcript-blocks",
+      "obligation": "A drag over a table written without outer bars copies its source as written and adds no bars.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_drag_over_a_table_written_without_outer_bars_copies_it_as_written_with_no_bars_added",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "8fa39da1c1fec37f16bd401f97507399819d0197ecc40ddc1a8355f9fde3fad5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-NEAR-MISS",
+      "family": "transcript-blocks",
+      "obligation": "A delimiter row with another number of cells, a lone row of dashes, and a delimiter-like line in prose leave their lines as prose, exactly as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::lines_that_only_look_like_a_table_without_outer_bars_stay_as_they_were_written",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "2c3a34efd9179fa0d6d6088208b1ee15aaa1fbb911113a62fd03d1aed8be62cd",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-SOURCE",
+      "family": "transcript-blocks",
+      "obligation": "A table written without outer bars is handed on whole as a block with the source it was written as.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_table_without_outer_bars_is_handed_on_whole_with_the_source_it_was_written_as",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "c0d3de774d53cc97ae1238a09cda9c24d71492caffb6a76009afe27ee5dfa9c5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-ARRIVING",
+      "family": "transcript-blocks",
+      "obligation": "A line still arriving is on screen as it comes, whatever it could turn out to be, so a line that is not a table is never held back for one.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_line_still_arriving_is_on_screen_whatever_it_could_turn_out_to_be",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "9fe683c13a26df2e29a2539acb96ba16ea2e767cca9329a4c5afc4bddc034988",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-ARRIVING-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode a line still arriving is on screen as it comes, whatever it could turn out to be.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_line_still_arriving_is_on_screen_whatever_it_could_turn_out_to_be",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "0b9c3e67e3995508b34689ce0cc207b8ec30c64be49c2159b0b8b456f008aa83",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-IN-DOUBT",
+      "family": "transcript-blocks",
+      "obligation": "A header stalled part way is drawn as the prose it is until the delimiter row decides, and gives way to the table without leaving a row of itself in the record.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_header_stalled_part_way_is_drawn_as_the_prose_it_is_until_the_delimiter_row_decides",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "beb694f4d60cfe1a184ac400e62af23e5d2033c64b72bdb63cc93a89e73a862e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-IN-DOUBT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode a header stalled part way never reaches the terminal's scrollback as prose, because a line in doubt is not finished.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_header_stalled_part_way_never_reaches_the_scrollback_as_prose",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "e3a0dbc0fdcc33fcd40331742249993bfde39442340b3b4f3bb3dfc85f8c8a78",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-FRAME",
+      "family": "transcript-blocks",
+      "obligation": "A frame drawn between two deltas while a possible header is in doubt, wherever the answer is cut, leaves the screen and the record that drawing the whole answer leaves.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_frame_drawn_while_a_header_is_in_doubt_leaves_what_drawing_the_whole_answer_leaves",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "d15f0c2702c87ea22dba8b855c8bf952695b849ef397ee6cda61d8b7d8e9fe61",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-FRAME-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode a frame drawn between two deltas while a possible header is in doubt, wherever the answer is cut, leaves the scrollback that drawing the whole answer leaves.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_frame_drawn_while_a_header_is_in_doubt_leaves_what_drawing_the_whole_answer_leaves",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "a9b63e05f98d5832cefc293f947b42c3dcf575454141632acef5f112719492c2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-RETRACT",
+      "family": "transcript-blocks",
+      "obligation": "The reader says a header as prose as it arrives, takes it back exactly once before handing on the table, and never takes back a line that stops looking like a header.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_header_is_said_as_the_prose_it_is_so_far_and_taken_back_when_the_delimiter_row_decides",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "39291b3de95f3c926408fe0695cd7975799e3e5212b7ad349baf6948ae093cb9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-NEVER-RETRACTED",
+      "family": "transcript-blocks",
+      "obligation": "A line that stops looking like a header is never taken back, and is said exactly as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_line_that_stops_looking_like_a_header_is_never_taken_back",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "7751079f85ad99397c0da719494800585b9e4242508bb79ae32c6848c7c62be0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-PRESENT-IN-DOUBT",
+      "family": "transcript-blocks",
+      "obligation": "A component drawn while a line may still be the header of a table written without outer bars ends that line as the prose it was, said once, as if it had never been in doubt.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_component_presented_while_a_header_is_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "3fcd5f2d297ec6a313f22f60f62e6781d2fce6c1e782a40b94f09172d55b1f1f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-PRESENT-IN-DOUBT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "On a native screen, presenting rows, committing a line or writing a prompt while a line may still be the header of a table written without outer bars ends it as the prose it was, said once, as if it had never been in doubt.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_call_that_writes_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "36319500e603f651d211d4c385172c78774858cc77ab012c0f361d2376f4f918",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-COMMIT-IN-DOUBT",
+      "family": "transcript-blocks",
+      "obligation": "Committing a line or writing a prompt while a line may still be the header of a table written without outer bars ends it as the prose it was, said once, as if it had never been in doubt.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_line_written_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "be0665e6466ebabbc86fac479a1fe9dc68e8eb4a9c537c16edfcbb82a79d5ec1",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-RESPONSIVE-IN-DOUBT",
+      "family": "transcript-blocks",
+      "obligation": "A responsive block laid while a line may still be the header of a table written without outer bars ends it as the prose it was: the header said once, no blank row added, no table made of it when the delimiter row comes, as for the same words with no header in them.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_responsive_block_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "a2d8421614c75ad06740b68ce47491ee202345a13a8984550057ae08894a8dfe",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-RESPONSIVE-IN-DOUBT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "On a native screen, a responsive block laid while a line may still be the header of a table written without outer bars sends it to the scrollback once, as the prose it was, with no table made of it when the delimiter row comes.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_responsive_block_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "f9b9e98fd7b08f14fbaffc6121ccce0ba6009fb143b61a2baee286c32269214d",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-AS-LAID-IN-DOUBT",
+      "family": "transcript-blocks",
+      "obligation": "A responsive block charged as laid while a line may still be the header of a table written without outer bars ends it as the prose it was: the header said once, no blank row added, no table made of it when the delimiter row comes, as for the same words with no header in them.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_block_charged_as_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "2fe663fa05725ce15e6a33ab9de6c07efb71045444ca8704cdea164e39157596",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-AS-LAID-IN-DOUBT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "On a native screen, a responsive block charged as laid while a line may still be the header of a table written without outer bars sends it to the scrollback once, as the prose it was, with no table made of it when the delimiter row comes.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_block_charged_as_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "5f40a6fe1e5548a7c119a34b0a488575d8c5e65d93d41e7ab36297f3767bdb72",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-OPENS-IN-DOUBT",
+      "family": "transcript-blocks",
+      "obligation": "An opening laid while a line may still be the header of a table written without outer bars ends it as the prose it was: the header said once, no blank row added, no table made of it when the delimiter row comes, as for the same words with no header in them.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::an_opening_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "820cd2114682fc5e970ea275204b59b79b218dcee041504156fba5db4270c0a3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-OPENS-IN-DOUBT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "On a native screen, an opening laid while a line may still be the header of a table written without outer bars sends it to the scrollback once, as the prose it was, with no table made of it when the delimiter row comes.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_opening_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "4d6b17c4cf05e53dc804fda38ce3710dd10fbf8081a3e1242a1346dd7e37011c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-DIVIDES-IN-DOUBT",
+      "family": "transcript-blocks",
+      "obligation": "A divider laid while a line may still be the header of a table written without outer bars ends it as the prose it was: the header said once, no blank row added, no table made of it when the delimiter row comes, as for the same words with no header in them.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_divider_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "c509936d43b2f8319e386bca6b57c577a6ebac0b5e2c30dc3a7f53d7846ffb70",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-DIVIDES-IN-DOUBT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "On a native screen, a divider laid while a line may still be the header of a table written without outer bars sends it to the scrollback once, as the prose it was, with no table made of it when the delimiter row comes.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_divider_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "e6e6dabd8bb0aa6da351a4f174c9c97a437e454b91a5785bafd01a03cd073338",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-EMPTIES-IN-DOUBT",
+      "family": "transcript-blocks",
+      "obligation": "Emptying the transcript on a screen while a line may still be the header of a table written without outer bars ends it as the prose it was and drops it with the rest: no blank row left for it, no table made of it when the delimiter row comes, as for the same words with no header in them.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_transcript_emptied_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "c3fa3c987f72ffe0d79e2fbff14d73ddbe28b5decf47be48b10867af32c834c5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-EMPTIES-IN-DOUBT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "Emptying a native transcript while a line may still be the header of a table written without outer bars sends it to the scrollback once, as the prose it was, with no table made of it when the delimiter row comes.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_transcript_emptied_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "5ebf0eecf689b4e777e606495b691b11fed0de0eec23865e64a7315f398d8f69",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-SUBORDINATE-IN-DOUBT",
+      "family": "transcript-blocks",
+      "obligation": "Hanging an answer under a result mark while a line may still be the header of a table written without outer bars ends it as the prose it was: the header marked and said once, no blank row added, no table made of it when the delimiter row comes, as for the same words with no header in them.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::an_answer_hung_while_a_header_is_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "e056d3d82736b5f21180b9f43f9e4937afa2bef4c7d904ac286e5125c9f6e895",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-SUBORDINATE-IN-DOUBT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "On a native screen, hanging an answer under a result mark while a line may still be the header of a table written without outer bars sends it to the scrollback once, marked, as the prose it was, with no table made of it when the delimiter row comes.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_answer_hung_while_a_header_is_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "42a40d05ed37b78bead13647bc908ad361ea1450ca66bc9d1113742ec3fbbddc",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-REDIRECTED",
+      "family": "transcript-blocks",
+      "obligation": "A run whose output is a file is written a table without outer bars as the table, once, and never its header as prose, however the answer is cut into deltas.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_redirected_run_is_written_a_table_without_outer_bars_as_the_table_and_never_its_header",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "967ea9e21f6c302296bd6aa54917b4db004cb02a19af9a375653b1b6d0db36d6",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-REDIRECTED-HELD",
+      "family": "transcript-blocks",
+      "obligation": "A run whose output is a file has not written a line that may still be the header of a table until it is known, and writes it whole when it is not one.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_redirected_run_has_not_written_a_line_that_may_still_be_a_header",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "6d22ca13a770e39ed5449f4c01990f93fb9445b8f186ef06ac6c0b65f67363ae",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-PREVIEW",
+      "family": "transcript-blocks",
+      "obligation": "A session replayed onto a recording that stands in for a pipe, wearing a palette, draws a table written without outer bars as the table the screen draws.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_recording_that_is_no_screen_draws_a_table_written_without_outer_bars_as_one",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "378b7ed2fa0b8ee94d79aec005eee3e9f577aaeaa9cdd1071641b19032783f5b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-IN-DOUBT-READER",
+      "family": "transcript-blocks",
+      "obligation": "The reader says a line is in doubt from its first character until the delimiter row under it is whole, and not for a line that cannot be a header.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_header_is_in_doubt_exactly_until_the_delimiter_row_has_arrived",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "91bd5808bcbf38b57ed05df289a9f94d20e5561c156b5c249c84a74c447a5121",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-READ",
+      "family": "transcript-blocks",
+      "obligation": "Title over =====, and Sub over -----, are drawn as headings and the underline rows are never shown: no row of the window holds ===== or ---, and a rule row is never wider than the words above it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::setext_underlines_are_read_rather_than_drawn",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "91fc327276e866dcf47d61338636e88a9978714da00c7c9a93284ed4fa0d2a13",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-READ-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode the scrollback holds the same: no ===== or --- row, a rule under each of Title and Sub no wider than its words.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_setext_underline_is_read_rather_than_drawn",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "8e7934a2498d516738c77c2b9b83e453b28d348f8cdff474296cc2264b7727e6",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-RULE",
+      "family": "transcript-blocks",
+      "obligation": "A level-1 heading wears a heavy rule (\u2501, ascii =) and a level-2 heading a light one (\u2500, ascii -), each as many columns wide as the words as drawn, whatever the length of the underline written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::setext_headings_wear_a_rule_as_wide_as_their_words_in_both_sets",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "a815321d11ca28c6a6b0bd8afd5b453b1c07cb8949cc85acb109f6d1a410333e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-RULE-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The native scrollback wears the same rules, in both glyph sets.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_setext_heading_wears_a_rule_as_wide_as_its_words_in_both_sets",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "4534973912f934a1399098177975faa62529ee848a822e970294d29fe8316861",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-WRAPS",
+      "family": "transcript-blocks",
+      "obligation": "A heading wider than the window wraps, and its single rule is as wide as the last row the words are drawn on; no other row holds a rule glyph.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_screen_wraps_a_heading_with_a_rule_as_wide_as_its_last_row",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "3f5236c015b09de81460ad12e5933c22bd6725a46a837a9b8becd09558550c97",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-WRAPS-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode a wrapped heading wears one rule as wide as its last row.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_heading_that_wraps_wears_a_rule_as_wide_as_its_last_row",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "9b8cd4e090ebb12cb2807da91391a2f829e92936b163c4d2eacec9a62d58bd70",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-RELAID",
+      "family": "transcript-blocks",
+      "obligation": "A heading already written is laid out again when the window narrows and when the glyph set changes: the rule is as wide as the last row of the words at the new width, in the new set's stroke.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_heading_is_laid_out_again_at_a_new_width_and_in_a_new_glyph_set",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "0253d5d1790de9ac04f04e153ad2fe689a51379c145e7806aae071f2608878f8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-RELAID-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The native scrollback is written again with the heading's rule at the new width and in the new glyph set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_heading_is_laid_out_again_at_a_new_width_and_in_a_new_glyph_set",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "3b7e028228c364615039d2c24e81943d8d4c03c847995fe9caa19a09dee32ca8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-NOT-A-PARAGRAPH",
+      "family": "transcript-blocks",
+      "obligation": "A --- at the start of an answer, after a blank line, or under a list item, a quote, an ATX heading, a closed fence or a closed table is a rule as wide as the window; a === row under a list item or a closed fence is prose, and under an ATX heading is prose beside that heading's own rule.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_dashed_row_under_something_that_is_not_a_paragraph_stays_a_full_width_rule",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "9fe8977945903124e54d7713ede12c3cc84db8ee182e7f4d2901c7b474d6ae0e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-NOT-A-PARAGRAPH-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The native scrollback reads --- and === under what is not a paragraph the same way.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_dashed_row_under_something_that_is_not_a_paragraph_stays_a_full_width_rule",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "f3f6445a1aed41f9703db7e37a35d620589d7e1b0845264e532ac106bc8fc11f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-TABLE-BOUNDARY",
+      "family": "transcript-blocks",
+      "obligation": "a | b over --|-- with as many cells is a table (a bar is drawn, no bare rule row), never a level-2 heading.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_line_of_cells_over_a_delimiter_row_is_still_a_table_and_not_a_heading",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "631ea66f101261248b10f56c575c4d87303389d242aeb15f1634ae9e4dd45d32",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-TABLE-BOUNDARY-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The same in native mode: the bar-less table is still a table.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_line_of_cells_over_a_delimiter_row_is_still_a_table_and_not_a_heading",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "a467ff30b5b61a63f3aa383cfd9b68aa60d76b76827626dec3e96705600d8689",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-DECLINED-HEADER",
+      "family": "transcript-blocks",
+      "obligation": "one cell over --- and a | b over --- over 1 | 2 are level-2 headings with their rules; one cell over :-: stays prose.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_dashed_row_under_a_line_that_was_no_table_header_underlines_it",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "1f7b4427b81468bfda0e0e524af63ddc64f2872ef218148bb0a9555abe3684cb",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-DECLINED-HEADER-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The same three answers in native mode.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_dashed_row_under_a_line_that_was_no_table_header_underlines_it",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "78895f3954013ddfc9b94fcb1a12aa5e15039f3a7acb8ece9eccebc0edbd3615",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-END-OF-MESSAGE",
+      "family": "transcript-blocks",
+      "obligation": "Title over ===== and Sub over --- with no final line break are headings: the end of the message completes an underline.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::an_underline_complete_at_the_end_of_the_message_counts",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "3219aeb3d5e2d6c85325fe3f59f1e15147b7dbd981484bb584d884654b43347e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-END-OF-MESSAGE-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The same in native mode, and trailing blanks after the underline are part of it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_underline_at_the_end_of_the_message_or_with_trailing_blanks_counts",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "07b709f4416fda17b7cdc332e799eaccee3e34c9830c436d2ed7c644f738b618",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-UNDERLINE-CAP",
+      "family": "transcript-blocks",
+      "obligation": "Exactly 128 - or 128 = under a short title are headings (levels 2 and 1); 129 - is a full-width rule under prose, and 129 = is prose.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_screen_reads_an_underline_of_a_hundred_and_twenty_eight_marks_and_not_one_more",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "ef7b1c8813ea0153bd57b626b63eff9668dcacc23e065b88181c2e9cc86ffbc4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-UNDERLINE-CAP-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The native scrollback draws a 128-mark underline as a heading and a 129-mark one as it was written, and does the same for a title of 128 bytes against one of 129.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_underline_and_a_title_of_the_most_the_reader_holds_are_headings_and_one_more_is_not",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "cd8cb63508b1c85d3ceb9c79a00512356a0192e2c7e34dfa1c1dd50e293361bf",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-TITLE-CAP",
+      "family": "transcript-blocks",
+      "obligation": "A title of exactly 128 bytes over --- or === is a heading with a rule 128 columns wide; one of 129 bytes over --- stays prose over a full-width rule, and over === stays prose over the row of equals signs.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_screen_reads_a_title_of_a_hundred_and_twenty_eight_bytes_and_not_one_more",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "462d501c210928efe11ad53edb4524936eb17a3821443d14edde25f6a708a598",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-MARKERS-ONLY",
+      "family": "transcript-blocks",
+      "obligation": "**  over --- and --  over --- are level-2 headings with a 2-column rule.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_title_of_nothing_but_markers_is_a_heading_with_a_rule_as_wide_as_the_markers",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "38305ab06d9e3da89eac8edc89ad29499f66ca67dbed6eb8ebc343c338cd04e9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ATX-INDENT-RULE",
+      "family": "transcript-blocks",
+      "obligation": "An ATX heading with up to three spaces in front of it wears a rule as wide as its words alone: `  # Title` draws `  Title` over a 5-column heavy rule, `   ## Sub` over a 3-column light one, and ascii draws `=`.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::an_indented_atx_heading_wears_a_rule_as_wide_as_its_words_and_not_its_indent",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "e401fd3cc2a147ceef84f44a2877b550cba47a412f486ec376ffafd588e4d787",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ATX-INDENT-RULE-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode, an ATX heading with up to three spaces in front of it wears a rule as wide as its words alone: `  # Title` draws `  Title` over a 5-column heavy rule, `   ## Sub` over a 3-column light one, and ascii draws `=`.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_indented_atx_heading_wears_a_rule_as_wide_as_its_words_and_not_its_indent",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "9d7c512978cc816585222917bc16ca541bcbd0101d4d4834ef5d209d96adfe81",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-DOLLAR-BACKSLASH",
+      "family": "transcript-blocks",
+      "obligation": "$5 over --- is a level-2 heading and \\*x over === a level-1 heading drawn as *x, since the display-math probe gives up on both.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_title_that_opens_with_a_dollar_or_a_backslash_is_a_heading",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "d21a1c0e5394ffaa84f0b564a7899dc82bd430f0fb08540ffe4bb3dcc6b7537c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-DOLLAR-BACKSLASH-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The same in native mode, and the marker-only titles.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_title_of_markers_or_opening_with_a_dollar_or_a_backslash_is_a_heading",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "36ea5bed6feba98b24d6965fb42b2de4c614f56f22d80ed72d12fd7bdec569cb",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-LAST-LINE",
+      "family": "transcript-blocks",
+      "obligation": "first line, second line over === draws the first line as prose and the second as the heading with its rule.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_screen_reads_only_the_last_line_of_a_paragraph_as_the_heading",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "44ef58f060bcf842d84d89f0b273fc6428349cfe954923054e3f004cefb9e8aa",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-LAST-LINE-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The same in native mode.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_underline_makes_only_the_last_line_of_a_paragraph_the_heading",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "e12d210163d0af0dacad7ef10425929fc1cb0d7e02262aaded37eddbd7eb9824",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-LOOK-ALIKE",
+      "family": "transcript-blocks",
+      "obligation": "# and a === heading are drawn alike, ## and a --- heading are drawn alike, no # is drawn, and levels 4 to 6 are one row with no rule like level 3.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::atx_and_setext_headings_of_one_level_look_alike_and_levels_four_to_six_look_like_three",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "f79ad50fe5c3090a93d907aa6dc7405654ef7fba8b901651dbca7fa47f7a01fe",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-LOOK-ALIKE-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The same in native mode.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::native_atx_and_setext_headings_of_one_level_look_alike_and_levels_four_to_six_look_like_three",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "27eaaea2edebfd26aa3c424a09d3fead6422c4cd0b5a056686cc1a32b439888f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-LONE-MARKER",
+      "family": "transcript-blocks",
+      "obligation": "Title over a single = and Sub over a single - are headings with rules of 5 and 3 columns.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_lone_marker_is_an_underline",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "f42c25ceb6159dd63e84892122fc77ccbb7c60f9a44ed96f9db4c3f1d0172b29",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-LONE-MARKER-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The same in native mode.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_lone_marker_is_an_underline",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "81048c3d7b32dfe2f4f24c7c1cd5ceef82a3d539e065fba3cd983fff6e1f5ffc",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-CUT",
+      "family": "transcript-blocks",
+      "obligation": "Three answers holding setext headings (and $5 and \\*x titles), each cut into two deltas at every byte, draw the rows the whole answer draws.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_setext_heading_cut_anywhere_draws_what_the_whole_answer_draws",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "98d5ef7e04ceaad8aaa7d2403de7a21ab68df424bee6575243fe852cf6852c22",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-CUT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The native scrollback of an answer cut into two deltas at every byte equals the one the whole answer keeps.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_answer_cut_anywhere_draws_the_setext_heading_the_whole_answer_draws",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "b0210324fe9712144d96b7753ecea9b5d6b40a737b4eea0c413fa31f25d26285",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-TWO-DELTAS-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "A title and its underline arriving in separate deltas, however cut, are one heading in the scrollback: the title is written once, with its rule under it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_title_and_its_underline_in_two_deltas_are_one_heading",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "06e40182917568c98c938d924e04edafe5c5f8c2508bb091eb94457354368e54",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-PROSE-ONCE-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "A title the next line proves prose reaches the scrollback once, as it was written, before that line.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_title_that_proved_prose_reaches_the_scrollback_once_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "0472cab29e88718a91454ffd70edbf1b6e33fe73c8e446a1d198ccde2f2286c0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-REDIRECTED",
+      "family": "transcript-blocks",
+      "obligation": "With output redirected and colour on, a title (with markers) over === is written once, as the heading drawn with its rule, only after its underline has arrived: nothing is written before, however the answer is cut; Sub over --- is written the same way.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_redirected_run_writes_a_title_once_and_only_when_it_is_settled",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "bfe030f94743382e89c8cfb5456b4e56e240192cad06ad700f05beda108a75be",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-REDIRECTED-PROSE",
+      "family": "transcript-blocks",
+      "obligation": "With output redirected, a title waits for the next line, and when that line is not an underline it is written then as the prose it was.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_redirected_run_ends_a_title_that_proved_prose_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "418f21c3f9144d44de97628cb4e829d7d3aab84c4e71cd78f30e7019ffd69e48",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-COPY",
+      "family": "transcript-blocks",
+      "obligation": "A drag over a heading copies its words and then its rule as drawn, and Ctrl+O lists no source for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_drag_over_a_heading_copies_it_as_it_is_drawn_and_lists_no_source",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "001df272bb438655cee04bffb2e2715675252208103cc3bf3e745c40c1545c70",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-READER-CUT",
+      "family": "transcript-blocks",
+      "obligation": "The reader says the same blocks for an answer cut into deltas anywhere as for the whole answer.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_heading_is_the_same_however_the_answer_is_cut_into_deltas",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "66ad50a3d3868c228fae87025fc268dec91391ce9caf2c5f3388deab3ee5214c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-READER-IN-DOUBT",
+      "family": "transcript-blocks",
+      "obligation": "A paragraph line is in doubt from its first character and after its break, up to the 128-byte cap.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_paragraph_line_is_in_doubt_while_it_is_open_and_right_after_its_break",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "6b307821d0c72b0e96273142d018c4bfe0a459f927a45b95f9382cb4cd563bda",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-READER-DOLLAR-IN-DOUBT",
+      "family": "transcript-blocks",
+      "obligation": "A title opening with $ or a backslash is in doubt from its first character.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_title_that_opens_with_a_dollar_or_a_backslash_is_in_doubt_from_its_first_character",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "522303deeb15428bcc4a14c4d94754bda9a3fc06726a9cb125259de6f423ce4c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-READER-NO-SOURCE",
+      "family": "transcript-blocks",
+      "obligation": "A heading block names no source to list.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_heading_block_names_no_source_to_list",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "a862eebfcaababf72ab6543e7646f227a99382671daa31097814ea478368158c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-GLYPH",
+      "family": "transcript-blocks",
+      "obligation": "The heavy rule glyph is one column wide, and differs from the light one in the unicode set only.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "glyphs::tests::the_heavy_rule_is_one_column_and_apart_from_the_light_one_only_where_the_set_can",
+      "source": "crates/crucible-tui/src/glyphs.rs",
+      "body_sha256": "83a652f623cf18639ff41268ebabb522c4c85a4bb585f86eb18aca5a72a5398b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
       ]
     },
     {
@@ -5016,6 +6564,2324 @@
       "case": "screen::tests::a_request_to_put_text_on_the_clipboard_is_kept_and_no_refusal",
       "source": "tests/whole_screen/screen.rs",
       "body_sha256": "69a9be967ef5e4036a256e01a1bac9a6f43e8e578dd52db01e6310d860af4e2a",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-INPUT-CEILING",
+      "family": "transcript-pictures",
+      "obligation": "A picture file or SVG one byte past one mebibyte is refused.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::input_is_refused_one_byte_past_its_ceiling",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "ac2060154e5f6c413a97e5e4150c26498db3265a92c6053185c1952053713ce6",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-DECODED-CEILING",
+      "family": "transcript-pictures",
+      "obligation": "A decoded picture one byte past two mebibytes is refused.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::decoded_pixels_are_refused_one_byte_past_their_ceiling",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "217f86ef08a46dc18cdd6e537a1f321354c7c571e2abec8e86b079323ba1d93c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-FORGED-HEADER",
+      "family": "transcript-pictures",
+      "obligation": "A header that claims four billion pixels is refused, not allocated.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_header_claiming_four_billion_pixels_is_refused_not_allocated",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "3a3db6a7b06c6a7d11f734f1fe3d33183d3928cb5e5a567796017c58a78b3ce4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-DRAWING-CEILING",
+      "family": "transcript-pictures",
+      "obligation": "An SVG drawn into more than two mebibytes of pixels is refused.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_drawing_is_refused_one_byte_past_its_ceiling",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "c461a9fb74639c2a8fc503771c05360a1bfd0735d41825bf670507bcf0bc4703",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ONE-SLOT",
+      "family": "transcript-pictures",
+      "obligation": "Only one picture is read or drawn at a time, across threads.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::the_slot_lets_one_thread_hold_it_at_a_time",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "9e1103fb95cc5b66566ef90cc8e69508c2ac895b7958ba271ed2c82e411ee7ea",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SLOT-OVER-TIME",
+      "family": "transcript-pictures",
+      "obligation": "The wait for the decode slot is bounded and ends as OverTime.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::the_wait_for_the_slot_is_bounded_and_says_over_time",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "d29573ee493cacd61d101bf086b1dc781f4badf0ce3c62acd31edfdbc7fbaa3f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SLOT-UNWIND",
+      "family": "transcript-pictures",
+      "obligation": "The decode slot is released when its holder unwinds.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::the_slot_is_released_when_its_holder_unwinds",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "63336443745b8e3c885abe7ada75d737e2ad8a14a135840136b0794eb78318b7",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-PNG-CEILING",
+      "family": "transcript-pictures",
+      "obligation": "A PNG payload is refused one byte past one mebibyte.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_png_payload_is_refused_one_byte_past_its_ceiling",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "13098e26accb0a19fa6718377cc7c4b214a0bd4a9667448fbfb39033b3dc950e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SIXEL-WIDTH",
+      "family": "transcript-pictures",
+      "obligation": "A Sixel payload is refused wider than six hundred pixels.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_sixel_payload_is_refused_wider_than_its_ceiling",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "e246250aca8dfe5fe0beac5fc2abee2f18b1c8c881543fbedf6ad7016a5ff501",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SIXEL-NOISE",
+      "family": "transcript-pictures",
+      "obligation": "The widest, noisiest Sixel payload stays within the size measured for it.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::the_widest_noisiest_sixel_payload_stays_within_its_measured_bound",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "e6faf6010cd830184438d2c6b9cf7ecb15ca182227b903f199c1f74cd481c19e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-IMAGE-HREF",
+      "family": "transcript-pictures",
+      "obligation": "An image in an SVG that is not a data URL is not followed.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::an_image_that_is_not_a_data_url_is_not_followed",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "682eb5f5c4b96dfa7336df6da2dd4a437c89e70a1885148878f2f9599b175f7b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ONE-FONT",
+      "family": "transcript-pictures",
+      "obligation": "The font database holds the one embedded face and nothing from the system.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::the_font_database_holds_the_one_embedded_face_and_nothing_from_the_system",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "b6d4a57645aaf453ec6f91854c586510eb98bbfd67105bab1f598c3083710ab9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-REFERENCE-RINGS",
+      "family": "transcript-pictures",
+      "obligation": "References that lead back to where they started are refused before the parser follows them.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::references_that_lead_back_to_where_they_started_are_refused_before_the_parser_follows_them",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "6b631ea204c466fac669b96e06eadc96ad71c6e425d44225173865afc0e01f0a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-NEAR-MISSES",
+      "family": "transcript-pictures",
+      "obligation": "References that share a target without leading back are drawn.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::references_that_share_a_target_without_leading_back_are_drawn",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "d6342dcd2c855df7280e63749782e7b8f97b5e15e2fca55613767fed8d546f36",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-DEEP-NESTING",
+      "family": "transcript-pictures",
+      "obligation": "A picture nested as deep as the parser allows is drawn whatever stack the caller has.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_picture_nested_as_deep_as_the_parser_allows_is_drawn_whatever_stack_the_caller_has",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "295b85b6730a3d0d2149008bd42e70ed0e414b34e9bf3ac7658baa9b418d4461",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-RENDERER-PANIC",
+      "family": "transcript-pictures",
+      "obligation": "A drawing the renderer panics on is refused, not raised to the caller.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_drawing_the_renderer_panics_on_is_refused_not_raised_to_the_caller",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "b47b528ce0aba20cd43d8c5bde7919b37fa0ff9d3215d1a11f009aeeeb4279f8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-CORPUS",
+      "family": "transcript-pictures",
+      "obligation": "Every file of the hostile corpus is drawn or refused as recorded, and the record and the corpus agree.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "every_file_of_the_corpus_is_drawn_or_refused_as_recorded",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "b1cfb61b941bba266c770ff06687745c8406f7242285a9b11ea75ced8ba6f244",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-CORPUS-RECORD",
+      "family": "transcript-pictures",
+      "obligation": "No file of the corpus is missing from the record, or the record from the corpus.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "no_file_of_the_corpus_is_missing_from_the_record_or_the_record_from_the_corpus",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "41f0e8c5e0634a4a31276d8320b14871a9b2221d14838bab4852ef64c38e3a49",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-NO-REFERENCE-FOLLOWED",
+      "family": "transcript-pictures",
+      "obligation": "Every reference an SVG makes is drawn as if it were not there, and what it names records no open, connect, accept or use.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "every_reference_is_drawn_as_if_it_were_not_there_and_what_it_names_records_nothing",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "c89e1691801a72505d7c696647d96d1ab08a63eb220f9dbd917d8915e4faace1",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-OBSERVER-USE",
+      "family": "transcript-pictures",
+      "obligation": "A resolver planted to use the sentinel changes the output and is found.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_planted_resolver_that_uses_the_sentinel_changes_the_output_and_is_found",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "653f693d7b7d6c9d9796954a29d36016ccc32965f722aec02e3bd8f6993ac9c7",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-OBSERVER-READ",
+      "family": "transcript-pictures",
+      "obligation": "A resolver planted to read and discard is found by the pipe that was opened.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_planted_resolver_that_reads_and_discards_is_found_by_the_pipe_that_was_opened",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "c90dc0888270be0a404d4b3c0b3108a3755c789ba8881b211ac2a04f1740f9eb",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-OBSERVER-CONNECT",
+      "family": "transcript-pictures",
+      "obligation": "A resolver planted to connect is found by the listener that accepted.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_planted_resolver_that_connects_is_found_by_the_listener_that_accepted",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "a49defc638d53f9e41dd398839868d61eb29b90cbc57e3c0ca9f28273fd458d5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-CORPUS-SILENT",
+      "family": "transcript-pictures",
+      "obligation": "The whole corpus drawn in a child process prints nothing.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "the_whole_corpus_drawn_in_a_child_process_prints_nothing",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "0927fbedacfcac12a9aa5d113bd47e075134ce3291779926f98277d8054b207c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SILENT-PLANTED-DIAGNOSTIC",
+      "family": "transcript-pictures",
+      "obligation": "A diagnostic planted behind an allow is found by the child-process check.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_planted_diagnostic_behind_an_allow_is_found_by_the_child_process_check",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "484a58e11c66b082510e6dd1e27f82abf9b0d05031b7b6059661851726d73b93",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SILENT-PLANTED-LINE",
+      "family": "transcript-pictures",
+      "obligation": "A line planted on the standard output is found by the child-process check.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_planted_line_on_the_standard_output_is_found_by_the_child_process_check",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "30daf95b0787975651a06a2ce843c9ef9b509b8975954c51e3cc5783783070e2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-HOSTILE-RUNNER-PANIC",
+      "family": "transcript-pictures",
+      "obligation": "A panic in the corpus runner is reported as a finding, not lost.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_planted_panic_is_found_by_the_runner",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "78b5e57ed82cc7ab0bba9f5eca58d3cc079343b9765f04a4b24215c54b151e0c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-HOSTILE-RUNNER-LOOP",
+      "family": "transcript-pictures",
+      "obligation": "An unbounded loop in the corpus runner is reported as a finding, not waited on.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_planted_unbounded_loop_is_found_by_the_runner",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "8c7134978c2b82be83b30c12da573ab347f2c5a81da1fa6ecace283af999edb8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-GENERATED",
+      "family": "transcript-pictures",
+      "obligation": "Generated pictures of every family are decoded, drawn or refused within the ceilings, none panicking or hanging.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "generated"
+      },
+      "case": "generated_pictures_are_decoded_drawn_or_refused_within_the_ceilings",
+      "source": "crates/crucible-raster/tests/generated.rs",
+      "body_sha256": "dce71f6197cead6275a2b2106127406be44603f6dec2d7579c8461dafae49086",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-GENERATED-DETERMINISTIC",
+      "family": "transcript-pictures",
+      "obligation": "A generated case is the same from the same seed and index.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "generated"
+      },
+      "case": "the_same_case_is_made_from_the_same_seed_and_index",
+      "source": "crates/crucible-raster/tests/generated.rs",
+      "body_sha256": "69183561f7c3129310d7ecbef1d949e946702f2af1e73bec530995299bce945f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-GENERATED-FORGED",
+      "family": "transcript-pictures",
+      "obligation": "The forged headers of every format are read by the decoder as a size past the ceiling.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "generated"
+      },
+      "case": "the_forged_headers_are_forged_to_something_the_decoder_reads_as_a_size",
+      "source": "crates/crucible-raster/tests/generated.rs",
+      "body_sha256": "003d06d826d575457d64a74a3b97e43a5aff618319c5eb9f1b151e71e6b57e95",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-GENERATED-RUNNER-PANIC",
+      "family": "transcript-pictures",
+      "obligation": "A panic planted in the generated runner is reported as a finding.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "generated"
+      },
+      "case": "a_planted_panic_is_found_by_the_generated_runner",
+      "source": "crates/crucible-raster/tests/generated.rs",
+      "body_sha256": "9778df341b9d094df39c63686ed1496ce5fcc416f92081f54f305e561a28d880",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-GENERATED-RUNNER-LOOP",
+      "family": "transcript-pictures",
+      "obligation": "A loop planted in the generated runner is reported as a finding.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "generated"
+      },
+      "case": "a_planted_unbounded_loop_is_found_by_the_generated_runner",
+      "source": "crates/crucible-raster/tests/generated.rs",
+      "body_sha256": "dd0d64dcc0d4b182c19fd2ea184eb6b78050ed62220de531493060d4d904d1d9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-MEMORY-MANY-RESULTS",
+      "family": "transcript-pictures",
+      "obligation": "A filter with many named results is refused before it is drawn, whatever the size of the file.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_filter_with_many_named_results_is_refused_before_it_is_drawn",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "fb265cf72c8bed7aad77085b9e6c7bf48729644a332521448119d5d9f178a303",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-MEMORY-LAYER-EDGE",
+      "family": "transcript-pictures",
+      "obligation": "A layer beside the canvas is counted against the two mebibyte ceiling, drawn at it and refused one byte past it.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_layer_beside_the_canvas_is_counted_against_the_ceiling_one_byte_past_it",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "f6fe1e0fd0d0a820f623364a617289202ef4c6fc6c96d0f485a20a0f2447d4f4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-MEMORY-SMALL-DRAWN",
+      "family": "transcript-pictures",
+      "obligation": "A small filter and a small layer are drawn.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_small_filter_and_a_small_layer_are_drawn",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "e9828895c585acf10487664d9b6c928e0ba1954c4a3e0ec66abe4c5f36501e03",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-FILTER-WORK-EDGE",
+      "family": "transcript-pictures",
+      "obligation": "Filter work is drawn at its ceiling and refused one row past it.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::filter_work_is_refused_one_row_past_its_ceiling",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "cb2927e8704efb4eca24ce56325471fcb7f0397e387ae736be3a6aa491a7113b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-FILTER-WORK-SUM",
+      "family": "transcript-pictures",
+      "obligation": "Filter work is added up over the whole drawing, not judged per primitive.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::filter_work_is_added_up_over_the_whole_drawing",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "3a2a1a19d1898fb00b788762c9dfd9faf4ffc3c5e7b6b104636dab5dc1600540",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-FILTER-WORK-WINDOWS",
+      "family": "transcript-pictures",
+      "obligation": "A morphology and a convolution are counted by the window each pixel reads.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_morphology_and_a_convolution_are_counted_by_the_window_each_pixel_reads",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "466109e790eaa5792a48282e46d984f33daf98309844b562f6c09e1d68cfc395",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-FILTER-WORK-MERGE",
+      "family": "transcript-pictures",
+      "obligation": "A merge is counted by the inputs it draws, and drawn at its ceiling and refused one row past it.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_merge_is_counted_by_the_inputs_it_draws",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "677355607b3f0d500381087c30804acc5242c7f112e614b85df3418dbc1d7d85",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SHAPE-WORK-CANVAS",
+      "family": "transcript-pictures",
+      "obligation": "A shape is counted by the pixels it covers inside the canvas, so one far off the page costs nothing.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_shape_is_counted_by_the_pixels_it_covers_inside_the_canvas",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "34b2c922dcb34c33ced542cb5ba867316579248abc230b0b46e5327328be907b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SHAPE-WORK-STROKE",
+      "family": "transcript-pictures",
+      "obligation": "A stroke and a fill of one path are counted apart.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_stroke_and_a_fill_are_counted_apart",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "e12ee04f60b01c0a0007ac6e2b68dee3cc41ed339446e8cd122b38f7d8284798",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-WORK-CORPUS-DRAWN-SMALL",
+      "family": "transcript-pictures",
+      "obligation": "A corpus file refused for its work is drawn once the work is made small, so the work budget is what refused it.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "5f3b7eb5d00f9e8f74854ed1adaa95f4f532fd840c46665aa41ba81379caa31c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SHAPE-WORK-DASHES",
+      "family": "transcript-pictures",
+      "obligation": "A dashed stroke is counted by the dashes it is cut into, drawn at the ceiling and refused one dash past it.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_dashed_stroke_is_counted_by_the_dashes_it_makes",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "22c203a87e379114fb0acc669c488de61db68932a48858cd354bddf2810cff96",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SHAPE-WORK-DASH-WIDTH",
+      "family": "transcript-pictures",
+      "obligation": "A thin dash is counted by the width it is drawn across, and a long one by the pixels it covers.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_thin_dash_is_counted_by_the_width_it_is_drawn_across",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "6aa9556219eb1d7020d3a2d7fad0acfe65baa34bd1962b648f05e064227c5992",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SHAPE-WORK-DASH-UNBOUNDED",
+      "family": "transcript-pictures",
+      "obligation": "A dash count no number can hold is refused, and a dash array of zeros is drawn.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_dash_count_no_number_can_hold_is_refused",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "cb95f38e3921bfa88f0792125f52c2d3314d9126079523c6e445f4d58968e337",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-CLIP-WORK",
+      "family": "transcript-pictures",
+      "obligation": "A path in a clip is counted by the pixels it fills on the clip's pixmap, drawn at the ceiling and refused one rectangle past it.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_path_in_a_clip_is_counted_by_the_pixels_it_fills",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "e33e37043f2b43dc1c04c5c5baff9d388c024b16c17d3fe75fcd3dd32ced955e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SHAPE-WORK-FLOOR",
+      "family": "transcript-pictures",
+      "obligation": "Every shape costs its overhead however little it covers, so shapes off the canvas are counted and a few nested uses of them are refused.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::every_shape_costs_its_overhead_whatever_it_covers",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "efc6ed7e9b414f2af0ec3a86fccdf8518d2d2513fa05145300e7924cd54e40f8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SHAPE-WORK-ROWS",
+      "family": "transcript-pictures",
+      "obligation": "A path is counted by the rows each segment crosses: edges along one row are drawn and as many crossing the page are refused.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_path_is_counted_by_the_rows_each_segment_crosses",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "bd56c5823d847f164ce76853292abd4ee0563de56e9c7427f39bb61849c9f785",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SHAPE-WORK-CROWDED-ROW",
+      "family": "transcript-pictures",
+      "obligation": "Edges crowded along a row are counted by the pixels each can walk: tens of thousands across a wide row are refused, and a thousand are drawn.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::edges_crowded_along_a_row_are_counted_by_the_pixels_each_can_walk",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "507c391de0ce946b4b88571384b812e53d246524deace9d4b9bf800fe1435d4e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SHAPE-WORK-DASH-SEGMENTS",
+      "family": "transcript-pictures",
+      "obligation": "A dashed stroke of many contours shorter than a pixel is counted by its segments across the rows of the stroke, not only by its few dashes, and refused as the solid stroke is.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_dashed_stroke_is_counted_by_its_segments_too",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "21df042a97bd96dc3e6591dae5f44c34008c7994c4578834ee8da7185bebafd0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SHAPE-WORK-GRADIENT-STOPS",
+      "family": "transcript-pictures",
+      "obligation": "A gradient is counted by its stops over the pixels it paints: a thousand stops over a large page are refused, and two are drawn.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_gradient_is_counted_by_its_stops_over_the_pixels_it_paints",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "fd7ba1981fb72129fb309edba2dc35446fa1ea25480f14058339ea586120971e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-USE-COPIES",
+      "family": "transcript-pictures",
+      "obligation": "The copies nested uses would make are counted and refused before any is made, a use in the definitions among them, and a few levels are drawn.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::the_copies_uses_would_make_are_counted_before_any_is_made",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "3daec729d697bba1728a57ebdb28542516b71ab79f1cb23489d707c075092973",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-USE-COPIED-CONTENT",
+      "family": "transcript-pictures",
+      "obligation": "A copy is counted by the text and attribute bytes it copies: many copies of a long text or path are refused before any is made, and one is drawn.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_copy_is_counted_by_the_text_and_the_attributes_it_copies",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "f1ba0ea058dad90f9119af1829cd8cf2d11077e6788c3496cc2c04e0690743a5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SHAPE-WORK-GRADIENT-PIXELS",
+      "family": "transcript-pictures",
+      "obligation": "A gradient costs the pixels it paints and its stops at each together: paints neither of which alone is past the ceiling are refused before they are drawn, and the same paints with two stops are drawn.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_gradient_costs_its_pixels_and_its_stops_together",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "5ad804abebf48113928e85faa6a6aac5fe51150230c0ffb21b2a042fbc390e3e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SHAPE-WORK-CROWDED-STROKE",
+      "family": "transcript-pictures",
+      "obligation": "A stroke whose edges crowd along a row is counted by the pixels each edge can walk: a wide crowded row is refused before it is drawn, and a narrower one is drawn.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::edges_of_a_stroke_crowded_along_a_row_are_counted_by_the_pixels_each_can_walk",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "af01799158e87097b9d44f793dfa6aa62b9e749d4af7c306903bf90683e027e8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ELEMENTS-DRAWN",
+      "family": "transcript-pictures",
+      "obligation": "An element outside those drawn is refused wherever it is before the parser sees it, and every element drawn is drawn, as is a name outside them that is only text or an attribute's value.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::an_element_outside_those_drawn_is_refused_and_every_element_drawn_is_drawn",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "ab7b11cbfe526f818ef36cdd77e6a6301853893514948087e3f68e9017d820e6",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-FILTER-IMAGE-SVG",
+      "family": "transcript-pictures",
+      "obligation": "An SVG inside a filter's image step refuses the picture, and a raster image there is drawn as nothing.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_picture_inside_a_filter_image_is_refused_and_a_raster_one_is_not_drawn",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "2b64434bcbf7f08e39dc37a6b85d947c7d8676864ef7675d2f04c8def0ddc854",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-NESTED-MARKERS",
+      "family": "transcript-pictures",
+      "obligation": "A marker drawn inside a marker is refused before the tree is built, and two markers on one shape, and one on many, are drawn.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_marker_drawn_inside_a_marker_is_refused_before_the_tree_is_built",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "90911e09113645218adc41db70b27153a98c0c1b0ff26deaa092bdd80e2993cf",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-NESTED-CLIPS",
+      "family": "transcript-pictures",
+      "obligation": "A clip or a filter inside a clip is refused before the tree is built, and a clip clipped by another as a whole, and one clip on many shapes, are drawn.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_clip_or_filter_inside_a_clip_is_refused_before_the_tree_is_built",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "745b5bad188e0c714f2bc554b2d706f4cb32300ff0e973fa616d7a6519bfd478",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-MARKER-CLIP-TEXT-COPIES",
+      "family": "transcript-pictures",
+      "obligation": "The copies a marker makes at each vertex, a clip sized to each shape it clips, and letters copied where nothing draws them are counted and refused before any is made, and a few of each are drawn.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::the_copies_markers_clips_and_text_ask_for_are_counted_before_any_is_made",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "1dd698ede2eee44c5be9a3e54a62359f2e524c91673863f9cfcb5466d8aea4e4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-CORPUS-REFUSED-SOON",
+      "family": "transcript-pictures",
+      "obligation": "Each corpus file whose drawing or tree build would take long, by nesting, copies, an element outside those drawn or a gradient's stops, is refused as recorded within the time a refusal may take.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_file_refused_for_its_work_is_refused_before_the_work_is_done",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "79bcedd8d62b146f03c1ac3d586baf74aaae0a42bf38b9dc66291b05fe9795bc",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-CORPUS-ELEMENT-AS-GROUP",
+      "family": "transcript-pictures",
+      "obligation": "A corpus file refused for an element is drawn once that element is made a group, so the element is what refused it.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_file_refused_for_an_element_is_drawn_once_the_element_is_a_group",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "52c00a3b961acdeebac9a85d01cad94a4c9206e393a121bbbd818829dd4e14cd",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-INDENTED-CODE-QUIET",
+      "family": "transcript-blocks",
+      "obligation": "A block indented four spaces after a blank line draws `\u250c\u2500`, `\u2502 let x = 1;`, `\u2502 let y = 2;` and `\u2514\u2500` between the paragraph and the line after it; no run wears the figure slot, and every run of its code is quiet.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_block_indented_after_a_blank_line_is_quiet_code_in_a_frame",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "41cf14316d39c4066ed107f593703e409026769e7d8f47e2af5febcfdd86021c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-INDENTED-CODE-DASHES",
+      "family": "transcript-blocks",
+      "obligation": "After a blank line, `    code` over `---` draws the code in its frame and hands the dashes on as a rule block, and the answer drawn whole puts that rule across the room under the frame: never a setext heading.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_dashed_row_under_an_indented_block_is_a_rule_across_the_room",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "ce4bd26c17b2fe1dd1ee2146af99afeab29436792352f48dbabe71085aed1090",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-INDENTED-CODE-EQUALS",
+      "family": "transcript-blocks",
+      "obligation": "After a blank line, `    code` over `===` draws the code in its frame and `===` as prose, with no block: never a setext heading.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_row_of_equals_under_an_indented_block_is_prose",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "c07777fdcc42afbfbb9194133725659c13c64fd15677c80f538e726d4edb74f1",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-INDENTED-CODE-LIST-QUOTE",
+      "family": "transcript-blocks",
+      "obligation": "A line indented four spaces after a blank line under a bulleted or numbered item (directly, after a lazy line, or under a deeper paragraph), inside a quote, or straight under a paragraph line is drawn as written, with no frame.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::an_indented_line_in_a_list_item_or_a_quote_or_a_paragraph_is_read_as_before",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "19ecc6ad60d3dccad94197c3bbe912e5fbef58b3e37d2cc4d11517bdeca98ce1",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-INDENTED-CODE-CUT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "An answer holding two indented blocks, one wrapping at 40 columns, cut into two deltas at every byte keeps the native scrollback the whole answer keeps: `\u250c\u2500`, `\u2502 done();`, `\u2514\u2500`, `\u2502 code`, `===`, a `\u2506` row and no `\u2501` heading rule.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_answer_cut_anywhere_draws_the_indented_block_the_whole_answer_draws",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "b20e7ddf1ebad4b2948f9d1a1089dd6a15b4f2939adf1a97814db21cc7fc21be",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-ROWS",
+      "family": "transcript-blocks",
+      "obligation": "A quote whose first line is `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]` draws a quiet bar on the marker's line and on each `> ` line after it, with the kind's mark in its own slot and its word in bold on the first row, in the unicode and the ascii glyph set, and the marker itself is not drawn.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::an_alert_is_a_quiet_bar_on_each_line_of_its_quote_with_its_mark_and_its_word_on_the_first",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "0b598d39078650722080323e9252bd6aca4fadd9d735410e1a1015c6fa811251",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-MARKER-HIDDEN",
+      "family": "transcript-blocks",
+      "obligation": "An alert's marker is never drawn: no row of any of the five kinds contains `[!` or the kind as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::an_alert_never_shows_its_marker",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "30a4d9d57438bfdd5933d18782c2b0e75aaa5cf3266f9efe9d196638dd6cff48",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-UNKNOWN-KIND",
+      "family": "transcript-blocks",
+      "obligation": "A quote that names no kind of alert, or has more on its line than the marker, is drawn as the quote it always was, with its text as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_quote_with_an_unknown_kind_or_more_on_its_line_stays_a_quote",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "6f9844897e2cfaaac582c701ac412c5286101e718552b9281cfa8eaf8d61b8e1",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-CUT",
+      "family": "transcript-blocks",
+      "obligation": "An answer opening with an alert, cut in two at any byte, its marker included, draws the same text as the answer read whole and wears the same slots in the same order, a run of one slot counted once, for each of the five kinds in the unicode and the ascii glyph set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::an_alert_cut_anywhere_draws_what_the_whole_alert_draws",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "c0d31e490a4132ff5a375a044fb63dd954bd14ff42086287d50d7808f71c8507",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-HELD",
+      "family": "transcript-blocks",
+      "obligation": "A `[!WARNING]` marker read as the deltas `> [`, `!`, `WARN`, `ING` and `]` draws no text until its line break, and the break draws exactly the alert's first row, `\u258e \u25b2 Warning`, in the default unicode glyph set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::nothing_of_an_alert_is_drawn_before_its_break_says_it_was_one",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "5a06633847d95aaa61ebd2876a3044b349f7af0d6b42b5d2aa1d6d684b50b318",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-WRAP",
+      "family": "transcript-blocks",
+      "obligation": "An alert that wraps at thirty columns keeps its bar on every row it wraps onto, in the unicode and the ascii glyph set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_wrapped_alert_keeps_its_bar_on_every_row",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "dd95dc3500699acf567a3d0a689d8902bffcf0620d44afd36f029a307a0d27bf",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-CUT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "A native answer with alerts cut at any byte keeps the same rows in the scrollback as the whole answer, and never keeps a marker.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_answer_cut_anywhere_draws_the_alert_the_whole_answer_draws",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "ec49b62a1ef75375cd9b826f2108c8bd10a228d771c1ab11d2b1fce39e8f3501",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-MARKS",
+      "family": "transcript-blocks",
+      "obligation": "The five marks of an alert are five different one-column marks in the unicode and in the ascii glyph set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "glyphs::tests::the_five_marks_of_an_alert_are_five_different_one_column_marks_in_both_sets",
+      "source": "crates/crucible-tui/src/glyphs.rs",
+      "body_sha256": "3772504d912354ce55342f6b5cea8971245d33273295da88dc3ac57222cc960a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-BAR",
+      "family": "transcript-blocks",
+      "obligation": "In the unicode and in the ascii glyph set the bar of an alert is one column wide and is none of the five marks, and in the unicode set it is not `\u2502`, the bar of a plain quote.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "glyphs::tests::the_bar_of_an_alert_is_one_column_and_a_mark_of_none_of_its_kinds",
+      "source": "crates/crucible-tui/src/glyphs.rs",
+      "body_sha256": "561305a3770ecd5a31b664ce680739760ba27837f0c2986248261f4ba52ef5b0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-COLOUR",
+      "family": "transcript-blocks",
+      "obligation": "The first row of each alert kind is a quiet bar, the kind's mark, a plain space and the kind's word in bold, and in every theme, dark, light, colourblind dark, colourblind light and ansi, the word has only weight, each mark's ink differs from plain and from quiet, the Note, Important and Caution marks carry a foreground colour, the Warning mark is the word's weight alone and the Tip mark is a strike in the quiet grey.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::an_alert_mark_carries_its_kinds_ink_and_its_word_only_weight_in_every_theme",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "d867d46c660b836a308377913e8ecd6c762702e4cc47cc08db20921af4ff4819",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-ENDS",
+      "family": "transcript-blocks",
+      "obligation": "An alert ends at a bare `>`, at a `>` with no space after it, at a table whose first line opens with `|`, at a heading's underline and at a display formula, and at each of those three also written after spaces, where lines that open with `|` are drawn as the lines they are and not as a table; the quote line after any of them is drawn as a quote of its own, not as part of the alert.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::an_alert_ends_at_any_line_that_is_not_a_row_of_its_quote",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "cedf39e6eb00956d3de7bfb0c05822f65d1c5fec24b844988a58ed202d3bb511",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-INDENTED-ROWS",
+      "family": "transcript-blocks",
+      "obligation": "An alert whose quote marks follow spaces keeps its quiet bar on every row: under a bullet or a numbered item, indented on its own, and with a row indented one to four spaces more than its header.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_row_of_an_alert_after_spaces_is_still_a_row_of_its_quote",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "9fabf3c92f388c18b0c321dd92137c8df53528f5aac5c62164085a47ec9b7f2a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-INDENTED-MARKER",
+      "family": "transcript-blocks",
+      "obligation": "A marker on an indented later row of a quote that is not an alert is shown as written, and the rows of the quote keep the plain bar.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_marker_on_an_indented_row_of_an_ordinary_quote_stays_as_written",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "d009fc2999995583232627e0a13fab4e806d1d187736e2a39ead45a297e1eca0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-TABLE-ROW",
+      "family": "transcript-blocks",
+      "obligation": "A quote line straight after a table whose first line does not open with `|` is one more row of that table: a header written without outer bars, whether its delimiter row opens with `|` or not and with spaces before it or not, and one written with outer bars after a tab; after a blank line the quote line is a quote of its own.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_quote_row_straight_after_a_table_not_opened_by_a_bar_is_a_row_of_it",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "2560996c644053f36b85413f1dcc373a3e3f1837d0dda9f4d58d30ff43b0f549",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-SANDBOX-DISK-ONE-TOTAL",
+      "family": "files-and-sandbox",
+      "obligation": "A run writing into its root, /tmp and its home together stops at the disk ceiling in total, never at a ceiling per place.",
+      "package": "crucible-sandbox-local",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_sandbox_local"
+      },
+      "case": "linux::resource_tests::writes_across_the_root_tmp_and_home_stop_at_one_total",
+      "source": "crates/crucible-sandbox-local/src/linux/resource_tests.rs",
+      "body_sha256": "430dfc29a13e9d26fa32cb0d1ecfab274f6472aef2e80b8727dbe9e4467ec83e",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-SANDBOX-DISK-MANY-FILES",
+      "family": "files-and-sandbox",
+      "obligation": "Many small files written into every writable place at once never hold more than the disk ceiling.",
+      "package": "crucible-sandbox-local",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_sandbox_local"
+      },
+      "case": "linux::resource_tests::many_small_files_written_everywhere_at_once_stop_at_the_total",
+      "source": "crates/crucible-sandbox-local/src/linux/resource_tests.rs",
+      "body_sha256": "06f0f60bc857eca2bd2746baaf44c5a66b6ca4dcca240c874c3b941048aa3fa5",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-SANDBOX-DISK-DEV-READ-ONLY",
+      "family": "files-and-sandbox",
+      "obligation": "Under a disk ceiling /dev and /dev/shm refuse writes, and /dev/null accepts them and holds nothing.",
+      "package": "crucible-sandbox-local",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_sandbox_local"
+      },
+      "case": "linux::resource_tests::dev_refuses_writes_and_dev_null_holds_nothing",
+      "source": "crates/crucible-sandbox-local/src/linux/resource_tests.rs",
+      "body_sha256": "e4176328d636a8ad725d44da21aff503e5b3ea9eb2047fe3987f4932df35847e",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-SANDBOX-DISK-HOST-WRITES-REFUSED",
+      "family": "files-and-sandbox",
+      "obligation": "A disk ceiling is refused as unsupported for a run with a writable rule or a writable manifest mount, and taken for a run with neither.",
+      "package": "crucible-sandbox-local",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_sandbox_local"
+      },
+      "case": "linux::resource_tests::a_disk_ceiling_is_refused_where_a_run_could_write_to_the_host",
+      "source": "crates/crucible-sandbox-local/src/linux/resource_tests.rs",
+      "body_sha256": "cd6f8ee2b68d047853feef03ef3e1430cb3e8e940ebe4b1aeb1ad934ea19794c",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-SANDBOX-DISK-OBSERVED-UNSUPPORTED",
+      "family": "files-and-sandbox",
+      "obligation": "Observing claims no disk ceiling and says a preparation checks --size, while a preparation on the same host takes one.",
+      "package": "crucible-sandbox-local",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_sandbox_local"
+      },
+      "case": "linux::resource_tests::observing_claims_no_disk_ceiling_that_a_preparation_on_this_host_takes",
+      "source": "crates/crucible-sandbox-local/src/linux/resource_tests.rs",
+      "body_sha256": "193149cb0a31b9932ea37905bb3c2117289c5f46b7737800beb61ae0255d69ba",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-SANDBOX-DISK-COMMAND-TIME-RESET",
+      "family": "files-and-sandbox",
+      "obligation": "A run making files until its command time runs out is stopped by that time, and the next run starts with none of them.",
+      "package": "crucible-sandbox-local",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_sandbox_local"
+      },
+      "case": "linux::resource_tests::files_made_until_the_command_time_runs_out_are_gone_from_the_next_run",
+      "source": "crates/crucible-sandbox-local/src/linux/resource_tests.rs",
+      "body_sha256": "bc89a7784ba1f2b75b496dbaaae9b3a8c6ee5d3c1764d1017fad7b0552111eaa",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-SANDBOX-DISK-XATTR-REFUSED",
+      "family": "files-and-sandbox",
+      "obligation": "Under a disk ceiling every call that sets an extended attribute (setxattr, lsetxattr, fsetxattr, setxattrat) is refused with EPERM, and no attribute value is held.",
+      "package": "crucible-sandbox-local",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_sandbox_local"
+      },
+      "case": "linux::resource_tests::extended_attribute_writes_are_refused_under_a_disk_ceiling",
+      "source": "crates/crucible-sandbox-local/src/linux/resource_tests.rs",
+      "body_sha256": "6c1f0fa904f2c3deca82430e350b5cbac9cbece2e794597b916c2854ccae4c05",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SUPPORT-SIX-CELLS",
+      "family": "transcript-pictures",
+      "obligation": "On Linux, over every row of the support table, both screen modes and the three protocols, exactly R1-fullscreen-kitty, R1-native-kitty, R2-fullscreen-iterm2, R4K-native-kitty, R4W-fullscreen-iterm2 and R6W-fullscreen-iterm2 are enabled.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::the_support_table_enables_exactly_the_six_cells_that_drew_right",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "cb14001a586ac8d3a57805484af955aad9f8154fe6d34ee618ebe2e328fc85d1",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-UNCOVERED-PLATFORM-TEXT",
+      "family": "transcript-pictures",
+      "obligation": "On Windows, FreeBSD and any other system, Kitty's environment names no candidate in either mode under auto or any forced protocol, while kitty forced in native mode there on macOS is used.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::windows_freebsd_and_any_other_system_draw_text_even_when_a_protocol_is_forced",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "e9c2d006dfb9e0aed7227465412942dad2d088d978befd4e243736fbdd2b295f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-FORCED-DISABLED-TEXT",
+      "family": "transcript-pictures",
+      "obligation": "A protocol forced in any row of the support table and either mode is used unasked exactly where that cell is one of the six enabled, and names no candidate everywhere else.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::a_protocol_forced_over_a_disabled_cell_draws_text",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "c410a2e8b8091e58f87cee309055eb9fe0ed10fa082848fdd116b328dfd564a3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-QUIET-NO-CANDIDATE",
+      "family": "transcript-pictures",
+      "obligation": "Under auto or kitty forced, a session whose output or input is not a terminal, with NO_COLOR set or with colour off names no candidate, the same session with none of them does, and an empty NO_COLOR counts as unset.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::the_four_places_nothing_may_be_asked_name_no_candidate_whatever_is_wanted",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "c8ba05906e3428ca49521cb669ac0af5c8e001eb4df930a6019eb4efc16029c7",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-MULTIPLEXER-NO-AUTO",
+      "family": "transcript-pictures",
+      "obligation": "Under auto, Kitty inside tmux, screen (by STY or a screen TERM), Zellij or a tmux TERM names no candidate, whether tmux passes sequences through, holds them back or is not known to.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::auto_names_nothing_inside_a_multiplexer_whatever_tmux_would_pass",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "cecdb521fe248257c912ad4923c26317b144f8201b0f415732e7bb738554c521",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-TMUX-FORCED-ON-ONLY",
+      "family": "transcript-pictures",
+      "obligation": "kitty forced in tmux inside Kitty is used only where the server said passthrough is on, not where it is off or not known, and is never used inside screen or Zellij even with passthrough on.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux_passes_a_forced_protocol_only_where_its_server_said_on",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "000b1d91317e00d7654cf9dd2feaa3ab4a327420db5a4f05d2ba7f45c0ff1449",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-OFF-TEXT",
+      "family": "transcript-pictures",
+      "obligation": "off names no candidate in Kitty's environment in either screen mode.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::off_draws_text_wherever_a_picture_would_draw",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "d037b836b48dff9dd54ea67398642c603bbd786fda55d34ec6e7542ad5393017",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ASKED-NEEDS-PIXELS",
+      "family": "transcript-pictures",
+      "obligation": "A candidate is text without being asked where the window reports no pixels, is drawn at the window's cell where the terminal says yes, and is text where it says no.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::a_candidate_is_asked_about_only_where_the_window_reports_its_pixels",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "b82a25bf0c2864f933963a87bb4cbe5a75892ace2d3264420e472039ecab0eb2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-FORCED-CELL",
+      "family": "transcript-pictures",
+      "obligation": "A forced protocol is drawn without asking, at the window's 9 by 18 cell where the window reports pixels and at an 8 by 16 cell where it reports none.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::a_forced_protocol_is_used_unasked_in_the_windows_cell_or_eight_by_sixteen",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "7264164c7ffc96044e3e1d11dc412b1a96e965814f574a498d1cb7125e62a9a6",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-CELL-FROM-PIXELS",
+      "family": "transcript-pictures",
+      "obligation": "A window of 80 by 24 cells and 800 by 480 pixels has a 10 by 20 cell, and one reporting nought pixels has none.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::the_cell_is_read_from_the_pixel_fields_of_the_window_size_report",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "fbe5fc4a7b216f2b31fd4fb27884be3edf83e778e417282f60fb87f252328fb8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-RENDERER-TEXT-FIRST",
+      "family": "transcript-pictures",
+      "obligation": "A new renderer draws text, and draws with the capability it is handed after.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_renderer_draws_text_until_it_is_told_what_the_terminal_draws",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "9ed255f08a9ded7877fedeb028f9c8f53f2a028ea4fc8bde252e3e080f914bde",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-RESIZE-CELL",
+      "family": "transcript-pictures",
+      "obligation": "Kitty handed over at a 9 by 18 cell is drawn at 12 by 24 after a resize to a window whose cell is 12 by 24.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_resize_reads_the_windows_cell_again",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "a7576a987c45e3c9828beedffd3fa36145fa0ecb29b3ad089872845812340f2a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-CONFIG-VALUES",
+      "family": "transcript-pictures",
+      "obligation": "output.images is auto where no layer sets it and kitty, iterm2, sixel or off where a layer names it, and png is no value of it.",
+      "package": "crucible-config",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_config"
+      },
+      "case": "settings::output::tests::images_are_auto_unless_a_layer_names_a_protocol_or_off",
+      "source": "crates/crucible-config/src/settings/output.rs",
+      "body_sha256": "c2f8068903fd09085258b68fcf84782b4b6716a2d331d33b57998bb8346f6511",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ROW-LAST",
+      "family": "transcript-pictures",
+      "obligation": "The last settings row is Images, for output.images, usually auto.",
+      "package": "crucible-config",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_config"
+      },
+      "case": "shape::rows::tests::the_images_row_is_the_last_so_no_row_before_it_moves",
+      "source": "crates/crucible-config/src/shape/rows/tests.rs",
+      "body_sha256": "b83e591b6e83da1f1f4137cf4b524014ece26deaf79344786bc8db7e2a846e3b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SETTINGS-AUTO-NEXT-START",
+      "family": "transcript-pictures",
+      "obligation": "The Images row at auto ends auto \u00b7 applies at next start.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::command::settings::tests::the_images_row_at_auto_says_it_applies_at_next_start",
+      "source": "src/cli/converse/command/settings/tests.rs",
+      "body_sha256": "f53795b1ad5fa81c115351ca3cefda36f8fec6458b53a3c5b813b555eda6fe46",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SETTINGS-AT-ONCE",
+      "family": "transcript-pictures",
+      "obligation": "In Kitty on Linux with a 9 by 18 cell, kitty chosen on the Images row draws Kitty at that cell at once and says Images set to kitty, and off then draws text at once and says Images set to off, each shown on the row.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::command::settings::tests::a_protocol_named_on_the_images_row_is_drawn_at_once_and_off_is_text_at_once",
+      "source": "src/cli/converse/command/settings/tests.rs",
+      "body_sha256": "1ae30397ff1ac5e405ef5e2f8844841cf24a4e7fa78a7bd8a1be6697f6cddc68",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SETTINGS-NO-INPUT",
+      "family": "transcript-pictures",
+      "obligation": "Where the start found its input not a terminal, kitty chosen on the Images row in Kitty on Linux leaves the drawing text.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::command::settings::tests::a_protocol_named_where_input_is_not_a_terminal_draws_text",
+      "source": "src/cli/converse/command/settings/tests.rs",
+      "body_sha256": "7ec2e37a6c29de3747c1c51510b709e89665580d2a1a9bd58e9e05804e10fb2e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SETTINGS-NOT-NATIVE",
+      "family": "transcript-pictures",
+      "obligation": "iterm2 in native mode in WezTerm on Linux ends iterm2 \u00b7 not available in native mode.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::command::settings::tests::a_protocol_only_fullscreen_draws_says_it_is_not_available_in_native_mode",
+      "source": "src/cli/converse/command/settings/tests.rs",
+      "body_sha256": "b34294bde737539ecf87d96d903f4b1ad5e284820ec9f1fbc06e3ad155a532ae",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SETTINGS-NOT-FULLSCREEN",
+      "family": "transcript-pictures",
+      "obligation": "kitty in fullscreen mode in tmux inside Kitty on Linux, with passthrough on, ends kitty \u00b7 not available in fullscreen mode.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::command::settings::tests::a_protocol_only_native_draws_says_it_is_not_available_in_fullscreen_mode",
+      "source": "src/cli/converse/command/settings/tests.rs",
+      "body_sha256": "e471f74baff06ec2353bb4e127ae87d5edd61b1d17a8b841890db2ca6ab07144",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SETTINGS-NOT-ANYWHERE",
+      "family": "transcript-pictures",
+      "obligation": "kitty in Kitty on Windows ends kitty \u00b7 not available and names no mode.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::command::settings::tests::a_protocol_neither_mode_draws_says_it_is_not_available",
+      "source": "src/cli/converse/command/settings/tests.rs",
+      "body_sha256": "15e78a9d5ea725018d1725bedd7a49480b70dd829a60fc00bc766a4998c14e88",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-EXCHANGE-YES",
+      "family": "terminal",
+      "obligation": "For Kitty, iTerm2 and sixel, a pseudo-terminal that answers the cursor position, then the candidate's yes and a cursor position, confirms the candidate, is asked its question once, and leaves no byte to read.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::exchange::a_terminal_that_answers_confirms_its_candidate_and_leaves_nothing_to_read",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "7a998fdf513da720addd2e793bd872905aba45edeaed47ab9349def0db69ad02",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-EXCHANGE-SILENT",
+      "family": "terminal",
+      "obligation": "A pseudo-terminal that never answers is asked the cursor position once and never the question, is read for the reply wait and less than a quarter second past it, and leaves nothing to read.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::exchange::a_terminal_that_never_answers_is_read_for_the_reply_wait_and_no_longer",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "24be3b02bded4625a2a940407ad371ec064ae31f0e6e69eab4ded456986f8fde",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-EXCHANGE-OUT-OF-ORDER",
+      "family": "terminal",
+      "obligation": "A yes arriving after the cursor position that follows the question is a no, the question is asked once, and the yes is consumed.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::exchange::a_yes_behind_its_cursor_position_is_a_no_and_is_consumed",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "d04ac9b807311980f5cd9e8f52c0c8fb748941292bfe80867888a61082462d0f",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-EXCHANGE-LATE-BACKGROUND",
+      "family": "terminal",
+      "obligation": "Background colour answers arriving before the first cursor position and before the yes are consumed, the candidate is still confirmed, and nothing is left to read.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::exchange::a_late_background_answer_is_consumed_wherever_it_lands",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "15a5514f4e30d6e9f2af2580c5c59e1ed243835902b190afb38f803379c9b407",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-EXCHANGE-FLOOD",
+      "family": "terminal",
+      "obligation": "A pseudo-terminal answering the cursor position with an OSC that runs 64 KiB without end is a no, is asked the cursor position once, and is left in under 500 ms of a 600 ms reply wait.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::exchange::a_terminal_that_sends_without_end_is_left_long_before_the_wait_runs_out",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "5b08aa654c15bef10e4e46946fd01af09dac1223e17c83de442add76e758d080",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-EXCHANGE-MODE-RESTORED",
+      "family": "terminal",
+      "obligation": "Inside the guard a pseudo-terminal reads without line editing, echo or a minimum count, and after an early error return its local modes, but for the PENDIN that macOS sets on its own, and its input and output modes and minimum count are what they were.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::exchange::the_mode_is_put_back_when_the_exchange_returns_early",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "40f847fb672d5dd2caaccdcb54a302a51a4f0d1033fc0aba2aff028f96565c28",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-EXCHANGE-NOT-A-TERMINAL",
+      "family": "terminal",
+      "obligation": "The guard sets no mode, and returns none, on the null device.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::exchange::no_mode_is_set_where_the_other_end_is_not_a_terminal",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "a60512cf489d4f68dc2950676218f644e90f92c14699a3982ada6f70b14e70be",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-REPLIES-UNASKED",
+      "family": "terminal",
+      "obligation": "Background colour answers, another image's or an imageless Kitty reply, near-miss cursor positions and device attributes, another iTerm2 reply, device control and private strings, and keys are each read whole as sequences that name no reply.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::replies::a_reply_nobody_asked_for_is_consumed_and_named_nothing",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "a186a85af4e07d1c4ec17b5c08faa249664cf9868b9bd4919e1053c73642154e",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-REPLIES-CEILING",
+      "family": "terminal",
+      "obligation": "An OSC, APC, DCS, CSI, private CSI and character-set sequence each 100,000 bytes long is held to the ceiling while read, ends as one sequence naming no reply, and leaves the reader between sequences.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::replies::a_sequence_of_any_length_is_held_to_its_ceiling_and_read_to_its_end",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "86b4d92f5fc71a0b0ee3d252a766780e4a66f822c2aab1091ac5eca224c74eaf",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-REPLIES-GENERATED",
+      "family": "terminal",
+      "obligation": "Each of 4096 generated cases, or CRUCIBLE_GENERATED_INPUTS where set, from the printed seed, holds noise to the ceiling, is between sequences after a cancel and reads whole replies back as what they were, within 30 s and without a panic.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::replies::generated_replies_and_noise_are_read_whole_and_bounded",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "111c254d00b3f9758bd6db977d0618b21dc3f5d921231eb1fe60d671abdf76fc",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-ON",
+      "family": "terminal",
+      "obligation": "A tmux that says on or all is on, and is run as -S with the socket from TMUX, display-message -p '#{allow-passthrough}'.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::a_server_that_passes_through_is_on_and_is_asked_for_this_pane",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "06cac3257e68fe8cec8a4ec15aac67533471a5a1f775f87f0f5cb7f3e73c4759",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-UNANSWERED",
+      "family": "terminal",
+      "obligation": "A tmux that does not answer is not known in under a second, and on Linux its process is gone once the question returns.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::a_server_that_does_not_answer_in_time_is_unknown_and_its_process_is_reaped",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "73e8975ccc455df6211d07ce2e28ec274e1491ac35c33892cfbc2e7f541b2035",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-ASKED-ONLY-WHERE-IT-DECIDES",
+      "family": "terminal",
+      "obligation": "tmux is not run, and passthrough is not known, under auto or off, outside tmux, on Windows or FreeBSD, over SSH, with colour off or NO_COLOR set, with output redirected, for a protocol or mode no tmux cell enables, or with no socket in TMUX.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::tmux_is_asked_only_where_its_answer_decides_what_is_drawn",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "b54a18893b308d89345e4666db4980904141e85c9a19cbd355b6a1f569f6e546",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-ABSOLUTE-ONLY",
+      "family": "terminal",
+      "obligation": "tmux is looked for only in the absolute entries of PATH: past ., a relative entry holding a tmux, bin, an empty entry and an absolute directory with none, the first absolute directory holding one is found; relative, . and empty entries alone, or an empty PATH, find none, and the relative tmux never runs.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::tmux_is_looked_for_only_in_the_absolute_directories_of_the_path",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "da13018b728ba99bd095228bbfa40d367e6a4edcfaf489d2e8aeaffc2301d2cd",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-RELATIVE-PASSED-OVER",
+      "family": "terminal",
+      "obligation": "With an empty entry, ., a relative entry holding a tmux that says on, and bin ahead of an absolute directory whose tmux says off, the server is off: the relative tmux never runs and the absolute one does.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::a_tmux_behind_entries_that_are_not_absolute_never_runs_and_the_absolute_one_answers",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "77f4eb0afae32514bf429bc08b35269ce890fa04a3cf66c829b7c986fa49f745",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-RELATIVE-NEVER-RUNS",
+      "family": "terminal",
+      "obligation": "A tmux that says on, reached only through an empty entry, ., bin and a relative entry, never runs, and passthrough is not known.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::a_tmux_reached_only_through_entries_that_are_not_absolute_never_runs",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "9be158d550eef006b0ffaf360641780f5ff8ee5ecb152ad9a8e8a8aaa144a378",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-NO-PATH",
+      "family": "terminal",
+      "obligation": "With no PATH, the tmux lookup finds nothing and passthrough is not known.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::with_no_path_tmux_on_finds_nothing_and_passthrough_is_unknown",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "4a1b3efd371110fb7d848a00a325da37b0f038132ec7d6e1d53c4cd9ee32ed74",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-EMPTY-ENVIRONMENT",
+      "family": "terminal",
+      "obligation": "Given no pane, tmux is started with no variable of this process, CARGO_MANIFEST_DIR among them: the environment it records, names and values, is exactly the one the same fake records when started with none, and it still answers on.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::tmux_is_started_with_no_variable_of_this_process",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "2cc1ee81a6ab609719e8d1efd22de8e30275edab0c7756bf5f31030e5de0ddf2",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-PANE",
+      "family": "terminal",
+      "obligation": "Inside tmux in Kitty with Kitty forced, a TMUX_PANE of %7 reaches tmux as %7, and it is the only variable beyond what tmux's shell sets by itself: the environment it records, that line set aside, is exactly the one the same fake records when started with none, CARGO_MANIFEST_DIR absent, and it answers on.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::a_pane_id_in_tmux_pane_reaches_tmux_and_no_other_variable_does",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "97feb70a18d0d6bc367674d788b520ea087b112933836106ef84aab93dbca593",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-PANE-MALFORMED",
+      "family": "terminal",
+      "obligation": "Inside tmux in Kitty with Kitty forced, a TMUX_PANE that is not % and one or more ASCII digits (empty, %, 7, %7x, %7;x, %-1, %+7, a space before or after %7, % and an Arabic-Indic seven, or %7, a newline and X=1) gives tmux no TMUX_PANE: the environment it records is exactly the one the same fake records when started with none, and it answers on.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::a_tmux_pane_not_percent_and_ascii_digits_adds_nothing",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "60b4e4d6ec918f7a63e7720722623d7e18e3d1d98d739777c5d1d68c49c453cb",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-STARTUP-ORDER",
+      "family": "terminal",
+      "obligation": "In Kitty's environment the built program asks the background colour, then the cursor position, then Kitty's question, then draws the prompt.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-first-frame"
+      },
+      "case": "startup::tests::heard::a_named_terminal_is_asked_after_the_background_question_and_before_the_prompt",
+      "source": "src/bin/startup/mod.rs",
+      "body_sha256": "1f5220457dfa8a239c7192179528181fada27cfb08ae067e537ac097e88fc0c3",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-STARTUP-QUIET",
+      "family": "terminal",
+      "obligation": "Started with output redirected, input not a terminal, NO_COLOR set or output.color never, the built program writes no cursor-position, Kitty, iTerm2, device-attributes or background question, and the runs on a terminal reach the prompt.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-first-frame"
+      },
+      "case": "startup::tests::heard::where_nothing_may_be_asked_no_question_reaches_the_terminal",
+      "source": "src/bin/startup/mod.rs",
+      "body_sha256": "428fbba53d971a1308e6846d302786fa036a38d763cdcafc1c3c2a1eec0d7a88",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-STARTUP-NO-KEY",
+      "family": "terminal",
+      "obligation": "Answered at once, never or out of order, or late or split with every answer cut before and after each escape, the cut after an escape being the one crossterm can read as Esc and typed characters, the built program asks the cursor position, asks Kitty's question only where a cursor position came within the patience, reads a late first cursor position to its end, puts the typed key in the box and types none of the answers.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-first-frame"
+      },
+      "case": "startup::tests::heard::no_answer_given_at_once_late_out_of_order_or_split_becomes_a_key",
+      "source": "src/bin/startup/mod.rs",
+      "body_sha256": "2516fdde4cb9bfcdd1889c143281d7e0c60e63753a7c05a907683a07c44b6dd2",
       "platforms": [
         "linux"
       ]

@@ -68,6 +68,13 @@ allow = [
     # binary's MIT terms intact.
     "bzip2-1.0.6",
 
+    # `resvg` draws through `tiny-skia`, and `tiny-skia` and the path crate under
+    # it take `arrayref` for array references of slices; no version of either is
+    # without it. `arrayref` carries the two-clause BSD licence, which permits
+    # use, modification and binary redistribution with the notice kept, imposes
+    # no copyleft, and leaves this binary's MIT terms intact.
+    "BSD-2-Clause",
+
     # The odd one out, and worth knowing why it is here. `webpki-roots` carries
     # Mozilla's root certificate store, which is data rather than code, so it
     # is under the Linux Foundation's licence for datasets instead of a

@@ -2055,11 +2055,23 @@ fn answered_natively_in(
     answer: &str,
     resized: Option<(usize, usize)>,
 ) -> Vec<String> {
+    answered_natively_in_pieces(window, glyphs, &[answer], resized)
+}
+
+/// [`answered_natively_in`], the answer arriving as `pieces`, one delta each.
+fn answered_natively_in_pieces(
+    window: &Window,
+    glyphs: Glyphs,
+    pieces: &[&str],
+    resized: Option<(usize, usize)>,
+) -> Vec<String> {
     let mut render = native(window);
     render.draws(glyphs);
     render.wears(colourful());
     stands(&mut render);
-    render.stream(answer).unwrap();
+    for piece in pieces {
+        render.stream(piece).unwrap();
+    }
     render.settle().unwrap();
     stands(&mut render);
     render.seal().unwrap();
@@ -2087,6 +2099,439 @@ fn a_native_table_narrowed_is_the_table_a_window_that_narrow_draws() {
 }
 
 #[test]
+fn a_native_table_written_without_outer_bars_is_drawn_as_a_table() {
+    let rows = answered_natively(&Window::new(40, 8), "a | b\n--|--\n1 | 2\n", None);
+
+    assert!(!rows.iter().any(|row| row.contains("--|--")), "{rows:#?}");
+    assert!(rows.iter().any(|row| row.contains('│')), "{rows:#?}");
+}
+
+#[test]
+fn a_native_frame_drawn_while_a_header_is_in_doubt_leaves_what_drawing_the_whole_answer_leaves() {
+    // A frame between two deltas, wherever the answer is cut: inside the
+    // header, between it and the delimiter row, or inside that row. What
+    // reached the scrollback is what one delta gives, so no header was sent
+    // out as prose that the table then repeated.
+    let answer = "before\n\nname | what it does\n--|--\nalpha | first\n\nafter\n";
+    let fresh = answered_natively(&Window::new(40, 10), answer, None);
+    assert!(fresh.iter().any(|row| row.contains('│')), "{fresh:#?}");
+    assert!(
+        !fresh
+            .iter()
+            .any(|row| row.contains("name | what") || row.contains("--|--")),
+        "{fresh:#?}"
+    );
+
+    for cut in 0..=answer.len() {
+        let (first, second) = answer.split_at(cut);
+        let window = Window::new(40, 10);
+        let mut render = native(&window);
+        render.wears(colourful());
+        stands(&mut render);
+        render.stream(first).unwrap();
+        stands(&mut render);
+        render.stream(second).unwrap();
+        render.settle().unwrap();
+        stands(&mut render);
+        render.seal().unwrap();
+
+        let (boxed, _) = boxed();
+        let boxed: Vec<String> = boxed.iter().map(Row::text).collect();
+        let rows: Vec<String> = window
+            .all()
+            .into_iter()
+            .filter(|row| !row.trim().is_empty() && !boxed.contains(row))
+            .collect();
+        assert_eq!(rows, fresh, "cut at {cut}");
+    }
+}
+
+/// A call that writes under the line an answer left open.
+type Writes = fn(&mut Renderer<Window>);
+
+/// What a native screen is left holding when `call` writes under an answer
+/// cut at `cut`, then the rest of the answer arrives.
+fn written_under_the_cut(cut: &str, call: Writes) -> Vec<String> {
+    let window = Window::new(40, 12);
+    let mut render = native(&window);
+    render.wears(colourful());
+    stands(&mut render);
+    render.stream(&format!("before\n\n{cut}")).unwrap();
+    call(&mut render);
+    render.stream("\n--|--\nalpha | 0.1\n\nafter\n").unwrap();
+    render.settle().unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+    let (boxed, _) = boxed();
+    let boxed: Vec<String> = boxed.iter().map(Row::text).collect();
+    window
+        .all()
+        .into_iter()
+        .filter(|row| !row.trim().is_empty() && !boxed.contains(row))
+        .collect()
+}
+
+#[test]
+fn a_native_call_that_writes_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // Presenting rows, committing a line and writing a prompt each end the
+    // line an answer left open, and a header that is still only a guess is
+    // the prose it looked like when they do: said once in the scrollback,
+    // with the same rows for the same words that could not have been a header.
+    let calls: [(&str, Writes); 3] = [
+        ("present", |render| {
+            render.present(&[row("component")]).unwrap();
+        }),
+        ("commit", |render| render.commit("note").unwrap()),
+        ("prompt", |render| {
+            render.prompt(Slot::Plain, "note").unwrap();
+        }),
+    ];
+    for (name, call) in calls {
+        for cut in [
+            "name | what it does\n",
+            "name | what",
+            "name | what it does\n--",
+        ] {
+            let doubtful = written_under_the_cut(cut, call);
+            let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+                .iter()
+                .map(|row| row.replace(" - ", " | "))
+                .collect();
+
+            assert_eq!(
+                doubtful
+                    .iter()
+                    .filter(|row| row.contains("name | what"))
+                    .count(),
+                1,
+                "{name} {cut:?}: {doubtful:#?}"
+            );
+            assert_eq!(doubtful, plain, "{name} {cut:?}");
+        }
+    }
+}
+
+#[test]
+fn a_native_responsive_block_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // On a native screen a block that keeps what lays it ends the line an
+    // answer left open, and a header still in doubt goes to the scrollback as
+    // the prose it looked like, said once, never as a table made of it later.
+    let call: Writes = |render| {
+        render
+            .responsive(9, Box::new(|_| vec![row("component")]))
+            .unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = written_under_the_cut(cut, call);
+        let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_native_block_charged_as_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // As the responsive block, for the one charged as its rows: the header
+    // still in doubt reaches the scrollback once, as the prose it looked like.
+    let call: Writes = |render| {
+        render
+            .responsive_as_laid(Box::new(|_| vec![row("component")]))
+            .unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = written_under_the_cut(cut, call);
+        let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_native_opening_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // The opening ends the line an answer left open the same way on a native
+    // screen: the header still in doubt reaches the scrollback once, as prose.
+    let call: Writes = |render| {
+        render
+            .opens(Box::new(|_, _| vec![row("component")]))
+            .unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = written_under_the_cut(cut, call);
+        let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_native_divider_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // A divider parts what is above it in the scrollback from what follows,
+    // so a header still in doubt over it goes there once, as the prose it
+    // looked like, and the delimiter row that comes later makes no table of it.
+    let call: Writes = |render| render.divides("new session").unwrap();
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = written_under_the_cut(cut, call);
+        let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_native_transcript_emptied_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // Emptying a native transcript writes what it held out to the scrollback,
+    // so a header still in doubt goes there once, as the prose it looked like,
+    // and the delimiter row that comes later makes no table of it.
+    let call: Writes = |render| render.empties().unwrap();
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = written_under_the_cut(cut, call);
+        let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_native_answer_hung_while_a_header_is_in_doubt_ends_it_as_the_prose_it_was() {
+    // Hanging what was written under a result mark ends the line an answer
+    // left open, so on a native screen a header still in doubt reaches the
+    // scrollback once, marked, as the prose it looked like.
+    let call: Writes = |render| {
+        let last = render.lines().saturating_sub(1);
+        render.subordinate(last, Glyphs::Unicode).unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = written_under_the_cut(cut, call);
+        let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_native_line_still_arriving_is_on_screen_whatever_it_could_turn_out_to_be() {
+    let window = Window::new(40, 8);
+    let mut render = native(&window);
+    render.wears(colourful());
+    stands(&mut render);
+    render.stream("It is started. That is all.").unwrap();
+    render.seal().unwrap();
+
+    let rows = window.all();
+    assert!(
+        rows.iter().any(|row| row.contains("That is all.")),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_native_header_stalled_part_way_never_reaches_the_scrollback_as_prose() {
+    // A window this short pushes every finished line out into the terminal's
+    // own buffer, which cannot take one back: so a header that turned out to
+    // be a table's must never have been finished while it was in doubt.
+    let window = Window::new(40, 6);
+    let mut render = native(&window);
+    render.wears(colourful());
+    stands(&mut render);
+    let piece = |render: &mut Renderer<Window>, text: &str| {
+        render.stream(text).unwrap();
+        render
+            .under(&[row("* thinking")], None, Palette::plain())
+            .unwrap();
+        render.seal().unwrap();
+        window.all()
+    };
+    let has = |rows: &[String], needle: &str| rows.iter().any(|row| row.contains(needle));
+
+    let rows = piece(&mut render, "one\ntwo\nthree\nfour\n\nname | wha");
+    assert!(has(&rows, "name | wha"), "{rows:#?}");
+
+    let rows = piece(&mut render, "t it does\n");
+    assert!(has(&rows, "name | what it does"), "{rows:#?}");
+
+    let rows = piece(&mut render, "--|--\n");
+    assert!(!has(&rows, "name | what"), "{rows:#?}");
+    assert!(!has(&rows, "--|--"), "{rows:#?}");
+
+    let rows = piece(&mut render, "alpha | first\nbeta | second\n\n");
+    assert!(has(&rows, "alpha"), "{rows:#?}");
+
+    render.settle().unwrap();
+    render.under(&[], None, Palette::plain()).unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+    let rows = window.all();
+    assert!(!has(&rows, "name | what"), "{rows:#?}");
+    assert!(!has(&rows, "--|--"), "{rows:#?}");
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("name") && row.contains('│')),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_native_table_written_without_outer_bars_narrowed_is_the_table_a_window_that_narrow_draws() {
+    let table = "name | what it does | since\n--|--|--\n\
+         alpha | reads the markdown out of a stream | 0.1\n\
+         beta | lays a table against the window | 0.2\n";
+    let fresh = answered_natively(&Window::new(30, 20), table, None);
+    assert!(
+        fresh.iter().filter(|row| row.contains('│')).count() >= 3,
+        "{fresh:#?}"
+    );
+    let narrowed = answered_natively(&Window::new(60, 20), table, Some((30, 20)));
+
+    assert_eq!(narrowed, fresh);
+}
+
+#[test]
+fn a_native_table_written_without_outer_bars_draws_its_structure_in_the_glyphs_worn() {
+    let rows = answered_natively_in(
+        &Window::new(40, 8),
+        Glyphs::Ascii,
+        "a | b\n--|--\n1 | 2\n",
+        None,
+    );
+
+    let rows: Vec<&str> = rows.iter().map(|row| row.trim_end()).collect();
+    assert_eq!(rows, ["a | b", "--+--", "1 | 2"], "{rows:#?}");
+}
+
+#[test]
+fn a_native_answer_cut_anywhere_draws_the_table_written_without_outer_bars_the_whole_answer_draws()
+{
+    let answer = "before\n\na | b\n--|--\n1 | 2\n\nafter\n";
+    let window = Window::new(40, 12);
+    let whole = answered_natively(&window, answer, None);
+    assert!(whole.iter().any(|row| row.contains('│')), "{whole:#?}");
+
+    for cut in 1..answer.len() {
+        let rows = answered_natively_in_pieces(
+            &Window::new(40, 12),
+            Glyphs::Unicode,
+            &[&answer[..cut], &answer[cut..]],
+            None,
+        );
+        assert_eq!(rows, whole, "cut at {cut}");
+    }
+}
+
+#[test]
 fn a_native_rule_narrowed_is_still_one_row() {
     let rows = answered_natively(
         &Window::new(40, 10),
@@ -2103,6 +2548,317 @@ fn a_native_rule_narrowed_is_still_one_row() {
         [25],
         "{rows:#?}"
     );
+}
+
+/// What a native session on a window `columns` wide keeps of `answer`, which
+/// arrives as `pieces`, once it has settled.
+fn kept_natively(columns: usize, glyphs: Glyphs, pieces: &[&str]) -> Vec<String> {
+    answered_natively_in_pieces(&Window::new(columns, 30), glyphs, pieces, None)
+        .into_iter()
+        .map(|row| row.trim_end().to_owned())
+        .collect()
+}
+
+#[test]
+fn a_native_setext_underline_is_read_rather_than_drawn() {
+    let rows = answered_natively(
+        &Window::new(40, 12),
+        "Title\n=====\n\nSub\n---\n\nprose\n",
+        None,
+    );
+
+    assert!(!rows.iter().any(|row| row.contains("=====")), "{rows:#?}");
+    assert!(!rows.iter().any(|row| row.contains("---")), "{rows:#?}");
+    let is_rule = |row: &str| {
+        let row = row.trim();
+        !row.is_empty() && row.chars().all(|c| matches!(c, '─' | '━'))
+    };
+    let above = std::iter::once("").chain(rows.iter().map(String::as_str));
+    for (over, row) in above.zip(rows.iter()) {
+        if is_rule(row) {
+            assert!(
+                row.trim().chars().count() <= over.trim().chars().count(),
+                "a rule under {over:?} is wider than its words: {rows:#?}"
+            );
+        }
+    }
+    assert!(rows.iter().any(|row| row.contains("Title")));
+    assert!(rows.iter().any(|row| row.contains("Sub")));
+}
+
+#[test]
+fn a_native_setext_heading_wears_a_rule_as_wide_as_its_words_in_both_sets() {
+    let answer = "Title\n=====\n\nSub\n---\n\nprose\n";
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &[answer]),
+        ["Title", "━━━━━", "Sub", "───", "prose"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Ascii, &[answer]),
+        ["Title", "=====", "Sub", "---", "prose"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Ascii, &["Title\n==========\n"]),
+        ["Title", "====="]
+    );
+}
+
+#[test]
+fn a_native_title_and_its_underline_in_two_deltas_are_one_heading() {
+    for pieces in [
+        ["Title\n", "=====\n"].as_slice(),
+        ["Ti", "tle", "\n", "=", "====", "\n"].as_slice(),
+        ["Title\n=====", "\n"].as_slice(),
+        ["Title\n", "=====\n\nafter\n"].as_slice(),
+    ] {
+        let rows = kept_natively(40, Glyphs::Unicode, pieces);
+        assert_eq!(
+            rows.iter().filter(|row| row.contains("Title")).count(),
+            1,
+            "{pieces:?}: {rows:#?}"
+        );
+        assert_eq!(
+            rows.iter().take(2).map(String::as_str).collect::<Vec<_>>(),
+            ["Title", "━━━━━"],
+            "{pieces:?}: {rows:#?}"
+        );
+    }
+}
+
+#[test]
+fn a_native_dashed_row_under_something_that_is_not_a_paragraph_stays_a_full_width_rule() {
+    let rule = "─".repeat(40);
+    for answer in [
+        "---\n",
+        "above\n\n---\n",
+        "- item\n---\n",
+        "> quote\n---\n",
+        "# Foo\n---\n",
+        "```\ncode\n```\n---\n",
+        "| a | b |\n|---|---|\n| 1 | 2 |\n---\n",
+    ] {
+        let rows = kept_natively(40, Glyphs::Unicode, &[answer]);
+        assert_eq!(rows.last(), Some(&rule), "{answer:?}: {rows:#?}");
+    }
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["one cell\n---\n"]),
+        ["one cell", "────────"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["a | b\n--|--\n1 | 2\n"]).len(),
+        3
+    );
+}
+
+#[test]
+fn a_native_heading_that_wraps_wears_a_rule_as_wide_as_its_last_row() {
+    let rows = kept_natively(16, Glyphs::Unicode, &["A title long enough to wrap\n=\n"]);
+    assert!(rows.len() > 2, "{rows:#?}");
+    let [.., words, rule] = rows.as_slice() else {
+        panic!("{rows:#?}");
+    };
+    assert_eq!(*rule, "━".repeat(crate::width::columns(words)), "{rows:#?}");
+}
+
+#[test]
+fn a_native_heading_is_laid_out_again_at_a_new_width_and_in_a_new_glyph_set() {
+    let answer = "A title long enough to wrap\n=====\n\nAnd a second one to wrap\n---\n";
+    let narrowed = answered_natively(&Window::new(40, 30), answer, Some((16, 30)));
+    let narrowed: Vec<String> = narrowed
+        .iter()
+        .map(|row| row.trim_end().to_owned())
+        .collect();
+    assert!(
+        narrowed.iter().any(|row| row.contains('━')),
+        "{narrowed:#?}"
+    );
+    assert_eq!(narrowed, kept_natively(16, Glyphs::Unicode, &[answer]));
+
+    // The set changes after the answer is kept; the next replay is in it.
+    let window = Window::new(40, 30);
+    let mut render = native(&window);
+    render.wears(colourful());
+    stands(&mut render);
+    render.stream(answer).unwrap();
+    render.settle().unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+    render.draws(Glyphs::Ascii);
+    settles_at(&window, &mut render, 16, 30);
+    let (boxed, _) = boxed();
+    let boxed: Vec<String> = boxed.iter().map(Row::text).collect();
+    let replayed: Vec<String> = window
+        .all()
+        .into_iter()
+        .filter(|row| !row.trim().is_empty() && !boxed.contains(row))
+        .map(|row| row.trim_end().to_owned())
+        .collect();
+    assert!(
+        replayed.iter().any(|row| row.starts_with('=')),
+        "{replayed:#?}"
+    );
+    assert_eq!(replayed, kept_natively(16, Glyphs::Ascii, &[answer]));
+}
+
+#[test]
+fn a_native_underline_at_the_end_of_the_message_or_with_trailing_blanks_counts() {
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["Title\n====="]),
+        ["Title", "━━━━━"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["Sub\n---"]),
+        ["Sub", "───"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["Title\n===\t\n"]),
+        ["Title", "━━━━━"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["Sub\n---\t\n"]),
+        ["Sub", "───"]
+    );
+}
+
+#[test]
+fn a_native_underline_and_a_title_of_the_most_the_reader_holds_are_headings_and_one_more_is_not() {
+    assert_eq!(
+        kept_natively(
+            200,
+            Glyphs::Unicode,
+            &[&format!("Sub\n{}\n", "-".repeat(128))]
+        ),
+        ["Sub", "───"]
+    );
+    assert_eq!(
+        kept_natively(
+            200,
+            Glyphs::Unicode,
+            &[&format!("Title\n{}\n", "=".repeat(128))]
+        ),
+        ["Title", "━━━━━"]
+    );
+    assert_eq!(
+        kept_natively(
+            200,
+            Glyphs::Unicode,
+            &[&format!("Sub\n{}\n", "-".repeat(129))]
+        ),
+        ["Sub".to_owned(), "─".repeat(200)]
+    );
+    assert_eq!(
+        kept_natively(
+            200,
+            Glyphs::Unicode,
+            &[&format!("Title\n{}\n", "=".repeat(129))]
+        ),
+        ["Title".to_owned(), "=".repeat(129)]
+    );
+    for (underline, heavy) in [("---", false), ("===", true)] {
+        let long = "t".repeat(128);
+        let rule = if heavy { "━" } else { "─" }.repeat(128);
+        assert_eq!(
+            kept_natively(200, Glyphs::Unicode, &[&format!("{long}\n{underline}\n")]),
+            [long.clone(), rule]
+        );
+
+        let longer = "t".repeat(129);
+        let expected = if heavy {
+            underline.to_owned()
+        } else {
+            "─".repeat(200)
+        };
+        assert_eq!(
+            kept_natively(200, Glyphs::Unicode, &[&format!("{longer}\n{underline}\n")]),
+            [longer, expected]
+        );
+    }
+}
+
+#[test]
+fn a_native_indented_atx_heading_wears_a_rule_as_wide_as_its_words_and_not_its_indent() {
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["  # Title\nafter\n"]),
+        ["  Title", "━━━━━", "after"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["   ## Sub\nafter\n"]),
+        ["   Sub", "───", "after"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Ascii, &["  # Title"]),
+        ["  Title", "====="]
+    );
+}
+
+#[test]
+fn a_native_title_of_markers_or_opening_with_a_dollar_or_a_backslash_is_a_heading() {
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["**\n---\n"]),
+        ["**", "──"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["--\n---\n"]),
+        ["--", "──"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["$5\n---\n"]),
+        ["$5", "──"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["\\*x\n===\n"]),
+        ["*x", "━━"]
+    );
+}
+
+#[test]
+fn a_native_answer_cut_anywhere_draws_the_setext_heading_the_whole_answer_draws() {
+    for answer in [
+        "intro\n\nTitle\n=====\n\nSub\n---\nafter\n",
+        "intro line\nTitle with **bold**\n=\nafter\n",
+        "$5\n---\nx\n\\*x\n===\nend\n",
+    ] {
+        let whole = kept_natively(40, Glyphs::Unicode, &[answer]);
+        assert!(
+            whole
+                .iter()
+                .any(|row| row.contains('━') || row.contains('─')),
+            "{answer:?} drew no rule: {whole:#?}"
+        );
+
+        for cut in 1..answer.len() {
+            let rows = kept_natively(40, Glyphs::Unicode, &[&answer[..cut], &answer[cut..]]);
+            assert_eq!(rows, whole, "cut at {cut} of {answer:?}");
+        }
+    }
+}
+
+#[test]
+fn a_native_answer_cut_anywhere_draws_the_indented_block_the_whole_answer_draws() {
+    let answer = "para\n\n    let total = first_value + second_value;\n\n    done();\n---\n\nmore\n\n    code\n===\n";
+    let whole = kept_natively(40, Glyphs::Unicode, &[answer]);
+    for row in ["┌─", "│ done();", "└─", "│ code", "==="] {
+        assert!(
+            whole.iter().any(|kept| kept.trim_start() == row),
+            "{row:?} is not kept: {whole:#?}"
+        );
+    }
+    assert!(
+        whole.iter().any(|row| row.trim_start().starts_with('┆')),
+        "no wrapped code row: {whole:#?}"
+    );
+    assert!(!whole.iter().any(|row| row.contains('━')), "{whole:#?}");
+
+    for cut in 1..answer.len() {
+        let rows = kept_natively(40, Glyphs::Unicode, &[&answer[..cut], &answer[cut..]]);
+        assert_eq!(rows, whole, "cut at {cut} of {answer:?}");
+    }
+}
+
+#[test]
+fn a_native_title_that_proved_prose_reaches_the_scrollback_once_as_the_prose_it_was() {
+    let rows = kept_natively(40, Glyphs::Unicode, &["Title\n", "not an underline\n"]);
+    assert_eq!(rows, ["Title", "not an underline"]);
 }
 
 /// An item long enough to wrap at thirty columns onto three rows or more.
@@ -2136,6 +2892,39 @@ fn a_native_wrapped_quote_keeps_its_bar_on_every_row() {
         for row in &rows {
             assert!(row.starts_with("│ "), "{row:?} lost the quote bar");
         }
+    }
+}
+
+#[test]
+fn a_native_wrapped_alert_keeps_its_bar_on_every_row() {
+    let answer = format!("> [!NOTE]\n> a body {LONG_ITEM}\n");
+    for resized in [None, Some((30, 12))] {
+        let columns = if resized.is_some() { 60 } else { 30 };
+        let rows = answered_natively(&Window::new(columns, 12), &answer, resized);
+
+        assert!(rows.len() > 3, "{rows:#?}");
+        assert_eq!(rows.first().map(String::as_str), Some("▎ ◆ Note"));
+        for row in &rows {
+            assert!(row.starts_with("▎ "), "{row:?} lost the alert bar");
+        }
+    }
+}
+
+#[test]
+fn a_native_answer_cut_anywhere_draws_the_alert_the_whole_answer_draws() {
+    let answer = "> [!WARNING]\n> a body long enough that it has to wrap onto another row\n\n> [!tip]\n> more\n";
+    let whole = kept_natively(40, Glyphs::Unicode, &[answer]);
+    for row in ["▎ ▲ Warning", "▎ ✓ Tip", "▎ more"] {
+        assert!(
+            whole.iter().any(|kept| kept == row),
+            "{row:?} is not kept: {whole:#?}"
+        );
+    }
+    assert!(!whole.iter().any(|row| row.contains("[!")), "{whole:#?}");
+
+    for cut in 1..answer.len() {
+        let rows = kept_natively(40, Glyphs::Unicode, &[&answer[..cut], &answer[cut..]]);
+        assert_eq!(rows, whole, "cut at {cut} of {answer:?}");
     }
 }
 
@@ -2483,4 +3272,71 @@ fn a_native_session_of_prose_and_a_rule_lists_no_source_and_bounds_nothing() {
 
     assert_eq!(render.sources().count(), 0);
     assert_eq!(render.sourced(), 0);
+}
+
+#[test]
+fn a_native_lone_marker_is_an_underline() {
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["Title\n=\n"]),
+        ["Title", "━━━━━"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["Sub\n-\n"]),
+        ["Sub", "───"]
+    );
+}
+
+#[test]
+fn native_atx_and_setext_headings_of_one_level_look_alike_and_levels_four_to_six_look_like_three() {
+    let atx = kept_natively(40, Glyphs::Unicode, &["# One\n\n## Two\n\n### Three\n"]);
+    let setext = kept_natively(40, Glyphs::Unicode, &["One\n===\n\nTwo\n---\n\nThree\n"]);
+    assert_eq!(atx, ["One", "━━━", "Two", "───", "Three"]);
+    assert_eq!(
+        setext.iter().take(4).collect::<Vec<_>>(),
+        atx.iter().take(4).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        kept_natively(
+            40,
+            Glyphs::Unicode,
+            &["#### Four\n\n##### Five\n\n###### Six\n"]
+        ),
+        ["Four", "Five", "Six"]
+    );
+}
+
+#[test]
+fn a_native_line_of_cells_over_a_delimiter_row_is_still_a_table_and_not_a_heading() {
+    let rows = kept_natively(40, Glyphs::Unicode, &["a | b\n--|--\n1 | 2\n"]);
+    assert!(rows.iter().any(|row| row.contains('│')), "{rows:#?}");
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row.contains('─') && !row.contains('┼')),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_native_dashed_row_under_a_line_that_was_no_table_header_underlines_it() {
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["one cell\n---\n"]),
+        ["one cell", "────────"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["a | b\n---\n1 | 2\n"]),
+        ["a | b", "─────", "1 | 2"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["one cell\n:-:\n"]),
+        ["one cell", ":-:"]
+    );
+}
+
+#[test]
+fn a_native_underline_makes_only_the_last_line_of_a_paragraph_the_heading() {
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["first line\nsecond line\n===\n"]),
+        ["first line", "second line", "━━━━━━━━━━━"]
+    );
 }

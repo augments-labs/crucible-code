@@ -294,10 +294,15 @@ impl<T: Terminal> Renderer<T> {
     /// that first draws it, and a mark hung after that frame would find the
     /// divider gone and mark nothing.
     ///
+    /// A line of an answer that may still be the header of a table or the title of
+    /// a heading is ended as the prose it was said to be first, as
+    /// [`Renderer::present`] does: the divider is under it.
+    ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn divides(&mut self, label: &str) -> Result<(), TerminalError> {
+        self.undoubted()?;
         self.apart()?;
         let divider = divider(label, self.transcript_columns(), self.glyphs);
         if !self.terminal.is_terminal() {

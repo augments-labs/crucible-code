@@ -80,9 +80,9 @@ pub use settings::access::{
     Cloud, MODEL_NAMED as AGENT_MODEL_NAMED, NATIVE_RUNNER, Serves, model_name as agent_model,
 };
 pub use settings::{
-    Access, AgentUpdate, Color, Compaction, Driver, ExternalAgent, Forced, Glyphs, McpServer,
-    Routes, SandboxSettings, ScreenMode, ScrollSpeed, Sending, Settings, ThemeChoice, ToolDetail,
-    TranscriptColours, Updates, When, local, user,
+    Access, AgentUpdate, Color, Compaction, Driver, ExternalAgent, Forced, Glyphs, ImageOutput,
+    McpServer, Routes, SandboxSettings, ScreenMode, ScrollSpeed, Sending, Settings, ThemeChoice,
+    ToolDetail, TranscriptColours, Updates, When, local, user,
 };
 pub use shape::THEME;
 pub use shape::rows::{Row, RowId, Values, row, rows};

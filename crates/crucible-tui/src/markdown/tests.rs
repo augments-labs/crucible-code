@@ -5,6 +5,10 @@ use crate::width;
 /// A window wide enough that nothing here is laid out against its edge.
 const ROOM: usize = 80;
 
+/// What a run that takes the open line back is written as, where a test reads
+/// the runs as text.
+const RETRACTED: &str = "<retracted>";
+
 /// The reader as runs alone: a block it hands on is laid out at the room it
 /// was read in, and its rows said in its place, each ending its line.
 ///
@@ -54,6 +58,7 @@ fn runs(
                 say(Slot::Plain, "\n", None);
             }
         }
+        Said::Retract => say(Slot::Plain, RETRACTED, None),
     }
 }
 
@@ -79,6 +84,41 @@ fn slots(said: &[(Slot, String)]) -> Vec<Slot> {
         }
         worn
     })
+}
+
+/// What is left of `said` once every taken-back line is gone: the runs since
+/// the last line break, which is where the line being written began.
+fn standing(said: Vec<(Slot, String)>) -> Vec<(Slot, String)> {
+    let mut left: Vec<(Slot, String)> = Vec::new();
+    for (slot, text) in said {
+        if text != RETRACTED {
+            left.push((slot, text));
+            continue;
+        }
+        while let Some((slot, text)) = left.pop() {
+            if let Some(at) = text.rfind('\n') {
+                left.push((slot, text.get(..=at).unwrap_or_default().to_owned()));
+                break;
+            }
+        }
+    }
+    left
+}
+
+/// The same for runs already put together as text.
+fn standing_text(text: &str) -> String {
+    let mut left = String::new();
+    for part in text
+        .split(RETRACTED)
+        .enumerate()
+        .map(|(at, part)| (at > 0, part))
+    {
+        if part.0 {
+            left.truncate(left.rfind('\n').map_or(0, |at| at + 1));
+        }
+        left.push_str(part.1);
+    }
+    left
 }
 
 /// One whole answer, read as one delta.
@@ -161,7 +201,7 @@ fn inline_code_wears_its_own_slot_and_loses_its_backticks() {
 
 #[test]
 fn a_fence_and_the_language_written_on_it_are_the_edges_of_its_frame() {
-    let said = whole("before\n```rust\nlet it = 1;\n```\nafter\n");
+    let said = ended("before\n```rust\nlet it = 1;\n```\nafter\n");
 
     // The fence and the word after it are not drawn as they were written: the
     // fence's two lines become the two edges of a frame, and the word after the
@@ -272,7 +312,7 @@ fn two_underscores_around_a_word_are_weight() {
 
 #[test]
 fn a_marker_that_never_closes_costs_its_own_paragraph_and_no_more() {
-    let said = whole("**never closed\nthe line after it\n\na new paragraph\n");
+    let said = ended("**never closed\nthe line after it\n\na new paragraph\n");
 
     assert_eq!(
         drawn(&said),
@@ -473,7 +513,7 @@ fn a_bracket_that_was_never_a_link_is_left_exactly_as_it_was() {
         "[unclosed and then the line ends\n",
         "[half](and then the line ends\n",
     ] {
-        assert_eq!(drawn(&whole(written)), written, "{written:?}");
+        assert_eq!(drawn(&ended(written)), written, "{written:?}");
     }
 }
 
@@ -563,7 +603,7 @@ fn a_dash_that_is_not_a_bullet_is_left_exactly_where_it_was() {
 fn a_star_at_the_start_of_a_line_is_still_emphasis_where_it_opens_one() {
     // The two are told apart by the space: `* item` is a list and `*word*` is
     // a phrase, wherever on the line either of them starts.
-    let said = whole("*loud* at the start\n");
+    let said = ended("*loud* at the start\n");
 
     assert_eq!(drawn(&said), "loud at the start\n");
     assert_eq!(slots(&said), vec![Slot::Emphasis, Slot::Plain]);
@@ -583,7 +623,7 @@ fn a_quote_is_a_bar_and_the_words_beside_it() {
 fn a_quote_ends_where_the_line_does() {
     // Like every other thing this reader opens: a model that quoted one line
     // has not put the rest of the answer in somebody else's mouth.
-    let said = whole("> quoted\nplain again\n");
+    let said = ended("> quoted\nplain again\n");
 
     assert_eq!(drawn(&said), "│ quoted\nplain again\n");
     assert_eq!(slots(&said), vec![Slot::Quiet, Slot::Quote, Slot::Plain]);
@@ -676,10 +716,10 @@ fn a_tilde_that_is_not_a_pair_is_left_exactly_where_it_was() {
 #[test]
 fn a_pair_left_dangling_at_the_end_of_a_line_strikes_nothing() {
     assert_eq!(
-        drawn(&whole("nothing to strike ~~\n")),
+        drawn(&ended("nothing to strike ~~\n")),
         "nothing to strike ~~\n"
     );
-    assert_eq!(slots(&whole("nothing to strike ~~\n")), vec![Slot::Plain]);
+    assert_eq!(slots(&ended("nothing to strike ~~\n")), vec![Slot::Plain]);
 }
 
 #[test]
@@ -938,7 +978,7 @@ fn a_bracket_that_is_not_a_box_leaves_the_bullet_it_follows_alone() {
 
 #[test]
 fn a_box_that_does_not_open_an_item_is_the_brackets_somebody_wrote() {
-    let said = whole("the set is [ ] until something is in it\n");
+    let said = ended("the set is [ ] until something is in it\n");
 
     assert_eq!(drawn(&said), "the set is [ ] until something is in it\n");
 }
@@ -1084,8 +1124,16 @@ fn emphasis_around_a_code_span_still_closes_after_it() {
 
 /// One whole answer, read as one delta and then ended.
 fn ended(answer: &str) -> Vec<(Slot, String)> {
+    ended_in(&[answer])
+}
+
+/// An answer read as these deltas, one after another, and then ended.
+fn ended_in(deltas: &[&str]) -> Vec<(Slot, String)> {
     let mut markdown = Markdown::default();
-    let mut said = read(&mut markdown, answer);
+    let mut said = Vec::new();
+    for delta in deltas {
+        said.extend(read(&mut markdown, delta));
+    }
     markdown.finish_runs(ROOM, &mut |slot, text, _| {
         said.push((slot, text.to_owned()));
     });
@@ -1198,10 +1246,13 @@ fn an_address_a_link_names_is_still_the_link_it_names() {
 }
 
 /// Every shape this file reads, as one answer each.
-const SHAPES: [&str; 12] = [
+const SHAPES: [&str; 19] = [
     "**strong** and *leaning* words",
     "a [link](https://example.com) here",
     "| a | b |\n|---|---|\n| 1 | 2 |\n",
+    "a | b\n--|--\n1 | 2\n\nafter\n",
+    "a | b\n--|---|--\n1 | 2\n",
+    "a | b\n---\n1 | 2\n",
     "- [x] done\n- [ ] not\n",
     "```rust\nfn main() {}\n```\n",
     "see https://example.com/a_b for more",
@@ -1211,6 +1262,10 @@ const SHAPES: [&str; 12] = [
     "a `*ptr*` span",
     "~~struck~~ words",
     "# heading\n",
+    "para\n\n    let x = 1;\n\n    y\n---\n",
+    "> [!WARNING]\n> a *loud* body\n> and more\n\nafter\n",
+    "> [!NOTE] not an alert\n> [!TIP]\n",
+    "> [!CAUTION]",
 ];
 
 #[test]
@@ -1532,7 +1587,8 @@ fn what_ends_a_sentence_after_a_number_is_not_part_of_it() {
 fn a_heading_is_still_a_heading_and_not_a_number() {
     let said = counted("# 487 of them\n");
 
-    assert_eq!(wrote(&said), "487 of them\n");
+    // The words, and the rule a heading of the first level is drawn with.
+    assert_eq!(wrote(&said), "487 of them\n━━━━━━━━━━━\n");
     assert!(points(&said).is_empty());
 }
 
@@ -1802,6 +1858,7 @@ fn blocks(answer: &str) -> (Vec<Block>, String) {
     let mut say = |said: Said<'_>| match said {
         Said::Run { text, .. } => runs.push_str(text),
         Said::Block(block) => blocks.push(block),
+        Said::Retract => runs.push_str(RETRACTED),
     };
     markdown.read(answer, ROOM, &mut say);
     markdown.finish(ROOM, &mut say);
@@ -2015,6 +2072,426 @@ fn a_table_past_its_cap_is_drawn_as_it_always_was() {
     let (blocks, _) = blocks(&format!("{table}\nafter\n"));
 
     assert!(blocks.is_empty(), "{} blocks", blocks.len());
+}
+
+/// A table written without its outer bars.
+const BARE: &str = "name | since\n--|--\nalpha | 0.1\nbeta | 0.2\n";
+
+#[test]
+fn a_table_without_outer_bars_is_handed_on_whole_with_the_source_it_was_written_as() {
+    let (blocks, runs) = blocks(&format!("before\n{BARE}\nafter\n"));
+
+    assert_eq!(
+        blocks,
+        [Block {
+            kind: Kind::Table,
+            source: BARE.to_owned(),
+            closed: true,
+        }]
+    );
+    assert_eq!(standing_text(&runs), "before\n\nafter\n");
+}
+
+#[test]
+fn a_table_without_outer_bars_is_drawn_as_the_table_it_is() {
+    let said = standing(whole(&format!("{BARE}\n")));
+
+    assert_eq!(
+        drawn(&said),
+        "name  │ since\n\
+         ──────┼──────\n\
+         alpha │ 0.1  \n\
+         beta  │ 0.2  \n\n"
+    );
+}
+
+#[test]
+fn a_table_without_outer_bars_is_drawn_as_the_one_with_them_is() {
+    // A body row with fewer or more cells than the header is padded or cut
+    // by the one reader of tables, whichever way the table was written.
+    let bare = "a | b\n:--|--:\n1\n2 | 3 | 4\n`x` | **y**\n\n";
+    let barred = "| a | b |\n|:--|--:|\n| 1 |\n| 2 | 3 | 4 |\n| `x` | **y** |\n\n";
+
+    assert_eq!(standing(whole(bare)), whole(barred));
+    assert!(drawn(&standing(whole(bare))).contains('│'));
+}
+
+#[test]
+fn a_table_without_outer_bars_runs_to_the_first_blank_line() {
+    let table = "a | b\n--|--\n1 | 2\nno bars in this row\n";
+    let (blocks, runs) = blocks(&format!("{table}\nafter | this\n"));
+
+    assert_eq!(
+        blocks,
+        [Block {
+            kind: Kind::Table,
+            source: table.to_owned(),
+            closed: true,
+        }]
+    );
+    assert_eq!(standing_text(&runs), "\nafter | this\n");
+}
+
+#[test]
+fn a_table_without_outer_bars_may_open_in_the_middle_of_a_paragraph() {
+    let (blocks, runs) = blocks("one line of prose\na | b\n--|--\n1 | 2\n");
+
+    assert_eq!(
+        blocks
+            .iter()
+            .map(|block| block.source.as_str())
+            .collect::<Vec<_>>(),
+        ["a | b\n--|--\n1 | 2\n"]
+    );
+    assert_eq!(standing_text(&runs), "one line of prose\n");
+}
+
+#[test]
+fn a_header_is_not_announced_as_a_table_until_its_delimiter_row_has_arrived() {
+    let answer = "name | since\n--|--\nalpha | 0.1\n";
+    let held = holdings(answer);
+    let delimited = "name | since\n--|--\n".len();
+
+    assert!(
+        held.iter().take(delimited - 1).all(Option::is_none),
+        "{held:?}"
+    );
+    assert_eq!(
+        held.get(delimited - 1),
+        Some(&Some(Holding {
+            held: Held::Table,
+            lines: 2,
+        }))
+    );
+    assert_eq!(
+        held.last(),
+        Some(&Some(Holding {
+            held: Held::Table,
+            lines: 3,
+        }))
+    );
+}
+
+#[test]
+fn lines_that_only_look_like_a_table_without_outer_bars_stay_as_they_were_written() {
+    for answer in [
+        // The delimiter row has more cells than the header, or fewer.
+        "a | b\n--|---|--\n1 | 2\n",
+        "a | b | c\n--|--\n1 | 2\n",
+        // A delimiter row whose cells are not dashes, or are only colons.
+        "a | b\n--|x\n1 | 2\n",
+        "a | b\n:|:\n1 | 2\n",
+        // A header with one cell, or one whose bar is escaped.
+        "no bars\n--|--\n1 | 2\n",
+        "a \\| b\n--|--\n1 | 2\n",
+        // A row of dashes in the middle of prose.
+        "a | b\nthen -- | --\n1 | 2\n",
+        // Nothing under the header at all, or the message ending in the
+        // middle of the delimiter row.
+        "a | b\n",
+        "a | b\n--|",
+    ] {
+        let (blocks, _) = blocks(answer);
+        assert!(blocks.is_empty(), "{answer:?}: {blocks:?}");
+        assert_eq!(
+            drawn(&ended(answer)),
+            answer.replace("\\|", "|"),
+            "{answer:?}"
+        );
+    }
+}
+
+#[test]
+fn a_lone_row_of_dashes_under_a_line_is_not_a_table() {
+    for answer in ["a | b\n---\n1 | 2\n", "one cell\n---\n", "one cell\n:-:\n"] {
+        let (blocks, runs) = blocks(answer);
+
+        assert!(
+            blocks.iter().all(|block| block.kind != Kind::Table),
+            "{answer:?}: {blocks:?}"
+        );
+        assert!(runs.starts_with(answer.lines().next().unwrap_or_default()));
+    }
+
+    // What the line is instead: the title of a level-2 heading, or prose.
+    for (answer, title) in [
+        ("one cell\n---\n", "one cell"),
+        ("a | b\n---\n1 | 2\n", "a | b"),
+    ] {
+        let (blocks, _) = blocks(answer);
+
+        assert_eq!(
+            blocks.first().map(|block| block.kind),
+            Some(Kind::Heading(Level::Two)),
+            "{answer:?}: {blocks:?}"
+        );
+        assert!(
+            blocks
+                .first()
+                .is_some_and(|block| block.source.starts_with(title)),
+            "{answer:?}: {blocks:?}"
+        );
+    }
+    let (blocks, _) = blocks("one cell\n:-:\n");
+    assert!(blocks.is_empty(), "{blocks:?}");
+}
+
+#[test]
+fn a_header_longer_than_a_header_is_held_for_is_read_as_the_prose_it_is() {
+    let header = format!("{} | b", "a".repeat(HEADER_CAP));
+    let answer = format!("{header}\n--|--\n1 | 2\n");
+    let (blocks, _) = blocks(&answer);
+
+    assert!(blocks.is_empty(), "{blocks:?}");
+    assert_eq!(drawn(&ended(&answer)), answer);
+}
+
+#[test]
+fn a_line_past_the_cap_on_a_header_is_said_without_waiting_for_its_end() {
+    let line = "a".repeat(HEADER_CAP + 8);
+    let said = read(&mut Markdown::default(), &line);
+
+    assert_eq!(drawn(&said), line);
+}
+
+#[test]
+fn a_table_without_outer_bars_past_its_cap_is_drawn_as_it_always_was() {
+    let row = "a cell | another cell\n";
+    let table = format!("a | b\n--|--\n{}", row.repeat(TABLE_CAP / row.len() + 1));
+    let (blocks, _) = blocks(&format!("{table}\nafter\n"));
+
+    assert!(blocks.is_empty(), "{} blocks", blocks.len());
+}
+
+#[test]
+fn a_reader_that_holds_nothing_draws_a_table_without_outer_bars_as_written() {
+    assert_eq!(as_written(BARE), BARE);
+}
+
+#[test]
+fn a_message_that_ends_in_a_table_without_outer_bars_draws_it_as_one() {
+    let (blocks, _) = blocks("a | b\n--|--\n1 | 2");
+
+    assert_eq!(
+        blocks
+            .iter()
+            .map(|block| block.source.as_str())
+            .collect::<Vec<_>>(),
+        ["a | b\n--|--\n1 | 2"]
+    );
+}
+
+/// What the reader said while `answer` was read a character at a time and
+/// finished, as one line per thing: `run <text>`, `retract` and `block`.
+fn told(answer: &str) -> Vec<String> {
+    let mut markdown = Markdown::default();
+    let mut told = Vec::new();
+    let mut say = |said: Said<'_>| match said {
+        Said::Run { text, .. } => told.push(format!("run {text}")),
+        Said::Retract => told.push("retract".to_owned()),
+        Said::Block(_) => told.push("block".to_owned()),
+    };
+    for (at, character) in answer.char_indices() {
+        let piece = answer
+            .get(at..at + character.len_utf8())
+            .unwrap_or_default();
+        markdown.read(piece, ROOM, &mut say);
+    }
+    markdown.finish(ROOM, &mut say);
+    told
+}
+
+/// The text of the runs among `told`.
+fn said_text(told: &[String]) -> String {
+    told.iter()
+        .filter_map(|thing| thing.strip_prefix("run "))
+        .collect()
+}
+
+#[test]
+fn a_header_is_said_as_the_prose_it_is_so_far_and_taken_back_when_the_delimiter_row_decides() {
+    let told = told("before\nname | since\n--|--\nalpha | 0.1\n\nafter");
+
+    let retract = told.iter().position(|thing| thing == "retract");
+    let block = told.iter().position(|thing| thing == "block");
+    assert!(retract.is_some() && retract < block, "{told:?}");
+    assert_eq!(told.iter().filter(|thing| *thing == "retract").count(), 1);
+    // The header is on its way out before the line under it has arrived.
+    let header = told.iter().position(|thing| thing == "run e");
+    assert!(header.is_some() && header < retract, "{told:?}");
+}
+
+#[test]
+fn a_line_that_stops_looking_like_a_header_is_never_taken_back() {
+    for answer in [
+        "a | b\nthen -- | --\n1 | 2\n",
+        "a | b\n--|x\n1 | 2\n",
+        "a | b\n--|",
+        "a | b\n",
+        "a | b",
+        "no bars\n--|--\n",
+    ] {
+        let told = told(answer);
+
+        assert!(
+            !told.iter().any(|thing| thing == "retract"),
+            "{answer:?}: {told:?}"
+        );
+        assert_eq!(said_text(&told), answer, "{answer:?}");
+    }
+}
+
+#[test]
+fn a_header_is_in_doubt_exactly_until_the_delimiter_row_has_arrived() {
+    let answer = "name | since\n--|--\nalpha | 0.1\n\nafter";
+    let mut markdown = Markdown::default();
+    let mut doubt = Vec::new();
+    for (at, character) in answer.char_indices() {
+        let piece = answer
+            .get(at..at + character.len_utf8())
+            .unwrap_or_default();
+        markdown.read(piece, ROOM, &mut |_| {});
+        doubt.push(markdown.in_doubt());
+    }
+
+    // From the first character, through the header's break and the start of
+    // the line under it, up to the last character of the delimiter row; the
+    // break that ends that row decides it, and the rows of the table are no
+    // longer a line that could be a header.
+    let row = answer.find("--|--").unwrap_or_default() + "--|--".len();
+    let table = row + "\nalpha | 0.1".len();
+    assert!(doubt.iter().take(row).all(|doubt| *doubt), "{doubt:?}");
+    assert!(
+        doubt.iter().take(table + 1).skip(row).all(|doubt| !*doubt),
+        "{doubt:?}"
+    );
+}
+
+#[test]
+fn a_line_that_cannot_be_a_header_is_not_in_doubt() {
+    let long = format!("{} | b\n", "x".repeat(HEADER_CAP));
+    for answer in [
+        "no bars here\n\n",
+        "a | b\nthen no bars\n\n",
+        "- a | b\n",
+        long.as_str(),
+    ] {
+        let mut markdown = Markdown::default();
+        markdown.read(answer, ROOM, &mut |_| {});
+        assert!(!markdown.in_doubt(), "{answer:?}");
+    }
+}
+
+#[test]
+fn a_paragraph_line_is_in_doubt_while_it_is_open_and_right_after_its_break() {
+    for line in [
+        "no bars here",
+        "a | b",
+        "  indented",
+        "**bold**",
+        "$5",
+        "\\*x",
+        "[a link](https://example.test)",
+        "1.5 is a number",
+    ] {
+        let mut markdown = Markdown::default();
+        for (at, character) in line.char_indices() {
+            let piece = line.get(at..at + character.len_utf8()).unwrap_or_default();
+            markdown.read(piece, ROOM, &mut |_| {});
+            assert!(markdown.in_doubt(), "{line:?}: after {piece:?}");
+        }
+        markdown.read("\n", ROOM, &mut |_| {});
+        assert!(markdown.in_doubt(), "{line:?}: right after its break");
+    }
+}
+
+#[test]
+fn a_line_that_opens_something_else_is_not_in_doubt() {
+    for line in [
+        "# a heading\n",
+        "- an item\n",
+        "* an item\n",
+        "> a quote\n",
+        "```rust\n",
+        "1. an item\n",
+        "| a | b |\n",
+        "---\n",
+        "\n",
+    ] {
+        let mut markdown = Markdown::default();
+        markdown.read(line, ROOM, &mut |_| {});
+        assert!(!markdown.in_doubt(), "{line:?}");
+    }
+}
+
+#[test]
+fn the_start_of_the_next_line_rules_an_underline_out() {
+    for rest in ["x", "-=", "=-", "\n", "=x", "- x", "***"] {
+        let mut markdown = Markdown::default();
+        let before = drawn(&read(&mut markdown, "Title\n"));
+        assert!(markdown.in_doubt(), "{rest:?}");
+        let after = drawn(&read(&mut markdown, rest));
+
+        // The break that was held comes out with the title, and nothing the
+        // title was can be taken back.
+        assert_eq!(before, "Title", "{rest:?}");
+        assert!(after.starts_with('\n'), "{rest:?}: {after:?}");
+        let (blocks, _) = blocks(&format!("Title\n{rest}\n"));
+        assert!(
+            !blocks.iter().any(|block| block.source.starts_with("Title")),
+            "{rest:?}: {blocks:?}"
+        );
+    }
+    // A line that is not a paragraph line is not in doubt either.
+    for rest in ["\n", "- x"] {
+        let mut markdown = Markdown::default();
+        markdown.read("Title\n", ROOM, &mut |_| {});
+        markdown.read(rest, ROOM, &mut |_| {});
+        assert!(!markdown.in_doubt(), "{rest:?}");
+    }
+    for rest in ["=", "==", "-", "---", "  ---", "=== ", "---\t"] {
+        let mut markdown = Markdown::default();
+        markdown.read("Title\n", ROOM, &mut |_| {});
+        markdown.read(rest, ROOM, &mut |_| {});
+        assert!(markdown.in_doubt(), "{rest:?}");
+    }
+}
+
+#[test]
+fn an_underline_past_the_cap_rules_the_hold_out() {
+    let mut markdown = Markdown::default();
+    markdown.read(
+        &format!("Title\n{}", "=".repeat(HEADER_CAP)),
+        ROOM,
+        &mut |_| {},
+    );
+    assert!(markdown.in_doubt());
+    markdown.read("=", ROOM, &mut |_| {});
+    assert!(!markdown.in_doubt());
+}
+
+#[test]
+fn the_end_of_the_message_ends_the_hold() {
+    let mut markdown = Markdown::default();
+    markdown.read("Title\n==", ROOM, &mut |_| {});
+    assert!(markdown.in_doubt());
+    markdown.finish(ROOM, &mut |_| {});
+    assert!(!markdown.in_doubt());
+}
+
+#[test]
+fn a_header_is_taken_back_once_however_the_answer_is_cut_into_deltas() {
+    let answer = "name | since\n--|--\nalpha | 0.1\n\nafter\n";
+    let whole = drawn(&standing(ended(answer)));
+
+    for cut in 0..answer.len() {
+        let (first, second) = answer.split_at(cut);
+        assert_eq!(
+            drawn(&standing(ended_in(&[first, second]))),
+            whole,
+            "cut at {cut}"
+        );
+    }
 }
 
 #[test]
@@ -2403,4 +2880,1061 @@ fn a_closing_fence_the_message_ends_in_the_middle_of_still_shuts_its_frame() {
             drawn(&said)
         );
     }
+}
+
+// A block indented four spaces after a blank line, in the frame a fence has.
+
+#[test]
+fn a_block_indented_after_a_blank_line_is_quiet_code_in_a_frame() {
+    let said = ended("para\n\n    let x = 1;\n    let y = 2;\n\nafter\n");
+
+    assert_eq!(
+        drawn(&said),
+        "para\n\n┌─\n│ let x = 1;\n│ let y = 2;\n└─\n\nafter\n"
+    );
+    assert!(
+        !said.iter().any(|(slot, _)| *slot == Slot::Figure),
+        "{said:?}"
+    );
+    assert!(
+        said.iter()
+            .filter(|(_, text)| text.contains("let"))
+            .all(|(slot, _)| *slot == Slot::Quiet),
+        "{said:?}"
+    );
+}
+
+#[test]
+fn a_dashed_row_under_an_indented_block_is_a_rule_across_the_room() {
+    let answer = "para\n\n    code\n---\n";
+    let (blocks, runs) = blocks(answer);
+
+    assert_eq!(runs, "para\n\n┌─\n│ code\n└─\n");
+    assert_eq!(
+        blocks.iter().map(|block| &block.kind).collect::<Vec<_>>(),
+        [&Kind::Rule]
+    );
+    assert_eq!(
+        drawn(&ended(answer)),
+        format!("para\n\n┌─\n│ code\n└─\n{}\n", "─".repeat(ROOM))
+    );
+}
+
+#[test]
+fn a_row_of_equals_under_an_indented_block_is_prose() {
+    let (blocks, runs) = blocks("para\n\n    code\n===\n");
+
+    assert_eq!(runs, "para\n\n┌─\n│ code\n└─\n===\n");
+    assert!(blocks.is_empty(), "{blocks:?}");
+}
+
+#[test]
+fn a_blank_line_between_two_indented_lines_stays_in_the_frame() {
+    let said = ended("para\n\n    one\n\n    two\n\nafter\n");
+
+    assert_eq!(drawn(&said), "para\n\n┌─\n│ one\n│ \n│ two\n└─\n\nafter\n");
+}
+
+#[test]
+fn the_spaces_past_the_fourth_and_the_markers_are_the_codes_own() {
+    let said = ended("para\n\n    if *a* {\n        `b` # c\n    }\n");
+
+    assert_eq!(
+        drawn(&said),
+        "para\n\n┌─\n│ if *a* {\n│     `b` # c\n│ }\n└─\n"
+    );
+}
+
+#[test]
+fn an_indented_block_the_message_ends_in_is_shut() {
+    for (answer, drawn_text) in [
+        ("para\n\n    code", "para\n\n┌─\n│ code\n└─\n"),
+        ("para\n\n    code\n", "para\n\n┌─\n│ code\n└─\n"),
+        ("para\n\n    code\n\n", "para\n\n┌─\n│ code\n└─\n\n"),
+    ] {
+        assert_eq!(drawn(&ended(answer)), drawn_text, "{answer:?}");
+    }
+}
+
+#[test]
+fn an_indented_line_in_a_list_item_or_a_quote_or_a_paragraph_is_read_as_before() {
+    for (answer, drawn_text) in [
+        ("- item\n\n    more\n", "• item\n\n    more\n"),
+        ("1. step\n\n    more\n", "1. step\n\n    more\n"),
+        ("- item\nlazy\n\n    more\n", "• item\nlazy\n\n    more\n"),
+        (
+            "- item\n\n  more\n\n    deeper\n",
+            "• item\n\n  more\n\n    deeper\n",
+        ),
+        ("> quote\n\n>     code\n", "│ quote\n\n│     code\n"),
+        ("para\n    more\n", "para\n    more\n"),
+    ] {
+        assert_eq!(drawn(&ended(answer)), drawn_text, "{answer:?}");
+    }
+}
+
+// A table and a heading underlined with dashes each end on a line the reader
+// never sees end, since the block took its break: the next line starts where
+// the block let go of it, and is read from its first character all the same.
+// A table written without outer bars ends only at a blank line, which the
+// reader does see, and takes every other line under it as a row.
+const ENDED_BY_THE_LINE_UNDER: [&str; 2] = ["| a |\n| - |\n| 1 |\n", "Title\n-----\n"];
+
+#[test]
+fn an_item_straight_under_a_table_or_a_heading_keeps_its_indented_line() {
+    let mut wrong = Vec::new();
+    for block in ENDED_BY_THE_LINE_UNDER {
+        let answer = format!("{block}1. item\n\n    more\n");
+        let (_, runs) = headed(&answer);
+        let whole = drawn(&ended(&answer));
+        if !runs.ends_with("1. item\n\n    more\n")
+            || !whole.ends_with("1. item\n\n    more\n")
+            || whole.contains("│ more")
+        {
+            wrong.push((answer, runs, whole));
+        }
+    }
+
+    assert_eq!(wrong, []);
+}
+
+// The line above it was written, so it opens no block of code, however far
+// back the last blank line was.
+#[test]
+fn a_line_indented_straight_under_a_table_or_a_heading_is_not_code() {
+    let mut wrong = Vec::new();
+    for block in ENDED_BY_THE_LINE_UNDER {
+        let answer = format!("para\n\n{block}    code\n");
+        let (_, runs) = headed(&answer);
+        let whole = drawn(&ended(&answer));
+        if runs.contains("┌─") || !runs.ends_with("    code\n") || whole.contains("┌─") {
+            wrong.push((answer, runs, whole));
+        }
+    }
+
+    assert_eq!(wrong, []);
+}
+
+#[test]
+fn a_paragraph_after_a_blank_line_ends_the_list_an_indented_block_continued() {
+    let said = ended("- item\n\npara\n\n    code\n");
+
+    assert_eq!(drawn(&said), "• item\n\npara\n\n┌─\n│ code\n└─\n");
+}
+
+/// What `answer` read to its end handed on: the blocks, and the runs with
+/// every line taken back gone.
+fn headed(answer: &str) -> (Vec<Block>, String) {
+    let (blocks, runs) = blocks(answer);
+    (blocks, standing_text(&runs))
+}
+
+/// The heading block `title` is, with the lines it was written as.
+fn heading(level: Level, source: &str) -> Block {
+    Block {
+        kind: Kind::Heading(level),
+        source: source.to_owned(),
+        closed: true,
+    }
+}
+
+#[test]
+fn an_atx_heading_of_the_first_two_levels_is_followed_by_its_rule() {
+    for (answer, block, words) in [
+        ("# One\n", heading(Level::One, "# One"), "One\n"),
+        ("## Two\n", heading(Level::Two, "## Two"), "Two\n"),
+        ("# One", heading(Level::One, "# One"), "One\n"),
+    ] {
+        let (blocks, runs) = headed(answer);
+
+        assert_eq!(blocks, [block], "{answer:?}");
+        assert_eq!(runs, words, "{answer:?}");
+    }
+}
+
+#[test]
+fn an_atx_heading_of_the_third_level_or_deeper_wears_no_rule() {
+    for answer in [
+        "### Three\n",
+        "#### Four\n",
+        "##### Five\n",
+        "###### Six\n",
+        "####### Seven\n",
+    ] {
+        let (blocks, _) = headed(answer);
+
+        assert!(blocks.is_empty(), "{answer:?}: {blocks:?}");
+    }
+}
+
+#[test]
+fn an_atx_heading_streams_its_words_and_is_never_taken_back() {
+    let told = told("# One\nafter\n");
+
+    assert!(!told.iter().any(|thing| thing == "retract"), "{told:?}");
+    assert_eq!(said_text(&told), "One\nafter\n");
+    let words = told.iter().position(|thing| thing == "run O");
+    let block = told.iter().position(|thing| thing == "block");
+    assert!(words.is_some() && words < block, "{told:?}");
+}
+
+#[test]
+fn an_underline_makes_the_line_above_it_a_heading_and_is_never_drawn() {
+    for (answer, block, words) in [
+        (
+            "Title\n=====\n",
+            heading(Level::One, "Title\n====="),
+            "Title\n",
+        ),
+        ("Sub\n-----\n", heading(Level::Two, "Sub\n-----"), "Sub\n"),
+        ("Title\n=\n", heading(Level::One, "Title\n="), "Title\n"),
+        ("Sub\n-\n", heading(Level::Two, "Sub\n-"), "Sub\n"),
+        (
+            "Title\n   ===\n",
+            heading(Level::One, "Title\n   ==="),
+            "Title\n",
+        ),
+        (
+            "Title\n===\t\n",
+            heading(Level::One, "Title\n===\t"),
+            "Title\n",
+        ),
+        ("Sub\n---  \n", heading(Level::Two, "Sub\n---  "), "Sub\n"),
+        (
+            "Title\n=====",
+            heading(Level::One, "Title\n====="),
+            "Title\n",
+        ),
+        ("Sub\n---", heading(Level::Two, "Sub\n---"), "Sub\n"),
+    ] {
+        let (blocks, runs) = headed(answer);
+
+        assert_eq!(blocks, [block], "{answer:?}");
+        assert_eq!(runs, words, "{answer:?}");
+    }
+}
+
+#[test]
+fn a_heading_that_an_underline_made_wears_the_slot_an_atx_heading_does() {
+    let atx = finished("# Title\n");
+    let setext = standing(finished("Title\n=====\n"));
+
+    assert_eq!(slots(&atx).first(), Some(&Slot::Heading));
+    assert_eq!(slots(&setext).first(), Some(&Slot::Heading), "{setext:?}");
+    // Its words, and the rule the block under them is laid out as.
+    assert_eq!(drawn(&setext), "Title\n━━━━━\n");
+}
+
+#[test]
+fn only_the_last_line_of_a_paragraph_is_the_heading() {
+    let (blocks, runs) = headed("one\ntwo\nthree\n===\n");
+
+    assert_eq!(blocks, [heading(Level::One, "three\n===")]);
+    assert_eq!(runs, "one\ntwo\nthree\n");
+}
+
+#[test]
+fn a_title_is_said_as_prose_and_taken_back_once_the_underline_has_settled_it() {
+    let told = told("Title\n=====\nafter\n");
+
+    let retract = told.iter().position(|thing| thing == "retract");
+    let block = told.iter().position(|thing| thing == "block");
+    assert!(retract.is_some() && retract < block, "{told:?}");
+    assert_eq!(told.iter().filter(|thing| *thing == "retract").count(), 1);
+    let title = told.iter().position(|thing| thing == "run T");
+    assert!(title.is_some() && title < retract, "{told:?}");
+}
+
+#[test]
+fn a_dashed_row_that_follows_something_other_than_a_paragraph_is_a_rule() {
+    for answer in [
+        "- item\n---\n",
+        "> quote\n---\n",
+        "# Foo\n---\n",
+        "```\ncode\n```\n---\n",
+        "| a | b |\n|---|---|\n| 1 | 2 |\n---\n",
+        "1. item\n---\n",
+        "\n---\n",
+        "---\n",
+        "text\n\n---\n",
+    ] {
+        let (blocks, _) = headed(answer);
+
+        assert!(
+            blocks.iter().any(|block| block.kind == Kind::Rule),
+            "{answer:?}: {blocks:?}"
+        );
+        assert!(
+            !blocks
+                .iter()
+                .any(|block| block.kind == Kind::Heading(Level::Two)),
+            "{answer:?}: {blocks:?}"
+        );
+    }
+}
+
+#[test]
+fn a_row_of_equals_signs_that_follows_something_other_than_a_paragraph_is_prose() {
+    for answer in [
+        "- item\n===\n",
+        "> quote\n===\n",
+        "# Foo\n===\n",
+        "\n===\n",
+        "===\n",
+    ] {
+        let (blocks, runs) = headed(answer);
+
+        // The one heading there may be is the `#` line's own, which has no
+        // row of `=` in it.
+        assert!(
+            !blocks.iter().any(|block| block.source.contains('=')),
+            "{answer:?}: {blocks:?}"
+        );
+        assert!(runs.contains("==="), "{answer:?}: {runs:?}");
+    }
+}
+
+#[test]
+fn a_line_of_cells_over_a_delimiter_row_of_as_many_is_still_a_table() {
+    let (blocks, _) = headed("a | b\n--|--\n1 | 2\n");
+
+    assert_eq!(
+        blocks.iter().map(|block| block.kind).collect::<Vec<_>>(),
+        [Kind::Table]
+    );
+}
+
+#[test]
+fn an_underline_that_is_not_one_leaves_both_lines_as_they_were_written() {
+    for answer in [
+        "Title\n-=\n",
+        "Title\n=-\n",
+        "Title\n= =\n",
+        "Title\n    ===\n",
+        "Title\n=== x\n",
+        "Title\n:-:\n",
+        "Title\n***\n",
+    ] {
+        let (blocks, runs) = headed(answer);
+
+        assert!(
+            !blocks
+                .iter()
+                .any(|block| matches!(block.kind, Kind::Heading(_))),
+            "{answer:?}: {blocks:?}"
+        );
+        if !blocks.iter().any(|block| block.kind == Kind::Rule) {
+            assert_eq!(runs, answer, "{answer:?}");
+        }
+    }
+}
+
+#[test]
+fn an_underline_of_a_hundred_and_twenty_eight_marks_is_read_and_one_more_is_not() {
+    for (mark, level) in [('-', Level::Two), ('=', Level::One)] {
+        let held = mark.to_string().repeat(HEADER_CAP);
+        let (blocks, _) = headed(&format!("Title\n{held}\n"));
+        assert_eq!(
+            blocks,
+            [heading(level, &format!("Title\n{held}"))],
+            "{mark}"
+        );
+
+        let past = mark.to_string().repeat(HEADER_CAP + 1);
+        let (blocks, runs) = headed(&format!("Title\n{past}\n"));
+        if mark == '-' {
+            assert_eq!(
+                blocks.iter().map(|block| block.kind).collect::<Vec<_>>(),
+                [Kind::Rule]
+            );
+        } else {
+            assert!(blocks.is_empty(), "{blocks:?}");
+            assert_eq!(runs, format!("Title\n{past}\n"));
+        }
+    }
+}
+
+#[test]
+fn a_title_of_a_hundred_and_twenty_eight_bytes_is_a_heading_and_one_more_is_prose() {
+    for (underline, level) in [("---", Level::Two), ("===", Level::One)] {
+        let title = "t".repeat(HEADER_CAP);
+        let (blocks, _) = headed(&format!("{title}\n{underline}\n"));
+        assert_eq!(
+            blocks,
+            [heading(level, &format!("{title}\n{underline}"))],
+            "{underline}"
+        );
+
+        let title = "t".repeat(HEADER_CAP + 1);
+        let (blocks, runs) = headed(&format!("{title}\n{underline}\n"));
+        assert!(
+            !blocks
+                .iter()
+                .any(|block| matches!(block.kind, Kind::Heading(_))),
+            "{underline}: {blocks:?}"
+        );
+        if underline == "===" {
+            assert_eq!(runs, format!("{title}\n{underline}\n"));
+        } else {
+            assert_eq!(
+                blocks.iter().map(|block| block.kind).collect::<Vec<_>>(),
+                [Kind::Rule]
+            );
+        }
+    }
+}
+
+#[test]
+fn a_title_of_nothing_but_markers_is_a_heading() {
+    for title in ["**", "--"] {
+        let (blocks, runs) = headed(&format!("{title}\n---\n"));
+
+        assert_eq!(
+            blocks,
+            [heading(Level::Two, &format!("{title}\n---"))],
+            "{title}"
+        );
+        assert_eq!(runs, format!("{title}\n"), "{title}");
+    }
+}
+
+#[test]
+fn a_title_that_opens_with_a_dollar_or_a_backslash_is_held_and_read() {
+    for (answer, level, words) in [
+        ("$5\n---\n", Level::Two, "$5\n"),
+        ("\\*x\n===\n", Level::One, "*x\n"),
+        ("$x$ is math\n===\n", Level::One, "$x$ is math\n"),
+    ] {
+        let (blocks, runs) = headed(answer);
+
+        assert_eq!(
+            blocks.iter().map(|block| block.kind).collect::<Vec<_>>(),
+            [Kind::Heading(level)],
+            "{answer:?}"
+        );
+        assert_eq!(runs, words, "{answer:?}");
+    }
+}
+
+#[test]
+fn a_title_that_opens_with_a_dollar_or_a_backslash_is_in_doubt_from_its_first_character() {
+    for line in ["$5", "\\*x", "$x$ is math"] {
+        let mut markdown = Markdown::default();
+        for (at, character) in line.char_indices() {
+            let piece = line.get(at..at + character.len_utf8()).unwrap_or_default();
+            markdown.read(piece, ROOM, &mut |_| {});
+            assert!(
+                markdown.in_doubt() || markdown.holding().is_some(),
+                "{line:?}: {piece:?}"
+            );
+        }
+        markdown.read("\n", ROOM, &mut |_| {});
+        assert!(markdown.in_doubt(), "{line:?}");
+    }
+}
+
+#[test]
+fn a_heading_is_the_same_however_the_answer_is_cut_into_deltas() {
+    for answer in [
+        "Title\n=====\nafter\n",
+        "**Sub**\n---\nafter\n",
+        "one\ntwo\nthree\n===\n\nnext\n",
+        "a | b\n---\n1 | 2\n\nx | y\n:|:\nend\n",
+        "$5\n---\n",
+        "\\*x\n===\n",
+        "Title\n=====",
+    ] {
+        let whole = drawn(&standing(ended(answer)));
+        let blocks_whole = blocks(answer).0;
+
+        for cut in 0..answer.len() {
+            if !answer.is_char_boundary(cut) {
+                continue;
+            }
+            let (first, second) = answer.split_at(cut);
+            assert_eq!(
+                drawn(&standing(ended_in(&[first, second]))),
+                whole,
+                "{answer:?} cut at {cut}"
+            );
+
+            let mut markdown = Markdown::default();
+            let mut cut_blocks = Vec::new();
+            let mut say = |said: Said<'_>| {
+                if let Said::Block(block) = said {
+                    cut_blocks.push(block);
+                }
+            };
+            markdown.read(first, ROOM, &mut say);
+            markdown.read(second, ROOM, &mut say);
+            markdown.finish(ROOM, &mut say);
+            assert_eq!(cut_blocks, blocks_whole, "{answer:?} cut at {cut}");
+        }
+    }
+}
+
+#[test]
+fn a_reader_that_holds_nothing_draws_a_title_and_its_underline_as_written() {
+    assert_eq!(as_written("Title\n=====\n"), "Title\n=====\n");
+    assert_eq!(as_written("# Title\n"), "Title\n");
+}
+
+#[test]
+fn a_heading_block_is_laid_out_as_a_rule_as_wide_as_its_words() {
+    let links = Links::default();
+    for (block, glyphs, rule) in [
+        (
+            heading(Level::One, "Title\n====="),
+            Glyphs::Unicode,
+            "━━━━━",
+        ),
+        (heading(Level::Two, "Title\n---"), Glyphs::Unicode, "─────"),
+        (heading(Level::One, "# Title"), Glyphs::Ascii, "====="),
+        (heading(Level::Two, "## Title"), Glyphs::Ascii, "-----"),
+        (heading(Level::Two, "**\n---"), Glyphs::Unicode, "──"),
+    ] {
+        let rows = lay(&block, ROOM, glyphs, &links);
+
+        assert_eq!(
+            rows.iter().map(Row::text).collect::<Vec<_>>(),
+            [rule],
+            "{block:?} in {glyphs:?}"
+        );
+    }
+}
+
+#[test]
+fn a_heading_that_wraps_wears_a_rule_as_wide_as_its_last_row() {
+    let links = Links::default();
+    let block = heading(Level::One, "# aaa bbb ccc");
+
+    let rows = lay(&block, 8, Glyphs::Unicode, &links);
+
+    assert_eq!(rows.iter().map(Row::text).collect::<Vec<_>>(), ["━━━"]);
+}
+
+#[test]
+fn a_heading_block_names_no_source_to_list() {
+    assert_eq!(Kind::Heading(Level::One).named(), None);
+    assert_eq!(Kind::Heading(Level::Two).named(), None);
+}
+
+const ATX_HEADINGS: &str = "# One\n\n## Two\n\n### Three\n\nA paragraph under them.\n";
+const SETEXT_HEADINGS: &str = "One\n===\n\nTwo\n---\n\nA paragraph under them.\n";
+
+#[test]
+fn atx_headings_64_unicode() {
+    insta::assert_snapshot!(corpus_pictures::picture(ATX_HEADINGS, 64, Glyphs::Unicode));
+}
+
+#[test]
+fn atx_headings_64_ascii() {
+    insta::assert_snapshot!(corpus_pictures::picture(ATX_HEADINGS, 64, Glyphs::Ascii));
+}
+
+#[test]
+fn setext_headings_64_unicode() {
+    insta::assert_snapshot!(corpus_pictures::picture(
+        SETEXT_HEADINGS,
+        64,
+        Glyphs::Unicode
+    ));
+}
+
+#[test]
+fn setext_headings_64_ascii() {
+    insta::assert_snapshot!(corpus_pictures::picture(SETEXT_HEADINGS, 64, Glyphs::Ascii));
+}
+
+const INDENTED_CODE: &str = "A block indented four spaces:\n\n    let total = 1 + 2;\n\n    \
+    let message = \"a line of code long enough to wrap at sixty-four columns\";\n\nAfter it.\n";
+
+#[test]
+fn indented_code_64_unicode() {
+    insta::assert_snapshot!(corpus_pictures::picture(INDENTED_CODE, 64, Glyphs::Unicode));
+}
+
+#[test]
+fn indented_code_64_ascii() {
+    insta::assert_snapshot!(corpus_pictures::picture(INDENTED_CODE, 64, Glyphs::Ascii));
+}
+
+// GitHub alerts: a quote whose first line is nothing but `[!KIND]`.
+
+/// Each alert kind as written, the word it is shown as, the slot its mark
+/// wears, and that mark in the unicode set and in the ascii one.
+const ALERTS: [(&str, &str, Slot, &str, &str); 5] = [
+    ("NOTE", "Note", Slot::Link, "◆", "*"),
+    ("TIP", "Tip", Slot::Done, "✓", "+"),
+    ("IMPORTANT", "Important", Slot::Accent, "■", "#"),
+    ("WARNING", "Warning", Slot::Doing, "▲", "!"),
+    ("CAUTION", "Caution", Slot::Trouble, "✗", "x"),
+];
+
+/// One whole answer in `glyphs`, read as these deltas and then ended.
+fn ended_as(glyphs: Glyphs, deltas: &[&str]) -> Vec<(Slot, String)> {
+    let mut markdown = Markdown::new(glyphs);
+    let mut said = Vec::new();
+    for delta in deltas {
+        said.extend(read(&mut markdown, delta));
+    }
+    markdown.finish_runs(ROOM, &mut |slot, text, _| {
+        said.push((slot, text.to_owned()));
+    });
+    said
+}
+
+#[test]
+fn an_alert_is_a_quiet_bar_on_each_line_of_its_quote_with_its_mark_and_its_word_on_the_first() {
+    for (marker, word, slot, unicode, ascii) in ALERTS {
+        for (glyphs, bar, mark) in [(Glyphs::Unicode, "▎", unicode), (Glyphs::Ascii, "|", ascii)]
+        {
+            let said = ended_as(glyphs, &[&format!("> [!{marker}]\n> first\n> second\n")]);
+            let run = |slot: Slot, text: &str| (slot, text.to_owned());
+
+            assert_eq!(
+                said,
+                vec![
+                    run(Slot::Quiet, bar),
+                    run(Slot::Quiet, " "),
+                    run(slot, mark),
+                    run(Slot::Plain, " "),
+                    run(Slot::Bold, word),
+                    run(Slot::Plain, "\n"),
+                    run(Slot::Quiet, bar),
+                    run(Slot::Quiet, " "),
+                    run(Slot::Plain, "first"),
+                    run(Slot::Plain, "\n"),
+                    run(Slot::Quiet, bar),
+                    run(Slot::Quiet, " "),
+                    run(Slot::Plain, "second"),
+                    run(Slot::Plain, "\n"),
+                ],
+                "{marker} in {glyphs:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_alert_never_shows_its_marker() {
+    for (marker, ..) in ALERTS {
+        let text = drawn(&ended(&format!("> [!{marker}]\n> body\n")));
+
+        assert!(!text.contains("[!") && !text.contains(marker), "{text:?}");
+    }
+}
+
+#[test]
+fn an_alert_is_known_by_its_kind_in_any_case() {
+    assert_eq!(drawn(&ended("> [!tip]\n> body\n")), "▎ ✓ Tip\n▎ body\n");
+    assert_eq!(
+        drawn(&ended("> [!Caution]\n> body\n")),
+        "▎ ✗ Caution\n▎ body\n"
+    );
+}
+
+#[test]
+fn an_alert_that_ends_the_message_has_its_header_and_no_break() {
+    assert_eq!(drawn(&ended("> [!WARNING]")), "▎ ▲ Warning");
+}
+
+#[test]
+fn an_alert_with_nothing_under_it_is_its_header_row() {
+    assert_eq!(drawn(&ended("> [!NOTE]\n\nafter\n")), "▎ ◆ Note\n\nafter\n");
+}
+
+#[test]
+fn an_empty_row_of_an_alert_keeps_its_bar() {
+    assert_eq!(
+        drawn(&ended("> [!NOTE]\n> one\n> \n> two\n")),
+        "▎ ◆ Note\n▎ one\n▎ \n▎ two\n"
+    );
+}
+
+#[test]
+fn a_quote_with_an_unknown_kind_or_more_on_its_line_stays_a_quote() {
+    for answer in [
+        "> [!SECRET]\n> body\n",
+        "> [!NOTES]\n> body\n",
+        "> [! NOTE]\n> body\n",
+        "> [!NOTE] with words after it\n> body\n",
+        "> [!NOTE]x\n> body\n",
+        "> [!]\n> body\n",
+        "> [NOTE]\n> body\n",
+        "> a [!NOTE] in a sentence\n> body\n",
+    ] {
+        let text = drawn(&ended(answer));
+
+        assert_eq!(text, answer.replace("> ", "│ "), "{answer:?}");
+    }
+}
+
+#[test]
+fn a_marker_with_an_address_after_it_is_the_link_it_was() {
+    let said = ended("> [!NOTE](https://example.com)\n");
+
+    assert_eq!(drawn(&said), "│ !NOTE\n");
+}
+
+#[test]
+fn an_alert_marker_is_the_first_line_of_its_quote_only() {
+    assert_eq!(
+        drawn(&ended("> some words\n> [!NOTE]\n> more\n")),
+        "│ some words\n│ [!NOTE]\n│ more\n"
+    );
+    assert_eq!(
+        drawn(&ended("> [!NOTE]\n> [!TIP]\n")),
+        "▎ ◆ Note\n▎ [!TIP]\n"
+    );
+}
+
+#[test]
+fn a_marker_outside_a_quote_is_prose() {
+    assert_eq!(drawn(&ended("[!NOTE]\nbody\n")), "[!NOTE]\nbody\n");
+    assert_eq!(drawn(&ended("- [!NOTE]\n")), "• [!NOTE]\n");
+    assert_eq!(
+        drawn(&ended("- > [!NOTE]\n  > a\n")),
+        "• > [!NOTE]\n  │ a\n"
+    );
+}
+
+#[test]
+fn an_alert_ends_where_its_quote_does() {
+    let said = ended("> [!NOTE]\n> body\nplain again\n> second\n\n> [!TIP]\n> third\n");
+
+    assert_eq!(
+        drawn(&said),
+        "▎ ◆ Note\n▎ body\nplain again\n│ second\n\n▎ ✓ Tip\n▎ third\n"
+    );
+}
+
+#[test]
+fn an_alert_ends_at_any_line_that_is_not_a_row_of_its_quote() {
+    // A bare `>` and a `>` with no space after it are not rows of a quote, and
+    // neither is a table whose first line opens with `|`, a heading's rule or
+    // display math, each of them also written after spaces, where lines that
+    // open with `|` are drawn as the lines they are and not as a table: none of
+    // them is part of the alert, so the quote row after one is a quote of its
+    // own and draws the plain bar.
+    for between in [
+        ">\n",
+        ">a\n",
+        "| a | b |\n| - | - |\n| 1 | 2 |\n",
+        "Title\n===\n",
+        "$$\nx^2\n$$\n",
+        "  | a | b |\n  | - | - |\n",
+        "  Title\n  ===\n",
+        "  $$\n  x^2\n  $$\n",
+    ] {
+        let answer = format!("> [!NOTE]\n> a\n{between}> b\n");
+        let text = drawn(&ended(&answer));
+
+        assert!(text.starts_with("▎ ◆ Note\n▎ a\n"), "{answer:?}: {text:?}");
+        assert!(text.ends_with("│ b\n"), "{answer:?}: {text:?}");
+    }
+}
+
+#[test]
+fn a_quote_row_straight_after_a_table_not_opened_by_a_bar_is_a_row_of_it() {
+    // The one block that does not hand a quote row on as a quote of its own: a
+    // table whose first line does not open with `|` goes on until a blank line,
+    // so the row is one more of its rows, whatever its delimiter row opens
+    // with. Such a first line is a header written without outer bars, with or
+    // without spaces before it, or one written with them after a tab.
+    for (answer, text) in [
+        (
+            "> [!NOTE]\n> a\na | b\n- | -\n1 | 2\n> b\n",
+            "▎ ◆ Note\n▎ a\na   │ b\n────┼──\n1   │ 2\n│ b │  \n",
+        ),
+        (
+            "> [!NOTE]\n> a\na | b\n| - | - |\n> b\n",
+            "▎ ◆ Note\n▎ a\na   │ b\n────┼──\n│ b │  \n",
+        ),
+        (
+            "> [!NOTE]\n> a\na | b |\n| - | - |\n> b\n",
+            "▎ ◆ Note\n▎ a\na   │ b\n────┼──\n│ b │  \n",
+        ),
+        (
+            "> [!NOTE]\n> a\n  a | b\n  - | -\n> b\n",
+            "▎ ◆ Note\n▎ a\na   │ b\n────┼──\n│ b │  \n",
+        ),
+        (
+            "> [!NOTE]\n> a\n\t| a | b |\n\t| - | - |\n> b\n",
+            "▎ ◆ Note\n▎ a\na   │ b\n────┼──\n│ b │  \n",
+        ),
+        (
+            "> [!NOTE]\n> a\na | b\n- | -\n1 | 2\n\n> b\n",
+            "▎ ◆ Note\n▎ a\na │ b\n──┼──\n1 │ 2\n\n│ b\n",
+        ),
+    ] {
+        assert_eq!(standing_text(&drawn(&ended(answer))), text, "{answer:?}");
+    }
+}
+
+#[test]
+fn a_row_of_an_alert_after_spaces_is_still_a_row_of_its_quote() {
+    // The quote mark is the first character that is not a space, so an alert
+    // under a list item, an alert indented itself and a row indented more than
+    // its header each keep the alert bar on every row.
+    for (answer, text) in [
+        (
+            "- item\n  > [!NOTE]\n  > a\n  > b\n",
+            "• item\n  ▎ ◆ Note\n  ▎ a\n  ▎ b\n",
+        ),
+        (
+            "- item\n\n  > [!NOTE]\n  > a\n  > b\n",
+            "• item\n\n  ▎ ◆ Note\n  ▎ a\n  ▎ b\n",
+        ),
+        (
+            "1. item\n   > [!NOTE]\n   > a\n",
+            "1. item\n   ▎ ◆ Note\n   ▎ a\n",
+        ),
+        ("  > [!NOTE]\n  > a\n  > b\n", "  ▎ ◆ Note\n  ▎ a\n  ▎ b\n"),
+        ("> [!NOTE]\n  > a\n", "▎ ◆ Note\n  ▎ a\n"),
+        ("> [!NOTE]\n> a\n > b\n", "▎ ◆ Note\n▎ a\n ▎ b\n"),
+        ("> [!NOTE]\n> a\n  > b\n", "▎ ◆ Note\n▎ a\n  ▎ b\n"),
+        ("> [!NOTE]\n> a\n   > b\n", "▎ ◆ Note\n▎ a\n   ▎ b\n"),
+        ("> [!NOTE]\n> a\n    > b\n", "▎ ◆ Note\n▎ a\n    ▎ b\n"),
+    ] {
+        assert_eq!(drawn(&ended(answer)), text, "{answer:?}");
+    }
+}
+
+#[test]
+fn a_marker_on_an_indented_row_of_an_ordinary_quote_stays_as_written() {
+    // A marker is read on the first row of a quote only, so one on a later row
+    // is text however far the row is indented, and the quote keeps its plain
+    // bar.
+    for (answer, text) in [
+        ("> a\n  > [!NOTE]\n  > b\n", "│ a\n  │ [!NOTE]\n  │ b\n"),
+        ("> a\n > [!NOTE]\n", "│ a\n │ [!NOTE]\n"),
+        ("- a\n  > x\n  > [!NOTE]\n", "• a\n  │ x\n  │ [!NOTE]\n"),
+    ] {
+        assert_eq!(drawn(&ended(answer)), text, "{answer:?}");
+    }
+}
+
+#[test]
+fn an_alert_after_spaces_cut_anywhere_draws_what_the_whole_alert_draws() {
+    // What is drawn, and the slot of everything that shows. Spaces are left
+    // out of the slots: the indentation before a bar is said under the quote's
+    // slot when the answer arrives whole and the plain one when it is cut
+    // inside it, for a quote that is no alert as well, and no ink shows on it.
+    let shown = |said: &[(Slot, String)]| {
+        slots(
+            &said
+                .iter()
+                .filter(|(_, text)| !text.trim().is_empty())
+                .cloned()
+                .collect::<Vec<_>>(),
+        )
+    };
+
+    for answer in [
+        "> [!NOTE]\n> a\n  > b\n",
+        "- item\n  > [!NOTE]\n  > a\n  > b\n",
+        "> a\n  > [!NOTE]\n  > b\n",
+        "> [!NOTE]\n> a\n  Title\n  ===\n> b\n",
+    ] {
+        let whole = ended(answer);
+
+        for cut in 1..answer.len() {
+            let (first, second) = answer.split_at(cut);
+            let said = ended_in(&[first, second]);
+
+            assert_eq!(drawn(&said), drawn(&whole), "{answer:?} cut at {cut}");
+            assert_eq!(shown(&said), shown(&whole), "{answer:?} cut at {cut}");
+        }
+    }
+}
+
+#[test]
+fn the_words_of_an_alert_keep_what_the_answer_gave_them() {
+    let said = ended("> [!NOTE]\n> a **loud** word, `code`, [the guide](https://a.io)\n");
+
+    assert_eq!(
+        slots(&said)
+            .into_iter()
+            .skip_while(|slot| *slot != Slot::Bold)
+            .collect::<Vec<_>>(),
+        [
+            Slot::Bold,
+            Slot::Plain,
+            Slot::Quiet,
+            Slot::Plain,
+            Slot::Bold,
+            Slot::Plain,
+            Slot::Code,
+            Slot::Plain,
+            Slot::Link,
+            Slot::Plain
+        ]
+    );
+    assert!(
+        said.iter()
+            .any(|(slot, text)| *slot == Slot::Link && text == "the guide"),
+        "{said:?}"
+    );
+}
+
+#[test]
+fn an_alert_hangs_under_its_bar() {
+    for (glyphs, bar) in [(Glyphs::Unicode, "▎ "), (Glyphs::Ascii, "| ")] {
+        assert_eq!(
+            hung_under("> [!NOTE]\n", glyphs),
+            Some((bar.len(), 2, bar.to_owned())),
+            "{glyphs:?}"
+        );
+    }
+}
+
+#[test]
+fn an_alert_cut_anywhere_draws_what_the_whole_alert_draws() {
+    // Inside its marker, between the marker and its break, and in the rows
+    // under it: the marker is held until the break says it was alone on its
+    // line, so a cut is never drawn as a quote that turned out to be an alert.
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        for (marker, ..) in ALERTS {
+            let answer = format!("> [!{marker}]\n> body *words*\n\n> [!{marker}] no\n> after\n");
+            let whole = ended_as(glyphs, &[&answer]);
+            assert!(
+                drawn(&whole).starts_with(&format!("{} ", glyphs.alerted())),
+                "{marker} drew no alert: {whole:?}"
+            );
+
+            for cut in 1..answer.len() {
+                let (first, second) = answer.split_at(cut);
+                let said = ended_as(glyphs, &[first, second]);
+
+                assert_eq!(drawn(&said), drawn(&whole), "{marker} cut at {cut}");
+                assert_eq!(slots(&said), slots(&whole), "{marker} cut at {cut}");
+            }
+        }
+    }
+}
+
+#[test]
+fn nothing_of_an_alert_is_drawn_before_its_break_says_it_was_one() {
+    let mut markdown = Markdown::default();
+
+    for delta in ["> [", "!", "WARN", "ING", "]"] {
+        assert_eq!(drawn(&read(&mut markdown, delta)), "", "after {delta:?}");
+    }
+    assert_eq!(drawn(&read(&mut markdown, "\n")), "▎ ▲ Warning\n");
+}
+
+#[test]
+fn an_alert_mark_carries_its_kinds_ink_and_its_word_only_weight_in_every_theme() {
+    // The first row of each kind, as the slots it was said under: a bar and a
+    // mark, then the word. Everything but the mark is quiet, plain or bold,
+    // which are the same in every theme by design, so whatever differs from
+    // one kind to the next is the mark.
+    let mut rows = Vec::new();
+    for (marker, word, slot, ..) in ALERTS {
+        let said = whole(&format!("> [!{marker}]\n> body\n"));
+        let first: Vec<(Slot, &str)> = said
+            .iter()
+            .take_while(|(_, text)| text != "\n")
+            .map(|(slot, text)| (*slot, text.as_str()))
+            .collect();
+        assert_eq!(
+            first.iter().map(|(slot, _)| *slot).collect::<Vec<_>>(),
+            [Slot::Quiet, Slot::Quiet, slot, Slot::Plain, Slot::Bold],
+            "{marker}: {first:?}"
+        );
+        assert_eq!(first.last().map(|(_, text)| *text), Some(word));
+
+        let mut row = crate::row::Row::new();
+        for (slot, text) in &said {
+            if text != "\n" {
+                row.push(*slot, text);
+            }
+        }
+        rows.push(row);
+    }
+    crate::colour_rule::holds("an alert", &rows, |_| false);
+
+    for theme in every_theme() {
+        let palette = Palette::resolve(true, theme, None, &|name| {
+            (name == "COLORTERM").then(|| "truecolor".to_owned())
+        });
+        let ink = |slot| palette.open(slot).as_str().to_owned();
+
+        assert_eq!(ink(Slot::Bold), "\x1b[1m", "{theme:?}: weight and no hue");
+        assert!(
+            !ink(Slot::Plain).contains('3'),
+            "{theme:?}: plain has a hue"
+        );
+        for (marker, _, slot, ..) in ALERTS {
+            assert_ne!(ink(slot), ink(Slot::Plain), "{theme:?} {marker}");
+            assert_ne!(ink(slot), ink(Slot::Quiet), "{theme:?} {marker}");
+        }
+
+        // Of the four kinds the design draws, it gives the marks of Note and
+        // Caution a colour of their own. It draws no Important alert: the
+        // accent Important's mark wears is this crate's choice. Each of those
+        // three marks carries a foreground colour. The design gives Warning
+        // and Tip no colour of their own: Warning is the word's weight and
+        // nothing more, and Tip is a strike through the bar's quiet grey.
+        for (marker, _, slot, ..) in ALERTS {
+            let hued = has_hue(&ink(slot));
+            match marker {
+                "NOTE" | "IMPORTANT" | "CAUTION" => {
+                    assert!(hued, "{theme:?} {marker} has no hue: {:?}", ink(slot));
+                }
+                "WARNING" => {
+                    assert_eq!(ink(slot), ink(Slot::Bold), "{theme:?} {marker}");
+                }
+                "TIP" => assert_eq!(ink(slot), "\x1b[9;90m", "{theme:?} {marker}"),
+                other => assert_eq!(other, "", "no ink is asked of the kind {other}"),
+            }
+        }
+    }
+}
+
+/// Every theme the chain below names, in the order the enum lists them.
+///
+/// The match has no wildcard, so a theme added to the enum stops this
+/// compiling until it has an arm. It is walked only once an arm before it
+/// names it: a new theme given `None` compiles and is left out, so whoever adds
+/// one puts it in the chain.
+fn every_theme() -> Vec<Theme> {
+    let mut every = vec![Theme::Dark];
+    while let Some(next) = every.last().and_then(|theme| match theme {
+        Theme::Dark => Some(Theme::Light),
+        Theme::Light => Some(Theme::ColourblindDark),
+        Theme::ColourblindDark => Some(Theme::ColourblindLight),
+        Theme::ColourblindLight => Some(Theme::Ansi),
+        Theme::Ansi => None,
+    }) {
+        every.push(next);
+    }
+    every
+}
+
+/// Whether an opening escape sets a foreground colour: one of the parameters
+/// 30 to 38, which excludes the weight, the strike, the underline and the
+/// quiet grey (90).
+fn has_hue(open: &str) -> bool {
+    open.trim_start_matches("\x1b[")
+        .trim_end_matches('m')
+        .split(';')
+        .filter_map(|part| part.parse::<u8>().ok())
+        .any(|part| (30..=38).contains(&part))
+}
+
+const ALERT_KINDS: &str = "> [!NOTE]\n> Useful information.\n\n> [!TIP]\n> A shortcut worth taking.\n\n\
+> [!IMPORTANT]\n> Something that must not be missed.\n\n> [!WARNING]\n> Running `cargo clean` \
+deletes the build cache; the next build takes minutes.\n\n> [!CAUTION]\n> This deletes the session \
+log; it cannot be undone.\n";
+
+#[test]
+fn alerts_64_unicode() {
+    insta::assert_snapshot!(corpus_pictures::picture(ALERT_KINDS, 64, Glyphs::Unicode));
+}
+
+#[test]
+fn alerts_64_ascii() {
+    insta::assert_snapshot!(corpus_pictures::picture(ALERT_KINDS, 64, Glyphs::Ascii));
 }

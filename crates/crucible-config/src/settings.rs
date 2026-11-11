@@ -40,7 +40,9 @@ pub use input::Sending;
 pub use layers::{local, user};
 pub use mcp::McpServer;
 pub use menu::Forced;
-pub use output::{Color, Glyphs, ScreenMode, ThemeChoice, ToolDetail, TranscriptColours};
+pub use output::{
+    Color, Glyphs, ImageOutput, ScreenMode, ThemeChoice, ToolDetail, TranscriptColours,
+};
 pub use sandbox::SandboxSettings;
 pub use updates::{AgentUpdate, Updates};
 pub use variables::ScrollSpeed;

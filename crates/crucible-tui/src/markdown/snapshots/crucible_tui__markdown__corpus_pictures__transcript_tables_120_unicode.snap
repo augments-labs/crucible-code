@@ -12,10 +12,10 @@ gamma<Quiet> </><Quiet>│</><Quiet> </>keeps the source of a drawn block<Quiet>
                                                                                                                         
 A table may be written without its outer bars:                                                                          
                                                                                                                         
-name | what it does | since                                                                                             
---|--|--                                                                                                                
-delta | draws a rule across the window | <Figure>0.4</>                                                                            
-epsilon | folds a long cell | <Figure>0.5</>                                                                                       
+<Bold>name</><Quiet>   </><Quiet> </><Quiet>│</><Quiet> </><Bold>what it does</><Quiet>                  </><Quiet> </><Quiet>│</><Quiet> </><Bold>since</>                                                                        
+<Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>┼</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>┼</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</>                                                                        
+delta<Quiet>  </><Quiet> </><Quiet>│</><Quiet> </>draws a rule across the window<Quiet> </><Quiet>│</><Quiet> </><Figure>0.4</><Quiet>  </>                                                                        
+epsilon<Quiet> </><Quiet>│</><Quiet> </>folds a long cell<Quiet>             </><Quiet> </><Quiet>│</><Quiet> </><Figure>0.5</><Quiet>  </>                                                                        
                                                                                                                         
 And one with more columns than a window can hold:                                                                       
                                                                                                                         

@@ -4,12 +4,10 @@ expression: window.picture()
 ---
 80x43 cursor 40,4 scrolled 0
 |│                                                                             ││|
-|│ Recent sessions                                                             ││|
+|│ No earlier session for this workspace                                       ││|
 |│                                                                             ││|
-|│ No earlier session for this workspace                                       │┃|
-|│                                                                             │┃|
-|│ ─────────────────────────────────────────────────────────────────────────── │┃|
-|│                                                                             │┃|
+|│ ─────────────────────────────────────────────────────────────────────────── ││|
+|│                                                                             ││|
 |│ Tips                                                                        │┃|
 |│                                                                             │┃|
 |│ · /          opens the command list                                         │┃|
@@ -20,8 +18,8 @@ expression: window.picture()
 |                                                                               ┃|
 |› show me the corpus                                                           ┃|
 |                                                                               ┃|
-|A fence that names its language:                                               ●|
-|                                                                               ┃|
+|A fence that names its language:                                               ┃|
+|                                                                               ●|
 |┌─ rust                                                                        ┃|
 |│ fn main() {                                                                  ┃|
 |│     let value = compute_something_long(argument_one, argument_two);          ┃|
@@ -36,8 +34,10 @@ expression: window.picture()
 |                                                                               ┃|
 |And a block indented four spaces, after a blank line:                          ┃|
 |                                                                               ┃|
-|    let x = 1;                                                                 ┃|
-|    let y = 2;                                                                 ┃|
+|┌─                                                                             ┃|
+|│ let x = 1;                                                                   ┃|
+|│ let y = 2;                                                                   ┃|
+|└─                                                                             ┃|
 |                                                                               ┃|
 |The corpus ends here.                                                          ┃|
 |                                                                                |

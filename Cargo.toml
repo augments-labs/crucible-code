@@ -29,10 +29,34 @@ publish = false
 # path, so its backend is named outright instead of leaving Linux support to
 # whichever display server happens to be in use.
 arboard = { version = "=3.7.0", features = ["wayland-data-control"] }
-# Encodes the clipboard's RGBA pixels as the PNG every provider accepts. The
+# Encodes the clipboard's RGBA pixels as the PNG every provider accepts, and
+# decodes PNG, JPEG, GIF and WebP image files under `Limits`, so a file that
+# claims a size past the ceiling is refused before its pixels are allocated. The
 # same release is already in arboard's image-data graph, so this names the API
-# without compiling a second encoder.
-image = { version = "=0.25.10", default-features = false, features = ["png"] }
+# without compiling a second PNG codec.
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+# Draws an SVG into pixels, which `std` has no parser, path filler or glyph
+# shaper for. Only `text` is on, so no system font is scanned and no gzip
+# stream is inflated, and its own raster-image decoders are left off, so a
+# raster image embedded in an SVG is skipped rather than drawn; the `image`
+# crate decodes image files, never an SVG's. Fonts and every `href` are the
+# caller's: nothing it names is read from the machine.
+resvg = { version = "=0.49.0", default-features = false, features = ["text"] }
+# Encodes pixels as a Sixel payload for terminals that draw one, which `std`
+# cannot do: Sixel is a six-pixel-row text format over a palette, so the work is
+# choosing at most 256 colours and dithering to them, in a quantiser written for
+# it. The crate is pure Rust and takes pixels, never a file or a terminal.
+icy_sixel = { version = "=0.7.0" }
+# Parses an SVG attribute's own grammar (path data, lengths with their units,
+# transforms, number lists, view boxes, the `font` shorthand), which `std`
+# cannot: the raster crate reads a picture's numbers with the very parser
+# `resvg` builds from, to bound their size before the build. Already in the
+# tree under `resvg`; pinned to the version it locks.
+svgtypes = { version = "=0.16.2" }
+# Splits a `style` attribute into declarations exactly as `resvg` does, so the
+# numbers a style gives are bounded alike. Already in the tree under `resvg`;
+# pinned to the version it locks.
+simplecss = { version = "=0.2.2" }
 # This workspace's own crates. Path dependencies, released together, so there is
 # no version to pin and no third party whose publish could move them.
 crucible-agents = { path = "crates/crucible-agents" }
@@ -52,6 +76,7 @@ crucible-mcp = { path = "crates/crucible-mcp" }
 crucible-models = { path = "crates/crucible-models" }
 crucible-privacy = { path = "crates/crucible-privacy" }
 crucible-provider = { path = "crates/crucible-provider" }
+crucible-raster = { path = "crates/crucible-raster" }
 crucible-registry = { path = "crates/crucible-registry" }
 crucible-runner = { path = "crates/crucible-runner" }
 crucible-runtime = { path = "crates/crucible-runtime" }
@@ -68,6 +93,7 @@ crucible-storage = { path = "crates/crucible-storage" }
 crucible-tools = { path = "crates/crucible-tools" }
 crucible-transport = { path = "crates/crucible-transport" }
 crucible-tui = { path = "crates/crucible-tui" }
+crucible-tui-diff = { path = "crates/crucible-tui-diff" }
 crucible-types = { path = "crates/crucible-types" }
 crucible-update = { path = "crates/crucible-update" }
 crucible-workspace = { path = "crates/crucible-workspace" }
@@ -97,6 +123,13 @@ clap_complete = "=4.6.11"
 # boxed error does. Derive only — nothing of it survives into the binary.
 thiserror = "=2.0.21"
 
+# Which words of a changed line changed: a diff over the line's words, so a
+# change draws the replaced word raised on both lines of its pair. `std` has no
+# sequence diff, and a longest-common-subsequence written here would be the
+# algorithm this is, without its bounds. Already in the graph under `insta`,
+# so this compiles the same version once; the default `text` feature only.
+similar = "=2.7.0"
+
 # Asks the terminal what colour its own background is, over OSC 11, and reads
 # the answer. `std` has no timed read on a file descriptor and `crossterm` has
 # neither the query nor a way to see the reply — its parser consumes stdin and
@@ -106,6 +139,21 @@ thiserror = "=2.0.21"
 # prompt is left on take a ground blended off the reader's own, instead of one
 # this project guessed at.
 terminal-colorsaurus = "=1.0.3"
+
+# The terminal a question about images is asked of, found and held: whichever
+# of the standard streams is a terminal, or the controlling one, with the
+# standard streams locked so nothing else writes while a reply is read. `std`
+# can tell that a stream is a terminal but cannot reopen one read and write or
+# hold all three locks as one value. Already in the graph under
+# `terminal-colorsaurus`, so this compiles the same version once.
+terminal-trx = "=0.2.6"
+
+# Waits on a terminal for at most a deadline before a read, which is what lets
+# a terminal that never answers cost a bounded wait instead of a hung start.
+# `std` has no timed read on a file descriptor. Already in the graph under
+# `terminal-colorsaurus` and `tokio`; `os-ext` alone, for polling a descriptor
+# this process did not open through it.
+mio = { version = "=1.2.4", default-features = false, features = ["os-ext"] }
 
 # Parses fenced code so it can be drawn in more than one colour, and reads the
 # `.tmTheme` files that say what those colours are — which is the format every
@@ -204,7 +252,7 @@ tokio-rustls = { version = "=0.26.6", default-features = false, features = ["rin
 # no system store, bundle or platform verifier is read, so a certificate is
 # trusted the same way on every machine. Named here for `crucible-http`, the one
 # crate that builds a client to verify a recipient.
-webpki-roots = "=1.0.10"
+webpki-roots = "=1.0.11"
 
 # JWT claims are base64url without padding. OpenAI subscription login needs the
 # selected ChatGPT account id from that bounded claim set; one decoder serves
@@ -278,7 +326,7 @@ bzip2 = "=0.6.1"
 # parser. Only its reader is used, over stored and deflated members, which
 # `flate2` above inflates in pure Rust; nothing is extracted by the crate's own
 # extraction, so each member is checked before a byte of it is written.
-zip = { version = "=9.0.5", default-features = false, features = ["deflate-flate2"] }
+zip = { version = "=9.3.0", default-features = false, features = ["deflate-flate2"] }
 
 # Search, and the directory walk that feeds it. These are ripgrep's own crates.
 # The budget is "grep within 1.25x of the rg binary", and the way to hold it is
@@ -337,7 +385,7 @@ unicode-width = "=0.2.3"
 # of crates that may make that call. The same feature is the one answer to
 # which user a process runs as, `getuid`, which `std` lacks as well; a manifest
 # that turns it on for that alone says so beside it.
-rustix = { version = "=1.1.5", features = ["fs"] }
+rustix = { version = "=1.1.6", features = ["fs"] }
 
 # Compiles the bounded Linux seccomp program without hand-maintained BPF or
 # syscall tables. The broker applies the prebuilt program only in the final
@@ -366,7 +414,7 @@ libc = "=0.2.191"
 # signal context — and the call that afterwards ends the process the way the
 # signal would have. Unix only. `crossterm` carries its own copy from the older
 # 0.3 line, so this is a second, small one.
-signal-hook = { version = "=0.4.5", default-features = false }
+signal-hook = { version = "=0.4.6", default-features = false }
 
 # Windows has no file mode, so the 0600 a session log is held at has to be
 # written as a DACL instead: one entry, for the account crucible is running as,
@@ -418,7 +466,7 @@ windows-sys = { version = "=0.61.2", features = [
 # its times in UTC, and says so. The provider crate takes it for the other
 # side of that hour: reading the RFC 3339 instant a vendor writes it as, which
 # `std` has no parser for.
-jiff = { version = "=0.2.38", default-features = false, features = [
+jiff = { version = "=0.2.39", default-features = false, features = [
     "std",
     "tz-system",
     "tzdb-zoneinfo",
@@ -500,11 +548,11 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
-# `cargo run` has six targets to choose between — this one and the five bench
-# probes under `src/bin/`, which cargo compiles as binaries of this package
-# whether or not a release ships them. Without this key it refuses to choose and
-# asks for `--bin`, which is a question about this repository's layout put to
-# somebody who only wanted to start crucible.
+# `cargo run` has more than one target to choose between — this one and every
+# binary under `src/bin/`, the bench probes among them, which cargo compiles as
+# binaries of this package whether or not a release ships them. Without this
+# key it refuses to choose and asks for `--bin`, which is a question about this
+# repository's layout put to somebody who only wanted to start crucible.
 default-run = "crucible"
 
 # One shipped binary. The short `cru` name is a symlink created by the
@@ -586,6 +634,9 @@ crucible-tools.workspace = true
 # never names the file.
 crucible-session.workspace = true
 crucible-tui.workspace = true
+# What draws a tool's edit: the same box a `diff` fence in an answer is drawn
+# in, so the two cannot drift apart.
+crucible-tui-diff.workspace = true
 image.workspace = true
 # The hash an attachment is recorded under, taken here because this is where a
 # file is attached and the runner compares it on every request afterwards. Both
@@ -710,4 +761,19 @@ inherits = "release"
 # single-machine suite has a time limit, so the one crate that computes them is
 # optimized in the builds tests use.
 [profile.dev.package.sha2]
+opt-level = 3
+
+# The picture crate draws hostile SVG and decodes hostile images, and its
+# generated corpus runs thousands of them. Unoptimized, the renderer takes
+# seconds for a picture a release build draws in milliseconds, so the corpus
+# would not finish in a gate's time, and it needs far more stack to recurse as
+# deep as the parser allows. The crates that do that work are optimized in the
+# builds tests use.
+[profile.dev.package.tiny-skia]
+opt-level = 3
+[profile.dev.package.tiny-skia-path]
+opt-level = 3
+[profile.dev.package.resvg]
+opt-level = 3
+[profile.dev.package.usvg]
 opt-level = 3

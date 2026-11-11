@@ -98,6 +98,10 @@ impl Terminal for SystemTerminal {
     fn is_terminal(&self) -> bool {
         self.is_terminal
     }
+
+    fn cell(&self) -> Option<super::graphics::Cell> {
+        super::graphics::window_cell()
+    }
 }
 
 #[cfg(test)]

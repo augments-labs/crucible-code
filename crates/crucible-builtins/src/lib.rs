@@ -36,7 +36,8 @@
 //! are the only code that ever holds both versions of a file, and each holds
 //! them for the length of one call, so each reads the change off there with
 //! `crucible_types::Diff::between` rather than leaving anything downstream to
-//! work it out again from bytes it no longer has.
+//! work it out again from bytes it no longer has. Each names the file on it as
+//! the model asked for it, as the call's own row does.
 //!
 //! They come by the two versions differently, and it shows in what each can
 //! promise. `edit` is handed the old one because it has to find text in it, so a

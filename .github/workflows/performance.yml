@@ -34,9 +34,10 @@ jobs:
           rm -rf rg.tar.gz "$stem"
           rg --version | head -1
 
-      # A shared runner: the six startup probes with a shared-runner limit
+      # A shared runner: the seven startup probes with a shared-runner limit
       # (the first frame, the native first frame and the first input, each with
-      # and without colour) hold it to those limits, and every other budget
+      # and without colour, and the first input with colour from a terminal
+      # that never answers) hold it to those limits, and every other budget
       # stays the one it states.
       - run: mkdir -p generated/json && scripts/sh/bench.sh > generated/json/budgets.json
         env:

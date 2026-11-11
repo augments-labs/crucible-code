@@ -269,6 +269,21 @@ fn a_settings_row_takes_only_the_words_its_declaration_reads() {
     // Which names there are is the host's to say; any name is one to ask it.
     assert!(take("output.syntaxTheme", "base16"));
     assert!(!take("output.syntaxTheme", ""));
+    for word in ["auto", "kitty", "iterm2", "sixel", "off"] {
+        assert!(take("output.images", word), "{word}");
+    }
+    for word in ["Kitty", "iterm", "png", ""] {
+        assert!(!take("output.images", word), "{word}");
+    }
+}
+
+#[test]
+fn the_images_row_is_the_last_so_no_row_before_it_moves() {
+    let last = rows().last().expect("there are rows");
+    assert_eq!(last.id(), RowId::Images);
+    assert_eq!(last.key(), "output.images");
+    assert_eq!(last.label(), "Images");
+    assert_eq!(last.usual(), Some("auto"));
 }
 
 #[test]
@@ -294,6 +309,7 @@ fn every_row_has_its_own_identity() {
         RowId::CacheIsolation,
         RowId::CacheRetention,
         RowId::CachePersistent,
+        RowId::Images,
     ];
     for id in every {
         let carrying = rows().iter().filter(|row| row.id() == id).count();

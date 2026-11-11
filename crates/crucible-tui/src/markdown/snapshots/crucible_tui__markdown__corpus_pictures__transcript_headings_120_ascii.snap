@@ -3,7 +3,9 @@ source: crates/crucible-tui/src/markdown/corpus_pictures.rs
 expression: "pictured(\"headings\", 120, Glyphs::Ascii)"
 ---
 <Heading>One</>                                                                                                                     
+<Quiet>=</><Quiet>=</><Quiet>=</>                                                                                                                     
 <Heading>Two</>                                                                                                                     
+<Quiet>-</><Quiet>-</><Quiet>-</>                                                                                                                     
 <Heading>Three</>                                                                                                                   
 <Heading>Four</>                                                                                                                    
 <Heading>Five</>                                                                                                                    
@@ -11,10 +13,10 @@ expression: "pictured(\"headings\", 120, Glyphs::Ascii)"
                                                                                                                         
 A heading may also be underlined instead:                                                                               
                                                                                                                         
-Title                                                                                                                   
-=====                                                                                                                   
+<Heading>Title</>                                                                                                                   
+<Quiet>=</><Quiet>=</><Quiet>=</><Quiet>=</><Quiet>=</>                                                                                                                   
                                                                                                                         
-Sub                                                                                                                     
-<Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</>
+<Heading>Sub</>                                                                                                                     
+<Quiet>-</><Quiet>-</><Quiet>-</>                                                                                                                     
                                                                                                                         
 The corpus ends here.

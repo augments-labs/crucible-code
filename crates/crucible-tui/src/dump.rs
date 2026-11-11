@@ -11,7 +11,8 @@
 //! nobody reads: the whole point of checking a drawing in beside its component
 //! is that the diff shows what moved on screen.
 //!
-//! Tests only, and it is where a test may reach for a snapshot at all: a
+//! Tests only — this crate's, and a drawer crate's through
+//! [`crate::testing`] — and it is where a test may reach for a snapshot at all: a
 //! picture is the right assertion where the thing under test *is* a picture,
 //! and the wrong one for a rule. "No row is ever drawn past the last column" is
 //! a property, it is tested as one, and a snapshot of it would assert today's
@@ -38,7 +39,7 @@ const CLOSE: &str = "</>";
 /// What a component pads for *itself* is not read off this: the picture shows a
 /// rectangle either way. That is a rule, and it is asserted as one where the
 /// component is.
-pub(crate) fn dump(rows: &[Row], columns: usize) -> String {
+pub fn dump(rows: &[Row], columns: usize) -> String {
     let mut dumped = String::new();
 
     for row in rows {
@@ -65,53 +66,16 @@ pub(crate) fn dump(rows: &[Row], columns: usize) -> String {
 /// What a run in `slot` is wrapped in, or nothing where it is wrapped in
 /// nothing.
 ///
-/// The variant's own name, so the picture and the code that built it are read
-/// with one word. [`Slot::Plain`] is the one that is never written: it is the
-/// reader's own foreground, the palette writes no bytes for it, and most of
-/// every component is plain — tagged, the wordmark and the padding would arrive
-/// buried in markup that says only that they were left alone.
+/// The slot's [`Slot::class`], the variant's own name, so the picture and the
+/// code that built it are read with one word. [`Slot::Plain`] is the one that
+/// is never written: it is the reader's own foreground, the palette writes no
+/// bytes for it, and most of every component is plain — tagged, the wordmark
+/// and the padding would arrive buried in markup that says only that they were
+/// left alone.
 fn marked(slot: Slot) -> Option<&'static str> {
     match slot {
         Slot::Plain => None,
-        Slot::Accent => Some("Accent"),
-        Slot::Strong => Some("Strong"),
-        Slot::Bold => Some("Bold"),
-        Slot::Pointed => Some("Pointed"),
-        Slot::Quiet => Some("Quiet"),
-        Slot::Cut => Some("Cut"),
-        Slot::Link => Some("Link"),
-        Slot::Emphasis => Some("Emphasis"),
-        Slot::Struck => Some("Struck"),
-        Slot::Code => Some("Code"),
-        Slot::AllowEdits => Some("AllowEdits"),
-        Slot::FullAccess => Some("FullAccess"),
-        Slot::Doing => Some("Doing"),
-        Slot::DoingMark => Some("DoingMark"),
-        Slot::Done => Some("Done"),
-        Slot::DoneMark => Some("DoneMark"),
-        Slot::Trouble => Some("Trouble"),
-        Slot::Removed => Some("Removed"),
-        Slot::RemovedNumber => Some("RemovedNumber"),
-        Slot::Added => Some("Added"),
-        Slot::AddedNumber => Some("AddedNumber"),
-        Slot::Prompt => Some("Prompt"),
-        Slot::PromptMark => Some("PromptMark"),
-        Slot::Comment => Some("Comment"),
-        Slot::Keyword => Some("Keyword"),
-        Slot::Str => Some("Str"),
-        Slot::Number => Some("Number"),
-        Slot::Name => Some("Name"),
-        Slot::Operator => Some("Operator"),
-        Slot::Path => Some("Path"),
-        Slot::Revision => Some("Revision"),
-        Slot::Figure => Some("Figure"),
-        Slot::Heading => Some("Heading"),
-        Slot::Bullet => Some("Bullet"),
-        Slot::Ordinal => Some("Ordinal"),
-        Slot::Quote => Some("Quote"),
-        Slot::ArgumentPath => Some("ArgumentPath"),
-        Slot::ArgumentAddress => Some("ArgumentAddress"),
-        Slot::ArgumentCommand => Some("ArgumentCommand"),
+        _ => Some(slot.class()),
     }
 }
 

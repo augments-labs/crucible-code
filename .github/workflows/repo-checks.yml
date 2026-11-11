@@ -16,5 +16,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The check that a drawer or raster crate reaches no network asks
+      # `cargo tree --offline` for each one's graph, which needs the locked
+      # sources present; a fresh runner has none.
+      - name: Populate the locked Cargo cache
+        run: cargo fetch --locked
       - run: scripts/sh/repo-checks.sh
       - uses: ./.github/actions/check-clean-worktree
