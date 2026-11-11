@@ -169,6 +169,73 @@ fn terra_prices_the_published_rates_and_doubles_input_and_cache_over_272k() {
 }
 
 #[test]
+fn sol_and_luna_price_their_published_rates_and_double_input_and_cache_over_272k() {
+    // Input, cached input, a 30-minute cache write and output, per million
+    // tokens, as each model's page states them below 272K input tokens.
+    let reviewed = PricingDate::new(2026, 11, 11);
+    let (keyed, _) = provider(VENDOR, "");
+    let (plan, _) = provider(SUBSCRIPTION, "");
+    for (model, input, read, write, output) in [
+        (
+            "gpt-6.1-sol",
+            2_000_000_000,
+            100_000_000,
+            2_500_000_000,
+            10_000_000_000,
+        ),
+        (
+            "gpt-6-sol",
+            2_000_000_000,
+            200_000_000,
+            2_500_000_000,
+            10_000_000_000,
+        ),
+        (
+            "gpt-6-luna",
+            100_000_000,
+            10_000_000,
+            125_000_000,
+            500_000_000,
+        ),
+    ] {
+        let asked = |provider: &OpenAi, tokens, at| {
+            provider
+                .prompt_cache_pricing(
+                    model,
+                    Some(model),
+                    Some(tokens),
+                    PromptCacheRetentionClass::Ephemeral,
+                    at,
+                )
+                .unwrap()
+        };
+        // Over 272K the whole request is priced at twice the input and cache
+        // rates and one and a half times the output rate.
+        for (tokens, doubled, output) in [(272_000, 1, output), (272_001, 2, output * 3 / 2)] {
+            let price = asked(&keyed, tokens, reviewed)
+                .unwrap_or_else(|| panic!("{model} has no price on the published API"));
+            assert_eq!(
+                price.rates().uncached_input,
+                rate(doubled * input),
+                "{model}"
+            );
+            assert_eq!(price.rates().cache_read, rate(doubled * read), "{model}");
+            assert_eq!(
+                price.rates().cache_write_or_creation,
+                rate(doubled * write),
+                "{model}"
+            );
+            assert_eq!(price.rates().output, rate(output), "{model}");
+        }
+        assert!(asked(&plan, 1_000, reviewed).is_none(), "{model}");
+        assert!(
+            asked(&keyed, 1_000, PricingDate::new(2026, 11, 10)).is_none(),
+            "{model} is priced before its page was read"
+        );
+    }
+}
+
+#[test]
 fn astra_uses_current_cache_options_and_preserves_every_effort_and_route_output_budget() {
     for endpoint in [VENDOR, SUBSCRIPTION] {
         let (provider, replay) = provider(endpoint.clone(), "");

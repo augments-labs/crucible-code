@@ -128,8 +128,11 @@ other Kimi models, with a default lifetime of 5 minutes (read 5 Nov 2026); the
 record names no lifetime of its own and carries no price, since Kimi Code
 bills a plan's quota.
 
-The OpenAI public pricing record uses the current [OpenAI pricing](https://developers.openai.com/api/docs/pricing)
-and model-specific documentation. The Anthropic record uses the pricing table in
+Every OpenAI model crucible offers is priced on the public API, from the
+current [OpenAI pricing](https://developers.openai.com/api/docs/pricing) and
+the model's own page: those of `gpt-6.1-sol`, `gpt-6-sol` and `gpt-6-luna`
+were read on 11 Nov 2026, and carry the same two bands and the 30-minute write
+as `gpt-6.1-terra`. The Anthropic record uses the pricing table in
 the prompt-caching guide. Pricing is selected only for an exact protocol,
 endpoint, model, revision, date, retention class and input band: Claude Haiku
 5.5's prompt pays Anthropic's higher prices once it is over 100,000 tokens,

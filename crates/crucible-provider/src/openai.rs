@@ -117,6 +117,18 @@ const PRICING_REVIEWED: PricingDate = PricingDate::new(2026, 8, 31);
 const ASTRA_REVIEWED: PricingDate = PricingDate::new(2026, 9, 6);
 const TERRA: &str = "gpt-6.1-terra";
 const TERRA_REVIEWED: PricingDate = PricingDate::new(2026, 11, 5);
+/// When the pages of `gpt-6.1-sol`, `gpt-6-sol` and `gpt-6-luna` were read for
+/// their prices.
+const SOL_LUNA_REVIEWED: PricingDate = PricingDate::new(2026, 11, 11);
+/// Every day a price record here was read from OpenAI's pages. A record read
+/// on a new day adds that day here, so the newest of them is a day every
+/// record is in force on.
+const PRICES_REVIEWED: [PricingDate; 4] = [
+    PRICING_REVIEWED,
+    ASTRA_REVIEWED,
+    TERRA_REVIEWED,
+    SOL_LUNA_REVIEWED,
+];
 const PRICING_SOURCE: &str = "https://developers.openai.com/api/docs/pricing";
 const MODEL_55_PRICING_SOURCE: &str = "https://developers.openai.com/api/docs/models/gpt-5.5";
 
@@ -378,6 +390,11 @@ fn prompt_cache(route: Serving, model: &str) -> PromptCacheCapabilities {
     )
 }
 
+/// The models whose prices were read on [`SOL_LUNA_REVIEWED`].
+fn sol_or_luna(model: &str) -> bool {
+    matches!(model, "gpt-6.1-sol" | "gpt-6-sol" | "gpt-6-luna")
+}
+
 /// What `asked` costs, priced only at the published API's own address.
 fn price(route: Option<Serving>, asked: Priced<'_>) -> Option<PromptCachePricing> {
     let Priced {
@@ -391,6 +408,8 @@ fn price(route: Option<Serving>, asked: Priced<'_>) -> Option<PromptCachePricing
         ASTRA_REVIEWED
     } else if model == TERRA {
         TERRA_REVIEWED
+    } else if sol_or_luna(model) {
+        SOL_LUNA_REVIEWED
     } else {
         PRICING_REVIEWED
     };
@@ -430,6 +449,44 @@ fn price(route: Option<Serving>, asked: Priced<'_>) -> Option<PromptCachePricing
                 rate(2_500_000_000),
                 7_500_000_000,
             ),
+        ),
+        ("gpt-6.1-sol", Some("gpt-6.1-sol")) => (
+            "gpt-6.1-sol",
+            "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+            openai_rates(
+                2_000_000_000,
+                100_000_000,
+                rate(2_500_000_000),
+                10_000_000_000,
+            ),
+            openai_rates(
+                4_000_000_000,
+                200_000_000,
+                rate(5_000_000_000),
+                15_000_000_000,
+            ),
+        ),
+        ("gpt-6-sol", Some("gpt-6-sol")) => (
+            "gpt-6-sol",
+            "https://developers.openai.com/api/docs/models/gpt-6-sol",
+            openai_rates(
+                2_000_000_000,
+                200_000_000,
+                rate(2_500_000_000),
+                10_000_000_000,
+            ),
+            openai_rates(
+                4_000_000_000,
+                400_000_000,
+                rate(5_000_000_000),
+                15_000_000_000,
+            ),
+        ),
+        ("gpt-6-luna", Some("gpt-6-luna")) => (
+            "gpt-6-luna",
+            "https://developers.openai.com/api/docs/models/gpt-6-luna",
+            openai_rates(100_000_000, 10_000_000, rate(125_000_000), 500_000_000),
+            openai_rates(200_000_000, 20_000_000, rate(250_000_000), 750_000_000),
         ),
         ("gpt-5.6-sol", Some("gpt-5.6-sol")) => (
             "gpt-5.6-sol",
@@ -511,6 +568,11 @@ fn price(route: Option<Serving>, asked: Priced<'_>) -> Option<PromptCachePricing
             "openai-standard-short-2026-11-05",
             "openai-standard-long-2026-11-05",
         )
+    } else if sol_or_luna(model) {
+        (
+            "openai-standard-short-2026-11-11",
+            "openai-standard-long-2026-11-11",
+        )
     } else {
         (
             "openai-standard-short-2026-08-31",
@@ -581,6 +643,15 @@ impl Responses<Gpt> {
     #[must_use]
     pub fn fast_signed_in(model: &str) -> FastForm {
         fast::form(Some(Serving::Subscription), model)
+    }
+
+    /// The newest day any of this module's price records was read from
+    /// OpenAI's pages: no record is reviewed after it, so a price asked for on
+    /// it finds every record there is.
+    #[must_use]
+    pub fn prices_reviewed() -> PricingDate {
+        let [first, rest @ ..] = PRICES_REVIEWED;
+        rest.into_iter().fold(first, Ord::max)
     }
 
     /// The fixed endpoint that accepts a `ChatGPT` subscription credential.
