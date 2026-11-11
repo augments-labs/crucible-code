@@ -2324,3 +2324,132 @@ fn an_own_program_with_no_agent_info_is_admitted_by_its_capabilities() -> Result
     assert_eq!(record.version(), "2.0.0");
     Ok(())
 }
+
+/// What a turn of the user's own Antigravity, started under the sandbox,
+/// `required` by a project where it says, with no profile directory, comes
+/// to when the program answers the turn with the link to sign in: how the
+/// turn ended, else why it did not.
+fn own_agy_turned(tree: &crate::Tree, required: bool) -> Result<Result<String, String>, Failed> {
+    use crucible_app::access::Route;
+    use crucible_app::backends::{Registry, Row, Sandboxing};
+    use crucible_app::launching::Launcher;
+    use crucible_config::{Driver, Serves};
+    use crucible_execution::{SessionRef, TurnRequest};
+    use crucible_external_harnesses::Control;
+    use crucible_external_harnesses::acp::SignIn;
+    use crucible_external_harnesses::antigravity::Manifest;
+    use crucible_external_harnesses::catalog::SNAPSHOT;
+    use crucible_external_harnesses::fake_peer::Script;
+    use crucible_external_harnesses::fake_peer::scripts::acp;
+    use crucible_sandbox::SandboxPolicy;
+    use crucible_types::TurnId;
+
+    let shipped = SNAPSHOT.entries().first().ok_or("the snapshot's entry")?;
+    let reviewed = acp::initialized(
+        &shipped.admits.name,
+        &shipped.admits.version,
+        Manifest::REVIEWED.sign_in.first().map_or("", SignIn::id),
+    );
+    let link = "Open the following link to authenticate the ACP server: \
+                https://accounts.google.com/o/oauth2/v2/auth?state=s";
+    let program = fake_peer::install(
+        &tree.0.join("peer"),
+        "antigravity",
+        &Script::once(acp::opening(&reviewed).say(link)),
+    )?;
+    let built = REGISTRY
+        .built(Driver::Antigravity)
+        .ok_or("Antigravity has no row")?;
+    // The peer reaches no host.
+    let row: &'static Row = Box::leak(Box::new(Row {
+        reaches: &[],
+        ..*built
+    }));
+    let executable = program.to_string_lossy().into_owned();
+    let route = Route::External {
+        serves: Serves::Provider("google"),
+        instance: "space".into(),
+        driver: Driver::Antigravity,
+        executable: executable.as_str().into(),
+        profile: None,
+        model: None,
+        effort: None,
+        location: None,
+        enabled: true,
+    };
+    let registry = Registry::new(std::slice::from_ref(row));
+    let agent = Agent::routed(&route, &registry, |_| None).ok_or("Antigravity's route")?;
+
+    let runtime = super::runtime()?;
+    let home = tree.home()?;
+    let state = catalog_fetch::state_in(home.path());
+    let consent = super::shipped_hold::shipped_given(row.route)?;
+    let policy = SandboxPolicy::standard(&tree.workspace()?)?.with_enabled(true);
+    let sessions = tree.sessions();
+    let launcher = Launcher::new(
+        crucible_app::probing::local(runtime.handle().clone()),
+        runtime.handle().clone(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
+    let control = Control::new().ok_or("a control")?;
+    let trust = Trust::load(&state, SystemTime::now());
+    let mut dialect = agent.dialect(
+        crucible_tools::Mode::Ask,
+        &trust,
+        &home.path().join("programs"),
+        Sandboxing { on: true, required },
+    )?;
+    Ok(runtime.block_on(async {
+        let mut host = launcher
+            .launch(&agent, &control, dialect.as_mut(), None)
+            .await
+            .map_err(|why| why.to_string())?;
+        let turned = host
+            .turn(
+                dialect.as_mut(),
+                &SessionRef::new("one").ok_or("a session's name")?,
+                &TurnRequest::new(TurnId::FIRST, "go"),
+                &Unwatched,
+            )
+            .await;
+        drop(host.stop(crucible_external_harnesses::STOP_GRACE).await);
+        turned
+            .map(|outcome| format!("{outcome:?}"))
+            .map_err(|failure| failure.reason().as_str().to_owned())
+    }))
+}
+
+/// A turn of the user's own Antigravity under the sandbox with no profile
+/// directory, which the program answers by asking for a sign-in, fails naming
+/// the two ways it can be signed in rather than `/login`: turning the sandbox
+/// off, with what that costs every command and agent, and the store release.
+/// Where a project requires the sandbox, only the store release is named.
+#[test]
+fn an_own_agy_turn_without_a_sign_in_names_the_two_ways() -> Result<(), Failed> {
+    let tree = crate::Tree::new("registry-own-agy-turn")?;
+    let failed = own_agy_turned(&tree, false)?
+        .err()
+        .ok_or("the turn did not fail")?;
+    assert!(!failed.contains("/login"), "{failed}");
+    for said in [
+        "~/.gemini",
+        "turn the sandbox off",
+        "docs/security/sandboxing.md",
+        "every command and agent in the conversation",
+        "store release",
+    ] {
+        assert!(failed.contains(said), "{said} is not said: {failed}");
+    }
+
+    let tree = crate::Tree::new("registry-own-agy-turn-required")?;
+    let failed = own_agy_turned(&tree, true)?
+        .err()
+        .ok_or("the turn did not fail")?;
+    assert!(!failed.contains("/login"), "{failed}");
+    assert!(!failed.contains("turn the sandbox off"), "{failed}");
+    assert!(failed.contains("store release"), "{failed}");
+    Ok(())
+}
