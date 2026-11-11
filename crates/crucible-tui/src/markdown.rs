@@ -162,6 +162,7 @@ use crate::glyphs::Glyphs;
 use crate::row::Row;
 use crate::width;
 
+mod escapes;
 mod kind;
 mod table;
 
@@ -1801,6 +1802,12 @@ pub struct Markdown {
     /// for the reason everything here does -- a delta is a piece of the wire,
     /// and the pair arrives split as often as not.
     escaped: bool,
+    /// A backslash and the break after it are held, with the spaces that have
+    /// followed, until the line under it says whether it was blank.
+    slashed: Option<String>,
+    /// An `&` and what has followed it, held until it is a whole reference or
+    /// is none.
+    entity: Option<String>,
     /// The spaces this line opened with, held for whatever follows them.
     ///
     /// Whether they were indentation at all is the first marker's to say: the
@@ -2185,6 +2192,12 @@ impl Markdown {
                 self.passing = None;
             }
 
+            // A backslash that ends a line, held with its break.
+            if self.slashes(character, room, say) {
+                run = next;
+                continue;
+            }
+
             // How the line opened: the spaces in front of what may be a line
             // of an indented block are held until it is or it is not, and
             // whatever opened the line is read before anything below sees it.
@@ -2277,27 +2290,13 @@ impl Markdown {
                 run = at;
             }
 
-            // Held text, not a run, for the reason an address is.
-            if self.reference.is_some() {
-                if self.referenced(character, say) {
-                    run = next;
-                    continue;
-                }
-                // The number has ended, or there was never one behind the
-                // hash. Either way what was held has been drawn or put back,
-                // and this character starts the run.
-                run = at;
-            }
-
-            // Held text, not a run, for the reason a reference is.
-            if self.tag.is_some() {
-                if self.tagged(character, say) {
-                    run = next;
-                    continue;
-                }
-                // Not one of the tags read here. What was held has gone out
-                // as written, and this character starts the run.
-                run = at;
+            // Held text, not a run, for the reason an address is: a number
+            // after a hash, a tag, and a reference. When what was held is
+            // settled it has been drawn or put back, and this character starts
+            // the run.
+            if self.holds_word(character, say) {
+                run = next;
+                continue;
             }
 
             // A backslash in front of a `<` keeps it from opening a tag, and
@@ -2345,6 +2344,11 @@ impl Markdown {
                     self.indent += delta.get(run..at).map_or(0, str::len);
                 }
                 self.tag = Some(String::from(character));
+                run = next;
+            } else if !kept && self.opens_entity(character) {
+                self.say(delta.get(run..at).unwrap_or_default(), say);
+                self.entity = Some(String::from(character));
+                self.started = true;
                 run = next;
             } else if self.opens_link(character) {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
@@ -3684,11 +3688,8 @@ impl Markdown {
         self.pay(say);
 
         let target = target(&link.target);
-        let words = if link.label.is_empty() {
-            target
-        } else {
-            &link.label
-        };
+        let label = escapes::decoded(&link.label);
+        let words = if label.is_empty() { target } else { &label };
 
         let file = self.files.as_ref().and_then(|files| files.address(target));
         let address = file.as_deref().unwrap_or(target);
@@ -3723,6 +3724,19 @@ impl Markdown {
     ) -> bool {
         (self.defining.is_some() && self.defines(character, room, say))
             || (self.angle.is_some() && self.angled(character, room, say))
+    }
+
+    /// Reads `character` into the number, tag or reference held, whichever is
+    /// open. Answers whether it was taken, and `false` says what was held is
+    /// settled and `character` is the caller's again.
+    fn holds_word(
+        &mut self,
+        character: char,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) -> bool {
+        (self.reference.is_some() && self.referenced(character, say))
+            || (self.tag.is_some() && self.tagged(character, say))
+            || (self.entity.is_some() && self.entitied(character, say))
     }
 
     /// Shows the watch on the line, for a title or the header of a table,
@@ -3959,7 +3973,8 @@ impl Markdown {
         say: &mut dyn FnMut(Slot, &str, Option<&str>),
     ) {
         self.pay(say);
-        let words = if words.is_empty() { address } else { words };
+        let words = escapes::decoded(words);
+        let words = if words.is_empty() { address } else { &words };
         say(Slot::Link, words, Some(address));
         self.previous = words.chars().next_back().unwrap_or(']');
     }
@@ -4477,6 +4492,10 @@ impl Markdown {
         }
         if let Some(written) = self.angle.take() {
             self.unangle(&written, room, say);
+        }
+        self.unslash(true, "", room, say);
+        if let Some(written) = self.entity.take() {
+            self.unentity(&written, say);
         }
 
         // A header still waiting for its delimiter row is the prose it was
