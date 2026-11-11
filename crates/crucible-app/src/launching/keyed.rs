@@ -3,12 +3,28 @@
 
 use std::path::Path;
 
-use crucible_external_harnesses::Request;
 use crucible_external_harnesses::catalog::Method;
+use crucible_external_harnesses::{Program, Request};
 use crucible_types::AgentKey;
 
-use crate::backends::{AgentRow, Started};
+use super::{Agent, Launcher, Origin, programs_beside};
+use crate::backends::{AgentRow, Sandboxing, Started};
 use crate::providers;
+
+impl Launcher<'_> {
+    /// How `agent`, its program at `program`, is started by this launcher,
+    /// as the keys it is given are decided.
+    pub(super) fn started(&self, agent: &Agent, program: &Program) -> Started {
+        Started {
+            origin: Origin::of(&programs_beside(self.state), program.path()),
+            sandbox: Sandboxing {
+                on: self.conversation.enabled(),
+                required: false,
+            },
+            profiled: agent.profile.is_some(),
+        }
+    }
+}
 
 /// `request` with each key the credential store in `home` keeps for `row`'s
 /// agent set in the variable of the method it was typed for, where the agent
