@@ -375,7 +375,7 @@ choice: Cancel: Change nothing.";
 /// What a connect says of an Antigravity not installed, written out as
 /// [`written_out`] writes it.
 const NOT_INSTALLED: &str = "asks: Antigravity cannot be started.
-fact: Not installed: no antigravity command on PATH and none at the configured executable.
+fact: Not installed: no agy or antigravity command on PATH and none at the configured executable. If it is installed under another name, set executable to its path or name.
 fact: Run `crucible agents install antigravity` in a terminal, then choose Check again.
 fact: Agent: antigravity, run as <tree>/home/programs/antigravity/1.3.0/agy_acp_server.
 choice: Check again (recommended): Look for the agent's program again.

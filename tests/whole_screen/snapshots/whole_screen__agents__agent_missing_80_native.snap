@@ -2,8 +2,7 @@
 source: tests/whole_screen/agents.rs
 expression: picture
 ---
-80x40 cursor 39,0 scrollback 2
-|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
+80x40 cursor 39,0 scrollback 3
 |│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No earlier session for this workspace     │|
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
 |│                                  │ ───────────────────────────────────────── │|
@@ -23,8 +22,9 @@ expression: picture
 |                                                                                |
 |Antigravity cannot be started.                                                  |
 |                                                                                |
-|Not installed: no antigravity command on PATH and none at the configured        |
-|executable.                                                                     |
+|Not installed: no agy or antigravity command on PATH and none at the configured |
+|executable. If it is installed under another name, set executable to its path or|
+|name.                                                                           |
 |Run `crucible agents install antigravity` in a terminal, then choose Check      |
 |again.                                                                          |
 |Agent: antigravity, run as                                                      |

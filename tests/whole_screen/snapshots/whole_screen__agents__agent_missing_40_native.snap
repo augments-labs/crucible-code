@@ -2,7 +2,7 @@
 source: tests/whole_screen/agents.rs
 expression: picture
 ---
-40x40 cursor 35,0 scrollback 0
+40x40 cursor 37,0 scrollback 0
 |CRUCIBLE                                |
 |/…/workspace                            |
 |                                        |
@@ -13,9 +13,11 @@ expression: picture
 |                                        |
 |Antigravity cannot be started.          |
 |                                        |
-|Not installed: no antigravity command on|
-|PATH and none at the configured         |
-|executable.                             |
+|Not installed: no agy or antigravity    |
+|command on PATH and none at the         |
+|configured executable. If it is         |
+|installed under another name, set       |
+|executable to its path or name.         |
 |Run `crucible agents install            |
 |antigravity` in a terminal, then choose |
 |Check again.                            |
@@ -39,7 +41,5 @@ expression: picture
 |  Choose another agent.                 |
 |                                        |
 |esc to go back                          |
-|                                        |
-|                                        |
 |                                        |
 |                                        |

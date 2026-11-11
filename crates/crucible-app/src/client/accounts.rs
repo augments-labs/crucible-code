@@ -175,7 +175,7 @@ use super::deciding::{Confirmation, Front, confirmed};
 use super::performing::{Desk, Performed};
 use crate::Conversation;
 use crate::backends::{AgentRow, Unbelieved};
-use crate::launching::{Unlaunched, quoted};
+use crate::launching::{Origin, Unlaunched, quoted};
 use crate::remember::{self, RememberError};
 
 /// What came of an account operation, in the application's own values.
@@ -1296,7 +1296,8 @@ impl Releases {
     /// What the row of the shipping agent `row` says, where crucible installs
     /// its release: of the one instance of it configured, or, where none is,
     /// of the one a connect would make, its command looked for on the `PATH`
-    /// of `steps`. Nothing where several are, whose own choices say it.
+    /// of `steps`, or that it asks which of two it runs. Nothing where several
+    /// are, whose own choices say it.
     fn built(
         &self,
         desk: &Desk<'_>,
@@ -1313,7 +1314,13 @@ impl Releases {
             .collect();
         match configured.as_slice() {
             [one] => self.note(&key, one.executable()),
-            [] => self.note(&key, &would_run(&self.home, row, &self.trust, steps)),
+            [] => match would_run(&self.home, row, &self.trust, steps) {
+                Running::One { executable, .. } => self.note(&key, &executable),
+                Running::Either { .. } => Some(
+                    "Asks whether to run your own program or the release Crucible installed."
+                        .to_owned(),
+                ),
+            },
             _ => None,
         }
     }
@@ -1763,7 +1770,8 @@ async fn among(
 
 /// The instance of `row`'s agent, shown as `agent`, a connect goes through:
 /// the one configured, one asked for of several, or one named after the
-/// agent where none is, its command looked for on the `PATH` of `steps`;
+/// agent where none is, its command looked for on the `PATH` of `steps`, as
+/// [`would_run`] says, the client asked which where it names two;
 /// `Some(None)` where the client went back to the list
 /// of agents, and nothing where it cancelled or answered nothing. Asked of a
 /// client that claims [`Capability::Install`], each of several says its note,
@@ -1800,40 +1808,190 @@ async fn instance(
         Configured::Back => return Some(None),
         Configured::Unconfigured => {}
     }
-    let name = row.driver.name();
     let home = desk.switching.choosing.parent()?;
-    // A driver whose agent shares its usual home with another program of its
-    // vendor is given a directory of its own beside the user file.
-    let profile = if row.driver.profile_needed() {
-        Some(home.join("agents").join(name).to_str()?.to_owned())
-    } else {
-        None
-    };
     let trust = crate::catalog_fetch::trust_in(home);
-    let executable = would_run(home, row, &trust, steps);
-    // A row is a built-in driver's, so its instance names no catalog agent.
-    let agent = ExternalAgent::unwritten(name, row.driver, &executable, profile.as_deref(), None)?;
+    let agent = match would_run(home, row, &trust, steps) {
+        Running::One { executable, own } => unwritten(home, row, &executable, own)?,
+        Running::Either { stored, own, note } => {
+            let question = either(agent, &stored, &own, note);
+            let answer = confirmed(capabilities, front, &question).await?;
+            match answered(home, row, &stored, answer)? {
+                Answered::Written(agent) => agent,
+                Answered::Back => return Some(None),
+            }
+        }
+    };
     Some(Some((agent, false)))
+}
+
+/// The instance of `row`'s agent written beside the user file in `home` for
+/// `answer`, the choice taken of [`either`]'s question over crucible's release
+/// at `stored`: the release, or the user's own program named by its command;
+/// [`Answered::Back`] where the person went back, and nothing where no
+/// instance can be written.
+fn answered(
+    home: &Path,
+    row: &'static crate::backends::Row,
+    stored: &Path,
+    answer: usize,
+) -> Option<Answered> {
+    let (executable, own) = match answer {
+        0 => (stored.to_str()?.to_owned(), false),
+        1 => (AgentRow::Built(row).command(), true),
+        _ => return Some(Answered::Back),
+    };
+    unwritten(home, row, &executable, own).map(Answered::Written)
+}
+
+/// What an answer to [`either`]'s question comes to.
+#[derive(Debug)]
+enum Answered {
+    /// The instance the chosen program is run as, not yet written.
+    Written(ExternalAgent),
+    /// The person went back, so nothing is written.
+    Back,
+}
+
+/// The program a new instance of a built-in row's agent is run as.
+#[derive(Debug, PartialEq, Eq)]
+enum Running {
+    /// The one there is: run as `executable`, the user's own program outside
+    /// crucible's install store where `own` says so.
+    One {
+        /// What the instance names as its program.
+        executable: String,
+        /// Whether it is the user's own program.
+        own: bool,
+    },
+    /// Crucible's installed release at `stored` and the user's own program at
+    /// `own`, of an agent whose release keeps a sign-in of its own, between
+    /// which the person chooses; `note` is what the agent's row says of the
+    /// own program.
+    Either {
+        /// The installed release.
+        stored: PathBuf,
+        /// The user's own program, found on `PATH`.
+        own: PathBuf,
+        /// What the person is told of the own program before choosing it.
+        note: Option<&'static str>,
+    },
 }
 
 /// The program an instance of `row`'s agent named after it is run as: the
 /// release crucible installs under `home`, installed or not yet, where
 /// `trust` offers one, unless its command is on the `PATH` of `steps`, as one
-/// installed by hand is; otherwise its command.
+/// installed by hand is; otherwise its command. Where the release is
+/// installed and the program on `PATH` is the user's own, of an agent whose
+/// release keeps a sign-in of its own, neither is taken: the person chooses.
 fn would_run(
     home: &Path,
     row: &'static crate::backends::Row,
     trust: &Trust,
     steps: Option<&crate::launching::Steps>,
-) -> String {
-    let command = AgentRow::Built(row).command();
-    let by_hand =
-        steps.is_some_and(|steps| matches!(steps.discover(&command), Discovery::Found(_)));
-    let managed = crate::installing::executable(home, row, trust).filter(|_| !by_hand);
-    managed
-        .as_deref()
-        .and_then(Path::to_str)
-        .map_or(command, str::to_owned)
+) -> Running {
+    let built = AgentRow::Built(row);
+    let command = built.command();
+    let by_hand = steps.and_then(|steps| match steps.discover(&command, &built.commands()) {
+        Discovery::Found(program) => Some((
+            program.path().to_path_buf(),
+            steps.origin(program.path()),
+            steps.sandboxed(),
+        )),
+        Discovery::Missing | Discovery::NotExecutable(_) => None,
+    });
+    let managed = crate::installing::executable(home, row, trust);
+    match (managed, by_hand) {
+        (Some(stored), Some((own, Origin::Own, sandboxed)))
+            if row.driver.profile_needed() && stored.is_file() =>
+        {
+            Running::Either {
+                stored,
+                own,
+                note: built.own_note(sandboxed),
+            }
+        }
+        (_, Some((_, origin, _))) => Running::One {
+            executable: command,
+            own: match origin {
+                Origin::Own => true,
+                Origin::Stored => false,
+            },
+        },
+        (managed, None) => Running::One {
+            executable: managed
+                .as_deref()
+                .and_then(Path::to_str)
+                .map_or(command, str::to_owned),
+            own: false,
+        },
+    }
+}
+
+/// The question that asks which of the agent shown as `agent`'s programs a
+/// new instance runs: crucible's installed release at `stored`, or the user's
+/// own program at `own`, of which `note` is said first.
+fn either(agent: &str, stored: &Path, own: &Path, note: Option<&str>) -> Confirmation {
+    let mut facts = vec![format!(
+        "{agent} is installed by Crucible and is also on your PATH."
+    )];
+    facts.extend(note.map(str::to_owned));
+    Confirmation {
+        asks: format!("Which {agent} should be used?"),
+        facts,
+        choices: vec![
+            (
+                "Crucible's release".to_owned(),
+                format!(
+                    "Run {}, signed in in a profile directory of its own.",
+                    stored.display()
+                ),
+            ),
+            (
+                "Your own program".to_owned(),
+                format!("Run {} with no profile of its own.", own.display()),
+            ),
+            ("Go back".to_owned(), "Choose another agent.".to_owned()),
+        ],
+    }
+}
+
+/// The instance of `row`'s agent named after it that runs `executable`,
+/// written beside the user file in `home`: one whose release shares its usual
+/// home with another program of its vendor is given a profile directory of
+/// its own there, unless it runs the user's own program, as `own` says, which
+/// is given none, so it looks for its sign-in in its usual home.
+fn unwritten(
+    home: &Path,
+    row: &'static crate::backends::Row,
+    executable: &str,
+    own: bool,
+) -> Option<ExternalAgent> {
+    let name = row.driver.name();
+    let profile = if row.driver.profile_needed() && !own {
+        Some(home.join("agents").join(name).to_str()?.to_owned())
+    } else {
+        None
+    };
+    // A row is a built-in driver's, so its instance names no catalog agent.
+    ExternalAgent::unwritten(name, row.driver, executable, profile.as_deref(), None)
+}
+
+/// What the person is told of the configured `agent` of `row`, where its
+/// program, found on the `PATH` of `steps`, is the user's own: what the row
+/// says of one; nothing for a release in crucible's install store.
+fn noted(
+    steps: Option<&crate::launching::Steps>,
+    row: &AgentRow,
+    agent: &ExternalAgent,
+) -> Option<&'static str> {
+    let steps = steps?;
+    let Discovery::Found(program) = steps.discover(agent.executable(), &row.commands()) else {
+        return None;
+    };
+    match steps.origin(program.path()) {
+        Origin::Own => row.own_note(steps.sandboxed()),
+        Origin::Stored => None,
+    }
 }
 
 /// How `row`'s agent is named to a person: as its route is warned about,
@@ -1862,7 +2020,9 @@ fn unfound_in(desk: &Desk<'_>, row: &AgentRow, shown: &str) -> Option<[String; 2
             shown,
             &crate::catalog_fetch::trust_in(home),
         ),
-        None => Discovery::Missing.refusal(shown, &row.command()),
+        None => Discovery::Missing
+            .refusal(shown, &crate::launching::looked_for(row))
+            .map(|refused| crate::launching::renamed(&Discovery::Missing, refused)),
     }
 }
 
@@ -2006,6 +2166,7 @@ async fn connect(
         }
     }
     let unstepped = || Reading::Unreadable(Failure::new("this run takes no agent steps"));
+    let note = noted(conversation.steps(), row, agent);
     for _ in 0..CHECKS {
         let status = match conversation.steps() {
             Some(steps) => steps.account(agent, Step::Status).await,
@@ -2026,14 +2187,15 @@ async fn connect(
                 agent,
                 row,
                 capabilities.has(Capability::Install).then_some(written),
+                note,
             ),
             Reading::Signed(
                 Authentication::Unknown | Authentication::Expired | Authentication::Unverifiable,
             )
             // The agent answered here, so it left no failure to give as the
             // reason.
-            | Reading::Version(_) => (unverified(agent, None), Vec::new()),
-            Reading::Unreadable(failure) => (unverified(agent, Some(failure)), Vec::new()),
+            | Reading::Version(_) => (unverified(agent, None, note), Vec::new()),
+            Reading::Unreadable(failure) => (unverified(agent, Some(failure), note), Vec::new()),
         };
         // Checking again is the first choice after the moves.
         let again = moves.len();
@@ -2127,11 +2289,13 @@ fn commit(desk: &Desk<'_>, provider: &str, agent: &ExternalAgent, written: bool)
 /// method of the agent's that the agents door carries out, where the instance
 /// is written, since the door signs in only an instance the configuration
 /// names; where it is not, it is told they are offered once it is. A client
-/// that does not claim it gives `None` and is offered no move.
+/// that does not claim it gives `None` and is offered no move. A `note` on
+/// the user's own program of the agent is said after its profile.
 fn signed_out(
     agent: &ExternalAgent,
     row: &AgentRow,
     written: Option<bool>,
+    note: Option<&str>,
 ) -> (Confirmation, Vec<AgentAction>) {
     let name = agent.name();
     let told = match row {
@@ -2147,8 +2311,9 @@ fn signed_out(
     let mut facts = vec![
         format!("Agent: {name}, run as {}.", agent.executable()),
         profiled(agent),
-        how,
     ];
+    facts.extend(note.map(str::to_owned));
+    facts.push(how);
     let methods = written.map_or_else(Vec::new, |_| row.methods());
     let (offered, more) = match written {
         Some(true) => sign_ins(agent, methods, &[CHECK_AGAIN, "Cancel"]),
@@ -2181,18 +2346,24 @@ fn signed_out(
 }
 
 /// What the person is told where `agent`'s sign-in could not be read, with
-/// the one reason the agent's run gave, where it gave one.
+/// the one reason the agent's run gave, where it gave one, and after its
+/// profile any `note` on the user's own program of the agent.
 ///
 /// The reason is the harness's own words, bounded and with its withheld values
 /// hidden, and only its first line: a front end takes control bytes out where
 /// it draws it.
-fn unverified(agent: &ExternalAgent, failure: Option<&Failure>) -> Confirmation {
+fn unverified(
+    agent: &ExternalAgent,
+    failure: Option<&Failure>,
+    note: Option<&str>,
+) -> Confirmation {
     let name = agent.name();
     let mut facts = vec![
         format!("Agent: {name}, run as {}.", agent.executable()),
         profiled(agent),
-        "Status: the agent did not say whether it is signed in.".to_owned(),
     ];
+    facts.extend(note.map(str::to_owned));
+    facts.push("Status: the agent did not say whether it is signed in.".to_owned());
     let reason = failure.and_then(reason);
     if let Some(reason) = reason {
         facts.push(format!("Reason: {reason}"));
@@ -2375,7 +2546,190 @@ fn coordinating(choosing: &Path, agent: &ExternalAgent) -> Result<Coordinator, C
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
+
+    use crucible_external_harnesses::antigravity::own_note;
+    use crucible_external_harnesses::fake_peer::{self, Script};
+
     use super::*;
+    use crate::backends::ANTIGRAVITY;
+    use crate::backends::tests::trusting;
+    use crate::launching::tests::{antigravity_release, antigravity_steps};
+    use crate::sample::Sample;
+
+    /// The user's own Antigravity installed as `agy` in a directory of
+    /// `sample`'s, outside crucible's install store, and the steps that look
+    /// for programs there.
+    fn own_agy(sample: &Sample) -> (PathBuf, crate::launching::Steps) {
+        let bin = sample.root().join("bin");
+        let own = fake_peer::install(&bin, "agy", &Script::of([])).expect("the fake peer");
+        (own, antigravity_steps(sample, Some(OsString::from(&bin))))
+    }
+
+    /// Where crucible's installed release of Antigravity lies under the home
+    /// of `sample`, whose trust state offers it, written there.
+    fn stored_antigravity(sample: &Sample) -> (PathBuf, Trust) {
+        let trust = trusting(sample, 2, &[antigravity_release("1.4.1")]);
+        let stored = crate::installing::executable(&sample.home(), &ANTIGRAVITY, &trust)
+            .expect("a release on offer");
+        std::fs::create_dir_all(stored.parent().expect("a version directory"))
+            .expect("a temporary directory");
+        std::fs::write(&stored, b"").expect("a temporary directory");
+        (stored, trust)
+    }
+
+    /// With crucible's release installed and the user's own `agy` on `PATH`,
+    /// a new Antigravity instance is not given either silently: the person is
+    /// asked, and each is offered with its path.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn both_antigravity_programs_are_offered_when_both_exist() {
+        let sample = Sample::new("accounts-antigravity-both");
+        let (stored, trust) = stored_antigravity(&sample);
+        let (own, steps) = own_agy(&sample);
+
+        let running = would_run(&sample.home(), &ANTIGRAVITY, &trust, Some(&steps));
+
+        let Running::Either {
+            stored: offered,
+            own: found,
+            note,
+        } = running
+        else {
+            panic!("{running:?}");
+        };
+        assert_eq!(offered, stored);
+        assert_eq!(found, own);
+        let question = either("Antigravity", &offered, &found, note);
+        let said: Vec<&str> = question
+            .choices
+            .iter()
+            .map(|(_, says)| says.as_str())
+            .collect();
+        for path in [&stored, &own] {
+            let shown = path.display().to_string();
+            assert!(
+                said.iter().any(|says| says.contains(&shown)),
+                "{shown} in {said:?}"
+            );
+        }
+    }
+
+    /// The user's own `agy`, chosen over crucible's release or found alone,
+    /// is written with no profile directory, and what the person is told of
+    /// it, before choosing it and of the instance afterwards, says whose
+    /// sign-in it uses; crucible's release keeps the directory beside the
+    /// user file.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_chooser_writes_an_own_agy_with_no_profile_directory_and_shows_the_note() {
+        let alone = Sample::new("accounts-antigravity-own");
+        let (_, steps) = own_agy(&alone);
+        let home = alone.home();
+        let trust = trusting(&alone, 2, &[antigravity_release("1.4.1")]);
+        let Running::One { executable, own } = would_run(&home, &ANTIGRAVITY, &trust, Some(&steps))
+        else {
+            panic!("only the own program is there");
+        };
+        let written = unwritten(&home, &ANTIGRAVITY, &executable, own).expect("an instance");
+        let both = Sample::new("accounts-antigravity-note");
+        let (stored, _) = stored_antigravity(&both);
+        let (found, beside) = own_agy(&both);
+        let stored_instance =
+            unwritten(&both.home(), &ANTIGRAVITY, &stored.to_string_lossy(), false)
+                .expect("an instance");
+        let note = own_note(beside.sandboxed());
+        let question = either("Antigravity", &stored, &found, Some(note));
+        let row = AgentRow::Built(&ANTIGRAVITY);
+
+        assert_eq!(written.profile(), None, "{written:?}");
+        assert!(
+            question.facts.iter().any(|fact| fact == note),
+            "{question:?}"
+        );
+        assert_eq!(noted(Some(&steps), &row, &written), Some(note));
+        assert_eq!(noted(Some(&beside), &row, &stored_instance), None);
+        let (signed_out, _) = signed_out(&written, &row, None, Some(note));
+        assert!(
+            signed_out.facts.iter().any(|fact| fact == note),
+            "{signed_out:?}"
+        );
+        let profile = both.home().join("agents").join("antigravity");
+        assert_eq!(
+            stored_instance.profile(),
+            Some(profile.to_string_lossy().as_ref())
+        );
+    }
+
+    /// The choice of the user's own program says what it is run with, which
+    /// holds with the sandbox on and off, and leaves whose sign-in it then
+    /// sees to the note beside it, which differs between the two.
+    #[test]
+    fn the_own_program_s_choice_holds_with_the_sandbox_on_and_off() {
+        let stored = Path::new("/home/programs/antigravity/1.4.1/agy_acp_server.par");
+        let own = Path::new("/usr/local/bin/agy");
+        for sandboxed in [false, true] {
+            let question = either("Antigravity", stored, own, Some(own_note(sandboxed)));
+
+            let says = question
+                .choices
+                .iter()
+                .find(|(name, _)| name == "Your own program")
+                .map(|(_, says)| says.as_str());
+
+            assert_eq!(
+                says,
+                Some(format!("Run {} with no profile of its own.", own.display()).as_str()),
+                "sandboxed: {sandboxed}"
+            );
+        }
+    }
+
+    /// Each answer to the question over both programs writes what its choice
+    /// says: crucible's release with the profile directory beside the user
+    /// file, the user's own program by its command with none, and going back
+    /// writes nothing.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn each_answer_over_both_programs_writes_the_instance_its_choice_names() {
+        let sample = Sample::new("accounts-antigravity-answered");
+        let (stored, _) = stored_antigravity(&sample);
+        let (own, _) = own_agy(&sample);
+        let home = sample.home();
+        let question = either("Antigravity", &stored, &own, None);
+        let profile = home.join("agents").join("antigravity");
+
+        let written: Vec<(&str, Option<Answered>)> = question
+            .choices
+            .iter()
+            .enumerate()
+            .map(|(answer, (name, _))| {
+                (
+                    name.as_str(),
+                    answered(&home, &ANTIGRAVITY, &stored, answer),
+                )
+            })
+            .collect();
+
+        let [
+            (release, Some(Answered::Written(release_instance))),
+            (mine, Some(Answered::Written(own_instance))),
+            (back, Some(Answered::Back)),
+        ] = written.as_slice()
+        else {
+            panic!("{written:?}");
+        };
+        assert_eq!(*release, "Crucible's release");
+        assert_eq!(release_instance.executable(), stored.to_string_lossy());
+        assert_eq!(
+            release_instance.profile(),
+            Some(profile.to_string_lossy().as_ref())
+        );
+        assert_eq!(*mine, "Your own program");
+        assert_eq!(
+            own_instance.executable(),
+            AgentRow::Built(&ANTIGRAVITY).command()
+        );
+        assert_eq!(own_instance.profile(), None, "{own_instance:?}");
+        assert_eq!(*back, "Go back");
+    }
 
     fn method(id: &str, name: &str) -> AuthMethod {
         AuthMethod {

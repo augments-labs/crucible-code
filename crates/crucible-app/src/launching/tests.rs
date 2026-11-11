@@ -35,6 +35,11 @@ use crate::backends::{ANTIGRAVITY, CatalogRow, Registry, Row};
 use crate::content_use::{Consent, Routes, Unstated};
 use crate::sample::Sample;
 
+mod antigravity;
+
+use antigravity::ANTIGRAVITY_REGISTRY;
+pub(crate) use antigravity::{antigravity_release, antigravity_steps};
+
 /// The plain protocol, held under Claude Code's route and shipped.
 static SHIPPED: [Row; 1] = [Row {
     driver: Driver::Claude,
@@ -1044,6 +1049,7 @@ async fn a_program_that_is_not_there_is_refused_with_how_to_install_it() {
     assert_eq!(
         refused.to_string(),
         "Not installed: no plain command on PATH and none at the configured executable. \
+         If it is installed under another name, set executable to its path or name. \
          Install Claude Code, then choose Check again."
     );
     assert_eq!(fake_peer::played(peer.parent().expect("a directory")), 0);
@@ -1240,10 +1246,10 @@ fn a_bare_name_is_found_on_path_and_an_absolute_one_where_it_is_written() {
     let peer = installed(&sample, &Script::of([]));
     let directory = peer.parent().expect("a directory").to_path_buf();
 
-    let by_name = discover("plain", |name| {
+    let by_name = discover("plain", &[], |name| {
         (name == "PATH").then(|| OsString::from(&directory))
     });
-    let written = discover(&peer.to_string_lossy(), |_| None);
+    let written = discover(&peer.to_string_lossy(), &[], |_| None);
     // A relative `PATH` element is a workspace's, and is never searched, even
     // where it names a peer's own directory from here. That peer is put beside
     // this test's executable, which a relative path can reach where a
@@ -1254,7 +1260,7 @@ fn a_bare_name_is_found_on_path_and_an_absolute_one_where_it_is_written() {
         fs::canonicalize(std::env::current_dir().expect("a working directory")).expect("resolved");
     let toward = relative(&here, &beside.0).expect("one root");
     assert!(toward.is_relative() && toward.join(near.file_name().expect("a name")).is_file());
-    let relative = discover("plain", |_| Some(OsString::from(&toward)));
+    let relative = discover("plain", &[], |_| Some(OsString::from(&toward)));
 
     assert!(matches!(by_name, Discovery::Found(found) if found.path() == peer));
     assert!(matches!(written, Discovery::Found(found) if found.path() == peer));
@@ -2285,309 +2291,6 @@ fn a_listed_file_with_another_hard_link_differs() {
     let (path, why) = differs(&package, &listing).expect("a difference");
     assert_eq!(path, "a");
     assert!(why.contains("link"), "{why}");
-}
-
-/// The built-in Antigravity row alone.
-static ANTIGRAVITY_ONLY: [Row; 1] = [ANTIGRAVITY];
-
-/// The registry holding it.
-static ANTIGRAVITY_REGISTRY: Registry = Registry::new(&ANTIGRAVITY_ONLY);
-
-/// The catalog's entry for `version` of Antigravity.
-fn antigravity_release(version: &str) -> serde_json::Value {
-    release_of(
-        "antigravity",
-        version,
-        (
-            &format!("https://dl.google.com/agy-extensions/releases/linux/agy-{version}.zip"),
-            &"a".repeat(64),
-            1000,
-        ),
-        [("agy_acp_server.par", 700), ("localharness_external", 300)],
-        &[],
-    )
-}
-
-/// What the fake peer says to Antigravity's status check once it is
-/// initialized as `version`: it initializes, then opens a session.
-fn antigravity_answering(version: &str) -> Reply {
-    Reply::new()
-        .hear(1)
-        .say(acp::initialized(
-            "antigravity-acp",
-            version,
-            "oauth-personal",
-        ))
-        .hear(1)
-        .say(acp::opened(1))
-}
-
-/// The status of the Antigravity the peer playing `script` is, as the steps of
-/// the registry holding its row read it, with the trust state `sample` holds.
-async fn antigravity_status(sample: &Sample, script: &Script) -> (Reading, usize) {
-    let here = sample.root().join("peer");
-    let program = fake_peer::install(&here, "antigravity", script).expect("the fake peer");
-    let consent = Consent::new(Routes::production());
-    consent.give("agent:antigravity");
-    let policy = conversation(sample);
-    let state = sample.state();
-    let sessions = sample.sessions();
-    let steps = Steps::new(
-        Launcher::new(
-            local(),
-            Handle::current(),
-            &policy,
-            &consent,
-            &state,
-            &sessions,
-        ),
-        Arc::new(SandboxEnablement::new(false, false)),
-        &ANTIGRAVITY_REGISTRY,
-        None,
-    );
-    let entry = ExternalAgent::unwritten(
-        "space",
-        Driver::Antigravity,
-        &program.to_string_lossy(),
-        None,
-        None,
-    )
-    .expect("an instance of a built-in driver");
-
-    let read = steps.account(&entry, Account::Status).await;
-
-    (read, fake_peer::played(&here))
-}
-
-/// The version the agent answers as is admitted when the trust state lists
-/// it, and is sent nothing more when it does not: a release the catalog
-/// reviewed since this build was made is run without a release of crucible.
-#[tokio::test(flavor = "multi_thread")]
-async fn antigravity_is_admitted_as_a_version_the_catalog_lists_and_no_other() {
-    let unlisted = Sample::new("launch-antigravity-unlisted");
-    let (refused, heard) = antigravity_status(
-        &unlisted,
-        &Script::of([antigravity_answering("1.4.1").hear_out()]),
-    )
-    .await;
-    let listed = Sample::new("launch-antigravity-listed");
-    trusting(&listed, 2, &[antigravity_release("1.4.1")]);
-    let (admitted, _) =
-        antigravity_status(&listed, &Script::of([antigravity_answering("1.4.1")])).await;
-    let snapshot = Sample::new("launch-antigravity-snapshot");
-    let (older, _) = antigravity_status(
-        &snapshot,
-        &Script::of([antigravity_answering(snapshot_version().unwrap_or("1.3.0"))]),
-    )
-    .await;
-
-    let Reading::Unreadable(failure) = refused else {
-        panic!("{refused:?}");
-    };
-    assert!(failure.reason().as_str().contains("1.4.1"), "{failure:?}");
-    assert_eq!(heard, 1, "nothing more was sent");
-    assert!(matches!(admitted, Reading::Signed(_)), "{admitted:?}");
-    if snapshot_version().is_some() {
-        assert!(matches!(older, Reading::Signed(_)), "{older:?}");
-    }
-}
-
-/// What a missing Antigravity is told to do is what the trust state offers:
-/// the command that installs the release, and where the state cannot be used,
-/// that it is to be repaired.
-#[test]
-fn a_missing_antigravity_is_told_what_the_trust_state_offers() {
-    let sample = Sample::new("launch-antigravity-missing");
-    let consent = Consent::new(Routes::production());
-    let route = Route::External {
-        serves: Serves::Provider("google"),
-        instance: "space".into(),
-        driver: Driver::Antigravity,
-        executable: "no-such-antigravity-program".into(),
-        profile: None,
-        model: None,
-        effort: None,
-        location: None,
-        enabled: true,
-    };
-    let registry = &ANTIGRAVITY_REGISTRY;
-    let missing = Agent::routed(&route, registry, |_| {
-        Some(OsString::from(sample.root().join("empty")))
-    })
-    .expect("a row");
-    let said = |trust: &Trust| match missing.program(&consent, trust) {
-        Err(Unlaunched::NotInstalled([_, next])) => next,
-        other => panic!("{other:?}"),
-    };
-
-    let offered = said(&trusting(&sample, 2, &[antigravity_release("1.4.1")]));
-    let file = trust_of(&sample).file();
-    std::fs::create_dir_all(file.parent().expect("a directory")).expect("a directory");
-    std::fs::write(&file, "not a trust state").expect("the file");
-    let unusable = said(&trust_of(&sample));
-
-    assert!(
-        offered.contains("crucible agents install antigravity"),
-        "{offered}"
-    );
-    assert!(
-        unusable.contains(&file.display().to_string()) && unusable.contains("Repair or remove"),
-        "{unusable}"
-    );
-}
-
-/// A run is admitted as the releases on offer when it is launched, not when
-/// its agent was selected: a catalog taken in since is the one it is held to.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_run_is_admitted_as_the_releases_on_offer_when_it_is_launched() {
-    let sample = Sample::new("launch-antigravity-fresh");
-    let consent = Consent::new(Routes::production());
-    let route = Route::External {
-        serves: Serves::Provider("google"),
-        instance: "space".into(),
-        driver: Driver::Antigravity,
-        executable: "antigravity".into(),
-        profile: None,
-        model: None,
-        effort: None,
-        location: None,
-        enabled: true,
-    };
-    let agent = Agent::routed(&route, &ANTIGRAVITY_REGISTRY, |_| None).expect("a row");
-    let policy = conversation(&sample);
-    let state = sample.state();
-    let sessions = sample.sessions();
-    let runs = Runs::new(
-        Launcher::new(
-            local(),
-            Handle::current(),
-            &policy,
-            &consent,
-            &state,
-            &sessions,
-        ),
-        Arc::new(SandboxEnablement::new(false, false)),
-        agent,
-        "space",
-        &Controls::default(),
-    );
-    let answers = |version: &str| {
-        let mut dialect = runs.dialect(Mode::Ask).expect("asking");
-        let _ = dialect.request(Shape {
-            workspace: Some(Path::new("/work")),
-            ..Shape::default()
-        });
-        let _ = dialect
-            .open(&TurnRequest::new(TurnId::FIRST, "hello"))
-            .expect("a first request");
-        let frame = acp::initialized("antigravity-acp", version, "oauth-personal");
-        dialect.heard(&frame).expect("an answer")
-    };
-
-    let before = answers("1.4.1");
-    trusting(&sample, 2, &[antigravity_release("1.4.1")]);
-    let after = answers("1.4.1");
-
-    assert!(matches!(before.as_slice(), [Act::Fail(_)]), "{before:?}");
-    assert!(matches!(after.as_slice(), [Act::Send(_)]), "{after:?}");
-}
-
-/// A start of an Antigravity whose trust state cannot be used says so, naming
-/// the file to repair or remove, rather than that no release is offered.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_found_antigravity_with_an_unusable_trust_state_is_refused_naming_the_file() {
-    let sample = Sample::new("launch-antigravity-untrusted");
-    let file = trust_of(&sample).file();
-    std::fs::create_dir_all(file.parent().expect("a directory")).expect("a directory");
-    std::fs::write(&file, "not a trust state").expect("the file");
-
-    let (read, heard) =
-        antigravity_status(&sample, &Script::of([antigravity_answering("1.3.0")])).await;
-
-    let Reading::Unreadable(failure) = read else {
-        panic!("{read:?}");
-    };
-    let said = failure.reason().as_str();
-    assert!(said.contains(&file.display().to_string()), "{said}");
-    assert!(said.contains("Repair or remove"), "{said}");
-    assert_eq!(heard, 0, "nothing was started");
-}
-
-/// The wire a run is made with follows the release its program is: the
-/// version directory it is kept in, not the newest one on offer.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_run_is_started_with_the_arguments_of_the_release_its_program_is() {
-    let sample = Sample::new("launch-antigravity-directory");
-    let release = |version: &str, args: &[&str]| {
-        release_of(
-            "antigravity",
-            version,
-            (
-                &format!("https://dl.google.com/agy-extensions/releases/linux/agy-{version}.zip"),
-                &"a".repeat(64),
-                1000,
-            ),
-            [("agy_acp_server.par", 700), ("localharness_external", 300)],
-            args,
-        )
-    };
-    trusting(
-        &sample,
-        2,
-        &[release("1.4.1", &["--new"]), release("1.3.0", &["--old"])],
-    );
-    let consent = Consent::new(Routes::production());
-    let policy = conversation(&sample);
-    let state = sample.state();
-    let sessions = sample.sessions();
-    let arguments = |version: &str| {
-        let program = sample
-            .root()
-            .join("programs/antigravity")
-            .join(version)
-            .join("agy_acp_server.par");
-        std::fs::create_dir_all(program.parent().expect("a directory")).expect("a directory");
-        std::fs::write(&program, "#!/bin/sh\n").expect("the program");
-        #[cfg(unix)]
-        std::fs::set_permissions(
-            &program,
-            std::os::unix::fs::PermissionsExt::from_mode(0o755),
-        )
-        .expect("executable");
-        let route = Route::External {
-            serves: Serves::Provider("google"),
-            instance: "space".into(),
-            driver: Driver::Antigravity,
-            executable: program.to_string_lossy().into(),
-            profile: None,
-            model: None,
-            effort: None,
-            location: None,
-            enabled: true,
-        };
-        let agent = Agent::routed(&route, &ANTIGRAVITY_REGISTRY, |_| None).expect("a row");
-        let runs = Runs::new(
-            Launcher::new(
-                local(),
-                Handle::current(),
-                &policy,
-                &consent,
-                &state,
-                &sessions,
-            ),
-            Arc::new(SandboxEnablement::new(false, false)),
-            agent,
-            "space",
-            &Controls::default(),
-        );
-        runs.dialect(Mode::Ask)
-            .expect("asking")
-            .request(Shape::default())
-            .arguments
-    };
-
-    assert_eq!(arguments("1.4.1"), ["--new"]);
-    assert_eq!(arguments("1.3.0"), ["--old"]);
 }
 
 /// A sandbox that keeps the network each start asked of it, and starts none.

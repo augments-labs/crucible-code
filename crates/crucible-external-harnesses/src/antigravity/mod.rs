@@ -1,5 +1,6 @@
-//! Google's Antigravity agent, spoken to over the Agent Client Protocol in a
-//! profile of its own.
+//! Google's Antigravity agent, spoken to over the Agent Client Protocol: a
+//! release crucible installs, run in a profile of its own, or the user's own
+//! program, run with no profile, so it looks in its usual home.
 //!
 //! [`Antigravity`] is the protocol's client run as a release the catalog
 //! reviewed: the entry keyed [`AGENT`], from the catalog most lately believed
@@ -8,8 +9,15 @@
 //! does. An agent that describes itself otherwise is sent nothing more. It is
 //! started with only the environment its profile builds, so no credential the
 //! shell holds for another use reaches it, and whether it is signed in is read
-//! from what the agent itself answers in that profile; a sign-in another Google
-//! product keeps is no evidence of its own.
+//! from what the agent itself answers in that profile. A profile crucible makes
+//! is never one another Google product shares.
+//!
+//! [`Antigravity::own`] is the client run as the user's own program instead,
+//! such as Google's `agy`, found under one of the [`COMMANDS`] or named by its
+//! path: it is admitted by what it answers, as [`Manifest::admits_own`] says,
+//! never by its name or version, and is given no profile unless the user
+//! names one, so it looks for its sign-in in its usual home, which the sandbox
+//! hides. [`own_note`] tells the user which sign-in that leaves it.
 //!
 //! It signs in by any of the four methods [`methods`] lists, the one asked
 //! for named by the user.
@@ -89,6 +97,22 @@ pub fn started(offered: Vec<OwnedPin>, program: Option<&std::path::Path>) -> Vec
     }
 }
 
+/// What the user is told of their own Antigravity program before it is
+/// chosen and wherever an instance runs one: whose sign-in it uses, given
+/// whether the sandbox is on.
+#[must_use]
+pub const fn own_note(sandboxed: bool) -> &'static str {
+    if sandboxed {
+        "Under the sandbox, your own Antigravity does not see the sign-in it keeps in \
+         ~/.gemini; the store release keeps a separate one. A business sign-in needs \
+         the store release or a profileDir you add."
+    } else {
+        "Your own Antigravity uses the sign-in it keeps in ~/.gemini, which another \
+         Google product may share; the store release keeps a separate one. A business \
+         sign-in needs the store release or a profileDir you add."
+    }
+}
+
 /// The command it is looked up as.
 const PROGRAM: &str = "antigravity";
 
@@ -104,6 +128,42 @@ const PROFILE: Profile = Profile {
 /// `offered`.
 fn admits(initialized: &Initialized, offered: &[Admits]) -> Result<(), Failure> {
     Manifest::REVIEWED.admits(initialized, offered)
+}
+
+/// The command names the agent is known under, in the order they are looked
+/// for: Google's command-line program, then the release's own name.
+pub const COMMANDS: &[&str] = &["agy", PROGRAM];
+
+/// The name, less its extension, of the file a release's program is
+/// unpacked as.
+const RELEASED_FILE: &str = "agy_acp_server";
+
+/// Whether the program at `program` is named as a release's program is, as
+/// its unpacked file or by the release's command, whatever extension the
+/// platform gives it: such a program is started with a release's arguments.
+#[must_use]
+pub fn named_as_release(program: &std::path::Path) -> bool {
+    program
+        .file_stem()
+        .is_some_and(|stem| stem == RELEASED_FILE || stem == PROGRAM)
+}
+
+/// The arguments the user's own program is started with, which serve the
+/// protocol from Google's command-line program.
+const OWN_ARGUMENTS: &[&str] = &["acp"];
+
+/// The protocol's client, as the user's own program is run.
+const OWN_PROFILE: Profile = Profile {
+    program: PROGRAM,
+    versions: Manifest::REVIEWED.protocols,
+    admits: admits_own,
+    sign_in: Manifest::REVIEWED.sign_in,
+};
+
+/// Whether the agent described as `initialized` holds what this client
+/// relies on, whatever release the catalog offers.
+fn admits_own(initialized: &Initialized, _offered: &[Admits]) -> Result<(), Failure> {
+    Manifest::REVIEWED.admits_own(initialized)
 }
 
 /// The Antigravity agent's wire.
@@ -131,6 +191,21 @@ impl Antigravity {
     #[must_use]
     pub fn allowing(allowing: Allowing, offered: &[OwnedPin]) -> Self {
         Self::new(Acp::allowing(PROFILE, allowing), offered)
+    }
+
+    /// The wire for the user's own program at `program`, its canonical path:
+    /// it is admitted by what it answers rather than as a release `offered`,
+    /// and is started with the single argument `acp`, unless its file is
+    /// named as a release's program is, when it is started as the newest
+    /// release `offered` is. With no profile it is given no home, so it looks
+    /// in its usual one; one the user names is its home, as for a release.
+    #[must_use]
+    pub fn own(program: &std::path::Path, allowing: Allowing, offered: &[OwnedPin]) -> Self {
+        let mut own = Self::new(Acp::allowing(OWN_PROFILE, allowing), offered);
+        if !named_as_release(program) {
+            own.args = OWN_ARGUMENTS.iter().map(ToString::to_string).collect();
+        }
+        own
     }
 
     /// `acp`, held to the releases `offered`.
