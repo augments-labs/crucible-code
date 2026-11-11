@@ -1827,15 +1827,15 @@
     {
       "id": "CASE-TRANSCRIPT-CHANGE-BOX-HEADER",
       "family": "transcript-blocks",
-      "obligation": "A change opens a box on each file's path and its added and removed counts, and closes it.",
+      "obligation": "A change opens a box on each file's path and, after a quiet dot, the words that say how many lines were added and removed, each count in its side's colour, and closes it.",
       "package": "crucible-tui-diff",
       "target": {
         "kind": "lib",
         "name": "crucible_tui_diff"
       },
-      "case": "tests::a_change_opens_with_its_path_and_counts_and_closes_its_box",
+      "case": "tests::a_change_opens_with_its_path_and_its_summary_and_closes_its_box",
       "source": "crates/crucible-tui-diff/src/tests.rs",
-      "body_sha256": "97e182c4f9d8c3956652ed550cccd413a5cb1cbd2bab0d02aa0d133d3b5a95b7",
+      "body_sha256": "ea3ca7bf1cc7cba3f39eb740385f8936d404c7013772b8682262dfb495b28e6f",
       "platforms": [
         "linux",
         "macos",
@@ -1871,7 +1871,7 @@
       },
       "case": "tests::lines_the_tool_never_kept_are_a_count_inside_the_box",
       "source": "crates/crucible-tui-diff/src/tests.rs",
-      "body_sha256": "24b73bbac471c874010c4e5665446ba774d1d2eb707c4551210960032d5e1a9f",
+      "body_sha256": "ca0c1233c5a7ef21143eae6f4077265b23104546dded9ad13f9bd5ab2fd7b420",
       "platforms": [
         "linux",
         "macos",
@@ -1881,15 +1881,87 @@
     {
       "id": "CASE-TRANSCRIPT-CHANGE-BOX-NO-PATH",
       "family": "transcript-blocks",
-      "obligation": "A change recorded without a path opens on its counts alone.",
+      "obligation": "A change recorded without a path, or with an empty one, opens on its summary alone, with no dot before it.",
       "package": "crucible-tui-diff",
       "target": {
         "kind": "lib",
         "name": "crucible_tui_diff"
       },
-      "case": "tests::a_change_with_no_path_opens_on_its_counts_alone",
+      "case": "tests::a_change_with_no_path_opens_on_its_summary_alone",
       "source": "crates/crucible-tui-diff/src/tests.rs",
-      "body_sha256": "8a9b5f3cecfd69bb37c3a90d1a95a5b6fe9457150a1822d234b67c15297c86f8",
+      "body_sha256": "2f70b9debe909c73dd1ede3a3a46bb970ee1a863f689a4ac15aadda59d8c978e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-BOX-SUMMARY-SIDES",
+      "family": "transcript-blocks",
+      "obligation": "A change's summary leaves out a side with no lines and says line for one, and a change that moved nothing has no summary.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_side_with_no_lines_is_left_out_of_the_summary",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "63b3e7e1a80c19a728f010f81f1911ee98d118cd17df10f1bcdcfc794b074c87",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-BOX-GROUND-UNBROKEN",
+      "family": "transcript-blocks",
+      "obligation": "Every cell of a changed row after the box's bar and the cell beside it carries its side's ground, the cell between the sign and the line among them.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::the_ground_of_a_changed_row_is_unbroken_from_its_number_to_its_edge",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "4babfbd1c4fbdcf3b98503b38c629b8bbe37589cd5ce411be5c74a0e1f23b295",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-BOX-GROUND-EDGE",
+      "family": "transcript-blocks",
+      "obligation": "A changed row ends one column short of its room whatever the length of its line, and a line longer than that is cut with the glyph set's ellipsis on its ground in the last cell the ground takes.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_changed_row_ends_one_column_short_of_the_room_whatever_its_length",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "165606787d300687bfb700e156b83cfae89c732670001040cff5d2b6422925cf",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-BOX-OFFER",
+      "family": "transcript-blocks",
+      "obligation": "A change whose call was cut offers the key that opens it two columns after its summary, in the slot that is quiet until the pointer is on it.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::draw::tests::a_change_whose_call_was_cut_offers_the_key_two_columns_after_its_summary",
+      "source": "src/cli/draw/tests.rs",
+      "body_sha256": "01783f74ee202f1227b37b3c992c5e2747a7a663563dbb4f8e2c9bd243584843",
       "platforms": [
         "linux",
         "macos",
