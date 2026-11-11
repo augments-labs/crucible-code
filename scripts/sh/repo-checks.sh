@@ -459,9 +459,10 @@ section "every vendor client is built where its hold was decided"
 # network, and only a disposable runner may run it without the sandbox; it also
 # runs a catalog agent's install script, under the hold its install asked for,
 # in a sandbox reaching only the hosts the entry's review named;
-# own_program.rs starts a program the user installed for its try, under the
-# same probe's hold and with the same one fixed `initialize`, never without
-# the sandbox and always with the network closed;
+# own_program.rs starts a program the user installed for its try, and again
+# at a launch whose program changed since that probe, before the launch starts
+# it, under the same probe's hold and with the same one fixed `initialize`,
+# never without the sandbox and always with the network closed;
 # conformance.rs launches the fake peer, which reaches no vendor, and compiles only under the proof feature; renewal.rs builds the
 # client sign-ins and renewals go through, handed the application's hold;
 # release.rs lends the client provider turns and web posts share only under a
