@@ -1064,15 +1064,17 @@ impl Agent {
     /// is judged by where its path leads as well as how it is written, and
     /// one that lies there in another agent's directory, or in none of its
     /// own versions, is refused rather than taken for the user's own. A
-    /// program outside the store is the user's own, and no release of the
-    /// catalog's. A version that holds a launcher is started through it or
-    /// not at all.
+    /// program outside the store is the user's own, [`Origin::Own`], and no
+    /// release of the catalog's. A release of an agent whose row needs a
+    /// profile directory is started only with one, while the user's own
+    /// program uses the sign-in its user already gave it. A version that
+    /// holds a launcher is started through it or not at all.
     ///
     /// # Errors
     ///
     /// As [`Agent::program`], else [`Unlaunched::Unstored`],
-    /// [`Unlaunched::Untrusted`], [`Unlaunched::Revoked`] or
-    /// [`Unlaunched::Launcher`].
+    /// [`Unlaunched::Unprofiled`], [`Unlaunched::Untrusted`],
+    /// [`Unlaunched::Revoked`] or [`Unlaunched::Launcher`].
     pub fn release(
         &self,
         consent: &Consent,
@@ -4838,6 +4840,20 @@ impl Steps {
         discover(executable, names, |name| {
             (name == "PATH").then(|| self.path.clone()).flatten()
         })
+    }
+
+    /// Where the program at `program` comes from, as the launch holds it:
+    /// in the install store beside the trust state every step reads, or
+    /// outside it.
+    #[must_use]
+    pub(crate) fn origin(&self, program: &Path) -> Origin {
+        Origin::of(&programs_beside(&self.state), program)
+    }
+
+    /// Whether the sandbox confines a step started now.
+    #[must_use]
+    pub(crate) fn sandboxed(&self) -> bool {
+        self.enablement.enabled()
     }
 
     /// The agent the session opened on `opened` goes on on, as [`reopening`]

@@ -563,18 +563,20 @@ install antigravity`](../reference/cli.md#agents-install-agent-version) asks on
 the terminal, then downloads the newest of them for your platform, checks it is
 that release and puts it under
 `programs/antigravity/` and its version in crucible's home. Where no entry
-names Antigravity, `/login` sets one up run as that release, unless an
-`antigravity` command is on your `PATH`, and where the release is not there yet
-it offers *Install*, which puts it in place as that command does, and says the
-command can be run instead, then *Check again* chosen. An entry you write
+names Antigravity, `/login` sets one up run as that release, unless your own
+program is on your `PATH` as `agy` or `antigravity`, when it sets one up run as
+that. Where both that release is installed and your own program is on your
+`PATH`, `/login` asks which to run, showing each one's path, and chooses
+neither for you. Where the release is not there yet and no program of your own
+is, it offers *Install*, which puts it in place as that command does, and says
+the command can be run instead, then *Check again* chosen. An entry you write
 yourself names its executable, `agy_acp_server.par`, or `agy_acp_server.exe` on
 Windows, with an absolute path. When the catalog offers a newer release, run
 the command again and change the entry's `executable` to the path it prints.
 The agent is admitted as, and started with the arguments of, the release whose
-version directory under `programs/antigravity/` its executable is in; a program
-kept anywhere else is admitted as any release on offer and started with the
-newest one's arguments. A release is downloaded only from a host its catalog
-target lists. A
+version directory under `programs/antigravity/` its executable is in. A
+program anywhere else in crucible's `programs/` directory is refused. A release
+is downloaded only from a host its catalog target lists. A
 release that calls itself another name, or a version the catalog does not
 offer, or no longer offers loading and resuming a session, signing out or its
 usual sign-in, is sent nothing more and refused with a sentence naming what
@@ -583,12 +585,32 @@ crucible's home cannot be read or used, no release is offered: `/login`, a start
 of the agent and the install command say so, naming the file, which you repair
 or remove.
 
+**Your own program.** Google's command-line `agy`, or any program outside
+crucible's `programs/` directory, is run as your own program. An entry whose
+`executable` is `antigravity` or `agy` is found as `agy` on your `PATH`, then
+as `antigravity`; one installed under another name is found when the entry's
+`executable` names it or its path. It is started as `agy acp`, except a program
+whose file is named `agy_acp_server.par` or `antigravity`, which is started as
+the newest release on offer is. It is admitted by what it answers, never by its
+name or version: protocol version 1, loading and resuming a session, signing
+out, and the `oauth-personal` sign-in; a program that lacks any of these is
+sent nothing more and refused naming what is missing. The name and version it
+gives are shown, or "did not say" where it gives none. Without a `profileDir`
+it is given no profile, so it uses the sign-in it keeps in `~/.gemini`, which
+another Google product may share; `/login` says so before you choose it and
+whenever it asks about such an entry. Under the sandbox it does not see that
+sign-in. A business sign-in through crucible needs the store release or a
+`profileDir` you add, which your own program is then started with as a release
+is.
+
 **Its model.** The agent chooses its own, and a `model` or an `effort` in its
 entry is refused, since nothing would read it.
 
-**Its profile.** `profileDir` is required: it is the directory the agent keeps
-its sign-in, files and unpacked runtime under, and its usual home is the one
-the Antigravity IDE signs in under. On macOS and Linux crucible makes it
+**Its profile.** `profileDir` is required for a release in crucible's
+`programs/` directory, and a start of one without it is refused naming the
+key: it is the directory the agent keeps its sign-in, files and unpacked
+runtime under, and its usual home is the one the Antigravity IDE signs in
+under. Your own program needs none (see above). On macOS and Linux crucible makes it
 private to you, readable by your user alone, each time the agent starts. The
 agent is started with an environment of its own: `PATH`, your home, user name,
 locale and time zone, and on Windows the variables that locate the system, and

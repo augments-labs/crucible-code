@@ -159,8 +159,8 @@ fn every_row_looks_for_each_of_its_command_names() {
         for name in &commands {
             let sample = Sample::new("backends-command-names");
             let here = sample.root().join("bin");
-            let peer = fake_peer::install(&here, name, &fake_peer::Script::of([]))
-                .expect("the fake peer");
+            let peer =
+                fake_peer::install(&here, name, &fake_peer::Script::of([])).expect("the fake peer");
             let route = Route::External {
                 serves: Serves::Provider("google"),
                 instance: "named".into(),

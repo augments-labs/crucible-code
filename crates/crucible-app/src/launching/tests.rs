@@ -2295,7 +2295,7 @@ static ANTIGRAVITY_ONLY: [Row; 1] = [ANTIGRAVITY];
 static ANTIGRAVITY_REGISTRY: Registry = Registry::new(&ANTIGRAVITY_ONLY);
 
 /// The catalog's entry for `version` of Antigravity.
-fn antigravity_release(version: &str) -> serde_json::Value {
+pub(crate) fn antigravity_release(version: &str) -> serde_json::Value {
     release_of(
         "antigravity",
         version,
@@ -2620,7 +2620,7 @@ async fn a_run_is_started_with_the_arguments_of_the_release_its_program_is() {
 
 /// The steps of the registry holding Antigravity's row alone, with a yes to
 /// Antigravity, each run unconfined and looking for programs on `path`.
-fn antigravity_steps(sample: &Sample, path: Option<OsString>) -> Steps {
+pub(crate) fn antigravity_steps(sample: &Sample, path: Option<OsString>) -> Steps {
     let consent = Consent::new(Routes::production());
     consent.give("agent:antigravity");
     let policy = conversation(sample);
@@ -2699,8 +2699,7 @@ async fn antigravity_is_found_as_agy_and_started_with_acp() {
 async fn own_antigravity_status(name: &str, reply: Reply) -> (Reading, usize) {
     let sample = Sample::new(name);
     let here = sample.root().join("bin");
-    let program =
-        fake_peer::install(&here, "agy", &Script::of([reply])).expect("the fake peer");
+    let program = fake_peer::install(&here, "agy", &Script::of([reply])).expect("the fake peer");
     let steps = antigravity_steps(&sample, None);
 
     let read = antigravity_read(&steps, &program.to_string_lossy(), None).await;
@@ -2733,7 +2732,9 @@ async fn an_antigravity_outside_the_store_is_admitted_by_what_it_answers() {
             .hear_out()
     };
     let mut no_logout = capabilities.clone();
-    no_logout["auth"] = serde_json::json!({});
+    if let Some(fields) = no_logout.as_object_mut() {
+        fields.insert("auth".to_owned(), serde_json::json!({}));
+    }
 
     let (admitted, _) = own_antigravity_status(
         "launch-own-admitted",
@@ -2751,8 +2752,11 @@ async fn an_antigravity_outside_the_store_is_admitted_by_what_it_answers() {
         ),
         (
             "logout",
-            own_antigravity_status("launch-own-logout", answered(1, &no_logout, "oauth-personal"))
-                .await,
+            own_antigravity_status(
+                "launch-own-logout",
+                answered(1, &no_logout, "oauth-personal"),
+            )
+            .await,
         ),
         (
             "protocol",
@@ -2796,9 +2800,11 @@ async fn a_claude_named_cc_is_launched() {
         &sessions,
     );
     let control = Control::new().expect("a control");
-    let named = Agent::routed(&route(Path::new("cc"), None), &crate::backends::REGISTRY, |name| {
-        (name == "PATH").then(|| OsString::from(&here))
-    })
+    let named = Agent::routed(
+        &route(Path::new("cc"), None),
+        &crate::backends::REGISTRY,
+        |name| (name == "PATH").then(|| OsString::from(&here)),
+    )
     .expect("Claude Code's row");
 
     let mut host = launcher
@@ -2828,15 +2834,10 @@ async fn a_claude_named_cc_is_launched() {
 async fn a_program_anywhere_in_the_store_is_not_own() {
     let sample = Sample::new("launch-origin");
     let programs = sample.home().join("programs");
-    let elsewhere = fake_peer::install(
-        &programs.join("claude/1.0.0"),
-        "agy",
-        &Script::of([]),
-    )
-    .expect("the fake peer");
-    let versionless =
-        fake_peer::install(&programs.join("antigravity"), "agy", &Script::of([]))
-            .expect("the fake peer");
+    let elsewhere = fake_peer::install(&programs.join("claude/1.0.0"), "agy", &Script::of([]))
+        .expect("the fake peer");
+    let versionless = fake_peer::install(&programs.join("antigravity"), "agy", &Script::of([]))
+        .expect("the fake peer");
     let own = fake_peer::install(&sample.root().join("peer"), "agy", &Script::of([]))
         .expect("the fake peer");
     let steps = antigravity_steps(&sample, None);
@@ -2881,12 +2882,17 @@ async fn a_store_antigravity_without_a_profile_is_refused_at_launch() {
     let refused = steps.refusal(&AgentRow::Built(&ANTIGRAVITY), &entry);
     let read = antigravity_read(&steps, &program.to_string_lossy(), None).await;
 
-    let said = refused.map(|refused| refused.to_string()).unwrap_or_default();
+    let said = refused
+        .map(|refused| refused.to_string())
+        .unwrap_or_default();
     assert!(said.contains(UNPROFILED), "{said}");
     let Reading::Unreadable(failure) = read else {
         panic!("{read:?}");
     };
-    assert!(failure.reason().as_str().contains(UNPROFILED), "{failure:?}");
+    assert!(
+        failure.reason().as_str().contains(UNPROFILED),
+        "{failure:?}"
+    );
     assert_eq!(fake_peer::played(&here), 0, "nothing was started");
 }
 

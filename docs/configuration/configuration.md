@@ -223,11 +223,11 @@ choosing that `providers.<name>.access.instance` uses. At most 32.
 | --- | --- |
 | `driver` | Which agent it is: `claude`, which reaches `anthropic`; `antigravity`, which reaches `google`; or `catalog`, an agent from the catalog or the ACP Registry, which `agent` names and which reaches no provider. Required. |
 | `agent` | For `catalog`, and required for it: the key the catalog or the ACP Registry offers the agent under, 1 to 32 lowercase letters, digits and hyphens. A driver's word, `native`, and a name Windows keeps for a device (`con`, `prn`, `aux`, `nul`, `com0` to `com9`, `lpt0` to `lpt9`) are never a key. Refused for any other driver. |
-| `executable` | Its program: an absolute path, or a bare name found on `PATH`. Required. |
+| `executable` | Its program: an absolute path, or a bare name found on `PATH`. Required. A name the agent is known by is looked for as each of them in turn: `antigravity` or `agy` as `agy`, then `antigravity`. For a program installed under another name, set this to that name or its path. |
 | `enabled` | `false` keeps the entry and sends it no new work; a provider whose `access` still names it is refused at start. Defaults to `true`. |
 | `authentication` | How it signs in: `account`, its own login, the only value. |
 | `configDir` | For `claude`: the absolute directory it keeps its sign-in under. |
-| `profileDir` | For `antigravity`: the same, and required, since its usual one is the Antigravity IDE's. For `catalog`: the same, but only for an agent whose catalog entry names the variable it reads its home from, which crucible sets to this directory; an entry that sets it keeps its sign-in there and, under the sandbox, may write that directory and none of the places the entry keeps the default sign-in in. For any other catalog agent it is refused when the agent is started, naming the entry and saying that agent offers no separate profile. |
+| `profileDir` | For `antigravity`: the same, since its usual one is the Antigravity IDE's. A release in crucible's `programs/` directory needs one, and its start without one is refused naming this key; your own `agy` or `antigravity` program uses the sign-in it already keeps without one. For `catalog`: the same, but only for an agent whose catalog entry names the variable it reads its home from, which crucible sets to this directory; an entry that sets it keeps its sign-in there and, under the sandbox, may write that directory and none of the places the entry keeps the default sign-in in. For any other catalog agent it is refused when the agent is started, naming the entry and saying that agent offers no separate profile. |
 | `model` | For `claude`: the model it is started on, such as `claude-opus-5-5`. Defaults to Anthropic's default model. |
 | `effort` | For `claude`: the rung it is started at, `low`, `medium`, `high`, `xhigh` or `max`. Defaults to the model's default rung. |
 | `cloudProject` | For `antigravity`: the Google Cloud project its business sign-in (`oauth-business`) is billed to, by its project ID: 6 to 30 lowercase letters, digits and hyphens, starting with a letter and not ending with a hyphen. |
@@ -241,6 +241,11 @@ neither; see [Antigravity](../providers/agents.md#antigravity).
 
 A profile key belongs to the drivers that read it, `configDir` to `claude` and
 `profileDir` to `antigravity` and `catalog`, and any other is refused by name.
+An `antigravity` entry without a `profileDir` is read, and refused only when a
+release in crucible's `programs/` directory is started for it. crucible v0.48.0
+to v0.50.0 refuse the whole configuration file while it holds such an entry, so
+before moving to one of those versions, remove the entry or give it a
+`profileDir`.
 Entries share a profile where they write its directory alike, so two that write
 one directory differently, with and without a trailing `/` or, where both
 directories exist, through a link, are refused, naming both; spell it the same

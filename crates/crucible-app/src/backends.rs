@@ -739,6 +739,21 @@ impl AgentRow {
         }
     }
 
+    /// What the user is told of their own program of its agent, one outside
+    /// crucible's install store, with the sandbox on as `sandboxed` says:
+    /// Antigravity's note on whose sign-in it uses, and nothing for every
+    /// other row, whose own program signs in as its release does.
+    #[must_use]
+    pub fn own_note(&self, sandboxed: bool) -> Option<&'static str> {
+        match self {
+            Self::Built(row) => match row.driver {
+                Driver::Antigravity => Some(antigravity::own_note(sandboxed)),
+                Driver::Claude | Driver::Catalog => None,
+            },
+            Self::Catalog(_) => None,
+        }
+    }
+
     /// Its wire for the user's own `program`, one that lies outside
     /// crucible's install store, fresh for a run in `mode`, as
     /// [`dialect`](Self::dialect) makes it for a release: for Antigravity,
