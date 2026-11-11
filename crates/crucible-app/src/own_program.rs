@@ -4,14 +4,15 @@
 //! An own program is no release crucible pinned or reviewed, so the directory
 //! it lies in is decided once, here, for the probe that admits it and for
 //! every launch alike. That directory is refused when the user's home it is
-//! judged against is no full path, when it is that home or the top of the
-//! file system, or when it is, lies within or contains a place no agent is
-//! made able to write; the one exception is a home search directory such as
-//! `~/.local/bin`, which may itself be read though it is listed as one, where
-//! no other such place lies there. A directory the sandbox already lets every
-//! program read gets no rule of its own, and any other is given read-only,
-//! never writable. Everything in that directory is readable to the agent
-//! while it runs.
+//! judged against is no full path or leads through a link that cannot be
+//! followed, when it is or contains that home, as written or where its links
+//! lead, or the top of the file system, or when it is, lies within or contains
+//! a place no agent is made able to write; the one exception is a home search
+//! directory such as `~/.local/bin`, which may itself be read though it is
+//! listed as one, where no other such place lies there. A directory the
+//! sandbox already lets every program read gets no rule of its own, and any
+//! other is given read-only, never writable. Everything in that directory is
+//! readable to the agent while it runs.
 //!
 //! [`probe`] is what admits one: started confined, with the network closed and
 //! never without the sandbox, it is sent `initialize` alone, and it is taken
@@ -68,7 +69,7 @@ use crate::backends::{AgentRow, CatalogRow, Sandboxing, Started, Unbelieved, Wir
 use crate::launching::discovery::{Origin, discover};
 use crate::launching::{
     Guarded, Overlap, PROBING, Reach, Sandbox, beneath, guarded, is_beneath, overlap, read_only,
-    unclosable,
+    resolved, unclosable,
 };
 use crate::probing::{Hearing, Kept, Unprobed, policy, recorded};
 
@@ -254,12 +255,12 @@ fn signing_in(row: &AgentRow, started: Started, platform: Platform) -> Told {
 
 /// What the sandbox is told of the directory `program`, a canonical path,
 /// lies in, for its probe and its launch alike: refused where `home` is no
-/// full path, or where that directory
-/// is `home`, contains it, is `/`, or is, lies within or contains a place no
-/// agent is made able to write, crucible's own home `crucible` and its session
-/// logs `sessions` among them, but for a home search directory against its
-/// own listing; no rule where the sandbox already reads it; else given
-/// read-only.
+/// full path or leads through a link that cannot be followed, or where that
+/// directory is `home`, as written or where its links lead, contains it, is
+/// `/`, or is, lies within or contains a place no agent is made able to write,
+/// crucible's own home `crucible` and its session logs `sessions` among them,
+/// but for a home search directory against its own listing; no rule where the
+/// sandbox already reads it; else given read-only.
 #[must_use]
 pub fn root(program: &Path, home: &Path, crucible: &Path, sessions: &Path) -> Root {
     decided(
@@ -290,6 +291,18 @@ pub(crate) fn decided(
             program.display()
         ));
     }
+    // The program's directory is judged where its links lead, so the home is
+    // judged both as written and where its links lead, as each guarded place
+    // is; one whose links cannot be followed leads nowhere it could be judged.
+    let Ok(real) = resolved(home) else {
+        return Root::Refused(format!(
+            "Your home, `{}`, leads through a link that cannot be followed, so no directory can \
+             be judged against it, and the directory of {} is not given to an agent.",
+            home.display(),
+            program.display()
+        ));
+    };
+    let homes = [home, real.as_path()];
     let Some(root) = program.parent().filter(|root| root.parent().is_some()) else {
         return Root::Refused(format!(
             "{} lies at the top of the file system, which holds every file on it, so its \
@@ -298,7 +311,10 @@ pub(crate) fn decided(
         ));
     };
     let shown = root.display();
-    if let Some(found @ (Overlap::Is | Overlap::Contains)) = overlap(root, home, Reach::Itself) {
+    if let Some(found) = homes.iter().find_map(|home| {
+        overlap(root, home, Reach::Itself)
+            .filter(|found| matches!(found, Overlap::Is | Overlap::Contains))
+    }) {
         return Root::Refused(format!(
             "{shown} {} your home, which holds every file you keep, so it is not given to an \
              agent.",
@@ -310,10 +326,11 @@ pub(crate) fn decided(
     }
     // A home search directory is excepted from its own listing alone, so
     // another guarded place kept exactly there still refuses it.
-    let searched = HOME_SEARCH
-        .iter()
-        .copied()
-        .find(|dir| overlap(root, &beneath(home, dir), Reach::Itself) == Some(Overlap::Is));
+    let searched = HOME_SEARCH.iter().copied().find(|dir| {
+        homes
+            .iter()
+            .any(|home| overlap(root, &beneath(home, dir), Reach::Itself) == Some(Overlap::Is))
+    });
     for place in guarded {
         let excepted = searched.is_some() && place.listed == searched;
         for at in &place.at {

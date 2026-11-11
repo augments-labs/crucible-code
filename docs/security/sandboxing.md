@@ -547,7 +547,9 @@ crucible's home or its session logs are kept in one. Your home
 here is your own, the one crucible itself was started with (`HOME`, or
 `USERPROFILE` on Windows), even where the agent's entry gives the program a
 home of its own; where crucible knows no home of yours, a program whose
-directory would be judged, or that is probed again, is not started. A directory
+directory would be judged, or that is probed again, is not started. Your home
+is judged both as written and where its links lead, and where it is not a full
+path or a link in it leads nowhere, no program's directory is given. A directory
 the sandbox already lets every program read, such as `/usr/bin`, gets no rule
 of its own, and any other is given read-only, never writable. The probe runs
 in an empty directory of its own, which is removed after.

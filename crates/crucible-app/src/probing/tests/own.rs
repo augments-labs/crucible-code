@@ -142,6 +142,112 @@ fn a_guarded_place_at_a_home_search_directory_is_refused() {
     assert!(why.contains("crucible's own home"), "{why}");
 }
 
+/// A home reached through a link, made in `sample`: the home as written, the
+/// directory it resolves to, and a directory outside both.
+#[cfg(unix)]
+fn linked_home(sample: &Sample) -> (PathBuf, PathBuf, PathBuf) {
+    let base = fs::canonicalize(sample.root()).expect("the sample's directory");
+    let real = base.join("real").join("someone");
+    fs::create_dir_all(&real).expect("the home it resolves to");
+    std::os::unix::fs::symlink(base.join("real"), base.join("linked")).expect("a linked home");
+    let outside = base.join("outside");
+    (base.join("linked").join("someone"), real, outside)
+}
+
+/// The directory of `program`, a canonical path, decided against `home` with
+/// crucible's home `crucible` and its session logs at `sessions`.
+#[cfg(unix)]
+fn decided_against(program: &Path, home: &Path, crucible: &Path, sessions: &Path) -> Root {
+    decided(
+        program,
+        home,
+        &guarded(home, crucible, sessions),
+        Platform::Other,
+        &[],
+    )
+}
+
+/// A program's directory is judged by where it resolves to, so a home reached
+/// through a link is judged where it resolves too: a root that is or contains
+/// it is refused as the user's home, not for a place that lies within it.
+#[cfg(unix)]
+#[test]
+fn a_root_at_a_linked_home_is_refused_as_the_home() {
+    let sample = Sample::new("own-linked-home");
+    let (home, real, outside) = linked_home(&sample);
+    let (crucible, sessions) = (outside.join("crucible"), outside.join("sessions"));
+
+    for (root, says) in [
+        (real.clone(), "is your home"),
+        (
+            real.parent().map(Path::to_path_buf).unwrap_or_default(),
+            "contains your home",
+        ),
+    ] {
+        let decided = decided_against(&root.join("agent"), &home, &crucible, &sessions);
+
+        let Root::Refused(why) = decided else {
+            panic!("{} was given: {decided:?}", root.display());
+        };
+        assert!(why.contains(says), "{why}");
+    }
+}
+
+/// A home search directory reached through a linked home is excepted as it is
+/// where the home is written, and still refused where crucible's home is kept
+/// there, by either spelling.
+#[cfg(unix)]
+#[test]
+fn a_home_search_directory_under_a_linked_home_is_excepted_from_its_listing_alone() {
+    let sample = Sample::new("own-linked-search");
+    let (home, real, outside) = linked_home(&sample);
+    let search = under(&real, &[".local", "bin"]);
+    let sessions = outside.join("sessions");
+
+    assert_eq!(
+        decided_against(
+            &search.join("agent"),
+            &home,
+            &outside.join("crucible"),
+            &sessions
+        ),
+        Root::Grant(search.clone())
+    );
+    for crucible in [under(&home, &[".local", "bin"]), search.clone()] {
+        let decided = decided_against(&search.join("agent"), &home, &crucible, &sessions);
+
+        let Root::Refused(why) = decided else {
+            panic!("{decided:?} with crucible's home at {}", crucible.display());
+        };
+        assert!(why.contains("crucible's own home"), "{why}");
+    }
+}
+
+/// A home whose links cannot be followed has nowhere it resolves to that a
+/// directory could be judged against, so every root is refused, naming it.
+#[cfg(unix)]
+#[test]
+fn a_root_judged_against_a_home_that_cannot_be_resolved_is_refused() {
+    let sample = Sample::new("own-unresolved-home");
+    let base = fs::canonicalize(sample.root()).expect("the sample's directory");
+    let home = base.join("dangling");
+    std::os::unix::fs::symlink(base.join("nowhere"), &home).expect("a link leading nowhere");
+    let tool = base.join("tool").join("bin");
+
+    let decided = decided_against(
+        &tool.join("agent"),
+        &home,
+        &base.join("crucible"),
+        &base.join("sessions"),
+    );
+
+    let Root::Refused(why) = decided else {
+        panic!("{decided:?}");
+    };
+    assert!(why.contains(&format!("`{}`", home.display())), "{why}");
+    assert!(why.contains("cannot be followed"), "{why}");
+}
+
 /// A home that is no full path, which no directory compares against, refuses
 /// every root, naming the home, rather than judging it against nothing.
 #[test]

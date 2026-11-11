@@ -2765,7 +2765,7 @@ impl Life<'_> {
 /// [`SandboxPolicyError::InvalidPath`] where a part of it exists and cannot be
 /// followed, as a link leading nowhere yet: what it leads to could be made
 /// later, under metadata a rule naming the link would not see.
-fn resolved(path: &Path) -> Result<PathBuf, SandboxPolicyError> {
+pub(crate) fn resolved(path: &Path) -> Result<PathBuf, SandboxPolicyError> {
     let mut missing = Vec::new();
     let mut existing = path;
     loop {
