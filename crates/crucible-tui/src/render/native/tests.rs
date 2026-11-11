@@ -2928,6 +2928,78 @@ fn a_native_answer_cut_anywhere_draws_the_alert_the_whole_answer_draws() {
     }
 }
 
+#[test]
+fn a_native_footnote_is_drawn_as_its_number_in_both_glyph_sets() {
+    // The rows kept natively leave out the blank one between the two.
+    let answer = "A claim[^1] here.\n\n[^1]: the note\n";
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &[answer]),
+        ["A claim¹ here.", "¹ the note"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Ascii, &[answer]),
+        ["A claim[1] here.", "[1] the note"]
+    );
+}
+
+#[test]
+fn a_native_key_and_sub_and_superscript_are_drawn_without_their_tags() {
+    let answer = "Press <kbd>Ctrl</kbd> for H<sub>2</sub>O and x<sup>2</sup>.\n";
+    assert_eq!(
+        kept_natively(60, Glyphs::Unicode, &[answer]),
+        ["Press Ctrl for H₂O and x²."]
+    );
+    assert_eq!(
+        kept_natively(60, Glyphs::Ascii, &[answer]),
+        ["Press [Ctrl] for H₂O and x²."]
+    );
+}
+
+#[test]
+fn a_native_line_break_tag_breaks_the_row_and_a_quote_keeps_its_bar_after_it() {
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["one<br>two\n"]),
+        ["one", "two"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["> one<br/>two\n"]),
+        ["│ one", "│ two"]
+    );
+}
+
+#[test]
+fn a_native_details_block_draws_its_summary_behind_a_mark_and_its_body_two_columns_in() {
+    let answer = "<details>\n<summary>Why it is</summary>\nthe body\n</details>\nafter\n";
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &[answer]),
+        ["▸ Why it is", "  the body", "after"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Ascii, &[answer]),
+        ["Details: Why it is", "  the body", "after"]
+    );
+}
+
+#[test]
+fn a_native_answer_cut_anywhere_draws_the_footnotes_and_tags_the_whole_answer_draws() {
+    let answer = "A claim[^1] with <kbd>Ctrl</kbd>, H<sub>2</sub>O<br>and x<sup>2</sup>.\n\n\
+                  <details><summary>Why</summary>\nthe body\n</details>\n\n[^1]: the note\n";
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let whole = kept_natively(40, glyphs, &[answer]);
+        assert!(
+            !whole
+                .iter()
+                .any(|row| row.contains('<') || row.contains("[^")),
+            "{glyphs:?} drew markup: {whole:#?}"
+        );
+
+        for cut in (1..answer.len()).filter(|cut| answer.is_char_boundary(*cut)) {
+            let rows = kept_natively(40, glyphs, &[&answer[..cut], &answer[cut..]]);
+            assert_eq!(rows, whole, "{glyphs:?} cut at {cut} of {answer:?}");
+        }
+    }
+}
+
 /// How many columns of blank stand in front of `row`'s first word.
 fn indent_of(row: &str) -> usize {
     row.len() - row.trim_start().len()
@@ -3235,6 +3307,58 @@ fn a_native_hostile_fence_label_reaches_the_terminal_as_nothing_but_its_name() {
 }
 
 #[test]
+fn a_native_hostile_tag_key_or_footnote_label_writes_no_escape_nor_a_tag_or_label_a_picture_cell() {
+    for answer in [
+        "<kbd\u{1b}]0;a title\u{7}>K</kbd> and <details \u{1b}_Gi=1;AAAA\u{1b}\\>\n",
+        "<kbd>&amp; \u{1b}]8;;https://example.invalid\u{1b}\\ \u{1b}_Gi=1;AAAA\u{1b}\\</kbd>\n",
+        "a[^\u{1b}]0;t\u{7}] and [^\u{1b}_Gi=1;AAAA\u{1b}\\]\n\n[^\u{1b}P1$r\u{1b}\\]: a note\n",
+        "H<sub>\u{1b}]0;t\u{7}</sub>O and x<sup>\u{8}2\u{85}</sup>\n",
+        concat!(
+            "<kbd \u{10eeee}\u{305}>K</kbd> a[^\u{10eeee}\u{305}x] H<sub \u{10eeee}\u{305}>2</sub>",
+            " <details \u{10eeee}\u{305}>\n\n[^\u{10eeee}\u{305}x]: n\n",
+        ),
+    ] {
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let window = Window::new(64, 12);
+            let mut render = native(&window);
+            render.images(crate::terminal::graphics::Capability::Graphics {
+                protocol: crate::terminal::graphics::Protocol::Kitty,
+                cell: crate::terminal::graphics::Cell {
+                    width: 9,
+                    height: 18,
+                },
+            });
+            render.draws(glyphs);
+            render.wears(colourful());
+            stands(&mut render);
+            render.stream(answer).unwrap();
+            render.settle().unwrap();
+            render.seal().unwrap();
+
+            let written = window.written();
+            for hostile in ["\u{1b}]", "\u{1b}P", "\u{1b}_", "\u{7}", "\u{8}", "\u{85}"] {
+                assert!(
+                    !written.contains(hostile),
+                    "{hostile:?} reached the terminal for {answer:?} with {glyphs:?}"
+                );
+            }
+            assert!(
+                !written.contains('\u{10eeee}'),
+                "a picture cell was placed for {answer:?} with {glyphs:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_native_entity_inside_a_key_is_drawn_as_written() {
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["<kbd>&amp; &lt;</kbd>\n"]),
+        ["&amp; &lt;"]
+    );
+}
+
+#[test]
 fn a_native_session_lists_the_drawn_blocks_newest_first_each_with_its_written_source() {
     let table = "| name | job |\n|---|---|\n| alpha | first |\n| beta | second |\n";
     let math = "$$\nx^2 + y^2\n$$\n";
@@ -3339,4 +3463,51 @@ fn a_native_underline_makes_only_the_last_line_of_a_paragraph_the_heading() {
         kept_natively(40, Glyphs::Unicode, &["first line\nsecond line\n===\n"]),
         ["first line", "second line", "━━━━━━━━━━━"]
     );
+}
+
+#[test]
+fn a_native_details_body_wider_than_the_window_is_two_columns_in_on_every_row() {
+    let wide = format!("<details><summary>Why</summary>\n{LONG_ITEM}\n</details>\nafter\n");
+    let broken =
+        format!("<details><summary>Why</summary>\nthe body<br>{LONG_ITEM}\n</details>\nafter\n");
+    for answer in [wide, broken] {
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            for rows in at_thirty_and_narrowed(glyphs, &answer) {
+                let body = rows
+                    .get(1..rows.len().saturating_sub(1))
+                    .unwrap_or_default();
+                assert!(body.len() > 2, "{glyphs:?} drew {rows:#?}");
+                for row in body {
+                    assert_eq!(indent_of(row), 2, "{glyphs:?} drew {row:?} in {rows:#?}");
+                }
+                assert_eq!(rows.last().map(String::as_str), Some("after"), "{rows:#?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_native_closing_details_tag_after_a_bare_table_is_no_row_of_it_whole_or_cut() {
+    let answer = "<details>\n<summary>S</summary>\n\na | b\n--|--\n1 | 2\n</details>\nafter\n";
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let whole = kept_natively(40, glyphs, &[answer]);
+        assert!(
+            whole.iter().all(|row| !row.contains("details")),
+            "{glyphs:?} drew {whole:#?}"
+        );
+        assert!(
+            whole.iter().any(|row| row.contains('2')),
+            "{glyphs:?} drew {whole:#?}"
+        );
+        assert_eq!(
+            whole.last().map(String::as_str),
+            Some("after"),
+            "{whole:#?}"
+        );
+
+        for cut in (1..answer.len()).filter(|cut| answer.is_char_boundary(*cut)) {
+            let rows = kept_natively(40, glyphs, &[&answer[..cut], &answer[cut..]]);
+            assert_eq!(rows, whole, "{glyphs:?} cut at {cut} of {answer:?}");
+        }
+    }
 }
