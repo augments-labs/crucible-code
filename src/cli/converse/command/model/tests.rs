@@ -755,9 +755,10 @@ fn a_window_with_no_shelf_lists_what_the_credential_serves_and_says_trains() {
 
 #[test]
 fn deepseek_shelf_rows_are_listed_by_the_version_behind_each_name() {
-    // `deepseek-flash` names no version, so its row names the one behind it.
-    // Every other model is listed by the name it is typed by, the ones with a
-    // product name of their own included.
+    // DeepSeek's pricing page names a dated release neither of its names
+    // carries, so its rows name that release. Every other model is listed by
+    // the name it is typed by, the ones with a product name of their own
+    // included.
     let providers = catalogue();
     let mut deepseek = Vec::new();
     for one in super::narrowing::every(&providers) {
