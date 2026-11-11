@@ -4267,10 +4267,23 @@ fn a_details_tag_draws_its_summary_bold_behind_a_quiet_mark_and_its_body_two_col
 }
 
 #[test]
-fn a_block_inside_details_stays_at_the_margin() {
-    let drawn = drawn_in(Glyphs::Ascii, "<details>\n```\ncode\n```\n</details>\n");
-    assert!(drawn.lines().all(|row| !row.starts_with(' ')), "{drawn:?}");
-    assert!(drawn.contains("code"), "{drawn:?}");
+fn a_list_quote_heading_table_fence_or_formula_inside_details_stays_at_the_margin() {
+    // The paragraph after each is set in, so the block is still open there.
+    for (block, word) in [
+        ("- item", "item"),
+        ("> quoted", "quoted"),
+        ("# Head", "Head"),
+        ("| a | b |\n| - | - |\n| 1 | 2 |", "1"),
+        ("```\ncode\n```", "code"),
+        ("$$\nx\n$$", "x"),
+    ] {
+        let answer = format!("<details>\n{block}\n\nbody\n</details>\n");
+        let drawn = drawn_in(Glyphs::Ascii, &answer);
+        let (body, rest): (Vec<&str>, Vec<&str>) = drawn.lines().partition(|row| *row == "  body");
+        assert_eq!(body, ["  body"], "{answer:?} drew {drawn:?}");
+        assert!(rest.iter().all(|row| !row.starts_with(' ')), "{drawn:?}");
+        assert!(rest.iter().any(|row| row.contains(word)), "{drawn:?}");
+    }
 }
 
 #[test]
