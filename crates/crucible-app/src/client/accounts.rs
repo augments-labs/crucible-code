@@ -2652,7 +2652,7 @@ mod tests {
             signed_out.facts.iter().any(|fact| fact == note),
             "{signed_out:?}"
         );
-        let profile = both.home().join("agents/antigravity");
+        let profile = both.home().join("agents").join("antigravity");
         assert_eq!(
             stored_instance.profile(),
             Some(profile.to_string_lossy().as_ref())
@@ -2694,7 +2694,7 @@ mod tests {
         let (own, _) = own_agy(&sample);
         let home = sample.home();
         let question = either("Antigravity", &stored, &own, None);
-        let profile = home.join("agents/antigravity");
+        let profile = home.join("agents").join("antigravity");
 
         let written: Vec<(&str, Option<Answered>)> = question
             .choices

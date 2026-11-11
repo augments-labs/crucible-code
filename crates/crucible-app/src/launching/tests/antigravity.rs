@@ -84,9 +84,13 @@ async fn stored_antigravity_status(
     version: &str,
     script: &Script,
 ) -> (Reading, usize) {
-    let here = sample.home().join("programs/antigravity").join(version);
+    let here = sample
+        .home()
+        .join("programs")
+        .join("antigravity")
+        .join(version);
     let program = fake_peer::install(&here, "agy_acp_server.par", script).expect("the fake peer");
-    let profile = sample.home().join("agents/space");
+    let profile = sample.home().join("agents").join("space");
     let steps = antigravity_steps(sample, None);
 
     let read = antigravity_read(&steps, &program.to_string_lossy(), Some(&profile)).await;
@@ -286,7 +290,8 @@ async fn a_run_is_started_with_the_arguments_of_the_release_its_program_is() {
     let arguments = |version: &str| {
         let program = sample
             .root()
-            .join("programs/antigravity")
+            .join("programs")
+            .join("antigravity")
             .join(version)
             .join("agy_acp_server.par");
         std::fs::create_dir_all(program.parent().expect("a directory")).expect("a directory");
@@ -573,15 +578,19 @@ async fn a_claude_named_cc_is_launched() {
 async fn a_program_anywhere_in_the_store_is_not_own() {
     let sample = Sample::new("launch-origin");
     let programs = sample.home().join("programs");
-    let elsewhere = fake_peer::install(&programs.join("claude/1.0.0"), "agy", &Script::of([]))
-        .expect("the fake peer");
+    let elsewhere = fake_peer::install(
+        &programs.join("claude").join("1.0.0"),
+        "agy",
+        &Script::of([]),
+    )
+    .expect("the fake peer");
     let versionless = fake_peer::install(&programs.join("antigravity"), "agy", &Script::of([]))
         .expect("the fake peer");
     let own = fake_peer::install(&sample.root().join("peer"), "agy", &Script::of([]))
         .expect("the fake peer");
     let steps = antigravity_steps(&sample, None);
     let row = AgentRow::Built(&ANTIGRAVITY);
-    let profile = sample.home().join("agents/space");
+    let profile = sample.home().join("agents").join("space");
 
     assert_eq!(Origin::of(&programs, &elsewhere), Origin::Stored);
     assert_eq!(Origin::of(&programs, &versionless), Origin::Stored);
@@ -751,7 +760,11 @@ const UNPROFILED: &str = "keeps its sign-in in a profile directory of its own, s
 async fn a_store_antigravity_without_a_profile_is_refused_at_launch() {
     let sample = Sample::new("launch-antigravity-unprofiled");
     let version = snapshot_version().unwrap_or("1.3.0");
-    let here = sample.home().join("programs/antigravity").join(version);
+    let here = sample
+        .home()
+        .join("programs")
+        .join("antigravity")
+        .join(version);
     let program = fake_peer::install(
         &here,
         "agy_acp_server.par",
@@ -807,7 +820,7 @@ async fn an_own_agy_given_a_profile_directory_by_hand_gets_gemini_home() {
     let sample = Sample::new("launch-own-profiled");
     let program = fake_peer::install(&sample.root().join("bin"), "agy", &Script::of([]))
         .expect("the fake peer");
-    let profile = sample.home().join("agents/mine");
+    let profile = sample.home().join("agents").join("mine");
     let route = Route::External {
         serves: Serves::Provider("google"),
         instance: "space".into(),
