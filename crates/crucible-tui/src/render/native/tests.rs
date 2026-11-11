@@ -3842,3 +3842,134 @@ fn a_native_held_phrase_is_told_of_in_the_foot_and_joins_the_scrollback_once_set
         );
     }
 }
+
+// A fence drawn by the drawers the renderer was handed. The drawer and the
+// hostile fences are the full screen's, so both modes are held to one input.
+
+/// The rows `answer` comes to natively in `glyphs` in a window `columns`
+/// wide, with `drawers` handed to the renderer, and everything written.
+fn drawn_natively(
+    glyphs: Glyphs,
+    columns: usize,
+    answer: &str,
+    drawers: Option<crate::drawing::Drawers>,
+    resized: Option<usize>,
+) -> (Vec<String>, String) {
+    let window = Window::new(columns, 40);
+    let mut render = native(&window);
+    render.draws(glyphs);
+    render.wears(colourful().addressing(true));
+    if let Some(drawers) = drawers {
+        render.drawers(drawers);
+    }
+    stands(&mut render);
+    render.stream(answer).unwrap();
+    render.settle().unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+    if let Some(columns) = resized {
+        settles_at(&window, &mut render, columns, 40);
+    }
+    let (boxed, _) = boxed();
+    let boxed: Vec<String> = boxed.iter().map(Row::text).collect();
+    let rows = window
+        .all()
+        .into_iter()
+        .filter(|row| !row.trim().is_empty() && !boxed.contains(row))
+        .map(|row| row.trim_end().to_owned())
+        .collect();
+    (rows, window.written())
+}
+
+/// An answer with a change in a fence between two lines of prose.
+const CHANGE_FENCED: &str =
+    "Before.\n\n```diff\n--- a/x.rs\n+++ b/x.rs\n@@ -1 +1 @@\n-old\n+new\n```\n\nAfter.\n";
+
+#[test]
+fn a_native_fence_of_an_answer_is_drawn_by_the_drawer_the_renderer_was_handed() {
+    use super::super::tests::drawers::echoing;
+
+    for (glyphs, mark) in [(Glyphs::Unicode, "»"), (Glyphs::Ascii, ">")] {
+        let (rows, _) = drawn_natively(glyphs, 64, CHANGE_FENCED, Some(echoing()), None);
+        assert_eq!(
+            rows,
+            [
+                "Before.".to_owned(),
+                format!("{mark} --- a/x.rs"),
+                format!("{mark} +++ b/x.rs"),
+                format!("{mark} @@ -1 +1 @@"),
+                format!("{mark} -old"),
+                format!("{mark} +new"),
+                "After.".to_owned(),
+            ],
+            "{glyphs:?}"
+        );
+    }
+}
+
+#[test]
+fn a_native_renderer_handed_no_drawer_draws_a_fence_exactly_as_it_was_written() {
+    let (untold, written) = drawn_natively(Glyphs::Unicode, 64, CHANGE_FENCED, None, None);
+    assert_eq!(
+        untold,
+        [
+            "Before.",
+            "┌─ diff",
+            "│ --- a/x.rs",
+            "│ +++ b/x.rs",
+            "│ @@ -1 +1 @@",
+            "│ -old",
+            "│ +new",
+            "└─",
+            "After.",
+        ]
+    );
+
+    // Handed a registry with nothing in it, it writes the same bytes.
+    let empty = Some(crate::drawing::Drawers::default());
+    let (rows, same) = drawn_natively(Glyphs::Unicode, 64, CHANGE_FENCED, empty, None);
+    assert_eq!(rows, untold);
+    assert_eq!(same, written);
+}
+
+#[test]
+fn a_native_drawn_fence_narrowed_is_the_fence_a_window_that_narrow_draws() {
+    use super::super::tests::drawers::echoing;
+
+    let answer = "```diff\n+a line a good deal longer than the narrow window is wide\n```\n";
+    let (fresh, _) = drawn_natively(Glyphs::Unicode, 24, answer, Some(echoing()), None);
+    let (narrowed, _) = drawn_natively(Glyphs::Unicode, 70, answer, Some(echoing()), Some(24));
+
+    // The room is the window's less the column the rail is spared.
+    assert_eq!(fresh, ["» +a line a good deal lo"]);
+    assert_eq!(narrowed, fresh);
+}
+
+#[test]
+fn a_native_hostile_path_or_line_in_a_drawn_fence_writes_no_escape() {
+    use super::super::tests::drawers::{HOSTILE_FENCES, OBEYED, echoing};
+
+    for answer in HOSTILE_FENCES {
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let (rows, written) = drawn_natively(glyphs, 64, answer, Some(echoing()), None);
+
+            // The drawer drew it, so what it was handed is what is on screen.
+            assert!(
+                rows.iter().any(|row| row.contains("@@ -1")),
+                "{answer:?} with {glyphs:?}: {rows:#?}"
+            );
+            assert!(
+                !rows
+                    .iter()
+                    .any(|row| row.contains("diff") || row.contains("patch")),
+                "{answer:?} with {glyphs:?}: {rows:#?}"
+            );
+            for hostile in OBEYED {
+                assert!(
+                    !written.contains(hostile),
+                    "{hostile:?} reached the terminal for {answer:?} with {glyphs:?}"
+                );
+            }
+        }
+    }
+}

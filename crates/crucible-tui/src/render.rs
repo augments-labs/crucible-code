@@ -39,6 +39,7 @@
 use crate::bands::{Bands, Wants};
 use crate::clipboard;
 use crate::color::{Palette, Slot, Theme};
+use crate::drawing::Drawers;
 use crate::escape::Escapes;
 use crate::files::Files;
 use crate::forge::Forge;
@@ -1242,6 +1243,16 @@ impl<T: Terminal> Renderer<T> {
     /// hands a path on as it was written.
     pub fn reads_paths(&mut self, files: Option<Files>) {
         self.record.links_mut().files = files;
+        self.markdown = self.reader();
+    }
+
+    /// Hands this renderer the drawers a closed fence of an answer is drawn
+    /// by, each asked for the fences whose name it takes.
+    ///
+    /// Said once, at startup, for the reason [`Renderer::counts`] is. A
+    /// renderer handed none draws every fence as it was written.
+    pub fn drawers(&mut self, drawers: Drawers) {
+        self.record.draws_with(drawers);
         self.markdown = self.reader();
     }
 
@@ -2797,7 +2808,8 @@ impl<T: Terminal> Taking<'_, T> {
         if let Some(out) = &mut self.out {
             out.write(self.unwritten)?;
             self.unwritten.clear();
-            for row in markdown::lay(&block, self.columns, self.glyphs, self.record.links()) {
+            let (links, drawers) = (self.record.links(), self.record.drawers());
+            for row in markdown::lay(&block, self.columns, self.glyphs, links, drawers) {
                 out.write(&row.text())?;
                 out.write("\n")?;
             }

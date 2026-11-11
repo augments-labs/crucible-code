@@ -162,6 +162,7 @@ use std::rc::Rc;
 
 use crate::chrome::{self, Frame, Label, Undrawn};
 use crate::color::Slot;
+use crate::drawing::{Drawers, Room};
 use crate::escape::Escapes;
 use crate::files::Files;
 use crate::forge::{DIGITS, Forge, named};
@@ -169,6 +170,7 @@ use crate::glyphs::Glyphs;
 use crate::row::Row;
 use crate::width;
 
+mod drawn;
 mod escapes;
 mod kind;
 mod links;
@@ -516,14 +518,25 @@ pub(crate) struct Links {
 /// `block` laid out as the lines it draws `room` columns wide, in `glyphs`.
 ///
 /// What the record keeps a block as, and what it lays it out with again at
-/// every width and glyph set it is asked for.
+/// every width and glyph set it is asked for. A closed fence a drawer in
+/// `drawers` takes is the rows that drawer lays out: see [`drawn`].
 ///
 /// Lines rather than rows: one put back as it was written can be wider than
 /// the room, and is folded where it is drawn, as streamed text is.
 #[must_use]
-pub(crate) fn lay(block: &Block, room: usize, glyphs: Glyphs, links: &Links) -> Vec<Row> {
+pub(crate) fn lay(
+    block: &Block,
+    room: usize,
+    glyphs: Glyphs,
+    links: &Links,
+    drawers: &Drawers,
+) -> Vec<Row> {
+    let refusal = match drawn::asked(block, room, glyphs, drawers) {
+        drawn::Asked::Drawn(rows) => return rows,
+        drawn::Asked::Written(refusal) => refusal,
+    };
     let mut rows = vec![Row::new()];
-    tell(block, room, glyphs, links, &mut |slot, text, link| {
+    let mut put = |slot: Slot, text: &str, link: Option<&str>| {
         let mut pieces = text.split('\n');
         if let Some(piece) = pieces.next() {
             push(&mut rows, slot, piece, link);
@@ -532,7 +545,12 @@ pub(crate) fn lay(block: &Block, room: usize, glyphs: Glyphs, links: &Links) -> 
             rows.push(Row::new());
             push(&mut rows, slot, piece, link);
         }
-    });
+    };
+    let room = Room {
+        columns: room,
+        glyphs,
+    };
+    told_undrawn(block, room, links, refusal, &mut put);
 
     // The break that ends the last line ends the block, and is no row of it.
     if rows.last().is_some_and(Row::is_empty) {
@@ -544,16 +562,36 @@ pub(crate) fn lay(block: &Block, room: usize, glyphs: Glyphs, links: &Links) -> 
 /// `block` as the runs [`lay`] makes its lines of, each with where it links,
 /// handed to `put` in order, a line's end as a break in the text.
 ///
+/// Runs rather than lines for a page printed once, which keeps each address
+/// beside its words as a run streamed past it would.
+pub(crate) fn tell(
+    block: &Block,
+    room: Room,
+    links: &Links,
+    drawers: &Drawers,
+    put: &mut dyn FnMut(Slot, &str, Option<&str>),
+) {
+    match drawn::asked(block, room.columns, room.glyphs, drawers) {
+        drawn::Asked::Drawn(rows) => drawn::told(&rows, put),
+        drawn::Asked::Written(refusal) => told_undrawn(block, room, links, refusal, put),
+    }
+}
+
+/// The runs of a block no drawer drew, with `refusal` on the frame of a fence
+/// a drawer declined for a reason worth saying.
+///
 /// A table is drawn against the room, or put back as it was written where it
 /// cannot be; a rule is drawn across the room; anything else is read again by
 /// a reader that holds nothing and links by `links`, so it is shown the way it
-/// would have streamed. Runs rather than lines for a page printed once, which
-/// keeps each address beside its words as a run streamed past it would.
-pub(crate) fn tell(
+/// would have streamed.
+fn told_undrawn(
     block: &Block,
-    room: usize,
-    glyphs: Glyphs,
+    Room {
+        columns: room,
+        glyphs,
+    }: Room,
     links: &Links,
+    refusal: Option<Undrawn>,
     put: &mut dyn FnMut(Slot, &str, Option<&str>),
 ) {
     match block.kind {
@@ -590,7 +628,8 @@ pub(crate) fn tell(
             let mut markdown = Markdown::new(glyphs)
                 .linking(links)
                 .as_written()
-                .unescaped();
+                .unescaped()
+                .refusing(refusal);
             let mut said = |said: Said<'_>| {
                 if let Said::Run { slot, text, link } = said {
                     put(slot, text, link);
@@ -4905,7 +4944,11 @@ fn written(held: HeldMarks) -> &'static str {
 
 /// The answers every drawing of an answer is compared with, and the line a
 /// case watching them waits for.
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "a drawer crate's tests read the answers alone")
+)]
 pub(crate) mod corpus;
 #[cfg(test)]
 pub(crate) mod corpus_pictures;

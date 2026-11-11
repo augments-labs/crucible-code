@@ -9,6 +9,7 @@
 use std::fmt::Write as _;
 
 use crate::color::Slot;
+use crate::drawing::{Drawers, Room};
 use crate::forge::Forge;
 use crate::glyphs::Glyphs;
 use crate::markdown::{self, Links, Markdown, Said};
@@ -365,6 +366,8 @@ fn read(segment: &str, room: usize, glyphs: Glyphs, forge: Option<&Forge>, rows:
         forge: forge.cloned(),
         files: None,
     };
+    // The page is handed no drawer, so a fence on it stays as it was written.
+    let drawers = Drawers::default();
     let mut said = |said: Said<'_>| match said {
         Said::Run { slot, text, link } => put(&mut lines, slot, text, link),
         // A page printed once is read, never dragged across.
@@ -373,12 +376,21 @@ fn read(segment: &str, room: usize, glyphs: Glyphs, forge: Option<&Forge>, rows:
         Said::Shortened(_) => {}
         Said::Block(block) => {
             let mut open = false;
-            markdown::tell(&block, room, glyphs, &linking, &mut |slot, text, link| {
-                if let Some(last) = text.chars().last() {
-                    open = last != '\n';
-                }
-                put(&mut lines, slot, text, link);
-            });
+            markdown::tell(
+                &block,
+                Room {
+                    columns: room,
+                    glyphs,
+                },
+                &linking,
+                &drawers,
+                &mut |slot, text, link| {
+                    if let Some(last) = text.chars().last() {
+                        open = last != '\n';
+                    }
+                    put(&mut lines, slot, text, link);
+                },
+            );
             if open {
                 put(&mut lines, Slot::Plain, "\n", None);
             }

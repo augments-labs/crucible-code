@@ -3712,6 +3712,7 @@ fn a_rule_narrowed_is_still_one_row() {
     );
 }
 
+pub(super) mod drawers;
 mod escapes;
 mod headings;
 mod links;

@@ -610,7 +610,7 @@ fn celled(written: &str, forge: Option<Forge>) -> String {
         closed: true,
     };
     let links = Links { forge, files: None };
-    lay(&block, ROOM, Glyphs::Unicode, &links)
+    lay(&block, ROOM, Glyphs::Unicode, &links, &Drawers::default())
         .last()
         .map(|row| row.text().trim_end().to_owned())
         .unwrap_or_default()
