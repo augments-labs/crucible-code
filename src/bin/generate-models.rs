@@ -1471,6 +1471,34 @@ mod tests {
     }
 
     #[test]
+    fn the_generator_s_list_and_the_registry_name_the_same_models() {
+        // The registry is held to the checked-in table, and the table is
+        // written from this list only when somebody runs the generator, so a
+        // row dropped from the list, or one added for a provider the registry
+        // lacks, passes every other test until the next refresh. Two sources
+        // of one fact, held to one answer here, whatever key the database
+        // spells each model with.
+        let providers = crucible_app::providers::providers()
+            .expect("the built-in providers register")
+            .snapshot();
+        let offered: BTreeSet<(&str, &str)> = crucible_app::providers::offered(&providers)
+            .flat_map(|one| one.models.iter().map(move |model| (one.name, model.name)))
+            .collect();
+        let listed: BTreeSet<(&str, &str)> = OFFERED
+            .iter()
+            .map(|(provider, model, ..)| (*provider, *model))
+            .collect();
+
+        let unlisted: Vec<_> = offered.difference(&listed).collect();
+        let unoffered: Vec<_> = listed.difference(&offered).collect();
+        assert!(
+            unlisted.is_empty() && unoffered.is_empty(),
+            "offered by the registry and missing from the list: {unlisted:?}; \
+             listed and offered by nobody: {unoffered:?}"
+        );
+    }
+
+    #[test]
     fn every_rung_difference_kept_is_on_a_model_offered_and_says_why() {
         for (provider, key, why) in KEPT {
             assert!(
