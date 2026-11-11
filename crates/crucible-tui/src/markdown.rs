@@ -109,13 +109,13 @@
 //! The definition line is held to its end, as a link's words are, and is read
 //! as the line it is where it turns out to be none, where it has a title, an
 //! address in angle brackets or one written without a scheme, where it runs
-//! past [`MOST`], and where it is the one past [`DEFINITION_CAP`] definitions
-//! or [`DEFINITION_BYTES`] bytes of them. Definitions and references are read
+//! past `MOST`, and where it is the one past `DEFINITION_CAP` definitions
+//! or `DEFINITION_BYTES` bytes of them. Definitions and references are read
 //! where footnotes are, and shown as written everywhere those are.
 //!
 //! An address in angle brackets, `<https://…>`, `<http://…>` or `<name@host>`,
 //! is drawn without its brackets as a link to the address without them, an
-//! e-mail address as a `mailto:` one; one that runs past [`MOST`], holds a
+//! e-mail address as a `mailto:` one; one that runs past `MOST`, holds a
 //! blank or a control character, or stands in code, a key or sub or
 //! superscript, is shown as written. A word written as `www.` and a host, after
 //! a space, an opening bracket or a mark of emphasis, is a link to the `https://`
