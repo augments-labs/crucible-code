@@ -13,7 +13,7 @@ holds each one back and draws it whole once it closes:
 
 | Block | Opens with | Closes with |
 | --- | --- | --- |
-| Table | a line starting with `\|`, followed by a delimiter row such as `\| --- \| ---: \|`; or a line of two or more cells separated by `\|` with no outer bars, followed by a delimiter row such as `--\|--` with as many cells | the first line that does not start with `\|`; or, for one without outer bars, the first blank line |
+| Table | a line starting with `\|`, followed by a delimiter row such as `\| --- \| ---: \|`; or a line of two or more cells separated by `\|` with no outer bars, followed by a delimiter row such as `--\|--` with as many cells | the first line that does not start with `\|`; or, for one without outer bars, the first blank line, or inside `<details>` a line of nothing but `</details>` written at the left edge |
 | Display math | `$$`, `\[` or `\begin{…}` of an equation environment at the start of a line, or a fence named `math`, `latex`, `tex` or `katex` | the line its closing marker is on |
 | Mermaid diagram | a fence named `mermaid` | the fence closing |
 | Diff | a fence named `diff` or `patch` | the fence closing |
@@ -232,8 +232,9 @@ closing tag is not on its line. A summary's words are bold behind the mark. A
 paragraph inside `<details>` is drawn two columns in, on every row it wraps
 onto, until the first `</details>` or the end of the answer; a list, quote,
 heading, table, code block or display formula inside it is drawn where it
-would be without it. A line of nothing but `</details>` ends a table written
-without outer bars inside the block, and is never one of its rows.
+would be without it. A line of nothing but `</details>`, written at the left
+edge, ends a table written without outer bars inside the block, and is never
+one of its rows.
 
 A line written at the left edge that holds nothing but `<details>` and closing
 tags, such as `</details>` or `</summary>`, draws no row. A line
@@ -258,10 +259,11 @@ Some text is drawn exactly as the model wrote it, rather than as a block:
 - **A table without its outer bars.** A line such as `name | since` over a
   delimiter row such as `--|--` with the same number of cells is a table. Its
   rows are the lines after them up to the first blank line, or inside
-  `<details>` a line of nothing but `</details>`, so a table written this way
-  needs a blank line before whatever follows it. A delimiter row with
-  another number of cells, a lone `---`, or a line that only looks like a
-  delimiter row in the middle of prose leaves both lines as prose. Nothing
+  `<details>` a line of nothing but `</details>` written at the left edge, so
+  a table written this way needs a blank line before whatever follows it. A
+  delimiter row with another number of cells, a lone `---`, or a line that
+  only looks like a delimiter row in the middle of prose leaves both lines as
+  prose. Nothing
   marks the first line as a header until the delimiter row has arrived, so
   every line is shown as it arrives, as the prose it may be, and is replaced by
   the table once the delimiter row has. Only the line break after a line, and

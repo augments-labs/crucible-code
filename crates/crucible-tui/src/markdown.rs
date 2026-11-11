@@ -117,8 +117,9 @@
 //! characters has one, and as its plain text where one does not or the run
 //! passes its cap or its line. A tag is read away, and a line written at the
 //! margin that holds nothing but `<details>` and closing tags draws no row.
-//! Inside a `<details>` block, a line of nothing but `</details>` ends a table
-//! written without outer bars and is no row of it.
+//! Inside a `<details>` block, a line written at the margin that holds nothing
+//! but `</details>` ends a table written without outer bars and is no row of
+//! it.
 //!
 //! On the way out, each settled run is told by the kind of thing it is, which
 //! is what a design colours: a span of code that names a file is a path, and a
@@ -197,8 +198,9 @@ pub(crate) const DIFF_CAP: usize = 16 * 1024;
 ///
 /// A label is remembered from the first time it is written, as a reference or
 /// as a definition, in any letter case, so a definition written after its
-/// reference is tied to the number the reference was drawn with. Past this many labels, a reference
-/// and a definition with a label not yet numbered are shown as written.
+/// reference is tied to the number the reference was drawn with. Past this
+/// many labels, a reference and a definition with a label not yet numbered
+/// are shown as written.
 pub(crate) const FOOTNOTE_CAP: usize = 64;
 
 /// The most characters a footnote's label is written with, after its `^`.
