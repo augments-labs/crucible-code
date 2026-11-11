@@ -57,6 +57,8 @@ PLATFORM = {"linux": "linux", "darwin": "macos", "win32": "windows"}.get(
 
 DOCTEST = re.compile(r"^(?P<source>.+?) - (?P<case>\S+) \(line (?P<line>\d+)\): test$")
 
+DEFINITION = re.compile(r"^(\s*)(?:pub\s+)?(?:async\s+)?fn\s+([^\s(<]+)\s*[(<]")
+
 
 def slashed(path):
     """One spelling of a path, so a manifest reads the same on every platform."""
@@ -104,28 +106,28 @@ def fenced_region(lines, index):
     return None
 
 
-def find_function(root, name):
-    """Every place `name` is defined below `root`, so an ambiguity can be told.
+def definitions(root):
+    """Every function defined below `root`, by name, so an ambiguity can be told.
 
-    A hidden directory holds no source of the workspace, but it can hold whole
-    other checkouts of it — a worktree, an archived copy — whose cases would
-    read as more definitions of the same name.
+    The tree is read once for every case under it rather than once per case,
+    which grows with the cases times the files. A hidden directory holds no
+    source of the workspace, but it can hold whole other checkouts of it — a
+    worktree, an archived copy — whose cases would read as more definitions of
+    the same name.
     """
-    opening = re.compile(
-        r"^(\s*)(?:pub\s+)?(?:async\s+)?fn\s+" + re.escape(name) + r"\s*[(<]"
-    )
-    found = []
+    found = {}
     for base, directories, files in os.walk(root):
         directories[:] = [one for one in directories if one != "target" and not one.startswith(".")]
         for file in files:
             if not file.endswith(".rs"):
                 continue
             path = os.path.join(base, file)
-            lines = open(path, encoding="utf-8").read().splitlines()
-            for index, line in enumerate(lines):
-                match = opening.match(line)
+            for index, line in enumerate(open(path, encoding="utf-8").read().splitlines()):
+                match = DEFINITION.match(line)
                 if match:
-                    found.append((slashed(path), index, match.group(1), lines))
+                    found.setdefault(match.group(2), []).append(
+                        (slashed(path), index, match.group(1))
+                    )
     return found
 
 
@@ -220,10 +222,23 @@ def self_test():
         for where in ("tests", os.path.join(".worktrees", "other", "tests")):
             os.makedirs(os.path.join(root, where))
             with open(os.path.join(root, where, "main.rs"), "w", encoding="utf-8") as file:
-                file.write("fn a_named_case() {\n}\n")
-        found = [slashed(os.path.relpath(one[0], root)) for one in find_function(root, "a_named_case")]
+                file.write("fn a_named_case() {\n}\n\nfn twice() {\n}\n")
+        with open(os.path.join(root, "tests", "near.rs"), "w", encoding="utf-8") as file:
+            file.write("fn a_named_case_too() {\n}\n\nfn twice() {\n}\n")
+        defined = definitions(root)
+        found = [slashed(os.path.relpath(one[0], root)) for one in defined.get("a_named_case", [])]
+        if "tests/near.rs" in found:
+            print("    FAIL the required-case finder let a longer name answer for a case")
+            return 1
         if found != ["tests/main.rs"]:
             print("    FAIL the required-case finder read a checkout nested under a hidden directory")
+            return 1
+        found = sorted(slashed(os.path.relpath(one[0], root)) for one in defined.get("twice", []))
+        if found != ["tests/main.rs", "tests/near.rs"]:
+            print(
+                "    FAIL the required-case finder kept one definition of a name defined twice,"
+                " so an ambiguous case would read as unique"
+            )
             return 1
     return 0
 
@@ -383,6 +398,7 @@ def check(stream, listing, silenced, selection):
     failed = 0
     run = {}
     inventory = {}
+    sources = {}
     for case in manifest:
         kind = case["target"]["kind"]
         key = (case["package"], kind, case["target"]["name"])
@@ -452,18 +468,20 @@ def check(stream, listing, silenced, selection):
                 continue
 
             root = "." if case["package"] == "crucible-code" else os.path.join("crates", case["package"])
-            found = find_function(root, name.split("::")[-1])
+            if root not in sources:
+                sources[root] = definitions(root)
+            found = sources[root].get(name.split("::")[-1], [])
             if len(found) != 1:
                 where = ", ".join(one[0] for one in found) or "nowhere"
                 print(f"    FAIL {case['id']} resolves to {len(found)} definitions ({where}); name it uniquely")
                 failed = 1
                 continue
-            path, index, indent, lines = found[0]
+            path, index, indent = found[0]
             if path != case["source"]:
                 print(f"    FAIL {case['id']} moved to {path}; update its source in {MANIFEST}")
                 failed = 1
                 continue
-            region = function_region(lines, index, indent)
+            region = function_region(open(path, encoding="utf-8").read().splitlines(), index, indent)
             if region is None:
                 print(f"    FAIL {case['id']} has no closing brace in its own column in {path}")
                 failed = 1
