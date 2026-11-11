@@ -243,8 +243,8 @@ pub use crate::launching::{HandoverFailed, SignInTerminal};
 use crucible_auth::Store as Credentials;
 use crucible_client_api::bounds::ITEMS;
 use crucible_client_api::{
-    Capability, Choice, Command, Decision, ErrorCode, InstallProgress, Name, Pending, Refusal,
-    Request, Text,
+    Capabilities, Capability, Choice, Command, Correlation, Decision, ErrorCode, InstallProgress,
+    Name, Pending, Refusal, Request, Text,
 };
 use crucible_config::{AgentUpdate, Cloud, ConfigError, Driver, ExternalAgent, Home, Settings};
 /// A line a sign-in command said, as a channel is given it.
@@ -874,42 +874,7 @@ pub async fn run(
         },
         _ => return Ok(Outcome::Refused(ErrorCode::Busy.into())),
     };
-    let state = catalog_fetch::state_in(shelf.home.path());
-    let unrefreshed = catalog_fetch::refresh(&state, &shelf.catalog, Trigger::Opening)
-        .await
-        .err();
-    // Only a command that offers, installs, updates or rolls back an agent
-    // reads the registry; the cache is reused for its five minutes, and a
-    // failure is carried as the line the listing shows.
-    let (registry, registry_notice) = if needs_registry(command) {
-        match &shelf.registry {
-            Some(source) => {
-                match catalog_fetch::registry(shelf.home.path(), source, SystemTime::now()).await {
-                    Ok(view) => {
-                        let notice = view.unverified.clone();
-                        (Some(view), notice)
-                    }
-                    Err(why) => (None, Some(why.to_string().into())),
-                }
-            }
-            None => (None, None),
-        }
-    } else {
-        (None, None)
-    };
-    let settings = Settings::read_home(shelf.home)?;
-    let door = Door {
-        request,
-        shelf,
-        trust: Trust::load(&state, SystemTime::now()),
-        store: Store::new(shelf.home.path().join("programs")),
-        registry,
-        registry_notice,
-        user: crucible_config::user(shelf.home),
-        instances: settings.external_agents(),
-        // The user's own file alone: a checkout cannot ask for this.
-        standing: settings.agent_update() == AgentUpdate::Reviewed,
-    };
+    let (door, unrefreshed) = opened(request, shelf).await?;
     if let Command::SignInAgent { instance, method } = command {
         return door
             .sign_in(instance.as_str(), method.as_str(), front, &watching)
@@ -986,6 +951,95 @@ pub async fn run(
         Command::VerifyAgent { .. } => door.verify(agent),
         _ => Ok(Outcome::Refused(ErrorCode::Busy.into())),
     }
+}
+
+/// The door `request` is carried out with, lent `shelf`, once the catalog
+/// was fetched as a person asking for it and, for a command that offers,
+/// installs, updates or rolls back an agent, the registry read; and why the
+/// catalog was not refreshed, where it was not.
+///
+/// # Errors
+///
+/// [`AgentsError::Config`] where the configuration cannot be read.
+async fn opened<'a>(
+    request: &'a Request,
+    shelf: &'a Shelf<'a>,
+) -> Result<(Door<'a>, Option<FetchError>), AgentsError> {
+    let state = catalog_fetch::state_in(shelf.home.path());
+    let unrefreshed = catalog_fetch::refresh(&state, &shelf.catalog, Trigger::Opening)
+        .await
+        .err();
+    // Only a command that offers, installs, updates or rolls back an agent
+    // reads the registry; the cache is reused for its five minutes, and a
+    // failure is carried as the line the listing shows.
+    let (registry, registry_notice) = if needs_registry(request.command()) {
+        match &shelf.registry {
+            Some(source) => {
+                match catalog_fetch::registry(shelf.home.path(), source, SystemTime::now()).await {
+                    Ok(view) => {
+                        let notice = view.unverified.clone();
+                        (Some(view), notice)
+                    }
+                    Err(why) => (None, Some(why.to_string().into())),
+                }
+            }
+            None => (None, None),
+        }
+    } else {
+        (None, None)
+    };
+    let settings = Settings::read_home(shelf.home)?;
+    let door = Door {
+        request,
+        shelf,
+        trust: Trust::load(&state, SystemTime::now()),
+        store: Store::new(shelf.home.path().join("programs")),
+        registry,
+        registry_notice,
+        user: crucible_config::user(shelf.home),
+        instances: settings.external_agents(),
+        // The user's own file alone: a checkout cannot ask for this.
+        standing: settings.agent_update() == AgentUpdate::Reviewed,
+    };
+    Ok((door, unrefreshed))
+}
+
+/// What the door finds of the user's own program of one agent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OwnProgram {
+    /// The path the program's links lead to, as a try of it takes it.
+    Found(PathBuf),
+    /// The agent is offered, or is Antigravity, but no program of the user's
+    /// own is found for it.
+    Unfound,
+    /// Neither the signed catalog nor the ACP Registry offers an agent of
+    /// that name.
+    Unlisted,
+}
+
+/// The user's own program of `agent` the door, lent `shelf`, would try: found
+/// for that one agent as a listing finds it for each row it shows, after the
+/// same fetch of the catalog and read of the registry, so an agent past what a
+/// listing shows is found as one within it. Nothing is started or written.
+///
+/// # Errors
+///
+/// [`AgentsError::Untried`] where `shelf` lent no steps to start a program
+/// with, and [`AgentsError::Config`] where the configuration cannot be read.
+pub async fn own_program(shelf: &Shelf<'_>, agent: &str) -> Result<OwnProgram, AgentsError> {
+    let Ok(key) = AgentKey::new(agent) else {
+        return Ok(OwnProgram::Unlisted);
+    };
+    let steps = shelf
+        .steps
+        .ok_or_else(|| AgentsError::Untried(key.clone()))?;
+    let request = Request::new(
+        Capabilities::none().with(Capability::Install),
+        Correlation::new(1),
+        Command::AgentCatalog,
+    );
+    let (door, _) = opened(&request, shelf).await?;
+    Ok(door.own_program(&steps.trying(), &key))
 }
 
 /// Whether `command` may offer, install, update or roll back an agent the ACP
@@ -1215,9 +1269,7 @@ impl Door<'_> {
                     keeps_no_sign_in: true,
                     registry: true,
                     probed,
-                    // A registry release is proposed as no program of the
-                    // user's own.
-                    own: None,
+                    own: trying.as_ref().and_then(|trying| self.own(trying, key)),
                 });
             }
         }

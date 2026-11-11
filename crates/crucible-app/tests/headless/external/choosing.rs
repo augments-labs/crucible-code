@@ -1023,22 +1023,11 @@ fn at_door(
     command: Command,
     picking: &mut Picking,
 ) -> Result<Result<Door, AgentsError>, Failed> {
-    use crucible_app::client::agents::{Shelf, Watching, run};
+    use crucible_app::client::agents::{Watching, run};
     use crucible_client_api::{Correlation, Request};
 
     let home = tree.home()?;
-    let shelf = Shelf {
-        catalog: catalog_fetch::Source {
-            base: "http://127.0.0.1:1/catalog/".into(),
-            keys: Keys::new(&[]),
-            hosts: &[],
-            proxy: crucible_http::ProxyEnv::default(),
-        },
-        registry: None,
-        home: &home,
-        smoke: None,
-        steps: conversation.steps(),
-    };
+    let shelf = lent(&home, conversation, None);
     let request = Request::new(Asking::every(), Correlation::new(2), command);
     let mut progress = |_| {};
     let cancel = crucible_runtime::Cancel::new();
@@ -1051,6 +1040,104 @@ fn at_door(
         terminal: None,
     };
     Ok(runtime()?.block_on(run(&request, &shelf, picking, watching)))
+}
+
+/// The shelf the agents door is lent in `home`, with `conversation`'s steps,
+/// no catalog it can reach, and the ACP Registry read from `registry`.
+fn lent<'a>(
+    home: &'a crucible_config::Home,
+    conversation: &'a Conversation,
+    registry: Option<catalog_fetch::RegistrySource>,
+) -> crucible_app::client::agents::Shelf<'a> {
+    crucible_app::client::agents::Shelf {
+        catalog: catalog_fetch::Source {
+            base: "http://127.0.0.1:1/catalog/".into(),
+            keys: Keys::new(&[]),
+            hosts: &[],
+            proxy: crucible_http::ProxyEnv::default(),
+        },
+        registry,
+        home,
+        smoke: None,
+        steps: conversation.steps(),
+    }
+}
+
+/// A registry source nothing answers at, so the door reads the index cached
+/// in its home, as a command line's door reads it within its five minutes.
+fn cached_registry() -> catalog_fetch::RegistrySource {
+    catalog_fetch::RegistrySource {
+        url: "http://127.0.0.1:1/registry.json".into(),
+        hosts: &[],
+        proxy: crucible_http::ProxyEnv::default(),
+    }
+}
+
+/// What the agents door lists in `tree` for `conversation`, the ACP
+/// Registry read from the index cached there, as `crucible agents search`
+/// asks it.
+pub(crate) fn listed_with_the_registry(
+    tree: &Tree,
+    conversation: &Conversation,
+) -> Result<Result<Door, AgentsError>, Failed> {
+    use crucible_app::client::agents::{Watching, run};
+    use crucible_client_api::{Correlation, Request};
+
+    let home = tree.home()?;
+    let shelf = lent(&home, conversation, Some(cached_registry()));
+    let request = Request::new(Asking::every(), Correlation::new(2), Command::AgentCatalog);
+    let mut progress = |_| {};
+    let cancel = crucible_runtime::Cancel::new();
+    let link = |_: crucible_execution::Text| {};
+    let watching = Watching {
+        progress: &mut progress,
+        cancel: &cancel,
+        link: &link,
+        sign_in: None,
+        terminal: None,
+    };
+    Ok(runtime()?.block_on(run(&request, &shelf, &mut Picking::of([]), watching)))
+}
+
+/// The user's own program of `agent` the agents door finds in `tree` for
+/// `conversation`, the ACP Registry read from the index cached there, as
+/// `crucible agents try` asks it.
+pub(crate) fn found_at_door(
+    tree: &Tree,
+    conversation: &Conversation,
+    agent: &str,
+) -> Result<Result<crucible_app::client::agents::OwnProgram, AgentsError>, Failed> {
+    let home = tree.home()?;
+    let shelf = lent(&home, conversation, Some(cached_registry()));
+    Ok(runtime()?.block_on(crucible_app::client::agents::own_program(&shelf, agent)))
+}
+
+/// The ACP Registry agent `id`, released at 1.0.0 for this machine, whose
+/// program is started as `./id acp`.
+fn registered(id: &str) -> Value {
+    json!({
+        "id": id,
+        "name": id,
+        "version": "1.0.0",
+        "license": "Apache-2.0",
+        "license_url": "https://example.com/terms",
+        "distribution": {"binary": {platform(): {
+            "archive": "https://downloads.example.com/goose-1.0.0.tar.gz",
+            "cmd": format!("./{id}"),
+            "sha256": "a".repeat(64),
+            "args": ["acp"],
+        }}},
+    })
+}
+
+/// Writes in `tree`'s home the ACP Registry index listing `agents`, fetched
+/// now, as a read of it within its five minutes would find it.
+fn registry_cached(tree: &Tree, agents: &[Value]) -> Result<(), Failed> {
+    let path = catalog_fetch::registry_in(tree.home()?.path()).join("registry.json");
+    std::fs::create_dir_all(path.parent().ok_or("the cache's directory")?)?;
+    let index = json!({"version": "1.0.0", "agents": agents});
+    std::fs::write(&path, serde_json::to_vec(&index)?)?;
+    Ok(())
 }
 
 /// The move a connect of `conversation` naming no instance ends on, the user
@@ -1738,6 +1825,30 @@ pub(crate) fn tried_at_door(
 /// that conversation, and the path the program's links lead to.
 pub(crate) fn goose_of_your_own(tree: &Tree) -> Result<(Conversation, PathBuf), Failed> {
     trusting(tree, &[entry("goose", "1.0.0", ONE)])?;
+    let program = own_goose(&tools(tree), true)?;
+    Ok((own_sandboxed(tree)?, program))
+}
+
+/// A tree whose catalog offers nothing but whose cached ACP Registry index
+/// lists goose, and whose user installed their own goose on the `PATH` a
+/// conversation's steps look on, which answers as an agent; that
+/// conversation, and the path the program's links lead to.
+pub(crate) fn goose_of_the_registry(tree: &Tree) -> Result<(Conversation, PathBuf), Failed> {
+    registry_cached(tree, &[registered("goose")])?;
+    let program = own_goose(&tools(tree), true)?;
+    Ok((own_sandboxed(tree)?, program))
+}
+
+/// As [`goose_of_the_registry`], but the index lists, before goose, an agent
+/// whose id is a built-in driver's word, which no listing shows, and as many
+/// other agents as a listing shows, so goose is past what it shows.
+pub(crate) fn goose_past_the_listing(tree: &Tree) -> Result<(Conversation, PathBuf), Failed> {
+    use crucible_app::client::agents::LISTED;
+
+    let mut agents = vec![registered("claude")];
+    agents.extend((0..LISTED).map(|at| registered(&format!("listed-{at:02}"))));
+    agents.push(registered("goose"));
+    registry_cached(tree, &agents)?;
     let program = own_goose(&tools(tree), true)?;
     Ok((own_sandboxed(tree)?, program))
 }

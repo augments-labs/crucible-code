@@ -33,12 +33,13 @@
 //! user's own file says, as a sign-in run as a command is: the listing then
 //! names, beside each agent, the user's own program of it found on `PATH`, and
 //! the user's own Antigravity after them with what it sees of its sign-in. A
-//! search that cannot be lent them lists as before, naming none. `try` takes
-//! the program the listing names for its agent and sends the door that move,
-//! which asks on this terminal, as an install does, before the program is
-//! started once, confined with the network closed, and writes the instance
-//! that runs it once it answers as an agent; where the listing names none, it
-//! is refused and nothing is started.
+//! search that cannot be lent them lists as before, naming none. `try` asks
+//! the door for its agent's own program alone, as a listing would name it
+//! wherever its row would fall, and sends the door that move, which asks on
+//! this terminal, as an install does, before the program is started once,
+//! confined with the network closed, and writes the instance that runs it
+//! once it answers as an agent; where the door finds none, it is refused and
+//! nothing is started.
 //!
 //! `crucible agents unpack-check`, which the help leaves out, is the agent
 //! catalog's intake asking how a download, or a package tree from its lock
@@ -53,16 +54,18 @@
 //! output, and a refusal to standard error, written [`failing`].
 
 use std::fmt::Write as _;
+use std::future::Future;
 use std::io::{self, BufRead, BufReader, IsTerminal as _, Read as _, Write as _};
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::process::ExitCode;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use crucible_app::catalog_fetch::trust_in;
 use crucible_app::client::agents::{
-    self as door, AgentsError, HandoverFailed, How, Listed, Outcome, OwnAntigravity, SaidLine,
-    Shelf, SignInChannel, SignInTerminal, Typed, Typing,
+    self as door, AgentsError, HandoverFailed, How, Listed, Outcome, OwnAntigravity, OwnProgram,
+    SaidLine, Shelf, SignInChannel, SignInTerminal, Typed, Typing,
 };
 use crucible_app::client::{Confirmation, Front, Shown};
 use crucible_app::installing;
@@ -423,9 +426,9 @@ impl Desk<'_> {
         lent.unwrap_or_else(|| self.ask(Command::AgentCatalog))
     }
 
-    /// Tries the user's own program of `agent`, the one the catalog's
-    /// listing finds for it here, with a launcher and its steps lent to start
-    /// it: the door asks on this terminal before it is started.
+    /// Tries the user's own program of `agent`, the one the door finds for
+    /// that agent here, with a launcher and its steps lent to start it: the
+    /// door asks on this terminal before it is started.
     fn tried(&self, agent: &str) -> Answer {
         let Ok(name) = Name::new(agent) else {
             return Answer::Refused(format!("{} is not an agent's name", escaped(agent)));
@@ -435,46 +438,37 @@ impl Desk<'_> {
         };
         let tried = door::lending_here(self.home, services, self.runtime, |launcher, steps| {
             let lending = super::client::shelf(self.home, Some(launcher), Some(steps));
-            let listed = self.asked(
-                &install_request(Command::AgentCatalog),
-                &lending,
-                None,
-                None,
-            );
-            let program = match listed {
-                Ok(Outcome::Catalog {
-                    agents,
-                    antigravity,
-                    ..
-                }) => match antigravity.filter(|own| own.agent.as_str() == agent) {
-                    Some(own) => own.program,
-                    None => match agents
-                        .into_iter()
-                        .find(|listed| listed.agent.as_str() == agent)
-                    {
-                        Some(Listed {
-                            own: Some(program), ..
-                        }) => program,
-                        Some(_) => return Answer::Refused(unfound(agent)),
-                        None => {
-                            return Answer::Refused(format!(
+            let lending = &lending;
+            // Found and tried in the one wait, so that what is tried is what
+            // the door found.
+            let waited = self.waited(None, None, |front, watching| {
+                Box::pin(async move {
+                    let program = match door::own_program(lending, agent).await? {
+                        OwnProgram::Found(program) => program,
+                        OwnProgram::Unfound => return Ok(Err(unfound(agent))),
+                        OwnProgram::Unlisted => {
+                            return Ok(Err(format!(
                                 "the agent catalog lists no agent named {}, so nothing was tried",
                                 escaped(agent)
-                            ));
+                            )));
                         }
-                    },
-                },
-                other => return self.answered(other, None),
-            };
-            let program = Text::cut(&program.to_string_lossy());
-            if program.truncated() {
-                return Answer::Refused(unfound(agent));
-            }
-            let request = install_request(Command::TryOwnAgent {
-                agent: name,
-                program,
+                    };
+                    let program = Text::cut(&program.to_string_lossy());
+                    if program.truncated() {
+                        return Ok(Err(unfound(agent)));
+                    }
+                    let request = install_request(Command::TryOwnAgent {
+                        agent: name,
+                        program,
+                    });
+                    door::run(&request, lending, front, watching).await.map(Ok)
+                })
             });
-            self.answered(self.asked(&request, &lending, None, None), None)
+            match waited {
+                Ok(Err(refused)) => Answer::Refused(refused),
+                Ok(Ok(outcome)) => self.answered(Ok(outcome), None),
+                Err(refused) => self.answered(Err(refused), None),
+            }
         });
         tried.unwrap_or_else(|refused| Answer::Refused(caused(&refused)))
     }
@@ -513,6 +507,20 @@ impl Desk<'_> {
         sign_in: Option<&dyn SignInChannel>,
         handover: Option<&dyn SignInTerminal>,
     ) -> Result<Outcome, AgentsError> {
+        self.waited(sign_in, handover, |front, watching| {
+            Box::pin(door::run(request, lending, front, watching))
+        })
+    }
+
+    /// What `work` comes to, waited for on the application's runtime with
+    /// this terminal to ask on, lent `sign_in` and `handover`, and with how
+    /// far a download has come said as it comes.
+    fn waited<'l, T>(
+        &'l self,
+        sign_in: Option<&'l dyn SignInChannel>,
+        handover: Option<&'l dyn SignInTerminal>,
+        work: impl for<'w> FnOnce(&'w mut (dyn Front + 'l), door::Watching<'w>) -> Waited<'w, T>,
+    ) -> T {
         let (said, terminal) = (self.said, self.terminal);
         let mut front = Asked {
             said,
@@ -537,8 +545,7 @@ impl Desk<'_> {
                 sign_in,
                 terminal: handover,
             };
-            self.runtime
-                .block_on(door::run(request, lending, &mut front, watching))
+            self.runtime.block_on(work(&mut front, watching))
         };
         if let Some(progress) = &shown {
             said(progress.ended());
@@ -794,6 +801,9 @@ fn unfound(agent: &str) -> String {
         escaped(agent)
     )
 }
+
+/// The work [`Desk::waited`] waits for, borrowing what it is lent for `'w`.
+type Waited<'w, T> = Pin<Box<dyn Future<Output = T> + 'w>>;
 
 /// Why a try is refused where nothing can be lent to start a program with.
 const UNSTARTED: &str = "trying your own program starts it, and this command cannot start one \

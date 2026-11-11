@@ -307,10 +307,11 @@ const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
     ),
     // The `crucible agents` subcommands that ask the agents door, which a
     // command line reaches before any conversation exists and which start
-    // none: carrying the one command out.
+    // none: waiting for the door to carry the one command out, and, for
+    // `crucible agents try`, to find the program it is asked to try.
     (
         "src/cli/agents.rs",
-        ".block_on(door::run(request, lending, &mut front, watching))",
+        "self.runtime.block_on(work(&mut front, watching))",
         1,
     ),
     // `installing`'s download of a release, which `crucible agents install`

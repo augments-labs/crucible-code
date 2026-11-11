@@ -9,8 +9,10 @@ use crucible_external_harnesses::antigravity;
 use crucible_types::AgentKey;
 use crucible_types::shown::escaped;
 
-use super::{AgentsError, Confirmation, Door, Front, Outcome, OwnAntigravity, confirmed};
-use crate::backends::ANTIGRAVITY;
+use super::{
+    AgentsError, Confirmation, Door, Front, Outcome, OwnAntigravity, OwnProgram, confirmed,
+};
+use crate::backends::{ANTIGRAVITY, kept_word};
 use crate::launching::quoted;
 use crate::own_program::{Trying, Unowned};
 use crate::remember;
@@ -90,6 +92,33 @@ impl Door<'_> {
             configured.find_map(|instance| trying.catalog(key, Some(instance.executable())))
         };
         trial.map(|trial| trial.canonical().to_owned())
+    }
+
+    /// What the door finds of the user's own program of `key` alone, as
+    /// `trying` finds it: Antigravity's as a listing names it, and a catalog
+    /// or registry agent's as [`Door::own`] finds it for the row a listing
+    /// would give it, wherever that row would fall.
+    pub(super) fn own_program(&self, trying: &Trying, key: &AgentKey) -> OwnProgram {
+        if key.as_str() == ANTIGRAVITY_KEY {
+            return own_antigravity(trying, &self.instances)
+                .map_or(OwnProgram::Unfound, |own| OwnProgram::Found(own.program));
+        }
+        let offered = self
+            .trust
+            .offers(None)
+            .into_iter()
+            .any(|offer| offer.entry.key == *key)
+            || self.registry.as_ref().is_some_and(|view| {
+                view.index
+                    .offers()
+                    .into_iter()
+                    .any(|offer| offer.entry().id == *key)
+            });
+        if kept_word(key.as_str()) || !offered {
+            return OwnProgram::Unlisted;
+        }
+        self.own(trying, key)
+            .map_or(OwnProgram::Unfound, OwnProgram::Found)
     }
 
     /// Tries the user's own `program` of `agent`, a catalog agent's or
