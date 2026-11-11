@@ -139,13 +139,21 @@ pub(super) fn run<T: Terminal>(
         let mut listing = match read {
             Ok(door::Outcome::Catalog {
                 agents,
-                more,
+                // The panel lists what crucible installs, and says more only
+                // of those.
+                more: _,
+                installable,
                 unrefreshed,
                 registry,
                 // The panel lists what the catalog offers; `/login` is where
                 // the user's own program of an agent is offered.
                 antigravity: _,
-            }) => Listing::new(agents, more, unrefreshed.as_ref(), registry.as_deref()),
+            }) => Listing::catalog(
+                agents,
+                installable,
+                unrefreshed.as_ref(),
+                registry.as_deref(),
+            ),
             Ok(door::Outcome::Refused(refusal)) => return say(renderer, &format!("! {refusal}")),
             Ok(_) => return say(renderer, ASTRAY),
             Err(refusal) => return say(renderer, &refused(&refusal)),
@@ -264,6 +272,18 @@ struct Entry {
 }
 
 impl Listing {
+    /// The list over the catalog the door listed: `agents`, what a list of
+    /// only what crucible installs says of them, why the catalog was
+    /// `unrefreshed`, and the `registry` line.
+    fn catalog(
+        agents: Vec<door::Listed>,
+        installable: door::Installable,
+        unrefreshed: Option<&FetchError>,
+        registry: Option<&str>,
+    ) -> Self {
+        Self::new(agents, installable.more, unrefreshed, registry)
+    }
+
     /// The list over what the door listed: `agents`, whether there were
     /// `more`, and why the catalog was `unrefreshed`, where it was.
     fn new(
@@ -285,8 +305,8 @@ impl Listing {
         Self {
             // The door also lists an agent crucible installs no version of
             // where the user's own program of it was found; this list is what
-            // crucible installs, so it is left out, and the door never counts
-            // one such toward `more`.
+            // crucible installs, so it is left out, and `more` is said of
+            // what crucible installs alone.
             agents: agents
                 .into_iter()
                 .filter(|listed| listed.unoffered.is_none())

@@ -295,9 +295,8 @@ use trying::{own_antigravity, own_refusal};
 
 mod trying;
 
-/// The most catalog agents a listing names as offered; one with more says
-/// so. An agent listed only as the user's own program, since crucible installs
-/// no version of it, is not counted.
+/// The most catalog agents a listing names, offered or listed only as the
+/// user's own program; one with more says so.
 pub const LISTED: usize = 32;
 
 /// The most bytes a key typed for an agent may have.
@@ -387,6 +386,15 @@ pub struct Listed {
     pub own: Option<PathBuf>,
 }
 
+/// What a list of only the agents crucible installs says beside the rows it
+/// keeps, which leaves out each agent listed only as the user's own program.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Installable {
+    /// Whether an agent crucible installs a version of was past the most a
+    /// listing names.
+    pub more: bool,
+}
+
 /// The user's own Antigravity, found on the `PATH` a conversation's steps
 /// look on, as a listing names it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -424,6 +432,8 @@ pub enum Outcome {
         agents: Vec<Listed>,
         /// Whether there were more than are named.
         more: bool,
+        /// What a list of only the agents crucible installs says of these.
+        installable: Installable,
         /// Why the catalog was not refreshed first, where it was not: what is
         /// named is what was believed before.
         unrefreshed: Option<FetchError>,
@@ -1240,6 +1250,7 @@ impl Door<'_> {
         let trying = self.shelf.steps.map(Steps::trying);
         let mut agents: Vec<Listed> = Vec::new();
         let mut more = false;
+        let mut installable = Installable::default();
         for offer in self.trust.offers(None) {
             let key = &offer.entry.key;
             if kept_word(key.as_str()) {
@@ -1251,6 +1262,7 @@ impl Door<'_> {
             }
             if agents.len() == LISTED {
                 more = true;
+                installable.more = true;
                 continue;
             }
             // One agent's store that cannot be read is said on its row, and
@@ -1275,20 +1287,25 @@ impl Door<'_> {
         // key it lists once is not listed twice, and a key a built-in driver
         // is spelled with gets no registry row.
         let mut from_registry = false;
-        let mut counted = agents.len();
         if let Some(view) = &self.registry {
             for (entry, offer) in view.index.listed() {
                 let key = &entry.id;
                 if kept_word(key.as_str()) || agents.iter().any(|listed| listed.agent == *key) {
                     continue;
                 }
+                if agents.len() == LISTED {
+                    // Past the most a listing names, an entry crucible
+                    // installs no version of is not looked for on `PATH`, and
+                    // is said to be one more, since it may be listed; it is
+                    // never one more to a list of what crucible installs.
+                    more = true;
+                    installable.more |= offer.is_ok();
+                    continue;
+                }
                 let offer = match offer {
                     Ok(offer) => offer,
                     // An entry crucible installs no version of is listed only
-                    // as the user's own program, where one is found. It is
-                    // not counted toward the most a listing names, nor said to
-                    // be one more, since a list of what crucible installs
-                    // leaves it out; the index bounds how many there are.
+                    // as the user's own program, where one is found.
                     Err(why) => {
                         let Some(own) = trying.as_ref().and_then(|trying| self.own(trying, key))
                         else {
@@ -1310,11 +1327,6 @@ impl Door<'_> {
                         continue;
                     }
                 };
-                if counted == LISTED {
-                    more = true;
-                    continue;
-                }
-                counted += 1;
                 let probed = self.probed(key, offer.version());
                 from_registry = true;
                 agents.push(Listed {
@@ -1342,6 +1354,7 @@ impl Door<'_> {
         Outcome::Catalog {
             agents,
             more,
+            installable,
             unrefreshed,
             registry,
             antigravity: trying

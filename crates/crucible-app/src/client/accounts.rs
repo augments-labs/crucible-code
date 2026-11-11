@@ -1356,7 +1356,8 @@ type Cataloged = (AgentKey, Option<Box<str>>);
 /// with; at most [`LISTED`], and whether more are offered than are listed.
 /// Among the registry's, an entry with a target here that crucible does not
 /// install is listed with no version, and only where `trying` finds the user's
-/// own program of it, as the door finds it; it is not counted.
+/// own program of it, as the door finds it; past the most listed, it is not
+/// looked for, and is said to be one more, as the door says it.
 fn listed(releases: &Releases, trying: Option<&Trying>) -> (Vec<Cataloged>, bool) {
     let mut agents: Vec<Cataloged> = Vec::new();
     let mut more = false;
@@ -1373,7 +1374,6 @@ fn listed(releases: &Releases, trying: Option<&Trying>) -> (Vec<Cataloged>, bool
         }
         agents.push((key, Some(offer.pin.version)));
     }
-    let mut counted = agents.len();
     // The ACP Registry's offers come after the signed catalog's: a signed or
     // compiled entry is never shadowed by the unsigned registry.
     if let Some(index) = &releases.registry {
@@ -1384,6 +1384,10 @@ fn listed(releases: &Releases, trying: Option<&Trying>) -> (Vec<Cataloged>, bool
             {
                 continue;
             }
+            if agents.len() == LISTED {
+                more = true;
+                continue;
+            }
             let Ok(offer) = offer else {
                 let instances = instances_of(releases, &key).unwrap_or_default();
                 if trying.is_some_and(|trying| own_of(trying, &key, &instances).is_some()) {
@@ -1391,11 +1395,6 @@ fn listed(releases: &Releases, trying: Option<&Trying>) -> (Vec<Cataloged>, bool
                 }
                 continue;
             };
-            if counted == LISTED {
-                more = true;
-                continue;
-            }
-            counted += 1;
             agents.push((key, Some(offer.version().into())));
         }
     }

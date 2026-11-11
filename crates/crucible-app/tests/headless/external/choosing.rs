@@ -1971,6 +1971,17 @@ pub(crate) fn two_guessing_goose(tree: &Tree) -> Result<(Conversation, PathBuf),
     Ok((own_sandboxed(tree)?, program))
 }
 
+/// As [`goose_unhashed`], but the index lists `count` agents, `own-0` on,
+/// each with no SHA-256 and each guessing goose's name, and no goose itself.
+pub(crate) fn many_unhashed(tree: &Tree, count: usize) -> Result<Conversation, Failed> {
+    let entries: Vec<Value> = (0..count)
+        .map(|at| unhashed(&format!("own-{at}"), "goose"))
+        .collect();
+    registry_cached(tree, &entries)?;
+    own_goose(&tools(tree), true)?;
+    own_sandboxed(tree)
+}
+
 /// The name of each choice the first question of a connect of `conversation`
 /// naming no instance offers, asked of a client that claims every capability
 /// and declines it.

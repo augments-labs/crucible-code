@@ -330,6 +330,27 @@ fn catalog_leaves_out_an_entry_crucible_does_not_install() {
     );
 }
 
+/// `/catalog` says more are offered only where an agent crucible installs
+/// was past the most the door names, whatever the door says of the rest: one
+/// past it that the door would list only as the user's own program is not one
+/// more to a list of what crucible installs.
+#[test]
+fn catalog_says_no_more_for_an_entry_crucible_does_not_install() {
+    let goose = || vec![listed("goose", &["1.0.0"], "Apache-2.0", &[])];
+
+    let own_past = Listing::catalog(goose(), door::Installable { more: false }, None, None);
+    let offered_past = Listing::catalog(goose(), door::Installable { more: true }, None, None);
+
+    assert_eq!(
+        said(&own_past, 400),
+        ["goose 1.0.0 · Apache-2.0 · not installed"]
+    );
+    assert_eq!(
+        said(&offered_past, 400),
+        ["goose 1.0.0 · Apache-2.0 · not installed", MORE]
+    );
+}
+
 #[test]
 fn an_empty_catalog_says_that_none_is_offered() {
     let listing = Listing::new(Vec::new(), false, None, None);

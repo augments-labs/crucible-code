@@ -562,6 +562,9 @@ impl Desk<'_> {
             Outcome::Catalog {
                 agents,
                 more,
+                // A search names every agent listed, the user's own programs
+                // among them, so it says `more` of those.
+                installable: _,
                 unrefreshed,
                 registry,
                 antigravity,

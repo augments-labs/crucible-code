@@ -2784,6 +2784,44 @@ fn an_unhashed_entry_is_listed_as_your_own_when_its_command_is_on_path_and_not_o
     Ok(())
 }
 
+/// More ACP Registry entries with no SHA-256 than a listing names, each
+/// whose guessed name is on `PATH`, are listed by the agents door at most
+/// [`LISTED`] in all, the rest said to be more; and `/login` still asks, its
+/// choices within the client contract's bound and the shipping agents among
+/// them.
+#[test]
+fn more_unhashed_entries_on_path_than_a_listing_names_are_cut_and_login_still_asks()
+-> Result<(), Failed> {
+    use crate::external::choosing::{first_choices, listed_with_the_registry, many_unhashed};
+    use crucible_app::client::agents::LISTED;
+    use crucible_client_api::bounds::ITEMS;
+
+    let tree = crate::Tree::new("registry-unhashed-many")?;
+    let mut conversation = many_unhashed(&tree, ITEMS + 1)?;
+
+    let listed = listed_with_the_registry(&tree, &conversation)?;
+    let Ok(Outcome::Catalog { agents, more, .. }) = listed else {
+        return Err(format!("the listing answered {listed:?}").into());
+    };
+    assert!(
+        agents.len() <= LISTED,
+        "the door listed {} agents",
+        agents.len()
+    );
+    assert!(more, "the door did not say more were offered");
+    let choices = first_choices(&tree, &mut conversation)?;
+    assert!(
+        choices.len() <= ITEMS,
+        "/login put {} choices",
+        choices.len()
+    );
+    assert!(
+        choices.iter().any(|choice| choice == "Claude Code"),
+        "{choices:?}"
+    );
+    Ok(())
+}
+
 /// An ACP Registry entry with no SHA-256 for this machine, listed as the
 /// user's own program, offers no version, and `/login` offers nothing for it
 /// but trying that program: no install, update or roll back. Crucible's store
