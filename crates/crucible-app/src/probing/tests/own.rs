@@ -172,19 +172,29 @@ fn a_root_inside_the_runtime_mounts_gets_no_rule() {
     let (home, crucible, sessions) = places();
     let mounts = crucible_sandbox_local::runtime_directories();
 
-    for (program, mounted) in [
-        (Path::new("/").join("usr").join("bin").join("agent"), "/usr"),
-        (
-            under(Path::new("/"), &["usr", "local", "bin", "agent"]),
-            "/usr",
-        ),
-    ] {
-        let expected = if mounts.contains(&mounted) {
+    // Linux mounts all of `/usr`; macOS mounts `/usr/bin` but not
+    // `/usr/local`; no other platform's sandbox mounts either.
+    let usr_bin = under(Path::new("/"), &["usr", "bin"]);
+    let usr_local_bin = under(Path::new("/"), &["usr", "local", "bin"]);
+    let (bin_mounted, local_mounted) = if cfg!(target_os = "linux") {
+        (true, true)
+    } else if cfg!(target_os = "macos") {
+        (true, false)
+    } else {
+        (false, false)
+    };
+    for (dir, mounted) in [(usr_bin, bin_mounted), (usr_local_bin, local_mounted)] {
+        let expected = if mounted {
             Root::NoRule
         } else {
-            Root::Grant(program.parent().map(Path::to_path_buf).unwrap_or_default())
+            Root::Grant(dir.clone())
         };
-        assert_eq!(root(&program, &home, &crucible, &sessions), expected);
+        assert_eq!(
+            root(&dir.join("agent"), &home, &crucible, &sessions),
+            expected,
+            "{}",
+            dir.display()
+        );
     }
     if cfg!(target_os = "linux") {
         assert!(
