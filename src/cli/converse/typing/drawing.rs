@@ -131,10 +131,10 @@ pub(in crate::cli::converse) fn draw<T: Terminal>(
     // transcript at all.
     let room = renderer.room().saturating_sub(boxed.rows.len() + 1);
     let reach = reach(renderer, around.docking);
-    let over = over(around, renderer.columns(), room, reach, style);
+    let (over, writing) = over(around, renderer.columns(), room, reach, style);
 
     let pointed = boxed.pointed.as_ref().map(|(at, row)| (*at, row));
-    let prompt = replacement(&boxed.rows, boxed.caret, pointed)?;
+    let prompt = replacement(&boxed.rows, boxed.caret, pointed)?.writing_over(writing);
     renderer.replace(prompt, &over, style.palette())?;
     Ok(())
 }
@@ -161,13 +161,16 @@ pub(in crate::cli::converse) fn draw<T: Terminal>(
 /// keep the rule off what is above it. With nothing under it, it closes with a
 /// blank row of its own, which keeps the box off it in place of the one owed
 /// below.
+///
+/// With the rows comes where a line of the dock is being written, counted
+/// from the first of them, which is where the cursor stands.
 pub(super) fn over(
     around: Around<'_>,
     columns: usize,
     room: usize,
     reach: usize,
     style: Style,
-) -> Vec<Row> {
+) -> (Vec<Row>, Option<Caret>) {
     let mut listed = around.open.rows(columns, room, style.glyphs());
     let opened = !listed.is_empty();
 
@@ -177,7 +180,7 @@ pub(super) fn over(
     // an answer reads as part of it.
     let blank = usize::from(!opened);
 
-    let mut docked = docked(
+    let (mut docked, writing) = docked(
         around.docking,
         columns,
         (room + reach).saturating_sub(listed.len() + blank),
@@ -206,12 +209,16 @@ pub(super) fn over(
     }
     let under_panel = !planned.is_empty() || !docked.is_empty();
     over.append(&mut planned);
+    let writing = writing.map(|caret| Caret {
+        row: over.len() + caret.row,
+        column: caret.column,
+    });
     over.append(&mut docked);
     if !opened && (!paneled || under_panel) {
         over.push(Row::new());
     }
     over.append(&mut listed);
-    over
+    (over, writing)
 }
 
 /// How many rows past [`Renderer::room`] the dock may stand in: its closed
@@ -240,20 +247,28 @@ pub(in crate::cli::converse) fn reach<T: Terminal>(
 
 /// The dock in at most `room` rows, with a blank above it to keep it off the
 /// transcript or the plan; nothing where nothing waits or it has no room.
+///
+/// With them, where a line is being written in it, counted from the first of
+/// the rows: the cursor goes there, since that line is what is being typed
+/// into.
 pub(in crate::cli::converse) fn docked(
     docking: &Docking,
     columns: usize,
     room: usize,
     style: Style,
-) -> Vec<Row> {
-    let (rows, _) = docking.rows(columns, room.saturating_sub(1), style.glyphs());
+) -> (Vec<Row>, Option<Caret>) {
+    let (rows, caret) = docking.rows(columns, room.saturating_sub(1), style.glyphs());
     if rows.is_empty() {
-        return rows;
+        return (rows, None);
     }
     let mut over = Vec::with_capacity(rows.len() + 1);
     over.push(Row::new());
     over.extend(rows);
-    over
+    let writing = caret.map(|caret| Caret {
+        row: caret.row + 1,
+        column: caret.column,
+    });
+    (over, writing)
 }
 
 /// Validates the prompt rows before they become one renderer replacement.

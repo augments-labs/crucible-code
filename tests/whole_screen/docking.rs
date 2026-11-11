@@ -743,6 +743,81 @@ fn the_open_dock_fits_a_resized_window_and_one_too_small_for_it() {
     }
 }
 
+/// The row of `picture` the cursor is on, as drawn, and what is drawn on it
+/// before the cursor.
+fn at_cursor(picture: &str) -> (String, String) {
+    let mut lines = picture.lines();
+    let header = lines.next().unwrap_or_default();
+    let (row, column) = header
+        .split_whitespace()
+        .skip_while(|word| *word != "cursor")
+        .nth(1)
+        .and_then(|at| at.split_once(','))
+        .and_then(|(row, column)| Some((row.parse::<usize>().ok()?, column.parse::<usize>().ok()?)))
+        .unwrap_or_else(|| panic!("no cursor in the picture\n{picture}"));
+    let drawn = lines.nth(row).unwrap_or_default();
+    // The frame's own first column stands before the window's first.
+    let before = drawn.chars().skip(1).take(column).collect();
+    (drawn.to_owned(), before)
+}
+
+/// Fails unless the cursor stands at the end of `written`, on a row of the
+/// dock.
+fn writes_at_the_cursor(window: &Watched, mode: &str, written: &str) {
+    let picture = window.picture();
+    let (row, before) = at_cursor(&picture);
+    assert!(
+        before.ends_with(written) && !row.contains("│ ›"),
+        "{mode}: the cursor stands where {written:?} is being written\n{picture}"
+    );
+}
+
+/// Fails unless the cursor stands on the composer's line.
+fn composes_at_the_cursor(window: &Watched, mode: &str) {
+    let picture = window.picture();
+    let (row, _) = at_cursor(&picture);
+    assert!(
+        row.contains("│ ›"),
+        "{mode}: the cursor stands in the composer\n{picture}"
+    );
+}
+
+#[test]
+fn the_cursor_stands_where_a_line_of_the_dock_is_written() {
+    for (native, mode) in MODES {
+        // Under a running turn.
+        let vendor = Vendor::calling_then_holding_long("ask_user", LATER, HELD);
+        let mut window = opened(&format!("docking-caret-{mode}"), native, (80, 24), &vendor);
+        window.types_and_catches("go\r", WAITING);
+        chooses(&mut window, "/questions\r");
+        writes(&mut window, "n");
+        window.types_and_catches("a note", "a note");
+        writes_at_the_cursor(&window, mode, "Note: a note");
+
+        presses(&mut window, "\t");
+        window.types_and_catches("x", "│ › x");
+        composes_at_the_cursor(&window, mode);
+        vendor.ends_the_turn();
+
+        // Between turns, writing an answer of one's own.
+        let vendor = Vendor::calling("ask_user", LATER, ENDED);
+        let mut window = opened(
+            &format!("docking-caret-idle-{mode}"),
+            native,
+            (80, 24),
+            &vendor,
+        );
+        window.types_and_catches("go\r", WAITING);
+        idle(&mut window, "the question was asked");
+        chooses(&mut window, "/questions\r");
+        presses(&mut window, DOWN);
+        window.types_and_catches(DOWN, "› 3.");
+        presses(&mut window, "\r");
+        window.types_and_catches("Zig", "Zig");
+        writes_at_the_cursor(&window, mode, "Zig");
+    }
+}
+
 #[test]
 fn a_blocking_ask_still_stands_where_the_prompt_was() {
     for (native, mode) in MODES {

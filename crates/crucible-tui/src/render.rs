@@ -120,6 +120,9 @@ pub struct PromptRows<'a> {
     caret: Caret,
     /// A relative row and that row in its pointed palette state.
     pointed: Option<(usize, &'a Row)>,
+    /// Where a line is being written in what stands over the box, which the
+    /// cursor stands at instead.
+    over: Option<Caret>,
 }
 
 impl<'a> PromptRows<'a> {
@@ -147,7 +150,18 @@ impl<'a> PromptRows<'a> {
             rows,
             caret,
             pointed,
+            over: None,
         })
+    }
+
+    /// The same, with the cursor where a line is being written in the rows
+    /// standing over the box, its row counted from the first of them, since
+    /// that line is what the keys are typing into. A caret that does not fall
+    /// on one of those rows as they stand is not one, and the cursor stays in
+    /// the box.
+    #[must_use]
+    pub fn writing_over(self, over: Option<Caret>) -> Self {
+        Self { over, ..self }
     }
 }
 
@@ -224,7 +238,8 @@ struct Standing {
     boxed: Vec<Row>,
     /// The palette `boxed` was handed in with.
     boxed_in: Option<Palette>,
-    /// Where the cursor belongs in the box.
+    /// Where the cursor belongs in the box. None while a line written in
+    /// what stands over it has the cursor, in `turned`.
     prompted: Option<Caret>,
 }
 
@@ -1746,6 +1761,8 @@ impl<T: Terminal> Renderer<T> {
     /// palette state. The renderer chooses it from the pointer's absolute
     /// window row; the caller remains the owner of the component and its words.
     ///
+    /// [`PromptRows::writing_over`] stands the cursor in `over` instead.
+    ///
     /// # Errors
     ///
     /// `TerminalError::Io` if the terminal could not be written to.
@@ -1789,8 +1806,19 @@ impl<T: Terminal> Renderer<T> {
         // draws them; what stands under them at the window's.
         self.standing
             .stands(turn, over, palette, self.folds(), columns);
-        self.standing.prompted = Some(prompt.caret);
-        self.standing.turned = None;
+        // A line written over the box has the cursor, held to the rows as they
+        // stand, clipped to the window: the turn's own rows come first.
+        let written = prompt.over.filter(|caret| {
+            self.standing
+                .over
+                .get(caret.row)
+                .is_some_and(|row| caret.column <= row.columns())
+        });
+        self.standing.prompted = written.is_none().then_some(prompt.caret);
+        self.standing.turned = written.map(|caret| Caret {
+            row: self.standing.running.len() + caret.row,
+            column: caret.column,
+        });
         self.prompt_target = prompt.pointed.map(|(at, row)| (at, door(row, columns)));
 
         if self.prompt_pointed()
@@ -2697,9 +2725,10 @@ impl<T: Terminal> Renderer<T> {
 
     /// Where the cursor goes, in window rows and columns.
     ///
-    /// The box first, because between turns it is the only thing anybody is
-    /// typing into. Then whatever a turn is holding, which is where a question
-    /// asked mid-turn puts it. With neither, the top of the prompt band — the
+    /// The box first, because between turns it is mostly what anybody is
+    /// typing into, and it gives way only to a line being written over it.
+    /// Then whatever stands over the box, which is where a question asked
+    /// mid-turn puts it, and a line of the dock being written. With neither, the top of the prompt band — the
     /// row the box would be on, which is where the next thing to be typed will
     /// appear.
     fn parked(&self, bands: &Bands) -> (usize, usize) {
