@@ -50,7 +50,7 @@ pub use assembly::{Assembled, ContextInputs, Live, asked, assemble};
 pub use compaction::Room;
 pub use prompt::{
     EnvironmentSection, Identity, ModelSection, PermissionsSection, Questions, QuestionsSection,
-    Skill, SkillsSection, SystemPrompt, ToolsSection, WorkspaceSection, continue_numbering,
+    Skill, SkillsSection, SystemPrompt, ToolsSection, WorkspaceSection,
 };
 pub use sections::{ContextSection, capture, seen};
 pub use task::{AMENDMENT_BYTES, MOST_AMENDMENTS, REQUEST_BYTES, Task, TaskSection};

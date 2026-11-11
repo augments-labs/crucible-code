@@ -140,12 +140,9 @@ pub fn billing(conversation: &Conversation) -> api::Billing {
 /// It goes to a client that claimed [`Capability::Questions`], whether or not
 /// it asked for progress, because that client is the one answering it, and to
 /// no other.
-/// Each question is shown in the shape a blocking question is put, with one
-/// difference: an answer whose name is longer than the words a client is
-/// handed is cut, saying so, where a blocking question like it is declined
-/// unput. A restored batch is bounded by the registry's total alone, and one
-/// left out would wait where no client could answer or decline it; a cut
-/// name is one the client cannot choose, and the rest of the batch it can.
+/// Each question is shown in the shape a blocking question is put. The
+/// registry bounds every text a batch holds, restored ones included, below the
+/// words a client is handed, so none is cut on its way here.
 ///
 /// The report is read as a signal and not for what it carries: the era and
 /// the set are read together from `questions`, the handle the front end

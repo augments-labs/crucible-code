@@ -19,12 +19,12 @@ can only be about the whole tool: `deny ask_user` refuses every call to it.
 | Argument | What it is |
 | --- | --- |
 | `questions` | Every question to put, in the order to answer them. Required, and at most 4. |
-| `heading` | Two or three words naming one question, shown in a row of all of them. Required, and at most 24 bytes, because the row holds every heading at once. |
+| `heading` | Two or three words naming one question, shown in a row of all of them. Required, at most 24 bytes, because the row holds every heading at once, and on one line, with no line break or control character. |
 | `question` | The question itself. Required, and at most 500 bytes. |
 | `several` | Whether more than one of its answers may be chosen. Left out means one. |
 | `answers` | The answers it offers, best first. Required, at least 2 and at most 8, and no two the same. |
-| `answer` | What one answer is called. Required, and at most 500 bytes. |
-| `says` | One line saying what choosing it means, where the name does not say it. At most 500 bytes. |
+| `answer` | What one answer is called. Required, at most 500 bytes, and on one line, with no line break or control character, since what you choose is said back under it. |
+| `says` | What choosing it means, where the name does not say it. At most 500 bytes. |
 | `recommended` | Marks the one answer the agent would pick. At most one per question, and the first listed; a call that marks two, or one that is not first, is refused so the agent can correct it. |
 | `shows` | What the answer would look like, row by row. At most 10 rows of at most 500 bytes each. |
 | `mode` | `blocking`, the default, waits for the answer. `deferred` returns at once and the answer comes later; see [Asking without waiting](#asking-without-waiting). |

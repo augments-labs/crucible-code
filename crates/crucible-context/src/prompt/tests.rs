@@ -869,7 +869,9 @@ fn the_questions_section_snapshot_is_what_a_resume_restores_the_waiting_question
     let later = Deferred::default();
     later.restore(&nowhere).expect("an empty state restores");
     assert!(later.waiting().is_empty());
-    assert_eq!(later.state().get("next"), held.state().get("next"));
+    let next = Deferred::saved_next(&held.state());
+    assert!(next.is_some_and(|next| next > 0), "{next:?}");
+    assert_eq!(Deferred::saved_next(&later.state()), next);
 }
 
 #[test]

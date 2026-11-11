@@ -20,7 +20,7 @@ use crucible_tools::{Deferred, Permission, ToolSnapshot};
 use crucible_types::{ContextError, ContextPatch, ContextSnapshot, Fragment, Seen, Transcript};
 use serde_json::Value;
 
-use crate::prompt::{recorded_next, saved, telling, told_ids};
+use crate::prompt::{telling, told_ids};
 use crate::{
     ContextSection, EnvironmentSection, ModelSection, PermissionsSection, Questions,
     QuestionsSection, Skill, SkillsSection, Task, TaskSection, ToolsSection, WorkspaceSection,
@@ -216,17 +216,14 @@ pub fn asked(
     let empty = ContextSnapshot::new();
     let prior = prior.unwrap_or(&empty);
     let state = held.state();
-    let Some(next) = recorded_next(&state) else {
-        return Ok(None);
-    };
-    let Value::Object(mut now) = state else {
+    let Some(next) = Deferred::saved_next(&state) else {
         return Ok(None);
     };
     // Read after the state, never before: an answer settled between the two
     // leaves its batch out of that state, and this is what keeps it recorded.
     let undelivered = held.any_settled();
     let recorded = prior.get(QuestionsSection::ID);
-    if recorded.and_then(recorded_next) == Some(next) {
+    if recorded.and_then(Deferred::saved_next) == Some(next) {
         return Ok(None);
     }
     // A registry that never numbered anything has nothing for a log to keep.
@@ -234,34 +231,39 @@ pub fn asked(
         return Ok(None);
     }
 
-    let still = match now.remove("waiting") {
-        Some(Value::Array(still)) => still,
-        _ => Vec::new(),
-    };
-    let listed: Vec<Option<Value>> = still.iter().map(|batch| batch.get("id").cloned()).collect();
+    let still = Deferred::saved_waiting(&state);
+    let listed: Vec<Option<&str>> = still.iter().map(Deferred::saved_id).collect();
     let mut waiting: Vec<Value> = recorded
-        .and_then(|state| state.get("waiting"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|kept| undelivered || still.iter().any(|batch| batch.get("id") == kept.get("id")))
+        .map(Deferred::saved_waiting)
+        .unwrap_or_default()
+        .iter()
+        .filter(|kept| {
+            undelivered
+                || still
+                    .iter()
+                    .any(|batch| Deferred::saved_id(batch) == Deferred::saved_id(kept))
+        })
         .cloned()
         .collect();
     let new: Vec<Value> = still
-        .into_iter()
+        .iter()
         .filter(|batch| {
-            let id = batch.get("id");
-            !waiting.iter().any(|kept| kept.get("id") == id)
+            let id = Deferred::saved_id(batch);
+            !waiting.iter().any(|kept| Deferred::saved_id(kept) == id)
         })
+        .cloned()
         .collect();
     waiting.extend(new);
     // Kept only while the registry can read it back: a list it would refuse
     // brings back none of its batches. The oldest kept that the registry no
     // longer lists goes first, as the one most likely already delivered.
-    while Deferred::default().restore(&saved(next, &waiting)).is_err() {
+    while Deferred::default()
+        .restore(&Deferred::saved(next, &waiting))
+        .is_err()
+    {
         let Some(at) = waiting.iter().position(|kept| {
-            let id = kept.get("id");
-            !listed.iter().any(|listed| listed.as_ref() == id)
+            let id = Deferred::saved_id(kept);
+            !listed.contains(&id)
         }) else {
             break;
         };
@@ -273,7 +275,7 @@ pub fn asked(
     numbered.record(
         QuestionsSection::ID,
         telling(
-            saved(next, &waiting),
+            Deferred::saved(next, &waiting),
             told.into_iter().map(Value::from).collect(),
         ),
     )?;
@@ -396,7 +398,7 @@ mod tests {
         let recorded = patch.apply(&prior).expect("the patch applies");
         let state = recorded.get(QuestionsSection::ID).expect("still recorded");
 
-        assert_eq!(state.get("next"), Some(&json!(2)));
+        assert_eq!(Deferred::saved_next(state), Some(2));
         assert_eq!(ids(state), ["q0", "q1"]);
         assert_eq!(recorded.sections().len(), 1, "only the questions changed");
         assert_eq!(
@@ -420,7 +422,12 @@ mod tests {
             .apply(&ContextSnapshot::new())
             .expect("the patch applies");
         let state = recorded.get(QuestionsSection::ID).expect("recorded");
-        assert_eq!(state.get("waiting"), held.state().get("waiting"));
+        let now = held.state();
+        assert_eq!(Deferred::saved_waiting(&now).len(), 1, "{now}");
+        assert_eq!(
+            Deferred::saved_waiting(state),
+            Deferred::saved_waiting(&now)
+        );
         assert_eq!(state.get("told"), Some(&json!([])), "nothing was told yet");
 
         let resumed = Deferred::default();
