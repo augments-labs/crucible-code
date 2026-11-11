@@ -2,7 +2,7 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x46 cursor 41,4 scrollback 0
+80x46 cursor 40,4 scrollback 0
 |╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
 |│                                  │ Recent sessions                           │|
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
@@ -20,11 +20,10 @@ expression: window.picture()
 |                                                                                |
 |› show me the corpus                                                            |
 |                                                                                |
-|A line that ends in a backslash\                                                |
+|A line that ends in a backslash                                                 |
 |continues on the next row.                                                      |
 |                                                                                |
-|An ampersand written as &amp;, a tag as &lt;tag&gt;, a copy as &copy; and a     |
-|number as &#169;.                                                               |
+|An ampersand written as &, a tag as <tag>, a copy as © and a number as ©.       |
 |                                                                                |
 |An empty reference &#0; and an override &#x202E; are written as they came.      |
 |                                                                                |
@@ -47,5 +46,6 @@ expression: window.picture()
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|
+|                                                                                |
 |                                                                                |
 |                                                                                |

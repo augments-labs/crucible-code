@@ -272,6 +272,30 @@ that `<br>`, `<details>` or `<summary>` is read on is never the first line of a
 table written without outer bars, nor the title of a heading underlined with
 `===` or `---`.
 
+## Line breaks and entities
+
+- **A backslash at the end of a line.** In a paragraph, a list item or a quote,
+  a `\` just before the line break breaks the line and is not drawn, once more
+  of the paragraph follows. When the message ends there, or a blank line comes
+  next, the backslash is drawn as written. In code, a code span, a heading,
+  display math and a block drawn as written it is an ordinary character.
+- **Entities.** Outside code, `&name;` for the names below and every numeric
+  reference, `&#169;` or `&#xA9;` with up to seven digits, is drawn as the
+  character it names. What it names is text, never read again: `&lt;details&gt;`
+  opens nothing and `&#42;` leans on nothing. The names are `amp`, `lt`, `gt`,
+  `quot`, `apos`, `nbsp`, `copy`, `reg`, `trade`, `hellip`, `mdash`, `ndash`,
+  `lsquo`, `rsquo`, `ldquo`, `rdquo`, `laquo`, `raquo`, `bull`, `middot`, `deg`,
+  `plusmn`, `times`, `divide`, `micro`, `para`, `sect`, `euro`, `pound`, `yen`,
+  `cent`, `larr`, `rarr`, `uarr`, `darr`, `harr`, `rArr`, `lArr`, `hArr`, `ne`,
+  `le`, `ge`, `infin` and `check`, and case matters. Any other name, an entity
+  without its `;`, and one inside code, a key, `<sub>` or `<sup>` are drawn as
+  written.
+- **An entity for a character a screen does not draw as itself.** A control
+  character, an escape, a bidirectional override or other format character,
+  zero, a surrogate and a value past the last character are drawn as written,
+  `&#27;[31m` and `&#x202E;` among them. No entity puts an escape on the
+  terminal.
+
 ## What is shown as written
 
 Some text is drawn exactly as the model wrote it, rather than as a block:

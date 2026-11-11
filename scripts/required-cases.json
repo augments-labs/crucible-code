@@ -8513,6 +8513,186 @@
       ]
     },
     {
+      "id": "CASE-TRANSCRIPT-BACKSLASH-BREAK",
+      "family": "transcript-blocks",
+      "obligation": "A backslash that ends a line inside a paragraph breaks the line and draws no backslash, in a list item, a quote and under emphasis, and is kept where no line follows, a blank line follows, or it is not in prose.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::escapes::a_backslash_hard_break_draws_no_backslash",
+      "source": "crates/crucible-tui/src/markdown/tests/escapes.rs",
+      "body_sha256": "fd5c503027797f2ae63236c6e08b08ae325544336981a936d407d16079a28c8c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BACKSLASH-BREAK-CUT",
+      "family": "transcript-blocks",
+      "obligation": "A backslash break draws the same text and slots cut at any byte and one character at a time.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::escapes::a_backslash_hard_break_is_the_same_cut_anywhere",
+      "source": "crates/crucible-tui/src/markdown/tests/escapes.rs",
+      "body_sha256": "5189405091345919da0654175a7a79ea3c248ef33cc19e6b024955b6acf30f21",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ENTITIES-DRAWN",
+      "family": "transcript-blocks",
+      "obligation": "The common named entities and every numeric reference outside code draw the character they name.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::escapes::entities_are_the_characters_they_name",
+      "source": "crates/crucible-tui/src/markdown/tests/escapes.rs",
+      "body_sha256": "877cad0341d782ff975ffbd3affc072853bc2da7394f962fdcb89a64e1070d1d",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ENTITY-IN-CODE",
+      "family": "transcript-blocks",
+      "obligation": "An entity inside a code span, a fence, an indented block or a key stays as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::escapes::an_entity_inside_code_stays_as_written",
+      "source": "crates/crucible-tui/src/markdown/tests/escapes.rs",
+      "body_sha256": "d6a31ced44f4f58814a72014c06cccc9defcb0957a64f71501db96479a69840b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ENTITY-HOSTILE",
+      "family": "transcript-blocks",
+      "obligation": "A reference naming a control or format character, a surrogate, zero, a value past the last scalar or the picture placeholder is shown as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::escapes::a_reference_that_names_what_no_screen_draws_as_itself_is_shown_as_written",
+      "source": "crates/crucible-tui/src/markdown/tests/escapes.rs",
+      "body_sha256": "9d4909173d1c208b15830eb8cb2fbbf91dd498afa6cf89b0b475518e19fbd52e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ENTITY-CUT",
+      "family": "transcript-blocks",
+      "obligation": "An entity draws the same text and slots cut at any byte and one character at a time.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::escapes::an_entity_is_the_same_cut_anywhere",
+      "source": "crates/crucible-tui/src/markdown/tests/escapes.rs",
+      "body_sha256": "0d6ee15050896551273bd1a5e570ae331622c5bdf40d7baab40a92cf0ac9ebc3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ENTITY-HOSTILE-SCREEN",
+      "family": "transcript-blocks",
+      "obligation": "A hostile reference writes no escape byte and no picture cell to the terminal of the redrawing screen and is drawn as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::escapes::a_hostile_entity_writes_no_escape_nor_a_picture_cell_and_is_drawn_as_written",
+      "source": "crates/crucible-tui/src/render/tests/escapes.rs",
+      "body_sha256": "4c3cdc4b990c87e4a0d58ecaf345f75477e013a5b8e3949c5bbf91a5c1806329",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ENTITY-HOSTILE-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "A hostile reference writes no escape byte and no picture cell to the terminal of the native screen and is drawn as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_hostile_entity_writes_no_escape_nor_a_picture_cell_and_is_drawn_as_written",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "1504c64330376856382c4c4a53f13ddc54f2980d1339bdfe42b9c9bcc38716de",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ENTITY-SCREEN",
+      "family": "transcript-blocks",
+      "obligation": "An entity and a backslash break are drawn as their characters on the redrawing screen.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::escapes::a_backslash_before_a_line_break_breaks_the_line_and_draws_no_backslash",
+      "source": "crates/crucible-tui/src/render/tests/escapes.rs",
+      "body_sha256": "1cfe51f058bfa7e85c732fb186087967f08dbbad090b8b1e24f9a71cc19d4a9a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ENTITY-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "An entity and a backslash break are drawn as their characters on the native screen.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_entity_is_drawn_as_the_character_it_names_and_a_backslash_break_draws_no_backslash",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "843539f250d3d43dbe3eb1dbf1ea19b00ce7dce44ad6fbf875e501fb184694db",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
       "id": "CASE-TRANSCRIPT-REFERENCE-BEFORE-LINK",
       "family": "transcript-blocks",
       "obligation": "With a definition above, a second bracket after a bracket that names no definition still opens an inline link or a footnote reference, as it does with none, cut anywhere.",
