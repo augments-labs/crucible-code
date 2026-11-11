@@ -554,7 +554,7 @@ in an empty directory of its own, which is removed after.
 
 A program changed since its probe, whose path leads elsewhere or whose size or
 modification time differs, is probed again in the same way before it is
-started, and a refusal there is the launch's: the program is not started and
+started, as is one dated before 1970 at every start, and a refusal there is the launch's: the program is not started and
 its old record is removed. Every start's answer to `initialize` is held to
 protocol version 1 and its capabilities as the probe's was, and an answer that
 differs from the record replaces it. On Linux the probe and every launch under

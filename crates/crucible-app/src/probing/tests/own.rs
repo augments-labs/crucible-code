@@ -594,6 +594,45 @@ fn a_changed_agent_key_or_launch_shape_reads_as_no_record() {
     );
 }
 
+/// A program dated before 1970 has a time a record cannot keep, so it never
+/// reads as the program probed, even when it was not changed, and a launch
+/// probes it again.
+#[test]
+fn a_program_dated_before_1970_is_never_current() {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    let sample = Sample::new("own-pre-epoch");
+    let program = program_in(&sample);
+    let crucible = sample.home();
+    let dated = |to: SystemTime| {
+        fs::File::options()
+            .write(true)
+            .open(&program)
+            .and_then(|file| file.set_modified(to))
+            .expect("the program's time");
+        let kept = fs::metadata(&program)
+            .and_then(|meta| meta.modified())
+            .expect("the program's time");
+        assert!(kept < UNIX_EPOCH, "the file system kept {kept:?}");
+    };
+    dated(UNIX_EPOCH - Duration::from_hours(24));
+    let gemini = instance("gemini", "gemini", &[]);
+
+    let record = admit(
+        &crucible,
+        &gemini,
+        &["gemini"],
+        &program,
+        &Sandbox::Closed,
+        &speaking(),
+    )
+    .expect("admitted");
+
+    assert!(!record.current(&program), "an unchanged program");
+    dated(UNIX_EPOCH - Duration::from_hours(48));
+    assert!(!record.current(&program), "a program retimed before 1970");
+}
+
 #[test]
 fn the_own_program_records_are_kept_to_64_and_go_with_their_instance() {
     let sample = Sample::new("own-bound");

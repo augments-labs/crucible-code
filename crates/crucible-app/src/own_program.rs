@@ -27,7 +27,8 @@
 //!
 //! A launch holds the program to its record. One whose path, size or
 //! modification time changed since its probe, as a program that updates
-//! itself does, is probed again in process, confined, before it is started:
+//! itself does, or whose modification time is before 1970 and so cannot be
+//! kept, is probed again in process, confined, before it is started:
 //! it is started only where it is still admitted, and its record is replaced,
 //! or removed with the launch refused. Every start's answer to `initialize`
 //! is admitted as the probe's was, and one that differs from the record
@@ -523,10 +524,10 @@ impl Record {
     /// Whether the program at `program`, a canonical path, is still the one
     /// probed: the same path, size and modification time. One that changed,
     /// as a program that updates itself does, is probed again before it is
-    /// started.
+    /// started, as is one whose modification time is before 1970.
     #[must_use]
     pub fn current(&self, program: &Path) -> bool {
-        let Ok(stamp) = stamp(program) else {
+        let Ok(Some(stamp)) = stamp(program) else {
             return false;
         };
         self.program() == Some(program) && self.kept.get("stamp") == Some(&stamp)
@@ -641,7 +642,7 @@ impl Record {
         kept.insert("agent".into(), json!(instance.agent));
         kept.insert("launch".into(), json!(instance.launch()));
         kept.insert("program".into(), json!(path));
-        kept.insert("stamp".into(), stamp);
+        kept.insert("stamp".into(), stamp.unwrap_or(Value::Null));
         kept.insert("sandbox".into(), json!("closed"));
         kept.insert("protocol".into(), json!(initialized.protocol()));
         // It answered with its capabilities, or `Initialized::own` would have
@@ -700,18 +701,18 @@ impl Record {
 }
 
 /// The modification time and size of the file at `path`, as a record keeps
-/// them.
-fn stamp(path: &Path) -> std::io::Result<Value> {
+/// them; none where that time is before 1970, which a record cannot keep, so
+/// such a program is never read as the one probed.
+fn stamp(path: &Path) -> std::io::Result<Option<Value>> {
     let meta = fs::metadata(path)?;
-    let modified = meta
-        .modified()?
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    Ok(json!({
+    let Ok(modified) = meta.modified()?.duration_since(UNIX_EPOCH) else {
+        return Ok(None);
+    };
+    Ok(Some(json!({
         "size": meta.len(),
         "secs": modified.as_secs(),
         "nanos": modified.subsec_nanos(),
-    }))
+    })))
 }
 
 /// The record kept under crucible's home `crucible` for `instance` as it is
