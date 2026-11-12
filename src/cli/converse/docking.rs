@@ -34,7 +34,7 @@ use std::collections::BTreeSet;
 use crucible_client_api::{Command, Era, Picked, Refusal, Replied, Said};
 use crucible_tui::{
     Action, Batched, Caret, Chosen, Dock, Docked, Drafted, Editing, Editor, Focus, Glyphs, Key,
-    Member, Offer, Phase, Pressed, Row, Scrolled, Slot, Typed,
+    Member, Offer, Phase, Pressed, Row, Scrolled, Typed, dock_keys,
 };
 use crucible_types::{Batch, QuestionId};
 
@@ -53,7 +53,8 @@ const CHOOSING_SEVERAL: &[&str] = &[
 /// While a line is being written.
 const WRITING: &[&str] = &["enter or esc done", "tab composer"];
 
-/// While a decline waits for its second press, parted by the glyph set's dot.
+/// While a decline waits for its second press, parted by the glyph set's dot
+/// and folded between the two where a window cannot hold them in one row.
 const CONFIRMING: [&str; 2] = ["enter to decline this question", "esc keep it"];
 
 /// While the answers are read back, or what became of them is shown.
@@ -283,21 +284,22 @@ impl Docking {
         // under the dock, rather than in its row of keys, which a short window
         // takes away once the dock's blank rows are gone: asked there, a
         // decline in a short window would look like a key that did nothing.
-        let asking = usize::from(self.confirming);
-        let room = room.saturating_sub(asking);
+        // Folded between its two keys as the dock's own keys are, so a narrow
+        // window loses neither, and the dock gives up a row for each.
+        let asking = if self.confirming {
+            dock_keys(&CONFIRMING, columns, glyphs)
+        } else {
+            Vec::new()
+        };
+        let room = room.saturating_sub(asking.len());
         self.laid.set(Some((columns, room, glyphs)));
         let (mut rows, caret) = Docked {
             dock: &self.dock,
             footer: self.footer(),
         }
         .within(columns, room, glyphs);
-        if self.confirming && !rows.is_empty() {
-            rows.push(
-                Row::new()
-                    .then(Slot::Plain, "  ")
-                    .then(Slot::Quiet, CONFIRMING.join(&format!(" {} ", glyphs.dot())))
-                    .clipped(columns),
-            );
+        if !rows.is_empty() {
+            rows.extend(asking);
         }
         (rows, caret)
     }
