@@ -200,7 +200,10 @@ matrices and cases between their bracket pieces:
 ```
 
 With the ASCII glyph set the frame, the rules, the bracket pieces and the minus
-sign are ASCII; the letters and operators of the formula stay as they are.
+sign are ASCII: `‖` is drawn as `||`, and `⟨` and `⟩` as `<` and `>`. The
+letters, the operators, the root sign and the raised scripts of the formula
+stay as they are. A formula holding a ceiling or a floor, which no ASCII
+character draws, is shown as written.
 
 A dollar is math only where it reads as one, so `$5 and $10`, `$HOME/$USER`,
 `$n$th` and `set $a,$b` stay as written. A dollar followed by a space, a tab, a

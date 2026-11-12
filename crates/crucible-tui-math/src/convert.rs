@@ -617,7 +617,7 @@ impl<'a> Parser<'a> {
             "," | ";" | ":" | ">" | " " | "quad" => Expr::Text(" ".to_owned()),
             "qquad" => Expr::Text("  ".to_owned()),
             _ => {
-                let mut symbol = symbol(&name).ok_or(Refused::Unclean)?.to_owned();
+                let mut symbol = self.named(&name)?.to_owned();
                 // The space after a word ends its name in TeX, and a reader
                 // expects `\alpha \leq \pi` to keep its spacing; not before a
                 // script, so `\alpha ^2` still reads as α².
@@ -736,8 +736,8 @@ impl<'a> Parser<'a> {
         Ok(match self.bump().ok_or(Refused::Unclean)? {
             '.' => String::new(),
             character @ ('(' | ')' | '[' | ']' | '|' | '/') => character.to_string(),
-            '<' => "⟨".to_owned(),
-            '>' => "⟩".to_owned(),
+            '<' => self.named("langle")?.to_owned(),
+            '>' => self.named("rangle")?.to_owned(),
             '\\' => {
                 let start = self.at;
                 while self
@@ -749,7 +749,7 @@ impl<'a> Parser<'a> {
                 if self.at == start {
                     match self.bump() {
                         Some(character @ ('{' | '}')) => character.to_string(),
-                        Some('|') => "‖".to_owned(),
+                        Some('|') => self.named("|")?.to_owned(),
                         _ => return Err(Refused::Unclean),
                     }
                 } else {
@@ -757,15 +757,31 @@ impl<'a> Parser<'a> {
                     match name {
                         "langle" | "rangle" | "lceil" | "rceil" | "lfloor" | "rfloor" | "vert"
                         | "Vert" | "lvert" | "rvert" | "lVert" | "rVert" | "lbrace" | "rbrace"
-                        | "uparrow" | "downarrow" | "backslash" => {
-                            symbol(name).ok_or(Refused::Unclean)?.to_owned()
-                        }
+                        | "uparrow" | "downarrow" | "backslash" => self.named(name)?.to_owned(),
                         _ => return Err(Refused::Unclean),
                     }
                 }
             }
             _ => return Err(Refused::Unclean),
         })
+    }
+
+    /// The character a command names, in this formula's glyph set.
+    ///
+    /// A double bar and an angle bracket are bracket pieces, so under ASCII
+    /// they are drawn as two bars and as the less-than and greater-than
+    /// signs. A ceiling or a floor has no ASCII shape that does not read as a
+    /// bracket, so under ASCII it refuses the formula, which is then shown as
+    /// written. Every other character is the formula's content and is drawn
+    /// as itself in either set.
+    fn named(&self, command: &str) -> Read<&'static str> {
+        match (command, self.glyphs) {
+            ("Vert" | "lVert" | "rVert" | "|", Glyphs::Ascii) => Ok("||"),
+            ("langle", Glyphs::Ascii) => Ok("<"),
+            ("rangle", Glyphs::Ascii) => Ok(">"),
+            ("lceil" | "rceil" | "lfloor" | "rfloor", Glyphs::Ascii) => Err(Refused::Unclean),
+            _ => symbol(command).ok_or(Refused::Unclean),
+        }
     }
 
     /// An environment's name, in its braces.

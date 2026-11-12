@@ -22,8 +22,11 @@
 //!   terminal would act on reaches a row through it, and nothing it names (a
 //!   file, an address) is opened.
 //! - **ASCII where it is asked for.** Under the ASCII glyph set the frame, the
-//!   fraction rules, the bracket pieces and the minus sign are ASCII; the
-//!   letters and operators of the formula are its content and stay.
+//!   fraction rules, the bracket pieces and the minus sign are ASCII: a double
+//!   bar is two bars and an angle bracket the less-than or greater-than sign,
+//!   and a ceiling or a floor, which no ASCII character draws, refuses the
+//!   formula. The letters, operators, roots and raised scripts of the formula
+//!   are its content and stay.
 //! - **Every row fits.** A block wider than its room is refused for that room,
 //!   never cut, so a narrower window shows it as written.
 

@@ -209,9 +209,21 @@ fn scripts_stacked_over_a_rule_stand_beside_their_base() {
 }
 
 /// What the ASCII set must not draw in a structure: box drawing, the bracket
-/// pieces and the Unicode minus.
+/// pieces, the angle, ceiling and floor brackets and the Unicode minus.
 fn structural_unicode(character: char) -> bool {
-    matches!(character, '\u{2500}'..='\u{257f}' | '\u{239b}'..='\u{23ad}' | '−' | '‖')
+    matches!(
+        character,
+        '\u{2500}'..='\u{257f}'
+            | '\u{239b}'..='\u{23ad}'
+            | '−'
+            | '‖'
+            | '⟨'
+            | '⟩'
+            | '⌈'
+            | '⌉'
+            | '⌊'
+            | '⌋'
+    )
 }
 
 #[test]
@@ -225,6 +237,12 @@ fn under_ascii_every_structure_is_ascii() {
         r"\begin{Vmatrix} 1 \\ 2 \end{Vmatrix}",
         r"f(x) = \begin{cases} x & x \geq 0 \\ -x & x < 0 \\ 0 & \text{else} \end{cases}",
         r"\frac{\frac{1}{2}}{\frac{3}{4}}",
+        r"\|v\| = \Vert w \Vert + \lVert u \rVert",
+        r"\left\| \frac{a}{b} \right\|",
+        r"\left\Vert \frac{a}{b} \right\Vert",
+        r"\langle u, v \rangle",
+        r"\left\langle \frac{a}{b} \right\rangle",
+        r"\left< \frac{a}{b} \right>",
     ] {
         let rows = block(source, 64, ASCII).unwrap_or_default();
         assert!(!rows.is_empty(), "{source} was not drawn");
@@ -236,6 +254,44 @@ fn under_ascii_every_structure_is_ascii() {
         }
         let compact = inline(source, ASCII).unwrap_or_default();
         assert!(!compact.chars().any(structural_unicode), "{compact:?}");
+    }
+}
+
+#[test]
+fn under_ascii_double_bars_and_angle_brackets_are_drawn_in_ascii() {
+    // Drawn as in Unicode, each double bar as two bars and each angle bracket
+    // as the less-than or greater-than sign.
+    for source in [
+        r"\|v\|",
+        r"\Vert v \Vert",
+        r"\lVert v \rVert",
+        r"\left\| v \right\|",
+        r"\langle u, v \rangle",
+        r"\left\langle v \right\rangle",
+        r"\left< v \right>",
+    ] {
+        let wanted = inline(source, UNICODE)
+            .map(|drawn| drawn.replace('‖', "||").replace('⟨', "<").replace('⟩', ">"));
+        assert!(wanted.is_some(), "{source} was not drawn");
+        assert_eq!(inline(source, ASCII), wanted, "{source}");
+    }
+}
+
+#[test]
+fn under_ascii_a_ceiling_or_a_floor_is_shown_as_written() {
+    // No ASCII character reads as a ceiling or a floor rather than as a
+    // bracket, so the formula is not drawn; in Unicode it is.
+    for source in [
+        r"\lceil \frac{n}{2} \rceil",
+        r"\left\lfloor x \right\rfloor",
+    ] {
+        assert!(block(source, 64, UNICODE).is_ok(), "{source}");
+        assert_eq!(
+            block(source, 64, ASCII).err(),
+            Some(Undrawn::NotText),
+            "{source}"
+        );
+        assert_eq!(inline(source, ASCII), None, "{source}");
     }
 }
 

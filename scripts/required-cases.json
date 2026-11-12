@@ -12495,7 +12495,7 @@
       },
       "case": "tests::under_ascii_every_structure_is_ascii",
       "source": "crates/crucible-tui-math/src/tests.rs",
-      "body_sha256": "14097cd6a24b27eb688df632e781724648ffcc611087233ad5214b0b0e6fc27a",
+      "body_sha256": "007ae8102b49ce697d7c47dc518fe1de08c71271699f574e76879a9e8e4ea899",
       "platforms": [
         "linux",
         "macos",
@@ -12706,6 +12706,42 @@
       "case": "cli::converse::replaying::tests::a_formula_in_a_session_glimpsed_is_drawn_the_way_the_session_draws_math",
       "source": "src/cli/converse/replaying/tests.rs",
       "body_sha256": "b7ac7eccff8494d82f581b9d03b45d60e2f8e2cc4cc3373fec0826d919c104bf",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-ASCII-BARS-ANGLES",
+      "family": "transcript-blocks",
+      "obligation": "Under ascii glyphs a double bar is drawn as two bars and an angle bracket as the less-than or greater-than sign, written plainly or after left and right, and the rest as in unicode.",
+      "package": "crucible-tui-math",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_math"
+      },
+      "case": "tests::under_ascii_double_bars_and_angle_brackets_are_drawn_in_ascii",
+      "source": "crates/crucible-tui-math/src/tests.rs",
+      "body_sha256": "8a58d5765a5c1e15b659e0ebf0b4b7489d53c146f1b92ef464e3555da45980ae",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-ASCII-CEILING-FLOOR",
+      "family": "transcript-blocks",
+      "obligation": "A formula holding a ceiling or a floor is drawn in unicode glyphs and, under ascii glyphs, is refused as not text in a block and in a line.",
+      "package": "crucible-tui-math",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_math"
+      },
+      "case": "tests::under_ascii_a_ceiling_or_a_floor_is_shown_as_written",
+      "source": "crates/crucible-tui-math/src/tests.rs",
+      "body_sha256": "c5a36830dcfdc453dd4d552be0e7de2581f8e9773cc5f1fa89ebff04557699d8",
       "platforms": [
         "linux",
         "macos",
