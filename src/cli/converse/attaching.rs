@@ -5,6 +5,10 @@
 //! the path, and no tool went looking for it. What that leaves to decide is
 //! whether the file can be sent at all, and every answer of no is a sentence
 //! the user reads while they can still act on it.
+//!
+//! Words the application wrote, such as the note that wakes the model when
+//! background work ends, attach nothing: a path a command printed was nobody's
+//! choice, and neither is an `[Image #N]` it happens to contain.
 
 use std::fs;
 use std::io::{Cursor, Write as _};
@@ -12,6 +16,7 @@ use std::path::{Path, PathBuf};
 
 use crucible_app::Settled;
 use crucible_attachments::{AttachmentError, CEILING, Opened, kind};
+use crucible_client_api::Author;
 use crucible_tui::{Renderer, Row, Terminal, TerminalError, fold};
 use crucible_types::{Attachment, Modalities, SessionId};
 use crucible_workspace::{Workspace, written};
@@ -75,6 +80,8 @@ pub(super) struct Sent<'a> {
     pub(super) prompt: &'a str,
     /// The paths pasted so far, `[Image #1]` first.
     pub(super) images: &'a [Box<str>],
+    /// Who wrote it, which decides whether its words can choose a file at all.
+    pub(super) author: Author,
 }
 
 /// Who the prompt is going to, and what this session says they can be given.
@@ -141,9 +148,20 @@ fn gathered(
     asking: Asking<'_>,
     sent: Sent<'_>,
 ) -> (Vec<Attachment>, Vec<String>) {
-    let Sent { prompt, images } = sent;
+    let Sent {
+        prompt,
+        images,
+        author,
+    } = sent;
     let mut attachments: Vec<Attachment> = Vec::new();
     let mut refusals = Vec::new();
+    // The application's words choose nothing. A note that wakes the model
+    // carries what a background command printed, and a path in it was never
+    // somebody picking that file, so it is neither read, imported nor sent.
+    match author {
+        Author::Person => {}
+        Author::Application => return (attachments, refusals),
+    }
     let mut one = |named: Named, attachments: &mut Vec<Attachment>| match named {
         Named::Attached(one) => {
             if !attachments.iter().any(|have| have.hash == one.hash) {

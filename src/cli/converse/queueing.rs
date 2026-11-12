@@ -468,6 +468,8 @@ pub(super) fn taken<T: Terminal>(
     };
     draw::queued(renderer, &said, style)?;
 
+    // Only the person queues a line, so what it names is theirs to attach.
+    let author = Author::Person;
     let imported = attaching::imported(held);
     let attached = attaching::beside(
         renderer,
@@ -476,10 +478,11 @@ pub(super) fn taken<T: Terminal>(
         attaching::Sent {
             prompt: &said,
             images: &held.images,
+            author,
         },
         style,
     )?;
-    let work = Work::Turn(said, attached, Author::Person);
+    let work = Work::Turn(said, attached, author);
     let (back, leaving) = ran(conversation, renderer, terms, work, held)?;
     Ok((back, Some(leaving)))
 }
