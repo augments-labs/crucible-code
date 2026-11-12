@@ -24,7 +24,7 @@ use crate::cli::converse::warning::{
     CRAMPED_NOTE, CRAMPED_QUEUE, CRAMPED_ROOM, CRAMPED_SEND, DROPPED, KEPT, Put, QUEUE_KEPT,
     UNSENT, left, returned, unanswered,
 };
-use crate::cli::converse::{Held, Work, ran, refreshed};
+use crate::cli::converse::{Held, Work, ran, refreshed, typing, work};
 
 use crate::cli::style::Style;
 
@@ -761,4 +761,32 @@ fn a_line_sent_alone_from_the_queue_and_held_back_goes_back_to_the_queue() {
     )
     .expect("the queue to be asked");
     assert_eq!(again, None, "the queue was taken before the reader sent");
+}
+
+#[test]
+fn a_line_is_the_work_of_where_it_was_sent_from() {
+    // Held back, the work a line started decides where the line goes: one from
+    // the box back into the box, one Ctrl+S sent from the queue back to the
+    // queue. So the loop must start the queue's work for the queue's line.
+    let queue = work(
+        "first".to_owned(),
+        Box::default(),
+        Author::Person,
+        typing::Origin::Queue,
+    );
+    let typed = work(
+        "first".to_owned(),
+        Box::default(),
+        Author::Person,
+        typing::Origin::Box,
+    );
+
+    assert!(
+        matches!(&queue, Work::Queued(line, _) if line == "first"),
+        "the queue's line did not start the queue's work"
+    );
+    assert!(
+        matches!(&typed, Work::Turn(line, _, Author::Person) if line == "first"),
+        "a typed line did not start a turn of the reader's"
+    );
 }

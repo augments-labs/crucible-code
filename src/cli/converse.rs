@@ -909,12 +909,7 @@ fn conversing<T: Terminal>(
             },
             terms.style(),
         )?;
-        // A line Ctrl+S sent from the queue is still one of the queue's: held
-        // back, it goes back there rather than over what the box holds.
-        let work = match origin {
-            typing::Origin::Box => Work::Turn(prompt, attached, author),
-            typing::Origin::Queue => Work::Queued(prompt, attached),
-        };
+        let work = work(prompt, attached, author, origin);
         let (back, leaving) = ran(conversation, renderer, terms, work, &mut held)?;
         conversation = back;
 
@@ -2108,6 +2103,22 @@ fn moved(held: &mut Held<'_>) {
     }
 }
 
+/// The work a line the reader sent starts, told by where it was sent from.
+///
+/// A line Ctrl+S sent from the queue is still one of the queue's: held back,
+/// it goes back there rather than over what the box holds.
+fn work(
+    prompt: String,
+    attached: Box<[Attachment]>,
+    author: Author,
+    origin: typing::Origin,
+) -> Work {
+    match origin {
+        typing::Origin::Box => Work::Turn(prompt, attached, author),
+        typing::Origin::Queue => Work::Queued(prompt, attached),
+    }
+}
+
 /// What a worker is sent away to do.
 ///
 /// Two things rather than one, because there are two and they are the same
@@ -2120,7 +2131,7 @@ enum Work {
     Turn(String, Box<[Attachment]>, Author),
     /// The lines the reader queued behind a turn, as the turn they are taken
     /// as: the oldest is its prompt, with the files it named, and the rest are
-    /// offered to it. The person's words, run as any prompt of theirs is; told
+    /// offered to it, or the one line Ctrl+S sent alone. The person's words, run as any prompt of theirs is; told
     /// apart from one sent from the box because, held back, they go back to
     /// the queue rather than into the box.
     Queued(String, Box<[Attachment]>),

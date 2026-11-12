@@ -42,8 +42,9 @@ pub(super) enum Put {
     /// turn. Held back, it is dropped rather than put in the prompt box,
     /// where it would read as the person's message.
     Note,
-    /// The lines queued behind a turn about to be sent as the next one.
-    /// Held back, they stay in the queue, and the box is left as it is.
+    /// The lines queued behind a turn about to be sent as the next one, or
+    /// the one Ctrl+S sent alone. Held back, they stay in the queue, and the
+    /// box is left as it is.
     Queue,
     /// The dock's answers about to be sent.
     Answer,

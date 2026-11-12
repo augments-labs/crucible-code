@@ -425,9 +425,12 @@ impl Prompts {
         self.standing = Standing::Held;
     }
 
-    /// Puts `line`, taken from the front as the turn the content-use question
-    /// held back, back at the front, and leaves every line to the reader's
-    /// next prompt, as a used-up plan does.
+    /// Puts `line`, the turn the content-use question held back, at the front,
+    /// and leaves every line to the reader's next prompt, as a used-up plan
+    /// does.
+    ///
+    /// The front is where it was taken from, or, for a line Ctrl+S sent alone,
+    /// where Ctrl+S puts the line it sends under a turn: next.
     ///
     /// Lost, each answer of no would be one more line the reader did not send
     /// and did not get back. The steer is emptied of what the held-back turn

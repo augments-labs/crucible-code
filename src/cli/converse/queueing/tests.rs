@@ -815,3 +815,31 @@ fn a_queue_kept_after_its_turn_was_held_back_is_whole_and_goes_with_the_next_pro
     queue.offered(&steer);
     assert_eq!(steer.take(), ["first", "second", "third"]);
 }
+
+#[test]
+fn a_line_sent_alone_and_held_back_waits_next_as_ctrl_s_under_a_turn_leaves_it() {
+    // Ctrl+S sends the highlighted line next, so held back it waits next: at
+    // the front, the rest behind it in the order they were typed, between turns
+    // as under one, where Ctrl+S moves the line to the front before it goes.
+    let (mut idle, steer) = queued(&["first", "second", "third"]);
+    assert!(idle.walk(false));
+    let alone = idle.sent_alone().expect("the highlighted line");
+    assert_eq!(alone, "second");
+
+    idle.kept(&alone, &steer);
+
+    assert_eq!(waiting(&idle), ["second", "first", "third"]);
+    assert_eq!(
+        idle.highlighted(),
+        0,
+        "the highlight is not on the line kept"
+    );
+
+    let (mut running, steer) = queued(&["first", "second", "third"]);
+    assert!(running.walk(false));
+    assert!(running.send_now(&steer));
+    let alone = batched(&mut running, &steer).expect("the line sent alone");
+    running.kept(&alone, &steer);
+
+    assert_eq!(waiting(&running), waiting(&idle), "the two keys disagree");
+}
