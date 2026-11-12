@@ -201,11 +201,11 @@ impl CatalogRow {
     }
 
     /// The row of the program the user installed for `key`, started with what
-    /// `own` proposes and signed in by `methods`, the ones its probe record
-    /// answered. `entry` is the entry it stands for, where one can be read,
-    /// whose statement of content use it is held under; a registry row, read on `read`, holds the
-    /// registry's generic warning where its entry states none, as
-    /// [`CatalogRow::registry`] does.
+    /// `own` proposes and signed in by `methods`, the ones its catalog entry
+    /// gives, a registry entry giving none. `entry` is the entry it stands
+    /// for, where one can be read, whose statement of content use it is held
+    /// under; a registry row, read on `read`, holds the registry's generic
+    /// warning where its entry states none, as [`CatalogRow::registry`] does.
     ///
     /// # Errors
     ///

@@ -1013,7 +1013,8 @@ impl Agent {
                 // A catalog row's program is held to the catalog wherever it
                 // lies: one outside the store is no release of the catalog's,
                 // and is refused as one not believed, unless its row is that
-                // of the user's own program, held to its probe record.
+                // of the user's own program, used as found under the
+                // conversation's sandbox setting.
                 if let (Some(programs), AgentRow::Catalog(catalog)) = (&self.believed, row)
                     && !(catalog.is_own() && Origin::of(programs, program.path()) == Origin::Own)
                 {
