@@ -145,6 +145,7 @@ const fn openai_rates(input: u64, read: u64, write: UsageRate, output: u64) -> P
         uncached_input: rate(input),
         cache_read: rate(read),
         cache_write_or_creation: write,
+        cache_write_extended: UsageRate::Unknown,
         output: rate(output),
         reasoning: UsageRate::NotApplicable,
         storage: UsageRate::NotApplicable,

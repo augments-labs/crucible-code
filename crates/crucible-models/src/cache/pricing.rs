@@ -80,6 +80,9 @@ pub struct PromptCacheRates {
     pub cache_read: UsageRate,
     /// Provider-reported cache creation/writes.
     pub cache_write_or_creation: UsageRate,
+    /// The part of a write kept for the provider's longer retention class,
+    /// charged in place of the write rate for that part alone.
+    pub cache_write_extended: UsageRate,
     /// Generated output, including reasoning unless reasoning has its own rate.
     pub output: UsageRate,
     /// Separately billed reasoning output.
@@ -96,6 +99,7 @@ impl PromptCacheRates {
         uncached_input: UsageRate::Unknown,
         cache_read: UsageRate::Unknown,
         cache_write_or_creation: UsageRate::Unknown,
+        cache_write_extended: UsageRate::Unknown,
         output: UsageRate::Unknown,
         reasoning: UsageRate::Unknown,
         storage: UsageRate::Unknown,
@@ -278,11 +282,7 @@ impl PromptCachePricing {
             usage.input.cache_read,
             PricingUnit::MillionTokens,
         )?;
-        let (cache_write_input, write_complete) = self.charge(
-            self.rates.cache_write_or_creation,
-            usage.input.cache_write_or_creation,
-            PricingUnit::MillionTokens,
-        )?;
+        let (cache_write_input, write_complete) = self.charge_write(usage.input)?;
 
         let reasoning_separate = matches!(
             self.rates.reasoning,
@@ -357,6 +357,43 @@ impl PromptCachePricing {
             currency: Some(self.currency),
             unit: total.map(CostAmount::unit),
         })
+    }
+
+    /// The write's cost: the part kept for the longer retention class at its
+    /// own rate and the rest at the write rate. That part is inside the write,
+    /// so the two are summed and the write is never charged whole beside them.
+    fn charge_write(
+        self,
+        input: InputTokenUsage,
+    ) -> Result<(Option<CostAmount>, bool), PricingError> {
+        let Some(longer) = input.cache_write_extended.filter(|kept| *kept > 0) else {
+            return self.charge(
+                self.rates.cache_write_or_creation,
+                input.cache_write_or_creation,
+                PricingUnit::MillionTokens,
+            );
+        };
+        let rest = input
+            .cache_write_or_creation
+            .and_then(|write| write.checked_sub(longer));
+        let (rest, rest_complete) = self.charge(
+            self.rates.cache_write_or_creation,
+            rest,
+            PricingUnit::MillionTokens,
+        )?;
+        let (longer, longer_complete) = self.charge(
+            self.rates.cache_write_extended,
+            Some(longer),
+            PricingUnit::MillionTokens,
+        )?;
+        if !(rest_complete && longer_complete) {
+            return Ok((None, false));
+        }
+        let amount = match (rest, longer) {
+            (Some(rest), Some(longer)) => Some(rest.checked_add(longer)?),
+            (one, other) => one.or(other),
+        };
+        Ok((amount, true))
     }
 
     fn charge(
@@ -488,6 +525,7 @@ mod tests {
             uncached_input: UsageRate::priced(PriceRate::per_million(1_000_000_000)),
             cache_read: UsageRate::priced(PriceRate::per_million(100_000_000)),
             cache_write_or_creation: UsageRate::priced(PriceRate::per_million(1_250_000_000)),
+            cache_write_extended: UsageRate::Unknown,
             output: UsageRate::priced(PriceRate::per_million(5_000_000_000)),
             reasoning: UsageRate::NotApplicable,
             storage: UsageRate::NotApplicable,
@@ -576,6 +614,79 @@ mod tests {
         );
         assert_eq!(cost.output.unwrap().femtocurrency(), 200_000_000_000);
         assert_eq!(cost.total.unwrap().femtocurrency(), 695_000_000_000);
+    }
+
+    fn write_of(write: u64, longer: Option<u64>) -> ProviderUsage {
+        let input = InputTokenUsage::disjoint(Some(0), Some(0), Some(write)).unwrap();
+        let input = match longer {
+            Some(kept) => input.with_cache_write_extended(kept).unwrap(),
+            None => input,
+        };
+        ProviderUsage::new(input, Some(0), None, None, &[]).unwrap()
+    }
+
+    #[test]
+    fn a_write_with_no_longer_part_is_charged_whole_at_the_write_rate() {
+        for longer in [None, Some(0)] {
+            let cost = record("model-a", PricingDate::new(2026, 1, 1))
+                .cost(&write_of(100, longer))
+                .unwrap();
+
+            assert_eq!(
+                cost.cache_write_input.unwrap().femtocurrency(),
+                125_000_000_000,
+                "{longer:?}"
+            );
+            assert_eq!(
+                cost.total.unwrap().femtocurrency(),
+                125_000_000_000,
+                "{longer:?}"
+            );
+        }
+    }
+
+    fn with_longer_write(rate: UsageRate) -> PromptCachePricing {
+        let mut longer = rates();
+        longer.cache_write_extended = rate;
+        PromptCachePricing::new(
+            "fixture-protocol",
+            "https://provider.invalid/v1",
+            "model-a",
+            Some("model-a"),
+            PricingDate::new(2026, 1, 1),
+            "fixture-pricing-v1",
+            SOURCE,
+            USD,
+            PricingUnit::MillionTokens,
+            longer,
+        )
+    }
+
+    #[test]
+    fn the_longer_part_of_a_write_is_charged_at_its_own_rate_and_the_rest_at_the_write_rate() {
+        let cost = with_longer_write(UsageRate::priced(PriceRate::per_million(2_500_000_000)))
+            .cost(&write_of(100, Some(70)))
+            .unwrap();
+
+        // 30 at 1.25 and 70 at 2.5 per million, never the 100 a second time.
+        assert_eq!(
+            cost.cache_write_input.unwrap().femtocurrency(),
+            30 * 1_250_000_000 + 70 * 2_500_000_000
+        );
+        assert_eq!(
+            cost.total.unwrap().femtocurrency(),
+            30 * 1_250_000_000 + 70 * 2_500_000_000
+        );
+    }
+
+    #[test]
+    fn a_longer_part_with_no_reviewed_rate_leaves_the_write_and_total_unknown() {
+        let cost = with_longer_write(UsageRate::Unknown)
+            .cost(&write_of(100, Some(70)))
+            .unwrap();
+
+        assert!(cost.cache_write_input.is_none());
+        assert!(cost.total.is_none());
     }
 
     #[test]

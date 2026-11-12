@@ -563,6 +563,7 @@ impl Provider for Script {
                 uncached_input: UsageRate::priced(PriceRate::per_million(1_000_000_000)),
                 cache_read: UsageRate::priced(PriceRate::per_million(100_000_000)),
                 cache_write_or_creation: UsageRate::NotApplicable,
+                cache_write_extended: UsageRate::Unknown,
                 output: UsageRate::priced(PriceRate::per_million(5_000_000_000)),
                 reasoning: UsageRate::NotApplicable,
                 storage: UsageRate::NotApplicable,

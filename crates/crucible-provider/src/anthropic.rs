@@ -102,6 +102,7 @@ const fn anthropic_rates(input: u64, read: u64, write: u64, output: u64) -> Prom
         uncached_input: UsageRate::priced(PriceRate::per_million(input)),
         cache_read: UsageRate::priced(PriceRate::per_million(read)),
         cache_write_or_creation: UsageRate::priced(PriceRate::per_million(write)),
+        cache_write_extended: UsageRate::Unknown,
         output: UsageRate::priced(PriceRate::per_million(output)),
         reasoning: UsageRate::NotApplicable,
         storage: UsageRate::NotApplicable,
