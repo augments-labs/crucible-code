@@ -356,7 +356,15 @@ in crucible's home where the next five minutes reuse it. Only an entry whose
 target for this machine carries a SHA-256 and an archive crucible unpacks is
 offered. One without a hash, or whose archive is another format, is never
 installed and is left out of this list; `/login` and `crucible agents search`
-list it only as your own program, where its command is found on `PATH`. The
+list it only as your own program, where its command is found on `PATH`. So is
+an entry with no binary for this machine that the registry publishes only as a
+package for `npx` or `uvx`: crucible never runs a package runner, so its store
+never installs one. The name looked for is the npm package's last path segment
+without its `@<version>`, so `@xai-official/grok@1.0.80` is looked for as
+`grok`, or the Python package without its `==<version>`; a package given any
+other version range, extras, an address or a path, or named after a package
+runner, is looked for under no name and not listed. Your program is started
+with the arguments and environment the package is given, with no runner. The
 registry is not reviewed by Crucible: it has no signature, serial, expiry,
 revocation list or anti-rollback, so an offered version can be withdrawn or
 replaced only by the registry's own change. The list says so beside its agents,
