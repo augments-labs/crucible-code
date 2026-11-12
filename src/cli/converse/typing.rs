@@ -625,7 +625,7 @@ pub(crate) fn ask<T: Terminal>(
 
         // Ctrl+Enter is Return here. There is no turn to stop, so sending
         // everything now is sending the line, and the lines a used-up plan
-        // holds wait behind it as they do for Return.
+        // holds go with it as they do for Return.
         let arrived = match arrived {
             Pressed::SendAll => Pressed::Key(Key::Enter),
             arrived => arrived,
@@ -707,14 +707,13 @@ pub(crate) fn ask<T: Terminal>(
             }
 
             // And the one that sends the highlighted line now, which with no
-            // turn to stop is sending it as Return sends the box's: the rest
-            // stay queued, and the box keeps what is typed in it.
-            Pressed::SendNow if queued.waiting_count() > 0 => {
-                match queued.drop(queued.highlighted()) {
-                    Some(line) => return sent(renderer, line, false, recalling, style),
-                    None => offered.is_some(),
-                }
-            }
+            // turn to stop is sending it as Return sends the box's, alone: the
+            // rest stay queued and held back from its turn, as Ctrl+S holds
+            // them under one, and the box keeps what is typed in it.
+            Pressed::SendNow if queued.waiting_count() > 0 => match queued.sent_alone() {
+                Some(line) => return sent(renderer, line, false, recalling, style),
+                None => offered.is_some(),
+            },
 
             // The command list a `/`-started line has open is standing, and Esc
             // backs out of it; the line stays as it was typed. With no list

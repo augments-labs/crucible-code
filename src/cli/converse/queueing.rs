@@ -79,30 +79,50 @@ pub(super) struct Prompts {
     at: usize,
     /// Whether the last Ctrl+E found no room in the box, until the next key.
     refused: bool,
-    /// Whether the lines wait behind the running turn instead of being on
-    /// offer to it.
+    /// Which turns the lines are on offer to: see [`Standing`] for what holds
+    /// them back from one, or leaves them to the reader. Back on offer when the
+    /// queue is next taken whole, or empties, or the reader's next turn is
+    /// offered them.
+    standing: Standing,
+    /// Whether the next turn is the oldest line alone, as Ctrl+S sent it.
+    ///
+    /// Cleared once that turn is taken, and when that line leaves the front
+    /// any other way: the reader who deletes it or takes it back before the
+    /// turn stops has chosen nothing else to go alone.
+    alone: bool,
+}
+
+/// Which turns the waiting lines are on offer to.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Standing {
+    /// To the running turn, through the steer it reads, and to the next turn
+    /// taken from the queue.
+    #[default]
+    Offered,
+    /// To no running turn: they wait behind it.
     ///
     /// Set by a key that stops the turn to send them, so that the turn it is
     /// stopping takes none of them on its way out, and kept under the turn
-    /// Ctrl+S sends, which is that one line alone. Cleared when the queue is
-    /// next taken whole, or empties, or a used-up plan leaves it to the reader
-    /// between turns.
-    held: bool,
-    /// Whether the next turn is the oldest line alone, as Ctrl+S sent it.
+    /// Ctrl+S sends, which is that one line alone; Ctrl+S between turns sets it
+    /// for the same reason.
+    Held,
+    /// To the next turn the reader sends, and to nothing that runs before it.
     ///
-    /// Cleared with [`Prompts::held`], and when that line leaves the front any
-    /// other way: the reader who deletes it or takes it back before the turn
-    /// stops has chosen nothing else to go alone.
-    alone: bool,
+    /// Set where a used-up plan leaves the lines to the reader between turns.
+    /// That turn is offered them as it starts (see [`Prompts::offered`]); a
+    /// turn the application starts on its own, or room made for the window,
+    /// is not the one they wait for, and is offered none of them.
+    Loose,
 }
 
 /// Where the lines the panel names are besides the panel, which is what
 /// deleting one or taking it back has to reach.
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Offer<'a> {
-    /// Nowhere the turn can reach: between turns, or under a turn that a key
-    /// sending the queue now holds the lines back from (see
-    /// [`Prompts::offer`]). The panel holds the only copy.
+    /// Nowhere the turn can reach: between turns, under a turn that a key
+    /// sending the queue now holds the lines back from, or under one the
+    /// reader did not send while a used-up plan leaves the lines to the next
+    /// one they do (see [`Prompts::offer`]). The panel holds the only copy.
     Nowhere,
     /// Under a turn that is not held back from: on offer to it as well,
     /// through the steer it reads.
@@ -192,7 +212,7 @@ impl Prompts {
         self.at = self.at.min(self.lines.len().saturating_sub(1));
         if self.lines.is_empty() {
             self.refused = false;
-            self.held = false;
+            self.standing = Standing::Offered;
             self.alone = false;
         }
 
@@ -299,12 +319,12 @@ impl Prompts {
 
     /// Where the lines are besides the panel under a running turn: on offer to
     /// it through `steer`, or nowhere while a key that sent them now holds
-    /// them back from it.
+    /// them back from it, or while a used-up plan leaves them to a turn the
+    /// reader has not sent yet.
     pub(super) fn offer<'a>(&self, steer: &'a Steer) -> Offer<'a> {
-        if self.held {
-            Offer::Nowhere
-        } else {
-            Offer::Turn(steer)
+        match self.standing {
+            Standing::Offered => Offer::Turn(steer),
+            Standing::Held | Standing::Loose => Offer::Nowhere,
         }
     }
 
@@ -357,6 +377,41 @@ impl Prompts {
         true
     }
 
+    /// Takes the highlighted line out of the queue to be the next turn alone,
+    /// sent between turns, where a used-up plan left the lines to the reader.
+    ///
+    /// What Ctrl+S does under a turn, with no turn to stop: the rest are held
+    /// back from the turn this line starts, and taken whole once it is over.
+    /// `None` where nothing is highlighted.
+    pub(super) fn sent_alone(&mut self) -> Option<String> {
+        let line = self.drop(self.at)?;
+        if !self.lines.is_empty() {
+            self.standing = Standing::Held;
+        }
+        Some(line)
+    }
+
+    /// Offers every line to the turn the reader is starting, where a used-up
+    /// plan left them to the reader.
+    ///
+    /// The next turn they send is the one the lines were waiting for, and it
+    /// takes them as the turn they were queued under would have: at its first
+    /// pass boundary, each as the line it was typed as, leaving the panel as
+    /// the turn says it took each. Until then the steer holds them as well as
+    /// the panel, so the keys reach them there as they do under any turn.
+    /// Offered any later, they would wait unseen by that turn and run as the
+    /// one after it.
+    pub(super) fn offered(&mut self, steer: &Steer) {
+        if self.standing != Standing::Loose {
+            return;
+        }
+        self.standing = Standing::Offered;
+        drop(steer.take());
+        for line in &self.lines {
+            steer.say(line.clone());
+        }
+    }
+
     /// Takes every line back off the running turn's offer and keeps them off
     /// it, so the turn a key is stopping takes none of them on its way out.
     ///
@@ -364,14 +419,18 @@ impl Prompts {
     /// leaves the panel when the turn says so.
     fn hold(&mut self, steer: &Steer) {
         drop(steer.take());
-        self.held = true;
+        self.standing = Standing::Held;
     }
 
     /// Leaves every line to the reader between turns: on offer to the next
-    /// turn they send, and none of them to go alone.
+    /// turn they send (see [`Prompts::offered`]), and none of them to go alone.
     fn let_go(&mut self) {
-        self.held = false;
         self.alone = false;
+        self.standing = if self.lines.is_empty() {
+            Standing::Offered
+        } else {
+            Standing::Loose
+        };
     }
 
     /// Clears what the panel said about a line the box had no room for, and
@@ -409,7 +468,7 @@ pub(super) fn batched(queued: &mut Prompts, steer: &Steer) -> Option<String> {
         return queued.pop();
     }
 
-    queued.held = false;
+    queued.standing = Standing::Offered;
     let said = queued.pop()?;
 
     // What the steer still holds was offered to a turn that ended before it
@@ -433,7 +492,8 @@ pub(super) fn batched(queued: &mut Prompts, steer: &Steer) -> Option<String> {
 ///
 /// Not after work that stopped on a used-up plan: the lines stay queued for
 /// the reader, who can take them back or send a prompt, because the plan
-/// they would be sent to is spent until its reset. Nothing a key that sent
+/// they would be sent to is spent until its reset. The prompt they send takes
+/// the lines with it, as [`Prompts::offered`] says. Nothing a key that sent
 /// them now set holds past that stop: the turn it was for is over, and kept, it
 /// would hold the lines back from the next turn the reader sends.
 ///
