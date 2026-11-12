@@ -1,0 +1,36 @@
+---
+source: crates/crucible-tui/src/syntax/tests.rs
+expression: said
+---
+1337: #6d6d6d #ff5e5e #fbe3bf #fdb082 #8cdaff #ff5e5e
+Catppuccin Frappe: #949cbb #ca9ee6 #a6d189 #ef9f76 #8caaee #ca9ee6
+Catppuccin Latte: #7c7f93 #8839ef #40a02b #fe640b #1e66f5 #8839ef
+Catppuccin Macchiato: #939ab7 #c6a0f6 #a6da95 #f5a97f #8aadf4 #c6a0f6
+Catppuccin Mocha: #9399b2 #cba6f7 #a6e3a1 #fab387 #89b4fa #cba6f7
+Coldark-Cold: #3c526d #a04900 #116b00 #755f00 #7c00aa #a04900
+Coldark-Dark: #8da1b9 #e9ae7e #91d076 #e6d37a #c699e3 #e9ae7e
+DarkNeon: #7c7c7c #66ccff #ccff66 #99cc99 #f8f8f8 #66ccff
+Dracula: #6272a4 #ff79c6 #f1fa8c #bd93f9 #50fa7b #ff79c6
+GitHub: #969896 #a71d5d #183691 #0086b3 #795da3 #a71d5d
+InspiredGitHub: #969896 #a71d5d #183691 #0086b3 #795da3 #a71d5d
+Monokai Extended: #75715e #f92672 #e6db74 #be84ff #a6e22e #f92672
+Monokai Extended Bright: #75715e #f92672 #e6db74 #ae81ff #f92672 #f92672
+Monokai Extended Light: #75715e #f9005a #998f2f #684d99 #679c00 #f9005a
+Monokai Extended Origin: #75715e #f92672 #e6db74 #ae81ff #a6e22e #f92672
+Nord: #616e88 #d8dee9 #d8dee9 #b48ead #88c0d0 #81a1c1
+OneHalfDark: #5c6370 #c678dd #98c379 #e5c07b #61afef #c678dd
+OneHalfLight: #a0a1a7 #a626a4 #50a14f #c18401 #0184bc #a626a4
+Solarized (dark): #586e75 #859900 #2aa198 #6c71c4 #b58900 #859900
+Solarized (light): #93a1a1 #859900 #2aa198 #6c71c4 #b58900 #859900
+Sublime Snazzy: #686868 #ff5c57 #f3f99d #f1f1f0 #9aedfe #ff5c57
+TwoDark: #5c6370 #c678dd #98c379 #d19a66 #61afef #abb2bf
+ansi: #020000 #050000 #020000 #030000 #040000 #050000
+base16: #080000 #050000 #020000 #090000 #040000 #070000
+base16-256: #080000 #050000 #020000 #100000 #040000 #070000
+base16-eighties.dark: #747369 #cc99cc #99cc99 #f99157 #6699cc #d3d0c8
+base16-mocha.dark: #7e705a #a89bb9 #beb55b #d28b71 #8ab3b5 #d0c8c6
+base16-ocean.dark: #65737e #b48ead #a3be8c #d08770 #8fa1b3 #c0c5ce
+base16-ocean.light: #a7adba #b48ead #a3be8c #d08770 #8fa1b3 #4f5b66
+gruvbox-dark: #928374 #fb4934 #b8bb26 #d3869b #b8bb26 #fb4934
+gruvbox-light: #928374 #9d0006 #79740e #8f3f71 #79740e #9d0006
+zenburn: #87ae86 #fed6af #d68686 #87d6d5 #fffd87 #fed6af

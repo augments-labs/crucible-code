@@ -122,6 +122,10 @@ fn of(theme: &Highlighting, slot: Slot) -> (u8, u8, u8) {
 /// a reader that started fresh each line would draw the middle of it as code.
 pub struct Syntax {
     reading: HighlightLines<'static>,
+    /// The name of the definition this reads with, kept for the tests that
+    /// hold what every spelling resolves to.
+    #[cfg(test)]
+    definition: String,
 }
 
 impl std::fmt::Debug for Syntax {
@@ -158,6 +162,8 @@ impl Syntax {
 
         Some(Self {
             reading: HighlightLines::new(found, plain()),
+            #[cfg(test)]
+            definition: found.name.clone(),
         })
     }
 

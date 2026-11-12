@@ -212,3 +212,451 @@ fn a_theme_says_something_different_for_at_least_a_comment_and_a_keyword() {
         assert!(distinct.len() >= 3, "{named} says only {distinct:?}");
     }
 }
+
+/// What a sample is read as: a row for each of its lines, holding every run
+/// of the line in order with the slot it came back as.
+fn reading_of(spelled: &str, sample: &str) -> Vec<Vec<(Slot, String)>> {
+    let mut syntax = Syntax::of(spelled).expect("a spelling this build knows");
+
+    sample
+        .split_inclusive('\n')
+        .map(|line| {
+            let mut runs = Vec::new();
+            syntax.read(line, &mut |slot, text| runs.push((slot, text.to_owned())));
+            runs
+        })
+        .collect()
+}
+
+const RUST: &str = r#"// A comment.
+fn main() {
+    let said = "words";
+    let count = 42;
+}
+"#;
+
+const PYTHON: &str = r#"# A comment.
+import re
+
+def find(text):
+    count = 42
+    said = "words"
+    seen = re.compile(r"[a-z]+\d")
+    rows = "SELECT name FROM people WHERE age > 30"
+    return seen
+"#;
+
+const JAVASCRIPT: &str = r#"// A comment.
+function find(text) {
+  const count = 42;
+  const said = "words";
+  return /[a-z]+\d/.test(text);
+}
+"#;
+
+const TYPESCRIPT: &str = r#"// A comment.
+interface Found {
+  count: number;
+}
+function find(text: string): Found {
+  const said = "words";
+  return { count: /[a-z]+\d/.test(text) ? 42 : 0 };
+}
+"#;
+
+const GO: &str = r#"// A comment.
+package main
+
+func main() {
+    count := 42
+    said := "words"
+    println(said, count)
+}
+"#;
+
+const C: &str = r#"/* A comment. */
+#include <stdio.h>
+
+int main(void) {
+    int count = 42;
+    const char *said = "words";
+    return count;
+}
+"#;
+
+const CPP: &str = r#"// A comment.
+#include <string>
+
+class Greeter {
+public:
+    int count = 42;
+    std::string said = "words";
+    int find() { return count; }
+};
+"#;
+
+const JAVA: &str = r#"/**
+ * A comment with <b>markup</b>.
+ * @param count how many
+ */
+class Greeter {
+    int count = 42;
+    String said = "words";
+    int find() { return count; }
+}
+"#;
+
+const RUBY: &str = r#"# A comment.
+def find(text)
+  count = 42
+  said = "words"
+  rows = <<-SQL
+    SELECT name FROM people WHERE age > 30
+  SQL
+  page = <<-HTML
+    <p class="said">words</p>
+  HTML
+  look = <<-CSS
+    p.said { margin: 42px; }
+  CSS
+  code = <<-JS
+    const count = 42;
+  JS
+  rows
+end
+"#;
+
+const SHELL: &str = r#"# A comment.
+count=42
+said="words"
+alias ll='ls -l'
+find() {
+  local total=$((count + 1))
+  if [ "$count" -gt 1 ]; then
+    echo "$said"
+  fi
+  cd /tmp
+}
+"#;
+
+const SQL: &str = r"-- A comment.
+SELECT name, 42 FROM people WHERE said = 'words';
+CREATE TABLE people (name TEXT);
+";
+
+const JSON: &str = r#"// A comment.
+{
+  "said": "words",
+  "count": 42,
+  "kept": true,
+  "none": null
+}
+"#;
+
+const YAML: &str = r#"# A comment.
+said: "words"
+count: 42
+kept: true
+list:
+  - one
+"#;
+
+const HTML: &str = r#"<!-- A comment. -->
+<html>
+<head>
+<style>
+p.said { color: red; margin: 42px; }
+</style>
+<script>
+const count = 42; // counted
+</script>
+</head>
+<body><p class="said" style="margin: 42px" onclick="find(42)">words</p></body>
+</html>
+"#;
+
+const CSS: &str = r#"/* A comment. */
+p.said {
+  color: red;
+  margin: 42px;
+  content: "words";
+}
+@media screen { a { color: blue; } }
+"#;
+
+const MARKDOWN: &str = r#"# A heading
+
+Some *words*, some `code` and a [link](https://example.com).
+
+<!-- A comment. -->
+<p class="said">words</p>
+
+```html
+<b>raw</b>
+```
+
+1. counted
+"#;
+
+const DIFF: &str = r"--- a/said.txt
++++ b/said.txt
+@@ -1,3 +1,3 @@
+ kept
+-was
++now
+";
+
+const XML: &str = r#"<?xml version="1.0"?>
+<!-- A comment. -->
+<people count="42">
+  <person name="words">text &amp; more</person>
+</people>
+"#;
+
+const PHP: &str = r#"<p class="said">words</p>
+<?php
+// A comment.
+function find($text) {
+    $count = 42;
+    $said = "words";
+    $rows = "SELECT name FROM people WHERE age > 30";
+    $page = <<<HTML
+<b>words</b>
+HTML;
+    return $rows;
+}
+?>
+<p>after</p>
+"#;
+
+const PERL: &str = r#"# A comment.
+use strict;
+
+sub find {
+    my $count = 42;
+    my $said = "words";
+    my $rows = <<SQL;
+SELECT name FROM people WHERE age > 30
+SQL
+    my $page = <<HTML;
+<p class="said">words</p>
+HTML
+    return $rows;
+}
+"#;
+
+const LUA: &str = r#"-- A comment.
+local function find(text)
+  local count = 42
+  local said = "words"
+  return said
+end
+"#;
+
+const HASKELL: &str = r#"-- A comment.
+module Main where
+
+main :: IO ()
+main = do
+  let count = 42
+  putStrLn "words"
+"#;
+
+/// Each language `the_languages_a_model_actually_writes_are_known` lists, in
+/// its order, then each spelling of [`CALLED`] that is not one of them, with
+/// the code it is read on: a comment, a string, a number, a keyword and a name
+/// wherever its definition tells them apart, and a part for every other
+/// definition its own one hands text to, which [`LENT`] lists.
+const SAMPLES: [(&str, &str); 30] = [
+    ("rust", RUST),
+    ("python", PYTHON),
+    ("javascript", JAVASCRIPT),
+    ("typescript", TYPESCRIPT),
+    ("go", GO),
+    ("c", C),
+    ("cpp", CPP),
+    ("java", JAVA),
+    ("ruby", RUBY),
+    ("shell", SHELL),
+    ("bash", SHELL),
+    ("sql", SQL),
+    ("json", JSON),
+    ("yaml", YAML),
+    ("html", HTML),
+    ("css", CSS),
+    ("markdown", MARKDOWN),
+    ("diff", DIFF),
+    ("xml", XML),
+    ("php", PHP),
+    ("perl", PERL),
+    ("lua", LUA),
+    ("haskell", HASKELL),
+    ("ts", TYPESCRIPT),
+    ("tsx", TYPESCRIPT),
+    ("mts", TYPESCRIPT),
+    ("cts", TYPESCRIPT),
+    ("jsx", JAVASCRIPT),
+    ("console", SHELL),
+    ("golang", GO),
+];
+
+/// The parts of the samples that a definition other than the sample's own
+/// reads: the sample, the line, one run of that line and the slot the other
+/// definition gives it.
+///
+/// A definition loaded apart from the ones it leans on still reads its own
+/// code and goes quiet exactly here, so each of these is a place where a
+/// change to how definitions are loaded would show first.
+const LENT: [(&str, &str, &str, Slot); 24] = [
+    // A raw string is a regular expression, and a string that opens with a
+    // statement is SQL.
+    (
+        PYTHON,
+        r#"    seen = re.compile(r"[a-z]+\d")"#,
+        "+",
+        Slot::Operator,
+    ),
+    (PYTHON, "    rows = \"SELECT", "SELECT", Slot::Keyword),
+    // A regular expression between slashes.
+    (JAVASCRIPT, r"  return /[a-z]+\d/", "+", Slot::Operator),
+    (
+        TYPESCRIPT,
+        r"  return { count: /[a-z]+\d/",
+        "+",
+        Slot::Operator,
+    ),
+    // Numbers, strings and comments are C's.
+    (CPP, "    int count = 42;", "42", Slot::Number),
+    (CPP, "    std::string said", "words", Slot::Str),
+    // A documentation comment, and the markup inside one.
+    (JAVA, " * @param count", "param", Slot::Keyword),
+    (JAVA, " * A comment with <b>", "b", Slot::Name),
+    // A document whose mark names a language.
+    (RUBY, "    SELECT name", "SELECT", Slot::Keyword),
+    (RUBY, "    <p class", "p", Slot::Name),
+    (RUBY, "    p.said {", "px", Slot::Keyword),
+    (RUBY, "    const count", "const", Slot::Keyword),
+    // The commands a shell has built in.
+    (SHELL, "alias ll=", "ll", Slot::Name),
+    (SHELL, "  local total=", "local", Slot::Keyword),
+    // A sheet, a script, and an attribute that holds either.
+    (HTML, "p.said { color: red;", "px", Slot::Keyword),
+    (HTML, "const count = 42; // counted", "const", Slot::Keyword),
+    (HTML, "<body>", "42", Slot::Number),
+    // Markup written straight into the prose.
+    (MARKDOWN, "<p class=", "p", Slot::Name),
+    // The page around the code, the code, a string that opens with a
+    // statement, and a document whose mark names a language.
+    (PHP, "<p class=", "p", Slot::Name),
+    (PHP, "function find(", "function", Slot::Keyword),
+    (PHP, "    $rows = \"SELECT", "SELECT", Slot::Keyword),
+    (PHP, "<b>words</b>", "b", Slot::Name),
+    // A document whose mark names a language.
+    (PERL, "SELECT name", "SELECT", Slot::Keyword),
+    (PERL, "<p class=", "p", Slot::Name),
+];
+
+#[test]
+fn every_part_another_definition_reads_comes_back_as_what_it_is() {
+    // A sample whose lent part was already read as plain words would hold
+    // nothing about it: this is what makes each of those parts a live one.
+    let mut quiet = Vec::new();
+    for (sample, line, run, slot) in LENT {
+        let at = sample
+            .lines()
+            .position(|whole| whole.starts_with(line))
+            .expect("a line of the sample");
+        for (spelled, _) in SAMPLES.iter().filter(|(_, sampled)| *sampled == sample) {
+            let rows = reading_of(spelled, sample);
+            let read = rows.get(at).expect("a row for the line");
+            if !read.iter().any(|(was, text)| *was == slot && text == run) {
+                quiet.push(format!(
+                    "{spelled}: {run:?} of {line:?} is not {slot:?}: {read:?}"
+                ));
+            }
+        }
+    }
+
+    assert!(quiet.is_empty(), "{quiet:#?}");
+}
+
+#[test]
+fn every_theme_offered_is_worth_what_it_was() {
+    // What a reader's code is coloured with, theme by theme, in the order the
+    // picker lists them. A theme that goes missing, moves or changes a colour
+    // changes what somebody's screen looks like, and this is where it shows.
+    use std::fmt::Write as _;
+
+    let mut said = String::new();
+    for named in every_theme() {
+        let six = colours(&named).expect("a theme in the list to answer");
+        let six: Vec<String> = six
+            .iter()
+            .map(|(red, green, blue)| format!("#{red:02x}{green:02x}{blue:02x}"))
+            .collect();
+        let _ = writeln!(said, "{named}: {}", six.join(" "));
+    }
+
+    insta::assert_snapshot!(said);
+}
+
+#[test]
+fn every_spelling_with_a_sample_reads_it_as_it_did() {
+    // Every run of every line, with its slot: what a block in each language
+    // looks like, held whole so that a different way of loading a definition
+    // cannot move a single colour without saying so here.
+    use std::fmt::Write as _;
+
+    let unsampled: Vec<&str> = CALLED
+        .iter()
+        .map(|(spelled, _)| *spelled)
+        .filter(|spelled| !SAMPLES.iter().any(|(sampled, _)| sampled == spelled))
+        .collect();
+    assert!(unsampled.is_empty(), "no sample for: {unsampled:?}");
+
+    let mut said = String::new();
+    for (spelled, sample) in SAMPLES {
+        let definition = Syntax::of(spelled).map(|syntax| syntax.definition);
+        let _ = writeln!(said, "== {spelled} ({definition:?})");
+        for runs in reading_of(spelled, sample) {
+            let runs: Vec<String> = runs
+                .iter()
+                .map(|(slot, text)| format!("{slot:?} {text:?}"))
+                .collect();
+            let _ = writeln!(said, "{}", runs.join(" | "));
+        }
+    }
+
+    insta::assert_snapshot!(said);
+}
+
+#[test]
+fn every_name_and_extension_a_definition_carries_resolves_as_it_did() {
+    // A change is drawn in the language its file's extension names, or its
+    // whole name where it has none, so any of these can arrive. Each is held
+    // to the definition it reaches today, or to reaching none.
+    use std::fmt::Write as _;
+
+    let shipped = syntect::parsing::SyntaxSet::load_defaults_newlines();
+    let resolved = |spelled: &str| Syntax::of(spelled).map(|syntax| syntax.definition);
+
+    let mut said = String::new();
+    for definition in shipped.syntaxes() {
+        let _ = writeln!(said, "{}", definition.name);
+        let _ = writeln!(
+            said,
+            "  name {:?} -> {:?}",
+            definition.name,
+            resolved(&definition.name)
+        );
+        for extension in &definition.file_extensions {
+            let _ = writeln!(
+                said,
+                "  extension {extension:?} -> {:?}",
+                resolved(extension)
+            );
+        }
+    }
+
+    insta::assert_snapshot!(said);
+}
