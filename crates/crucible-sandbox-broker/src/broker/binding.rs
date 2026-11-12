@@ -38,12 +38,13 @@ pub(super) fn compile(allow_local_binding: bool) -> io::Result<Option<BpfProgram
 
 /// The filter for a closed network whose own private loopback the process may
 /// listen on: `bind` and `listen` pass, the `io_uring` calls stay refused, and
-/// `socket` opens only a family in [`PRIVATE_FAMILIES`].
+/// `socket` and `socketpair` open only a family in [`PRIVATE_FAMILIES`].
 ///
 /// Bubblewrap's `--unshare-net` is what keeps the loopback private, but only
 /// for families scoped to the network namespace: a vsock listener, for one, is
 /// reachable from the host and the hypervisor. Refusing the family at `socket`
-/// also refuses it before the kernel loads a module to answer for it.
+/// and `socketpair`, the two calls that create a socket, also refuses it before
+/// the kernel loads a module to answer for it.
 pub(super) fn compile_private_loopback() -> io::Result<BpfProgram> {
     let mut rules = refusals(IO_URING);
     // `domain` is an int, so only the argument's low 32 bits are its family.
@@ -56,9 +57,11 @@ pub(super) fn compile_private_loopback() -> io::Result<BpfProgram> {
         })
         .collect::<io::Result<Vec<_>>>()?;
     let other_family = SeccompRule::new(other_family).map_err(error)?;
-    rules.insert(libc::SYS_socket, vec![other_family.clone()]);
-    #[cfg(target_arch = "x86_64")]
-    rules.insert(libc::SYS_socket + X32_SYSCALL_BIT, vec![other_family]);
+    for creating in [libc::SYS_socket, libc::SYS_socketpair] {
+        rules.insert(creating, vec![other_family.clone()]);
+        #[cfg(target_arch = "x86_64")]
+        rules.insert(creating + X32_SYSCALL_BIT, vec![other_family.clone()]);
+    }
     compiled(rules)
 }
 
@@ -303,6 +306,31 @@ mod tests {
         (answer, errno)
     }
 
+    /// Makes a connected pair of `family` sockets with `kind`, through the x32
+    /// number on `x86_64` when `x32`, and answers with the call's result and
+    /// `errno`.
+    fn paired(family: libc::c_int, kind: libc::c_int, x32: bool) -> (i64, Option<i32>) {
+        let mut number = libc::SYS_socketpair;
+        #[cfg(target_arch = "x86_64")]
+        if x32 {
+            number += X32_SYSCALL_BIT;
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        let _ = x32;
+        let mut ends: [libc::c_int; 2] = [-1, -1];
+        // SAFETY: socketpair writes at most two ints into `ends`, which lives
+        // for the whole call; the descriptors it returns are closed below.
+        let answer = unsafe { libc::syscall(number, family, kind, 0, ends.as_mut_ptr()) };
+        let errno = std::io::Error::last_os_error().raw_os_error();
+        if answer == 0 {
+            for end in ends {
+                // SAFETY: `end` is one this call just opened.
+                unsafe { libc::close(end) };
+            }
+        }
+        (answer, errno)
+    }
+
     #[test]
     fn the_private_loopback_filter_opens_only_local_ip_and_netlink_sockets() {
         if std::env::var_os(CHILD).is_some() {
@@ -324,6 +352,17 @@ mod tests {
             #[cfg(target_arch = "x86_64")]
             assert_eq!(
                 opened(AF_MCTP, libc::SOCK_DGRAM, true),
+                (-1, Some(libc::EPERM))
+            );
+            let (answer, errno) = paired(libc::AF_UNIX, libc::SOCK_STREAM, false);
+            assert_eq!(answer, 0, "Unix socketpair: errno {errno:?}");
+            assert_eq!(
+                paired(AF_MCTP, libc::SOCK_DGRAM, false),
+                (-1, Some(libc::EPERM))
+            );
+            #[cfg(target_arch = "x86_64")]
+            assert_eq!(
+                paired(AF_MCTP, libc::SOCK_DGRAM, true),
                 (-1, Some(libc::EPERM))
             );
             std::fs::write(

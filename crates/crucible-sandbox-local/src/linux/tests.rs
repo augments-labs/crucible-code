@@ -1460,9 +1460,10 @@ fn a_closed_network_with_private_loopback_opens_only_local_ip_and_netlink_socket
         return;
     }
     let sample = Sample::new("sandbox-private-loopback-families");
-    // AF_MCTP (45) is built into the kernels this runs on, so opening one
-    // where no filter refuses it loads no module. The families the allowance
-    // means still open, and Unix sockets still listen by path and abstractly.
+    // AF_MCTP (45) is built into the kernels this runs on, so opening or
+    // pairing one where no filter refuses it loads no module. The families the
+    // allowance means still open, Unix sockets still listen by path and
+    // abstractly, and a Unix socketpair still connects.
     let script = r#"
 import errno
 import socket
@@ -1491,6 +1492,19 @@ except OSError as error:
         raise SystemExit(f"AF_MCTP refused with {error}, not EPERM")
 else:
     raise SystemExit("an AF_MCTP socket opened")
+
+for end in socket.socketpair(socket.AF_UNIX):
+    end.close()
+
+try:
+    ends = socket.socketpair(45, socket.SOCK_DGRAM)
+except OSError as error:
+    if error.errno != errno.EPERM:
+        raise SystemExit(f"an AF_MCTP socketpair refused with {error}, not EPERM")
+else:
+    for end in ends:
+        end.close()
+    raise SystemExit("an AF_MCTP socketpair opened")
 "#;
     let (status, errors) = closed_python(
         &service,
