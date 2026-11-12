@@ -944,7 +944,7 @@ pub(crate) fn tools(tree: &Tree) -> PathBuf {
 }
 
 /// The user's home a test of their own programs judges a directory against.
-pub(crate) fn user(tree: &Tree) -> PathBuf {
+fn user(tree: &Tree) -> PathBuf {
     tree.0.join("user")
 }
 
@@ -1883,6 +1883,124 @@ pub(crate) fn goose_through_a_link(tree: &Tree) -> Result<(Conversation, PathBuf
     std::fs::create_dir_all(tools(tree))?;
     std::os::unix::fs::symlink(&program, tools(tree).join("goose"))?;
     Ok((own_sandboxed(tree)?, program))
+}
+
+/// The catalog instance `name` of goose, run as `executable`.
+#[cfg(unix)]
+fn catalog_goose(name: &str, executable: &str) -> Result<crucible_config::ExternalAgent, Failed> {
+    let key = crucible_types::AgentKey::new("goose")?;
+    Ok(crucible_config::ExternalAgent::unwritten(
+        name,
+        crucible_config::Driver::Catalog,
+        executable,
+        None,
+        Some(&key),
+    )
+    .ok_or("a catalog instance naming its agent")?)
+}
+
+/// What `PATH` is in `tree` to a test of the user's own programs.
+#[cfg(unix)]
+fn path_in(tree: &Tree) -> impl Fn(&str) -> Option<std::ffi::OsString> + use<> {
+    let path = tools(tree).into_os_string();
+    move |name: &str| (name == "PATH").then(|| path.clone())
+}
+
+/// Probes the catalog instance of goose that runs `program` in `tree` as
+/// `crucible agents try` does, keeping its record.
+#[cfg(unix)]
+pub(crate) fn goose_tried_at(tree: &Tree, program: &std::path::Path) -> Result<(), Failed> {
+    use crucible_app::own_program::Places;
+
+    let configured = &catalog_goose("goose", &program.to_string_lossy())?;
+    let home = tree.home()?;
+    own_program::tried(
+        &Places {
+            home: &user(tree),
+            crucible: home.path(),
+            sessions: &tree.sessions(),
+        },
+        configured,
+        &[configured.name()],
+        path_in(tree),
+        &crucible_app::probing::local,
+        std::time::Duration::from_secs(20),
+    )
+    .map_err(|why| why.to_string())?;
+    Ok(())
+}
+
+/// How a turn ended that the catalog instance of goose naming its program by
+/// its command took in `tree` on `runtime`, started under the sandbox with
+/// its programs looked for on `tree`'s `PATH` and its route's hold given by
+/// `consent`; else why it did not.
+#[cfg(unix)]
+pub(crate) fn goose_turned_by_command(
+    tree: &Tree,
+    runtime: &tokio::runtime::Runtime,
+    consent: fn(&str) -> Result<Consent, Failed>,
+) -> Result<Result<String, String>, Failed> {
+    use crucible_app::backends::Sandboxing;
+    use crucible_app::launching::Launcher;
+    use crucible_execution::{SessionRef, TurnRequest};
+    use crucible_external_harnesses::Control;
+    use crucible_types::TurnId;
+
+    let configured = &catalog_goose("goose", "goose")?;
+    let home = tree.home()?;
+    let state = catalog_fetch::state_in(home.path());
+    let agent = Agent::believing(configured, &REGISTRY, &state, path_in(tree))
+        .map_err(|why| why.to_string())?;
+    let consent = consent(agent.row().route())?;
+    let policy = SandboxPolicy::standard(&tree.workspace()?)?.with_enabled(true);
+    let sessions = tree.sessions();
+    let launcher = Launcher::new(
+        crucible_app::probing::local(runtime.handle().clone()),
+        runtime.handle().clone(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    )
+    .homed(user(tree));
+    let control = Control::new().ok_or("a control")?;
+    let trust = Trust::load(&state, std::time::SystemTime::now());
+    let mut dialect = agent.dialect(
+        crucible_tools::Mode::Ask,
+        &trust,
+        &home.path().join("programs"),
+        Sandboxing {
+            on: true,
+            required: false,
+        },
+    )?;
+    Ok(runtime.block_on(async {
+        let mut host = launcher
+            .launch(&agent, &control, dialect.as_mut(), None)
+            .await
+            .map_err(|why| why.to_string())?;
+        let turned = host
+            .turn(
+                dialect.as_mut(),
+                &SessionRef::new("one").ok_or("a session's name")?,
+                &TurnRequest::new(TurnId::FIRST, "go"),
+                &Unwatched,
+            )
+            .await;
+        drop(host.stop(crucible_external_harnesses::STOP_GRACE).await);
+        turned
+            .map(|outcome| format!("{outcome:?}"))
+            .map_err(|failure| failure.reason().as_str().to_owned())
+    }))
+}
+
+/// Where a turn's events go when none of them is looked at.
+#[cfg(unix)]
+struct Unwatched;
+
+#[cfg(unix)]
+impl crucible_execution::Sink for Unwatched {
+    fn post(&self, _: crucible_execution::Event) {}
 }
 
 /// A tree whose catalog offers nothing but whose cached ACP Registry index

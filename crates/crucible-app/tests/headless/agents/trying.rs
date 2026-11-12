@@ -14,7 +14,9 @@ use crate::external::choosing::{
     tried_through_login,
 };
 #[cfg(unix)]
-use crate::external::choosing::{goose_through_a_link, tools, user};
+use crate::external::choosing::{
+    goose_through_a_link, goose_tried_at, goose_turned_by_command, tools,
+};
 use crate::{Failed, Tree};
 
 /// The instance `crucible agents try agent` writes in `tree`, set up by
@@ -220,131 +222,14 @@ fn an_instance_naming_a_program_through_a_link_is_launched_under_the_sandbox() -
 {
     let tree = Tree::new("agents-launch-through-a-link")?;
     let (_, program) = goose_through_a_link(&tree)?;
-    own_goose_probed(&tree, &own_goose("goose", &program.to_string_lossy())?)?;
+    goose_tried_at(&tree, &program)?;
 
-    let turned = own_goose_turned(&tree, &own_goose("goose", "goose")?)?;
+    let turned = goose_turned_by_command(
+        &tree,
+        &super::runtime()?,
+        super::shipped_hold::shipped_given,
+    )?;
 
     assert_eq!(turned.as_deref(), Ok("Answered"));
     Ok(())
-}
-
-/// The catalog instance `name` of goose, run as `executable`.
-#[cfg(unix)]
-fn own_goose(name: &str, executable: &str) -> Result<crucible_config::ExternalAgent, Failed> {
-    let key = crucible_types::AgentKey::new("goose")?;
-    Ok(crucible_config::ExternalAgent::unwritten(
-        name,
-        crucible_config::Driver::Catalog,
-        executable,
-        None,
-        Some(&key),
-    )
-    .ok_or("a catalog instance naming its agent")?)
-}
-
-/// What `PATH` is in `tree` to a test of the user's own programs.
-#[cfg(unix)]
-fn path_in(tree: &Tree) -> impl Fn(&str) -> Option<std::ffi::OsString> + use<> {
-    let path = tools(tree).into_os_string();
-    move |name: &str| (name == "PATH").then(|| path.clone())
-}
-
-/// Probes `configured` in `tree` as `crucible agents try` does, keeping its
-/// record.
-#[cfg(unix)]
-fn own_goose_probed(
-    tree: &Tree,
-    configured: &crucible_config::ExternalAgent,
-) -> Result<(), Failed> {
-    use crucible_app::own_program::{self, Places};
-
-    let home = tree.home()?;
-    own_program::tried(
-        &Places {
-            home: &user(tree),
-            crucible: home.path(),
-            sessions: &tree.sessions(),
-        },
-        configured,
-        &[configured.name()],
-        path_in(tree),
-        &crucible_app::probing::local,
-        std::time::Duration::from_secs(20),
-    )
-    .map_err(|why| why.to_string())?;
-    Ok(())
-}
-
-/// How a turn taken by `configured` in `tree` ended, started under the
-/// sandbox with its programs looked for on `tree`'s `PATH`; else why it did
-/// not.
-#[cfg(unix)]
-fn own_goose_turned(
-    tree: &Tree,
-    configured: &crucible_config::ExternalAgent,
-) -> Result<Result<String, String>, Failed> {
-    use crucible_app::backends::{REGISTRY, Sandboxing};
-    use crucible_app::catalog_fetch;
-    use crucible_app::launching::{Agent, Launcher};
-    use crucible_execution::{SessionRef, TurnRequest};
-    use crucible_external_harnesses::Control;
-    use crucible_external_harnesses::catalog::Trust;
-    use crucible_sandbox::SandboxPolicy;
-    use crucible_types::TurnId;
-
-    let runtime = super::runtime()?;
-    let home = tree.home()?;
-    let state = catalog_fetch::state_in(home.path());
-    let agent = Agent::believing(configured, &REGISTRY, &state, path_in(tree))
-        .map_err(|why| why.to_string())?;
-    let consent = super::shipped_hold::shipped_given(agent.row().route())?;
-    let policy = SandboxPolicy::standard(&tree.workspace()?)?.with_enabled(true);
-    let sessions = tree.sessions();
-    let launcher = Launcher::new(
-        crucible_app::probing::local(runtime.handle().clone()),
-        runtime.handle().clone(),
-        &policy,
-        &consent,
-        &state,
-        &sessions,
-    )
-    .homed(user(tree));
-    let control = Control::new().ok_or("a control")?;
-    let trust = Trust::load(&state, std::time::SystemTime::now());
-    let mut dialect = agent.dialect(
-        crucible_tools::Mode::Ask,
-        &trust,
-        &home.path().join("programs"),
-        Sandboxing {
-            on: true,
-            required: false,
-        },
-    )?;
-    Ok(runtime.block_on(async {
-        let mut host = launcher
-            .launch(&agent, &control, dialect.as_mut(), None)
-            .await
-            .map_err(|why| why.to_string())?;
-        let turned = host
-            .turn(
-                dialect.as_mut(),
-                &SessionRef::new("one").ok_or("a session's name")?,
-                &TurnRequest::new(TurnId::FIRST, "go"),
-                &Unwatched,
-            )
-            .await;
-        drop(host.stop(crucible_external_harnesses::STOP_GRACE).await);
-        turned
-            .map(|outcome| format!("{outcome:?}"))
-            .map_err(|failure| failure.reason().as_str().to_owned())
-    }))
-}
-
-/// Where a turn's events go when none of them is looked at.
-#[cfg(unix)]
-struct Unwatched;
-
-#[cfg(unix)]
-impl crucible_execution::Sink for Unwatched {
-    fn post(&self, _: crucible_execution::Event) {}
 }
