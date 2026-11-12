@@ -1357,7 +1357,11 @@ type Cataloged = (AgentKey, Option<Box<str>>);
 /// Among the registry's, an entry with a target here that crucible does not
 /// install is listed with no version, and only where `trying` finds the user's
 /// own program of it, as the door finds it; past the most listed, it is not
-/// looked for, and is said to be one more, as the door says it.
+/// looked for, and is said to be one more, as the door says it. Where it is
+/// looked for is decided by its instances in the user file, read once for the
+/// whole listing: where that file cannot be read, no such entry is looked for
+/// under the name its registry entry guesses, listed, or said to be one more,
+/// as the door, refused that same read, lists nothing.
 fn listed(releases: &Releases, trying: Option<&Trying>) -> (Vec<Cataloged>, bool) {
     let mut agents: Vec<Cataloged> = Vec::new();
     let mut more = false;
@@ -1377,10 +1381,18 @@ fn listed(releases: &Releases, trying: Option<&Trying>) -> (Vec<Cataloged>, bool
     // The ACP Registry's offers come after the signed catalog's: a signed or
     // compiled entry is never shadowed by the unsigned registry.
     if let Some(index) = &releases.registry {
+        let mut configured = None;
         for (entry, offer) in index.listed() {
             let key = entry.id.clone();
             if crate::backends::kept_word(key.as_str())
                 || agents.iter().any(|(listed, _)| *listed == key)
+            {
+                continue;
+            }
+            if offer.is_err()
+                && configured
+                    .get_or_insert_with(|| catalog_instances(releases))
+                    .is_err()
             {
                 continue;
             }
@@ -1389,8 +1401,9 @@ fn listed(releases: &Releases, trying: Option<&Trying>) -> (Vec<Cataloged>, bool
                 continue;
             }
             let Ok(offer) = offer else {
-                let instances = instances_of(releases, &key).unwrap_or_default();
-                if trying.is_some_and(|trying| own_of(trying, &key, &instances).is_some()) {
+                if let Some(Ok(instances)) = &configured
+                    && trying.is_some_and(|trying| own_of(trying, &key, instances).is_some())
+                {
                     agents.push((key, None));
                 }
                 continue;
@@ -1482,13 +1495,22 @@ const TRY_OWN: &str = "Try your own";
 /// the agents door reads them, so one the door added while this client ran is
 /// found without a restart.
 fn instances_of(releases: &Releases, key: &AgentKey) -> Result<Vec<ExternalAgent>, ConfigError> {
+    Ok(catalog_instances(releases)?
+        .into_iter()
+        .filter(|one| one.agent() == Some(key))
+        .collect())
+}
+
+/// The instances of every catalog agent the user file names now, read as
+/// [`instances_of`] reads them.
+fn catalog_instances(releases: &Releases) -> Result<Vec<ExternalAgent>, ConfigError> {
     let home = Home::find(&|name| {
         (name == crucible_config::HOME).then(|| releases.home.clone().into_os_string())
     })?;
     Ok(Settings::read_home(&home)?
         .external_agents()
         .into_iter()
-        .filter(|one| one.driver() == Driver::Catalog && one.agent() == Some(key))
+        .filter(|one| one.driver() == Driver::Catalog)
         .collect())
 }
 

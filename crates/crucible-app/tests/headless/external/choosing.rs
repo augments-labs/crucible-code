@@ -2060,3 +2060,31 @@ fn a_command_line_try_of_an_unhashed_key_with_nothing_on_path_says_path() -> Res
     assert!(!file.contains("goose"), "an instance was written: {file}");
     Ok(())
 }
+
+/// A connect naming no instance does not list an ACP Registry entry with no
+/// SHA-256 when the user file can no longer be read, though its guessed name
+/// is on `PATH`: which program the user configured for it is unknown, so it
+/// is not looked for under that name, as the agents door then lists nothing.
+#[test]
+fn an_unhashed_entry_is_not_listed_by_login_once_the_user_file_cannot_be_read() -> Result<(), Failed>
+{
+    let tree = Tree::new("external-choosing-unhashed-unreadable")?;
+    let (mut conversation, _program) = goose_unhashed(&tree)?;
+    let mut picking = Picking::of([None]);
+    let asked = Asked {
+        installed: ("{}", "work"),
+        command: &|_| Command::Connect { instance: None },
+        asking: Asking::every(),
+        after: Some("{ not json"),
+    };
+
+    accounting_on(&tree, &mut conversation, &asked, &mut picking)?;
+
+    let choices = every_choice(&picking.put);
+    assert!(!choices.is_empty(), "nothing was asked: {:?}", picking.put);
+    assert!(
+        choices.iter().all(|choice| choice != "goose"),
+        "{choices:?}"
+    );
+    Ok(())
+}
