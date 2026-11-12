@@ -16,3 +16,55 @@ package(crucible-sandbox-local)
 | (package(crucible-app) & binary(hosted_server))
 '''
 test-group = 'confined'
+
+# The gate runs the suite under this profile, with as many slots per processor
+# as it gives every test (`scripts/python/required-cases.py --gate-threads`),
+# so the tests that keep a processor busy run at most one per processor. The
+# packages and binaries below mostly wait on a child process, a socket or a
+# terminal rather than compute, so each of their tests holds one slot and they
+# fill the time the busy tests leave idle. A package not named here holds as
+# many slots as a busy test, so its tests run at most one per processor, as
+# before this profile, beside the waiting ones.
+[profile.gate]
+threads-required = 3
+
+# These tests assert that crucible-raster refused work within 100 ms of wall
+# clock, `SOON_REFUSED`, and beside the busy tests they missed it more often
+# than at one test per processor. Each holds every slot, so it runs with no
+# other test beside it. nextest starts tests in the order it queues them, so a
+# test needing every slot would wait, with the slots others free left empty,
+# for the tests started before it to finish; the highest priority queues these
+# first, so they run before any other test starts. nextest takes a test's
+# slots from the first override that sets them, so this one comes first. The
+# required-cases check fails the gate when this list and the tests whose text
+# names `SOON_REFUSED` differ.
+[[profile.gate.overrides]]
+filter = '''
+package(crucible-raster) & (
+    test(=tests::a_clip_or_filter_inside_a_clip_is_refused_before_the_tree_is_built)
+    | test(=tests::a_copy_is_counted_by_the_text_and_the_attributes_it_copies)
+    | test(=tests::a_gradient_costs_its_pixels_and_its_stops_together)
+    | test(=tests::a_marker_drawn_inside_a_marker_is_refused_before_the_tree_is_built)
+    | test(=tests::a_stroke_reaching_past_a_million_pixels_from_the_origin_is_refused)
+    | test(=tests::a_stroked_shape_the_page_turns_past_the_largest_size_measured_is_refused_before_it_is_built)
+    | test(=tests::edges_of_a_stroke_crowded_along_a_row_are_counted_by_the_pixels_each_can_walk)
+    | test(=tests::every_stop_of_a_gradient_is_set_up_again_for_each_shape_it_paints)
+    | test(=tests::shapes_whose_outlines_take_longer_to_build_than_the_parser_may_are_refused_before_it_builds_them)
+    | test(=tests::the_copies_markers_clips_and_text_ask_for_are_counted_before_any_is_made)
+    | test(=tests::the_copies_uses_would_make_are_counted_before_any_is_made)
+    | test(=tests::the_stops_of_a_gradient_in_its_shapes_units_are_counted_copied_for_each_shape)
+    | test(=a_file_refused_for_its_work_is_refused_before_the_work_is_done)
+)
+'''
+threads-required = "num-test-threads"
+priority = 100
+
+[[profile.gate.overrides]]
+filter = '''
+package(crucible-builtins) | package(crucible-mcp) | package(crucible-sandbox-local) | package(crucible-auth)
+| package(crucible-provider) | package(crucible-runner) | package(crucible-extension) | package(crucible-update)
+| binary_id(crucible-app) | binary_id(crucible-app::hosted_server)
+| binary_id(crucible-external-harnesses::host) | binary_id(crucible-external-harnesses::antigravity)
+| binary_id(crucible-external-harnesses::claude) | binary_id(crucible-code::whole_screen)
+'''
+threads-required = 1

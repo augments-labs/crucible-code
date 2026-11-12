@@ -36,14 +36,25 @@ package's directory as cargo would run it, so the rerun is the code the suite
 ran and costs no build. Asking cargo for one package instead would resolve that
 package's features alone and build it again, different from what was tested.
 The binaries are rerun beside one another, no more binaries at once than there
-are processors, which stands in for nextest's one test per processor since each
-binary runs its own cases on threads of its own. Those holding a case of one of
+are processors, which stands in for the gate's nextest run, where the tests
+that keep a processor busy run at most one per processor, since each binary
+runs its own cases on threads of its own. Those holding a case of one of
 `.config/nextest.toml`'s test groups take turns.
+
+A test whose own text names `SOON_REFUSED` asserts a wall-clock bound, which a
+test beside it that keeps a processor busy can make it miss, so the gate's
+nextest profile runs each such test alone and picks them by name. Every binary
+the selection built is listed, and the gate fails when a test that names the
+bound is not run alone, or one run alone no longer names it.
 
     scripts/python/required-cases.py <artifacts> <doc-list> <doc-ignored-list> <selection>...
     scripts/python/required-cases.py --self-test  prove the source reader reads,
-                                                  what a rerun runs, and which
-                                                  reruns take turns
+                                                  what a rerun runs, which
+                                                  reruns take turns, and which
+                                                  tests run alone
+    scripts/python/required-cases.py --gate-threads <processors>  print how many
+                                                  slots the gate's nextest run
+                                                  has on that many processors
 """
 
 import contextlib
@@ -64,6 +75,13 @@ from concurrent.futures import ThreadPoolExecutor
 
 MANIFEST = "scripts/required-cases.json"
 NEXTEST = ".config/nextest.toml"
+# The nextest profile scripts/sh/rust-checks.sh runs the suite under.
+GATE_PROFILE = "gate"
+# The slots an override of that profile gives a test it runs with no other.
+ALONE = "num-test-threads"
+# The wall-clock bound crucible-raster's refusal tests assert, which a test
+# beside them that keeps a processor busy can make them miss.
+TIMED = re.compile(r"\bSOON_REFUSED\b")
 
 PLATFORM = {"linux": "linux", "darwin": "macos", "win32": "windows"}.get(
     sys.platform, sys.platform
@@ -356,11 +374,56 @@ def self_test():
         if confining(os.path.join(root, "absent.toml")) != {}:
             print("    FAIL a checkout with no nextest configuration read as grouping tests")
             return 1
+        for written, threads in ((path, 4), (os.path.join(root, "absent.toml"), 4)):
+            if gate_threads(written, 4) != threads:
+                print(f"    FAIL a gate profile that gives a test one slot was not run with {threads} slots on 4 processors")
+                return 1
         with open(path, "w", encoding="utf-8") as file:
             file.write("[test-groups]\nconfined = { max-threads = 1 }\n")
         if confining(path) != {}:
             print("    FAIL a test group no override fills read as grouping tests")
             return 1
+        with open(path, "w", encoding="utf-8") as file:
+            file.write(
+                "[test-groups]\nconfined = { max-threads = 1 }\n\n"
+                f"[profile.{GATE_PROFILE}]\nthreads-required = 3\n\n"
+                f"[[profile.{GATE_PROFILE}.overrides]]\nfilter = 'package(w)'\nthreads-required = 1\n\n"
+                "[[profile.default.overrides]]\nfilter = 'package(a)'\ntest-group = 'confined'\n"
+            )
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            weighted = test_groups(path)
+        if (
+            weighted is None
+            or sorted(weighted) != ["confined"]
+            or not weighted["confined"]("a", "a", "t")
+            or weighted["confined"]("w", "w", "t")
+        ):
+            print(
+                f"    FAIL the slots profile {GATE_PROFILE} gives every test, which put no test in"
+                " a group of its own, were not read as the same test groups"
+            )
+            return 1
+        if gate_threads(path, 4) != 12:
+            print(f"    FAIL a profile {GATE_PROFILE} giving every test 3 slots was not run with 12 slots on 4 processors")
+            return 1
+        for counted, threads in (("4", "12"), ("2", "6")):
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                code = print_gate_threads(path, counted)
+            if code != 0 or printed.getvalue() != f"{threads}\n":
+                print(
+                    f"    FAIL --gate-threads {counted} did not succeed with the {threads} slots alone on its line,"
+                    " which rust-checks.sh reads"
+                )
+                return 1
+        for counted in ("", "0", "-2", "x", "2\r", "\u00b2"):
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                code = print_gate_threads(path, counted)
+            if code != 1 or "--gate-threads takes" not in printed.getvalue():
+                print(f"    FAIL --gate-threads did not refuse {counted!r} as a count of processors, saying why")
+                return 1
         for written, said in (
             (b"[test-groups\n", "is not TOML"),
             (b"[test-groups]\nconfined = { max-threads = 1 } # \xff\n", "is not TOML"),
@@ -369,6 +432,31 @@ def self_test():
             (b"[[profile.default.overrides]]\nfilter = 'package(a)'\nthreads-required = 2\n", "teach"),
             (b"[profile.ci]\ntest-threads = 4\n", "teach"),
             (b"[profile.default]\nthreads-required = 2\n", "teach"),
+            (b"[profile.ci]\nthreads-required = 3\n", "teach"),
+            (f"[profile.{GATE_PROFILE}]\nthreads-required = 'num-test-threads'\n".encode(), "teach"),
+            (f"[profile.{GATE_PROFILE}]\nthreads-required = true\n".encode(), "teach"),
+            (f"[profile.{GATE_PROFILE}]\nthreads-required = 0\n".encode(), "teach"),
+            (f"[profile.{GATE_PROFILE}]\ntest-threads = 12\n".encode(), "teach"),
+            (
+                f"[[profile.{GATE_PROFILE}.overrides]]\nfilter = 'package(a)'\nthreads-required = 2\n".encode(),
+                "teach",
+            ),
+            (f"[[profile.ci.overrides]]\nfilter = 'package(a)'\nthreads-required = '{ALONE}'\n".encode(), "teach"),
+            (
+                f"[[profile.{GATE_PROFILE}.overrides]]\nfilter = 'package(a)'\nthreads-required = 1\n\n"
+                f"[[profile.{GATE_PROFILE}.overrides]]\nfilter = 'package(b)'\nthreads-required = '{ALONE}'\n".encode(),
+                "teach",
+            ),
+            (
+                f"[[profile.{GATE_PROFILE}.overrides]]\nplatform = 'cfg(windows)'\nfilter = 'package(b)'\n"
+                f"threads-required = '{ALONE}'\n".encode(),
+                "teach",
+            ),
+            (
+                f"[[profile.{GATE_PROFILE}.overrides]]\nfilter = 'binary_id(crucible-raster)'\n"
+                f"threads-required = '{ALONE}'\n".encode(),
+                "teach",
+            ),
         ):
             with open(path, "wb") as file:
                 file.write(written)
@@ -378,6 +466,45 @@ def self_test():
             if refused is not None or said not in printed.getvalue():
                 print(f"    FAIL a nextest configuration it cannot read was not refused with {said!r}")
                 return 1
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                code = print_gate_threads(path, "4")
+            if code != 1 or said not in printed.getvalue():
+                print(f"    FAIL --gate-threads did not fail, saying why, on a nextest configuration it cannot read: {written!r}")
+                return 1
+        with open(path, "w", encoding="utf-8") as file:
+            file.write(
+                f"[profile.{GATE_PROFILE}]\nthreads-required = 3\n\n"
+                f"[[profile.{GATE_PROFILE}.overrides]]\nfilter = 'package(s)'\nslow-timeout = '60s'\n\n"
+                f"[[profile.{GATE_PROFILE}.overrides]]\nfilter = 'package(r) & test(=t)'\n"
+                f"threads-required = '{ALONE}'\npriority = 100\n\n"
+                f"[[profile.{GATE_PROFILE}.overrides]]\nfilter = 'package(q)'\nthreads-required = '{ALONE}'\n\n"
+                f"[[profile.{GATE_PROFILE}.overrides]]\nfilter = 'package(w)'\nthreads-required = 1\n"
+            )
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            read, threads = test_groups(path), gate_threads(path, 4)
+        if read != {} or threads != 12:
+            print(
+                f"    FAIL a profile {GATE_PROFILE} running tests alone before any other override sets their"
+                f" slots was not read as grouping none, with 12 slots on 4 processors: {printed.getvalue()!r}"
+            )
+            return 1
+        lone = alone(path)
+        for test, expected in (
+            (("r", "r", "t"), True),
+            (("q", "q", "x"), True),
+            (("r", "r", "u"), False),
+            (("s", "s", "t"), False),
+            (("w", "w", "t"), False),
+        ):
+            if lone(*test) != expected:
+                verb = "missed" if expected else "also picked"
+                print(f"    FAIL the reader of the tests profile {GATE_PROFILE} runs alone {verb} {test}")
+                return 1
+        if alone(os.path.join(root, "absent.toml"))("r", "r", "t"):
+            print("    FAIL a checkout with no nextest configuration read as running a test alone")
+            return 1
 
     if os.path.exists(NEXTEST):
         real = test_groups(NEXTEST)
@@ -396,6 +523,34 @@ def self_test():
                     f"    FAIL the test groups of {NEXTEST} as read here {verb} {test}; either"
                     " confining() misreads it, or it changed on purpose and these rows in"
                     " self_test() should say what it now groups"
+                )
+                return 1
+        lone = alone(NEXTEST)
+        gradient = "a_gradient_costs_its_pixels_and_its_stops_together"
+        for test, expected in (
+            (("crucible-raster", "crucible_raster", f"tests::{gradient}"), True),
+            (("crucible-raster", "hostile", "a_file_refused_for_its_work_is_refused_before_the_work_is_done"), True),
+            (("crucible-raster", "crucible_raster", f"tests::{gradient}_twice"), False),
+            (("crucible-builtins", "crucible_builtins", f"tests::{gradient}"), False),
+        ):
+            if lone(*test) != expected:
+                verb = "missed" if expected else "also picked"
+                print(
+                    f"    FAIL the tests {NEXTEST} runs alone as read here {verb} {test}; either alone()"
+                    " misreads it, or it changed on purpose and these rows in self_test() should say"
+                    " what it now runs alone"
+                )
+                return 1
+        for count in ("2", "5"):
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                code = main(["required-cases.py", "--gate-threads", count])
+            expected = gate_threads(NEXTEST, int(count))
+            if code != 0 or printed.getvalue() != f"{expected}\n":
+                first = printed.getvalue().partition("\n")[0]
+                print(
+                    f"    FAIL required-cases.py --gate-threads {count} exited {code} printing {first!r},"
+                    f" not the {expected} slots {NEXTEST} gives {count} processors"
                 )
                 return 1
 
@@ -567,6 +722,74 @@ def self_test():
                 " so an ambiguous case would read as unique"
             )
             return 1
+
+    beside = threading.Barrier(2, timeout=5)
+
+    def listing(executable):
+        beside.wait()
+        return {executable}, set()
+
+    try:
+        lists = inventories(
+            {("a", "lib", "a"): Built("one", ".", "a", "0"), ("b", "test", "b"): Built("two", ".", "b", "0")},
+            listing,
+            lambda: 2,
+        )
+    except threading.BrokenBarrierError:
+        print("    FAIL two built binaries were not listed beside one another where two processors allow it")
+        return 1
+    if lists != {("a", "lib", "a"): ({"one"}, set()), ("b", "test", "b"): ({"two"}, set())}:
+        print(f"    FAIL two built binaries were listed as {lists}, not each as itself")
+        return 1
+
+    with tempfile.TemporaryDirectory() as root:
+        with open(os.path.join(root, "tests.rs"), "w", encoding="utf-8") as file:
+            file.write(
+                "const SOON_REFUSED: Duration = Duration::from_millis(100);\n\n"
+                "#[test]\nfn timed_and_alone() {\n    assert!(took() < SOON_REFUSED);\n}\n\n"
+                "#[test]\nfn untimed_beside() {\n    assert!(took() < SOON_REFUSED_TWICE);\n}\n\n"
+                "#[test]\nfn timed_beside() {\n    assert!(took() < SOON_REFUSED);\n}\n\n"
+                "#[test]\nfn alone_untimed() {\n    assert!(took() < LATER);\n}\n\n"
+                "#[test]\nfn twice() {\n    assert!(took() < SOON_REFUSED);\n}\n\n"
+                "mod again {\n    #[test]\n    fn twice() {\n    }\n}\n\n"
+                "#[test]\nfn unclosed() {\n    assert!(took() < SOON_REFUSED);\n  }\n"
+            )
+        with open(os.path.join(root, "plain.rs"), "w", encoding="utf-8") as file:
+            file.write("#[test]\nfn unclosed_elsewhere() {\n  }\n")
+        defined = {package_root("p"): definitions(root)}
+        # Where a name resolves to two definitions and only one names the bound,
+        # the profile running it alone is right for one and wrong for the other,
+        # so it fails as ambiguous whichever way the profile runs it.
+        for names, chosen, said, reason in (
+            (
+                ["tests::timed_and_alone", "tests::untimed_beside", "tests::from_a_macro", "unclosed_elsewhere"],
+                {"tests::timed_and_alone"},
+                None,
+                None,
+            ),
+            (["tests::timed_beside"], set(), "tests::timed_beside", "runs it beside other tests"),
+            (["tests::alone_untimed"], {"tests::alone_untimed"}, "tests::alone_untimed", "names no SOON_REFUSED"),
+            (["tests::from_a_macro"], {"tests::from_a_macro"}, "tests::from_a_macro", "resolves to 0 definitions"),
+            (["tests::twice"], set(), "tests::twice", "resolves to 2 definitions"),
+            (["tests::again::twice"], {"tests::again::twice"}, "tests::again::twice", "resolves to 2 definitions"),
+            (["tests::unclosed"], set(), "tests::unclosed", "has no closing brace"),
+        ):
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                failed = timed(
+                    {("p", "lib", "b"): (set(names), set())},
+                    defined,
+                    lambda package, binary, test, chosen=chosen: (package, binary) == ("p", "b") and test in chosen,
+                )
+            lines = printed.getvalue().splitlines()
+            if said is None and (failed or lines):
+                print(f"    FAIL tests run alone exactly when they name SOON_REFUSED were refused: {lines}")
+                return 1
+            if said is not None and (
+                failed != 1 or len(lines) != 1 or f" {said} " not in lines[0] or reason not in lines[0]
+            ):
+                print(f"    FAIL {said} did not fail alone and by name with {reason!r}: {lines}")
+                return 1
     return 0
 
 
@@ -814,7 +1037,22 @@ def confining(path):
     nothing takes turns. A profile's `test-threads`, and a `threads-required`
     other than 1 that a profile sets for every test or an override for some,
     change how many tests nextest runs at once in a way no group says, so
-    either is refused rather than read as nothing.
+    either is refused rather than read as nothing. One exception is a
+    whole number of slots that the gate's own profile gives every test:
+    `scripts/sh/rust-checks.sh` runs that profile with that many slots per
+    processor, so the tests holding them run at most one per processor, the
+    slots put no test in a group of its own, and only the tests an override
+    sets back to one slot run more than one per processor.
+
+    An override of the gate's profile may also give its tests every slot the
+    run has, `threads-required = "num-test-threads"`, so each runs with no
+    other test beside it, as `alone()` reads. nextest takes a test's slots
+    from the first override that sets them, so such an override is refused
+    after one that sets slots otherwise, which would decide first for the
+    tests both pick, and so is one that names a platform, which would hold on
+    that platform alone, or whose filter `selector()` cannot read, since
+    `alone()` reads it so. That puts no test in a group of its own either, and
+    the reruns here still run such a case beside its binary's other cases.
     """
     try:
         source = open(path, "rb")
@@ -826,11 +1064,25 @@ def confining(path):
     for name, profile in config.get("profile", {}).items():
         if "test-threads" in profile:
             raise ValueError(f"profile {name} sets test-threads")
-        if profile.get("threads-required", 1) != 1:
+        slots = profile.get("threads-required", 1)
+        if type(slots) is not int or slots < 1 or (slots != 1 and name != GATE_PROFILE):
             raise ValueError(f"profile {name} sets threads-required")
+        decided = False
         for override in profile.get("overrides", []):
-            if override.get("threads-required", 1) != 1:
+            slots = override.get("threads-required", 1)
+            if slots == ALONE and name == GATE_PROFILE:
+                if decided:
+                    raise ValueError(
+                        f"an override of profile {name} runs tests alone after one that sets their slots otherwise"
+                    )
+                if "platform" in override:
+                    raise ValueError(f"an override of profile {name} runs tests alone on one platform")
+                if "filter" in override:
+                    selector(override["filter"])
+            elif slots != 1:
                 raise ValueError(f"an override of profile {name} sets threads-required")
+            elif "threads-required" in override:
+                decided = True
             if "test-group" in override:
                 picks = selector(override["filter"]) if "filter" in override else lambda *test: True
                 picked.setdefault(override["test-group"], []).append(picks)
@@ -838,6 +1090,105 @@ def confining(path):
         group: (lambda *test, picks=picks: any(pick(*test) for pick in picks))
         for group, picks in picked.items()
     }
+
+
+def alone(path):
+    """The tests the gate's profile runs with no other beside them, as a predicate on (package, binary, test name).
+
+    Those are the tests an override of that profile gives every slot,
+    `threads-required = "num-test-threads"`. `confining()` refuses such an
+    override where nextest might not apply it to every test it picks, so ask
+    this only of a file `test_groups()` has read. A checkout with no nextest
+    configuration runs no test alone.
+    """
+    try:
+        source = open(path, "rb")
+    except FileNotFoundError:
+        return lambda *test: False
+    with source:
+        overrides = tomllib.load(source).get("profile", {}).get(GATE_PROFILE, {}).get("overrides", [])
+    picks = [
+        selector(override["filter"]) if "filter" in override else (lambda *test: True)
+        for override in overrides
+        if override.get("threads-required") == ALONE
+    ]
+    return lambda *test: any(pick(*test) for pick in picks)
+
+
+def package_root(package):
+    """Where a package's source is, from the workspace's root: the root package's is the whole tree."""
+    return "." if package == "crucible-code" else os.path.join("crates", package)
+
+
+def inventories(built, listing=listed, width=processors):
+    """What `listing()` says of every built binary, as many asked at once as `width()` allows."""
+    keys = sorted(built)
+    with ThreadPoolExecutor(max_workers=width()) as pool:
+        return dict(zip(keys, pool.map(lambda key: listing(built[key].executable), keys)))
+
+
+def timed(inventory, sources, picks):
+    """Say which tests the gate's profile runs alone without asserting `SOON_REFUSED`, or the reverse.
+
+    A test asserting that bound can miss it while a test that keeps a
+    processor busy runs beside it, so the profile runs each one alone, and
+    picks them by name. A test asserts it here when its own text names it, as
+    `function_region()` reads its definition, so a helper that asserts it for
+    a test is not seen. Every discovered test is looked up by the last part of
+    its name in `sources`, the definitions below each package's root, which
+    this fills. One whose name resolves to no definition or to several, and
+    that is run alone or whose definitions name the bound, fails, as does one
+    defined in a file naming the bound whose end cannot be found.
+    """
+    marked = {}
+    failed = 0
+    for (package, kind, target), (discovered, _) in sorted(inventory.items()):
+        root = package_root(package)
+        if root not in sources:
+            sources[root] = definitions(root)
+        for name in sorted(discovered):
+            found = sources[root].get(name.split("::")[-1], [])
+            bounded = False
+            unread = None
+            for path, index, indent in found:
+                if path not in marked:
+                    text = open(path, encoding="utf-8").read()
+                    marked[path] = text.splitlines() if TIMED.search(text) else None
+                if marked[path] is None:
+                    continue
+                region = function_region(marked[path], index, indent)
+                if region is None:
+                    unread = path
+                elif TIMED.search(region):
+                    bounded = True
+            chosen = picks(package, target, name)
+            where = f"{name} in {package} {kind} {target}"
+            if unread is not None:
+                print(
+                    f"    FAIL {where} has no closing brace in its own column in {unread}, so whether it"
+                    " asserts SOON_REFUSED cannot be read"
+                )
+            elif len(found) != 1 and (bounded or chosen):
+                places = ", ".join(one[0] for one in found) or "nowhere"
+                print(
+                    f"    FAIL {where} resolves to {len(found)} definitions ({places}), so whether it"
+                    " asserts SOON_REFUSED cannot be read; define it once, by that name, in its package's source"
+                )
+            elif bounded and not chosen:
+                print(
+                    f"    FAIL {where} asserts the SOON_REFUSED wall-clock bound, but {NEXTEST}'s"
+                    f" {GATE_PROFILE} profile runs it beside other tests; name it in the override that"
+                    f" sets threads-required = '{ALONE}'"
+                )
+            elif chosen and not bounded:
+                print(
+                    f"    FAIL {where} is run alone by {NEXTEST}'s {GATE_PROFILE} profile, but its text"
+                    f" names no SOON_REFUSED; take it out of the override that sets threads-required = '{ALONE}'"
+                )
+            else:
+                continue
+            failed = 1
+    return failed
 
 
 def test_groups(path):
@@ -852,6 +1203,46 @@ def test_groups(path):
             " teach confining() and selector() what it says, so reruns still take nextest's turns"
         )
     return None
+
+
+def gate_threads(path, count):
+    """How many slots the gate's nextest run has on `count` processors, or None once it has said why it cannot say.
+
+    That is as many per processor as the gate's profile gives every test.
+    `confining()` reads those slots as putting no test in a group of its own
+    only because the run has this many, so the product is taken here, by the
+    same reader.
+    """
+    if test_groups(path) is None:
+        return None
+    try:
+        source = open(path, "rb")
+    except FileNotFoundError:
+        return count
+    with source:
+        profile = tomllib.load(source).get("profile", {}).get(GATE_PROFILE, {})
+    return count * profile.get("threads-required", 1)
+
+
+def print_gate_threads(path, count):
+    """`--gate-threads <processors>`: print the slots alone on a line and return 0, or return 1.
+
+    `count` is how many processors nextest runs with, which `scripts/sh/rust-checks.sh`
+    takes from Rust's `available_parallelism` as nextest does: under a CPU quota
+    `processors()` here counts more. On 1, this or `gate_threads()` has printed
+    why, which `scripts/sh/rust-checks.sh` shows above its own refusal.
+    """
+    if not re.fullmatch(r"[1-9][0-9]*", count):
+        print(
+            "    FAIL --gate-threads takes how many processors nextest counts, a whole number"
+            f" of 1 or more, not {count!r}"
+        )
+        return 1
+    threads = gate_threads(path, int(count))
+    if threads is None:
+        return 1
+    print(threads)
+    return 0
 
 
 def schedule(reruns, groups):
@@ -883,8 +1274,8 @@ def rerun(built, run, groups, ran=ran, width=processors):
     """Rerun every binary's required cases as `schedule()` allows, and say which did not all pass.
 
     No more binaries go at once than `width()` processors, which stands in for
-    nextest's one test per processor rather than matching it, since each binary
-    runs its own cases on threads of its own. Every line is printed in one
+    the gate's nextest run rather than matching it, since each binary runs its
+    own cases on threads of its own. Every line is printed in one
     order once all have answered, so the output does not depend on which
     finished first.
     """
@@ -941,10 +1332,10 @@ def check(stream, listing, silenced, selection):
     documented = doctests(listing)
     ignored_examples = doctests(silenced)
 
-    failed = 0
     run = {}
-    inventory = {}
+    inventory = inventories(built)
     sources = {}
+    failed = timed(inventory, sources, alone(NEXTEST))
     for case in manifest:
         kind = case["target"]["kind"]
         key = (case["package"], kind, case["target"]["name"])
@@ -1001,8 +1392,6 @@ def check(stream, listing, silenced, selection):
                 )
                 failed = 1
                 continue
-            if key not in inventory:
-                inventory[key] = listed(built[key].executable)
             discovered, ignored = inventory[key]
             if name not in discovered:
                 print(f"    FAIL {case['id']} is gone: {name} was not discovered in {case['package']}")
@@ -1013,7 +1402,7 @@ def check(stream, listing, silenced, selection):
                 failed = 1
                 continue
 
-            root = "." if case["package"] == "crucible-code" else os.path.join("crates", case["package"])
+            root = package_root(case["package"])
             if root not in sources:
                 sources[root] = definitions(root)
             found = sources[root].get(name.split("::")[-1], [])
@@ -1070,6 +1459,8 @@ def check(stream, listing, silenced, selection):
 def main(argv):
     if len(argv) == 2 and argv[1] == "--self-test":
         return self_test()
+    if len(argv) == 3 and argv[1] == "--gate-threads":
+        return print_gate_threads(NEXTEST, argv[2])
     if len(argv) < 5:
         print(__doc__)
         return 2

@@ -1548,6 +1548,8 @@ removable=(
     tests/whole_screen/snapshots/whole_screen__agents__*.snap
     tests/whole_screen/snapshots/whole_screen__a_slash_{opens_the_command_list_above_the_box,typed_mid_turn_opens_the_command_list}.snap
     Cargo.toml Cargo.lock scripts/sh/repo-checks.sh
+    # The gate profile names the harness crate's test binaries; they go with the route.
+    .config/nextest.toml
     docs/providers/{agents,index,providers,content-use,network}.md
     docs/configuration/configuration.md docs/reference/cli.md
     docs/security/{index,sandboxing}.md docs/sessions/sessions.md
