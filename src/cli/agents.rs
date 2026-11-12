@@ -825,9 +825,11 @@ fn unfound(agent: &str) -> String {
 /// The work [`Desk::waited`] waits for, borrowing what it is lent for `'w`.
 type Waited<'w, T> = Pin<Box<dyn Future<Output = T> + 'w>>;
 
-/// Why a try is refused where nothing can be lent to start a program with.
-const UNSTARTED: &str = "trying your own program starts it, and this command cannot start one \
-                         here, so nothing was tried";
+/// Why a try is refused where no steps can be lent to find the program with
+/// as a launch would.
+const UNSTARTED: &str = "trying your own program finds it as a conversation's launch would, and \
+                         this command cannot lend the steps that find it here, so nothing was \
+                         tried or written";
 
 /// The most paths a `verify` names of one version before it counts the rest.
 const NAMED: usize = 8;

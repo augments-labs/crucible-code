@@ -230,13 +230,14 @@ pub enum Command {
         /// nothing else.
         method: Name,
     },
-    /// Probe the user's own program for this agent, a catalog agent's or a
-    /// shipped agent's, the one a launch would find at `program`, once,
-    /// confined, and add an instance that runs it where it is admitted.
-    /// Changes nothing where it is not. The door finds the program again and
-    /// refuses where it is not the one at `program`, asks the client its own
-    /// yes before it starts anything, and is answered only to a client that
-    /// claimed [`Capability::Install`].
+    /// Try the user's own program for this agent, a catalog agent's or a
+    /// shipped agent's, the one a launch would find at `program`: add an
+    /// instance that runs it as found, and change nothing where it is
+    /// refused. The door finds the program as a launch of the instance would
+    /// and refuses where it is not the one at `program`, asks the client its
+    /// own yes before it writes anything, and is answered only to a client
+    /// that claimed [`Capability::Install`]. Nothing is started, probed or
+    /// admitted: a launch of the instance is what first starts the program.
     TryOwnAgent {
         /// The agent, by the name the catalog gives it. The door checks it as
         /// an agent key before it is used.

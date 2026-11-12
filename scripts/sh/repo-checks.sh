@@ -1750,8 +1750,9 @@ kinds=$(sed -n '/pub const KINDS: \[/,/\];/p' "$request_owner/command.rs" | grep
 # agent, the thirty-sixth, installs its program and writes an instance that
 # names it into the user's file, so it changes which program a route may start
 # and joined them as well. Trying the user's own program for a catalog agent,
-# the thirty-seventh, runs a program the user installed, confined, and writes
-# an instance that names it into the user's file, so it joined them too.
+# the thirty-seventh, starts nothing, but writes an instance that names a
+# program the user installed into the user's file, so it changes which program
+# a route may start and joined them too.
 # One more is one nobody has asked this of.
 if (($(grep -c . <<<"$kinds") != 37)); then
     printf '    FAIL the client contract no longer has the 37 commands the eighteen were picked out of; decide whether the new one changes what a session may do, then move the 37 in this check\n'
@@ -1811,12 +1812,11 @@ done <<<"$decided"
 # commands come from. The agents door performs the catalog's commands for a
 # client that claimed the capability they need, asking it before anything is
 # fetched or changed, and refuses every other; a try of the user's own program
-# is asked too, before its one confined probe, and the door runs it only where
-# the program the move names is the one a launch would find. The terminal's
-# client builds
-# none: it names every command once, to decide from the command alone what a
-# request for it claims where its sender names no claim, so a new command
-# decides that too. `/login` names the one connect that claims install, and the
+# is asked too, before the instance that runs it is written, and the door
+# writes it only where the program the move names is the one a launch would
+# find, starting nothing. The terminal's client builds none: it names every
+# command once, to decide from the command alone what a request for it claims
+# where its sender names no claim, so a new command decides that too. `/login` names the one connect that claims install, and the
 # install, update, rollback, sign-in or try of the user's own program it then
 # sends is the move that connect handed back, the application's own command
 # built on this host, handed to the agents door as it came. `/agents` names the catalog read, a verify and an add,

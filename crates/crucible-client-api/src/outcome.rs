@@ -477,8 +477,8 @@ pub enum AgentAction {
         /// The method, by the name the agent gives it.
         method: Name,
     },
-    /// Probe the user's own program for this catalog agent, found on `PATH`,
-    /// once, confined, and add an instance that runs it where it is admitted.
+    /// Try the user's own program for this catalog agent, found on `PATH`:
+    /// add an instance that runs it as found, starting nothing.
     TryOwn {
         /// The agent, by the name the catalog gives it.
         agent: Name,
