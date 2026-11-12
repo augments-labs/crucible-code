@@ -1,5 +1,8 @@
 [workspace]
 members = ["crates/*"]
+# A plain `cargo build` puts the sandbox broker beside `crucible`, as a release
+# ships it, so a build from source can confine a session.
+default-members = [".", "crates/crucible-sandbox-broker"]
 resolver = "3"
 
 [workspace.package]

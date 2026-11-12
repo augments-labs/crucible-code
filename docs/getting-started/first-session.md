@@ -198,7 +198,7 @@ for working on crucible itself.
 ```bash
 git clone https://github.com/augments-labs/crucible-code
 cd crucible-code
-cargo build --release -p crucible-code -p crucible-sandbox-broker
+cargo build --release
 ./target/release/crucible --version
 ```
 
