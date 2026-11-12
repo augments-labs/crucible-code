@@ -709,3 +709,41 @@ fn every_state_of_the_panel_fits_every_window_it_is_given() {
         }
     }
 }
+
+#[test]
+fn lines_a_used_up_plan_let_go_are_offered_to_the_next_turn_where_its_keys_reach_them() {
+    // Between turns the loop has emptied the offer, so the panel alone holds
+    // the lines until the reader's next turn starts.
+    let (mut queue, steer) = queued(&["first", "second", "third"]);
+    drop(steer.take());
+    queue.let_go();
+
+    queue.offered(&steer);
+    let offer = queue.offer(&steer);
+    assert!(queue.delete(offer), "the key found the line nowhere");
+
+    assert_eq!(waiting(&queue), ["second", "third"]);
+    assert_eq!(steer.take(), ["second", "third"]);
+
+    // Offered to that one turn: whatever it leaves is taken whole after it.
+    steer.say("second".to_owned());
+    queue.offered(&steer);
+    assert_eq!(steer.take(), ["second"]);
+}
+
+#[test]
+fn a_line_sent_alone_between_turns_holds_the_rest_back_from_its_turn() {
+    let (mut queue, steer) = queued(&["first", "second"]);
+    drop(steer.take());
+    queue.let_go();
+
+    assert_eq!(queue.sent_alone().as_deref(), Some("first"));
+    queue.offered(&steer);
+
+    assert!(
+        steer.take().is_empty(),
+        "the rest went with the line sent alone"
+    );
+    assert!(matches!(queue.offer(&steer), Offer::Nowhere));
+    assert_eq!(waiting(&queue), ["second"]);
+}

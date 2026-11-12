@@ -533,6 +533,8 @@ message, in the order you typed it; nothing is joined into a prompt you did not
 write. A turn that stopped on a used-up plan is the exception: the queue waits
 in the same panel over the box, where the same keys edit or delete it, until
 you send a prompt, since sent on its own it would reach a plan that is spent.
+The prompt you send then takes the queue with it, as a turn takes what was
+queued under it.
 
 Nothing holds the queue while you look at it. The turn above goes on writing,
 tools go on running, and the turn takes every waiting prompt at its next step,

@@ -517,7 +517,8 @@ The prompts waiting behind a running turn stand in one panel over the box
 whenever any are waiting: a title counting them, up to three of them a blank
 row apart with one highlighted, and a footer naming the keys. Between turns the
 same panel holds the prompts left queued behind a turn that stopped on a
-used-up plan, until you send a prompt. You go on typing into the box under it;
+used-up plan, until you send a prompt, which takes them with it. You go on
+typing into the box under it;
 the panel only adds these keys:
 
 | Key | What it does |
@@ -526,7 +527,7 @@ the panel only adds these keys:
 | <kbd>Ctrl+E</kbd> | Takes the highlighted prompt out of the queue and into the box at the cursor, where it can be edited or sent again. A prompt too long to go in beside what the box already holds (1 MiB together) stays queued and highlighted, and the panel says `no room in the box · line stays queued` until the next key. On an approval prompt it opens the explanation instead. |
 | <kbd>Ctrl+X</kbd> | Deletes the highlighted prompt; the box is left as it was. |
 | <kbd>Ctrl+Enter</kbd> | Stops the turn as <kbd>Esc</kbd> does and sends every waiting prompt, oldest first, with the line in the box last, as the next turn, each as the line it was typed as. The panel goes and the box is left empty. With nothing waiting it stops the turn and sends the line in the box; with the box empty too it does nothing. A line in the box past the queue's bound stays there, the row says why, and the turn goes on; one that is a command is run or refused as <kbd>Enter</kbd> runs it. Between turns it is <kbd>Enter</kbd>. |
-| <kbd>Ctrl+S</kbd> | Stops the turn as <kbd>Esc</kbd> does and sends the highlighted prompt alone as the next turn. The rest stay queued in order behind it, to be sent together when it ends, with the highlight on the prompt that followed; the line in the box stays in the box. Between turns it sends the highlighted prompt. Nothing while none are waiting, or once the turn has taken the highlighted one. |
+| <kbd>Ctrl+S</kbd> | Stops the turn as <kbd>Esc</kbd> does and sends the highlighted prompt alone as the next turn. The rest stay queued in order behind it, to be sent together when it ends, with the highlight on the prompt that followed; the line in the box stays in the box. Between turns it sends the highlighted prompt alone in the same way. Nothing while none are waiting, or once the turn has taken the highlighted one. |
 
 After <kbd>Ctrl+E</kbd> or <kbd>Ctrl+X</kbd>, the highlight stays where it
 was, on the prompt that followed, and the panel goes when the last prompt does.

@@ -84,9 +84,9 @@ pub(super) struct Prompts {
     ///
     /// Set by a key that stops the turn to send them, so that the turn it is
     /// stopping takes none of them on its way out, and kept under the turn
-    /// Ctrl+S sends, which is that one line alone. Cleared when the queue is
-    /// next taken whole, or empties, or a used-up plan leaves it to the reader
-    /// between turns.
+    /// Ctrl+S sends, which is that one line alone; Ctrl+S between turns sets it
+    /// for the same reason. Cleared when the queue is next taken whole, or
+    /// empties, or a used-up plan leaves it to the reader between turns.
     held: bool,
     /// Whether the next turn is the oldest line alone, as Ctrl+S sent it.
     ///
@@ -94,6 +94,13 @@ pub(super) struct Prompts {
     /// other way: the reader who deletes it or takes it back before the turn
     /// stops has chosen nothing else to go alone.
     alone: bool,
+    /// Whether a used-up plan left the lines to the reader between turns, so
+    /// that the next turn they send is offered them as it starts (see
+    /// [`Prompts::offered`]).
+    ///
+    /// Set where the plan lets them go, and cleared once they are offered, or
+    /// held back, or taken whole, or the queue empties.
+    loose: bool,
 }
 
 /// Where the lines the panel names are besides the panel, which is what
@@ -194,6 +201,7 @@ impl Prompts {
             self.refused = false;
             self.held = false;
             self.alone = false;
+            self.loose = false;
         }
 
         Some(prompt)
@@ -357,6 +365,39 @@ impl Prompts {
         true
     }
 
+    /// Takes the highlighted line out of the queue to be the next turn alone,
+    /// sent between turns, where a used-up plan left the lines to the reader.
+    ///
+    /// What Ctrl+S does under a turn, with no turn to stop: the rest are held
+    /// back from the turn this line starts, and taken whole once it is over.
+    /// `None` where nothing is highlighted.
+    pub(super) fn sent_alone(&mut self) -> Option<String> {
+        let line = self.drop(self.at)?;
+        self.loose = false;
+        self.held = !self.lines.is_empty();
+        Some(line)
+    }
+
+    /// Offers every line to the turn the reader is starting, where a used-up
+    /// plan left them to the reader.
+    ///
+    /// The next turn they send is the one the lines were waiting for, and it
+    /// takes them as the turn they were queued under would have: at its first
+    /// pass boundary, each as the line it was typed as, leaving the panel as
+    /// the turn says it took each. Until then the steer holds them as well as
+    /// the panel, so the keys reach them there as they do under any turn.
+    /// Offered any later, they would wait unseen by that turn and run as the
+    /// one after it.
+    pub(super) fn offered(&mut self, steer: &Steer) {
+        if !std::mem::take(&mut self.loose) {
+            return;
+        }
+        drop(steer.take());
+        for line in &self.lines {
+            steer.say(line.clone());
+        }
+    }
+
     /// Takes every line back off the running turn's offer and keeps them off
     /// it, so the turn a key is stopping takes none of them on its way out.
     ///
@@ -365,13 +406,15 @@ impl Prompts {
     fn hold(&mut self, steer: &Steer) {
         drop(steer.take());
         self.held = true;
+        self.loose = false;
     }
 
     /// Leaves every line to the reader between turns: on offer to the next
-    /// turn they send, and none of them to go alone.
+    /// turn they send (see [`Prompts::offered`]), and none of them to go alone.
     fn let_go(&mut self) {
         self.held = false;
         self.alone = false;
+        self.loose = !self.lines.is_empty();
     }
 
     /// Clears what the panel said about a line the box had no room for, and
@@ -410,6 +453,7 @@ pub(super) fn batched(queued: &mut Prompts, steer: &Steer) -> Option<String> {
     }
 
     queued.held = false;
+    queued.loose = false;
     let said = queued.pop()?;
 
     // What the steer still holds was offered to a turn that ended before it
@@ -433,7 +477,8 @@ pub(super) fn batched(queued: &mut Prompts, steer: &Steer) -> Option<String> {
 ///
 /// Not after work that stopped on a used-up plan: the lines stay queued for
 /// the reader, who can take them back or send a prompt, because the plan
-/// they would be sent to is spent until its reset. Nothing a key that sent
+/// they would be sent to is spent until its reset. The prompt they send takes
+/// the lines with it, as [`Prompts::offered`] says. Nothing a key that sent
 /// them now set holds past that stop: the turn it was for is over, and kept, it
 /// would hold the lines back from the next turn the reader sends.
 ///
