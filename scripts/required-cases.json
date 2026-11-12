@@ -12675,6 +12675,24 @@
       "platforms": [
         "linux"
       ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-NESTED-MATRICES",
+      "family": "transcript-blocks",
+      "obligation": "Matrices nested as deep as a formula is read, and nested past that to the byte cap, are answered inside the deadline in both glyph sets; the first is drawn and the second is refused as past the cap.",
+      "package": "crucible-tui-math",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "matrices_nested_to_the_byte_cap_are_answered_inside_the_deadline_and_drawn_only_within_the_depth",
+      "source": "crates/crucible-tui-math/tests/hostile.rs",
+      "body_sha256": "f35b1d580bb49af7066792d9d22a86c092014103ff9754e66e536c58ef575712",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
     }
   ]
 }

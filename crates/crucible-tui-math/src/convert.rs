@@ -665,27 +665,34 @@ impl<'a> Parser<'a> {
 
     fn environment(&mut self, depth: usize) -> Read<Expr> {
         let name = self.name()?;
-        let (end, after) = environment_end(self.source, self.at, &name).ok_or(Refused::Unclean)?;
+        // Known before its end is looked for, so the walk is for a name of a
+        // few letters. `None` is an environment read as one formula.
+        let laid = match name.as_str() {
+            "equation" | "equation*" | "displaymath" => None,
+            "matrix" | "smallmatrix" | "array" => Some((Delimiters::None, Cells::Centred)),
+            "align" | "align*" | "aligned" | "split" | "eqnarray" | "eqnarray*" | "alignat"
+            | "alignat*" => Some((Delimiters::None, Cells::Aligned)),
+            "gather" | "gather*" | "gathered" | "multline" | "multline*" => {
+                Some((Delimiters::None, Cells::Centred))
+            }
+            "cases" | "cases*" => Some((Delimiters::LeftBrace, Cells::Left)),
+            "pmatrix" => Some((Delimiters::Parentheses, Cells::Centred)),
+            "bmatrix" => Some((Delimiters::Brackets, Cells::Centred)),
+            "Bmatrix" => Some((Delimiters::Braces, Cells::Centred)),
+            "vmatrix" => Some((Delimiters::Bars, Cells::Centred)),
+            "Vmatrix" => Some((Delimiters::DoubleBars, Cells::Centred)),
+            _ => return Err(Refused::Unclean),
+        };
+        let (end, after) = environment_end(
+            self.source,
+            self.at,
+            &name,
+            MOST_DEPTH.saturating_sub(depth),
+        )?;
         let body = self.slice(self.at, end);
         self.at = after;
-
-        let (delimiters, cells) = match name.as_str() {
-            "equation" | "equation*" | "displaymath" => {
-                return Parser::new(body, self.glyphs).sequence(None, depth);
-            }
-            "matrix" | "smallmatrix" | "array" => (Delimiters::None, Cells::Centred),
-            "align" | "align*" | "aligned" | "split" | "eqnarray" | "eqnarray*" | "alignat"
-            | "alignat*" => (Delimiters::None, Cells::Aligned),
-            "gather" | "gather*" | "gathered" | "multline" | "multline*" => {
-                (Delimiters::None, Cells::Centred)
-            }
-            "cases" | "cases*" => (Delimiters::LeftBrace, Cells::Left),
-            "pmatrix" => (Delimiters::Parentheses, Cells::Centred),
-            "bmatrix" => (Delimiters::Brackets, Cells::Centred),
-            "Bmatrix" => (Delimiters::Braces, Cells::Centred),
-            "vmatrix" => (Delimiters::Bars, Cells::Centred),
-            "Vmatrix" => (Delimiters::DoubleBars, Cells::Centred),
-            _ => return Err(Refused::Unclean),
+        let Some((delimiters, cells)) = laid else {
+            return Parser::new(body, self.glyphs).sequence(None, depth);
         };
 
         let body = if matches!(name.as_str(), "array" | "alignat" | "alignat*") {
@@ -839,33 +846,43 @@ fn collapse(mut items: Vec<Expr>) -> Expr {
 }
 
 /// Where the body of the environment `name` that opens before `from` ends,
-/// and where the text after its `\end{name}` begins: nested environments of
-/// the same name are counted.
-fn environment_end(source: &str, from: usize, name: &str) -> Option<(usize, usize)> {
+/// and where the text after its `\end{name}` begins, in one walk over what
+/// follows: nested environments of the same name are counted, and one nested
+/// more than `room` levels inside it is refused where it opens.
+///
+/// Each nested environment is read one level deeper than the one it is in, so
+/// one past `room` is past [`MOST_DEPTH`] however its body reads, and refusing
+/// it here spares every level above it its own walk. Every environment that
+/// is read walks its own body once, and no more than [`MOST_DEPTH`] of them
+/// are read inside one another, so a formula costs a bounded number of walks
+/// over its bytes.
+fn environment_end(source: &str, from: usize, name: &str, room: usize) -> Read<(usize, usize)> {
     let begin = format!("\\begin{{{name}}}");
     let end = format!("\\end{{{name}}}");
-    let mut search = from;
+    let rest = source.get(from..).ok_or(Refused::Unclean)?;
+    let mut at = 0_usize;
     let mut depth = 1_usize;
-    loop {
-        let rest = source.get(search..)?;
-        let next_end = rest.find(&end)?;
-        match rest.find(&begin) {
-            Some(next_begin) if next_begin < next_end => {
-                depth = depth.saturating_add(1);
-                search = search
-                    .saturating_add(next_begin)
-                    .saturating_add(begin.len());
+    while let Some(found) = rest.get(at..).and_then(|tail| tail.find('\\')) {
+        let marker = at.saturating_add(found);
+        let tail = rest.get(marker..).unwrap_or_default();
+        if tail.starts_with(&begin) {
+            depth = depth.saturating_add(1);
+            if depth > room.saturating_add(1) {
+                return Err(Refused::TooLarge);
             }
-            _ => {
-                let at = search.saturating_add(next_end);
-                depth = depth.saturating_sub(1);
-                search = at.saturating_add(end.len());
-                if depth == 0 {
-                    return Some((at, search));
-                }
+            at = marker.saturating_add(begin.len());
+        } else if tail.starts_with(&end) {
+            depth = depth.saturating_sub(1);
+            at = marker.saturating_add(end.len());
+            if depth == 0 {
+                return Ok((from.saturating_add(marker), from.saturating_add(at)));
             }
+        } else {
+            // A backslash is one byte, so the next character starts after it.
+            at = marker.saturating_add(1);
         }
     }
+    Err(Refused::Unclean)
 }
 
 /// `source` without the braced group it opens with, as an `array`'s column

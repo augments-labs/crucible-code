@@ -23,7 +23,7 @@ use crucible_tui::chrome::Undrawn;
 use crucible_tui::drawing::{Drawers, Draws, Laid, Room};
 use crucible_tui::testing::read as answered;
 use crucible_tui::{Glyphs, Row};
-use crucible_tui_math::{Formulas, MOST_BYTES};
+use crucible_tui_math::{Formulas, MOST_BYTES, MOST_COLUMNS, MOST_DEPTH};
 use std::fs;
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -337,6 +337,51 @@ fn a_continued_fraction_nested_thirty_deep_is_drawn_in_a_line_and_answered_as_a_
         in_a_line
     });
     assert_eq!(ended, Ended::Returned(vec![true, true]));
+}
+
+/// `levels` matrices each inside the last, the innermost holding as many
+/// letters as the byte cap leaves room for.
+fn nested_matrices(levels: usize) -> String {
+    let (open, close, letter) = (r"\begin{matrix}", r"\end{matrix}", r"\alpha");
+    let ends = levels * (open.len() + close.len());
+    let letters = MOST_BYTES.saturating_sub(ends) / letter.len();
+    format!(
+        "{}{}{}",
+        open.repeat(levels),
+        letter.repeat(letters),
+        close.repeat(levels)
+    )
+}
+
+#[test]
+fn matrices_nested_to_the_byte_cap_are_answered_inside_the_deadline_and_drawn_only_within_the_depth()
+ {
+    // As deep as a letter inside them is read, and as deep as the byte cap
+    // allows, which is more than twice past it. Each level of the first is
+    // laid out over the whole formula, so it is drawn at the narrowest, the
+    // usual and the widest room; the second is refused before its end is
+    // looked for, so it is answered at every width between.
+    let within = nested_matrices(MOST_DEPTH - 1);
+    let past = nested_matrices(MOST_BYTES / r"\begin{matrix}\end{matrix}".len());
+    assert!(within.len() <= MOST_BYTES && past.len() <= MOST_BYTES);
+    assert!(past.matches(r"\begin").count() > 2 * MOST_DEPTH);
+    let ended = guarded(DEADLINE, move || {
+        let mut answered = Vec::new();
+        let every: Vec<usize> = (NARROWEST..=WIDEST).collect();
+        for (text, widths) in [(&within, vec![NARROWEST, WIDTH, WIDEST]), (&past, every)] {
+            for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+                for &columns in &widths {
+                    let room = room(columns, glyphs);
+                    drop(Formulas.inline(text, &room));
+                    drop(this_crate(text, &room));
+                }
+                answered.push(this_crate(text, &room(MOST_COLUMNS + 2, glyphs)).err());
+            }
+        }
+        answered
+    });
+    let past_cap = Some(Undrawn::PastCap);
+    assert_eq!(ended, Ended::Returned(vec![None, None, past_cap, past_cap]));
 }
 
 #[test]
