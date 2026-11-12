@@ -303,7 +303,8 @@ pub(super) fn held<T: Terminal>(
     // Every route that holds the send is asked about in turn: two warned
     // routes at one origin each keep the request back until each has its
     // yes. A yes is written down before the next question, so a route comes
-    // back only where its yes could not be, and that is said and stops here.
+    // back only where its yes could not be, and that is said, with what
+    // became of the work, and stops here.
     let said = loop {
         let Some(warned) = unsent(conversation, terms, work) else {
             return Ok(false);
@@ -322,9 +323,14 @@ pub(super) fn held<T: Terminal>(
             return Err(Fatal::Unanswered(unanswered(&warned)));
         }
         break match ask(renderer, terms.style(), &warned, Put::before(work))? {
+            // Nothing was sent where the yes could not be written down, as
+            // after going back, so what became of the work is said after why.
             Answer::Yes => match recorded(terms, &warned) {
                 Ok(()) => continue,
-                Err(said) => said,
+                Err(why) => {
+                    renderer.commit(&why)?;
+                    left(work, false).to_owned()
+                }
             },
             Answer::Back => left(work, false).to_owned(),
             Answer::Cramped => left(work, true).to_owned(),

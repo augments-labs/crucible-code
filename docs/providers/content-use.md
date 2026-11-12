@@ -18,12 +18,18 @@ of a token.
 - **Go back**, or Escape, sends nothing and leaves your message in the prompt
   box.
 
+If the yes cannot be written into that file, nothing is sent either: crucible
+says why, then that your message is back in the prompt box, and the question is
+asked again at your next send.
+
 The note that starts a turn when a command left running
 [ends on its own](../tools/commands.md#when-one-ends-on-its-own) is asked about
 the same way. It is not your message, so going back drops it rather than
 putting it in the box, and whatever you had typed there stays. A window too
 short to ask in drops it too, and so does a yes that could not be written down.
-In each case the model is not told of that ending; the first two lines say so:
+In each case the model is not told of that ending, and crucible says so. Going
+back ends with the first line below, and so does a yes that could not be written
+down, after a line saying why; a window too short ends with the second:
 
 ```text
 nothing was sent; the model was not told the command ended
