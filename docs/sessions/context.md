@@ -125,15 +125,18 @@ so the model is told when they differ from what it last heard.
 The words are written before the state. If crucible stops between the two the
 first time a section is told, the next request finds words it has no recorded
 state for and restates that section whole, opening with a line that tells the
-model it supersedes every earlier version. Your request is kept aside only in that
-recorded state. A session whose log holds your words but never recorded it has
-lost that copy: crucible stopped before writing it, the first turn ended before
-anything was sent, or the session was saved before crucible kept your request.
-Your words are still in the conversation, but when your request is next
-restated the model is told it was not kept, and nothing you say afterwards is
-taken for it. A change told later whose state was
+model it supersedes every earlier version. A change told later whose state was
 never written is compared against the state recorded before it. A session
 written before crucible recorded that state is told every section in full.
+
+Your request is kept aside only in that recorded state. A session whose log
+holds anything said to the agent, by you or by crucible for you, but never
+recorded that state has lost the copy: crucible stopped before writing it, the
+first turn ended before anything was sent, or the session was saved before
+crucible kept your request. When your request is next restated, the model is
+told it was not kept, and nothing you say afterwards is taken for it. Until a
+compaction replaces it with its summary, the model can still read your request
+where you wrote it in the conversation.
 
 ## Why it is split this way
 
