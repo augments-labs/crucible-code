@@ -1,6 +1,7 @@
 //! The probe that takes in a release follows the sandbox setting: with it off
 //! the release is started as a plain local process and admitted, with it on a
-//! sandbox that cannot close the network starts nothing.
+//! sandbox that cannot close the network starts nothing, and the policy the
+//! release is started under closes the network.
 
 use std::fs;
 use std::path::PathBuf;
@@ -12,12 +13,12 @@ use crucible_external_harnesses::fake_peer::scripts::acp;
 use crucible_external_harnesses::fake_peer::{self, Reply, Script};
 use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
-    SandboxBackendIdentity, SandboxCapabilities, SandboxError, SandboxRequest, SandboxService,
-    SandboxSession,
+    SandboxBackendIdentity, SandboxCapabilities, SandboxError, SandboxFilesystemProvenance,
+    SandboxNetworkPolicy, SandboxRequest, SandboxService, SandboxSession,
 };
 use tokio::runtime::Handle;
 
-use super::super::{Mode, Unprobed, local, probe};
+use super::super::{Confinement, Mode, Unprobed, local, policy, probe};
 use crate::launching::Unprobeable;
 use crate::sample::Sample;
 
@@ -166,4 +167,19 @@ fn an_install_probe_with_the_sandbox_on_and_no_closing_sandbox_is_refused() {
         0,
         "nothing was started before the refusal"
     );
+}
+
+#[test]
+fn an_install_probe_with_the_sandbox_on_closes_the_network() {
+    let release = Release::new("probe-setting-network");
+    let on = release.settings(r#"{"sandbox": {"enabled": true}}"#);
+    let mode = Mode::under(&on, false, &|_| None).expect("the sandbox needs no word");
+    assert_eq!(mode.confinement(), Confinement::Required);
+
+    // The policy a probe in the closed sandbox is started under.
+    let held = policy(&release.root, SandboxFilesystemProvenance::Workspace, true)
+        .expect("an install probe policy");
+
+    assert!(held.enabled());
+    assert_eq!(held.network(), &SandboxNetworkPolicy::Closed);
 }
