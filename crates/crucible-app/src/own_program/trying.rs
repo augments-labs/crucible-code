@@ -1,48 +1,32 @@
 //! Trying the user's own program before an instance runs it: what a person
-//! is told of it before they say yes, and the one probe the yes is for.
+//! is told of it before they say yes. The yes writes the instance, and
+//! nothing is started.
 //!
 //! A trial is found as a launch would find the program: for a catalog agent,
 //! its entry's guessed name or the instance's own `executable` on the `PATH`
 //! steps look on, outside crucible's install store; for Antigravity, one of
 //! its commands there. Its facts name the path its links lead to, what it is
 //! started with and what the sandbox lets it read, every value escaped as
-//! any other text a program gives. Its probe is [`super::probe`]'s for a
-//! catalog agent, whose record a launch is held to; Antigravity's own
-//! program is held to no record, so its answer is admitted as a launch admits
-//! it, and nothing is kept.
+//! any other text a program gives.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use crucible_config::{Driver, ExternalAgent};
-use crucible_external_harnesses::acp::Initialized;
-use crucible_external_harnesses::antigravity::{self, Manifest};
+use crucible_external_harnesses::antigravity;
 use crucible_external_harnesses::{Dialect as _, Discovery, Program, Shape};
-use crucible_sandbox::SandboxService;
-use crucible_tools::Mode;
 use crucible_types::AgentKey;
 use crucible_types::shown::escaped;
-use serde_json::Value;
-use tokio::runtime::Handle;
 
-use super::{
-    Instance, Places, Platform, Proposed, Record, Root, Unowned, answer, dialect, homeless, probe,
-    read, unadmitted,
-};
+use super::{Places, Platform, Proposed, Root, dialect, homeless};
 use crate::backends::{AgentRow, Row};
 use crate::launching::discovery::{Origin, discover};
-use crate::launching::{Sandbox, programs_beside};
+use crate::launching::programs_beside;
 
-/// What a trial of the user's own program is found and probed with: the
-/// sandbox and runtime a probe starts it under, the user's home its
-/// directory is judged against, where one is known, crucible's trust state
-/// and session logs, and the `PATH` it is looked for on.
+/// What a trial of the user's own program is found with: the user's home
+/// its directory is judged against, where one is known, crucible's trust
+/// state and session logs, and the `PATH` it is looked for on.
 pub(crate) struct Trying {
-    /// The sandbox the probe is started under.
-    service: Arc<dyn SandboxService>,
-    /// Where the probe's pipes are read and written.
-    runtime: Handle,
     /// The user's home, where one is known and is a full path.
     home: Option<PathBuf>,
     /// The directory the catalog's trust state is kept under, in crucible's
@@ -57,18 +41,15 @@ pub(crate) struct Trying {
 }
 
 impl Trying {
-    /// Trying with each of what it is found and probed with; a home that is
-    /// no full path is taken as none.
+    /// Trying with each of what it is found with; a home that is no full path
+    /// is taken as none.
     pub(crate) fn new(
-        (service, runtime): (Arc<dyn SandboxService>, Handle),
         home: Option<PathBuf>,
         (state, sessions): (PathBuf, PathBuf),
         path: Option<OsString>,
         sandboxed: bool,
     ) -> Self {
         Self {
-            service,
-            runtime,
             home: home.filter(|home| home.is_absolute()),
             state,
             sessions,
@@ -100,15 +81,6 @@ impl Trying {
     /// Whether the sandbox confines a launch started now.
     pub(crate) fn sandboxed(&self) -> bool {
         self.sandboxed
-    }
-
-    /// Removes the record kept for the instance named `name`, where one is.
-    ///
-    /// # Errors
-    ///
-    /// The I/O error where a record is there and could not be removed.
-    pub(crate) fn forget(&self, name: &str) -> std::io::Result<()> {
-        super::forget(self.crucible(), name)
     }
 
     /// The user's own program of the catalog agent `key`, run as
@@ -175,8 +147,6 @@ enum Of {
 pub(crate) struct Trial {
     /// Whose it is.
     of: Of,
-    /// The program, as it was found.
-    program: Program,
     /// The path its links lead to.
     canonical: PathBuf,
     /// What the sandbox is told of the directory it lies in.
@@ -194,7 +164,6 @@ impl Trial {
         );
         Some(Self {
             of,
-            program,
             canonical,
             root,
         })
@@ -211,39 +180,6 @@ impl Trial {
             Root::Refused(why) => Some(why),
             Root::NoRule | Root::Grant(_) => None,
         }
-    }
-
-    /// The instance named `name` that would run it, as its record is kept
-    /// for it.
-    fn instance<'a>(&'a self, name: &'a str) -> Instance<'a> {
-        match &self.of {
-            Of::Catalog { key, proposed } => Instance {
-                name,
-                driver: Driver::Catalog.name(),
-                agent: Some(key.as_str()),
-                args: proposed.own.args(),
-                env: proposed.own.env(),
-            },
-            Of::Antigravity(_) => Instance {
-                name,
-                driver: Driver::Antigravity.name(),
-                agent: None,
-                args: &[],
-                env: &[],
-            },
-        }
-    }
-
-    /// The record kept for the instance named `name` of a catalog agent's
-    /// program under `trying`'s crucible home, where one holds for it as it
-    /// is configured and the program is still the one probed; nothing for
-    /// Antigravity's, which keeps none.
-    pub(crate) fn fresh(&self, trying: &Trying, name: &str) -> Option<Record> {
-        let Of::Catalog { .. } = self.of else {
-            return None;
-        };
-        read(trying.crucible(), &self.instance(name))
-            .filter(|record| record.current(&self.canonical))
     }
 
     /// An instance named `name` that runs it by the path its links lead to,
@@ -315,8 +251,8 @@ impl Trial {
                 shown(self.canonical.parent().unwrap_or(&self.canonical))
             ),
             Root::Grant(directory) => format!(
-                "Everything in {} is readable to it, read-only, during its probe and at every \
-                 launch, where the network is open to its vendor.",
+                "Everything in {} is readable to it, read-only, at every launch under the \
+                 sandbox, where the network is open to its vendor.",
                 shown(directory)
             ),
         });
@@ -331,64 +267,6 @@ impl Trial {
             facts.push(antigravity::own_note(trying.sandboxed).to_owned());
         }
         facts
-    }
-
-    /// Probes it, as [`probe`] does, for the instance named `name` among the
-    /// configured `instances`: a catalog agent's record is kept for that
-    /// instance, and given back; Antigravity's answer is admitted as a launch
-    /// admits it, and nothing is kept.
-    ///
-    /// # Errors
-    ///
-    /// [`Unowned`] saying why it is not admitted; nothing is then kept.
-    pub(crate) async fn probe(
-        &self,
-        trying: &Trying,
-        name: &str,
-        instances: &[&str],
-    ) -> Result<Option<Record>, Unowned> {
-        let places = trying.places().ok_or_else(|| homeless(&self.program))?;
-        let instance = self.instance(name);
-        let service = Arc::clone(&trying.service);
-        let runtime = trying.runtime.clone();
-        match &self.of {
-            Of::Catalog { key, proposed } => {
-                let wire = proposed.row(key, Vec::new())?.dialect(Mode::Ask);
-                probe(
-                    service,
-                    runtime,
-                    &places,
-                    &instance,
-                    instances,
-                    self.program.clone(),
-                    wire,
-                    crate::probing::BOUND,
-                )
-                .await
-                .map(Some)
-            }
-            Of::Antigravity(row) => {
-                let wire = dialect(&AgentRow::Built(row), &self.canonical)
-                    .map_err(|failure| unadmitted(&failure))?;
-                let (canonical, said) = answer(
-                    service,
-                    runtime,
-                    &places,
-                    self.program.clone(),
-                    wire,
-                    crate::probing::BOUND,
-                )
-                .await?;
-                Record::answered(&instance, &canonical, &Sandbox::Closed, &said)?;
-                let result = said.get("result").cloned().unwrap_or(Value::Null);
-                let initialized =
-                    Initialized::own(&result).map_err(|failure| unadmitted(&failure))?;
-                Manifest::REVIEWED
-                    .admits_own(&initialized)
-                    .map_err(|failure| unadmitted(&failure))?;
-                Ok(None)
-            }
-        }
     }
 }
 

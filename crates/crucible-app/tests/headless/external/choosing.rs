@@ -425,10 +425,11 @@ fn a_client_that_does_not_install_is_put_the_questions_it_was_put_before() -> Re
 
 /// Each agent the catalog offers is listed after the shipping ones, saying
 /// the version offered and, of an instance running the user's own program,
-/// so; choosing it asks what to do with that agent, whose instance running
-/// the user's own program has nothing to connect until a probe of it is
-/// kept, and going back offers the agents again. Once trying it keeps one,
-/// that instance is offered Connect, and the user file is as it was.
+/// so; choosing it asks what to do with that agent, whose instance has
+/// nothing to connect while no program of the user's is found for it, and
+/// going back offers the agents again. Once the program it runs is found, it
+/// is offered Connect with nothing tried or started first, and the user file
+/// is as it was.
 #[test]
 fn a_catalog_agent_is_listed_after_the_shipping_ones_and_its_own_program_is_not_connected()
 -> Result<(), Failed> {
@@ -470,28 +471,11 @@ fn a_catalog_agent_is_listed_after_the_shipping_ones_and_its_own_program_is_not_
     own_goose(&tools(&tree), true)?;
     let mut conversation = own_sandboxed(&tree)?;
     let (_, choices) = goose_managed(&tree, &mut conversation, &before)?;
-    assert_eq!(choices, ["Try your own", "Install", "Go back"]);
-    let (action, _) = chose_own(&tree, &mut conversation, &before, "goose")?;
-    let tried = carried(
-        &tree,
-        &conversation,
-        &action,
-        &mut Picking::of([Some("Try it")]),
-    )?;
-    let Ok(Door::Tried { instance, .. }) = tried else {
-        return Err(format!("the door answered {tried:?}").into());
-    };
-    assert_eq!(&*instance, "work");
+    assert_eq!(choices, ["Connect", "Install", "Go back"]);
     assert_eq!(
         std::fs::read_to_string(crate::Desk::new(&tree, &[])?.choosing)?,
         before
     );
-    assert!(
-        goose_record(&tree, "work")?.is_some(),
-        "no probe record was kept"
-    );
-    let (_, choices) = goose_managed(&tree, &mut conversation, &before)?;
-    assert_eq!(choices, ["Connect", "Install", "Go back"]);
     Ok(())
 }
 
@@ -974,11 +958,21 @@ fn own_stepped(
     service: Arc<dyn SandboxService>,
     path: &std::path::Path,
 ) -> Result<Conversation, Failed> {
+    own_stepped_with(tree, service, path, true)
+}
+
+/// [`own_stepped`], with the sandbox on where `sandboxed` and off where not.
+fn own_stepped_with(
+    tree: &Tree,
+    service: Arc<dyn SandboxService>,
+    path: &std::path::Path,
+    sandboxed: bool,
+) -> Result<Conversation, Failed> {
     use crucible_app::launching::{Launcher, Steps};
     use crucible_sandbox::SandboxEnablement;
 
     std::fs::create_dir_all(user(tree))?;
-    let policy = SandboxPolicy::standard(&tree.workspace()?)?.with_enabled(true);
+    let policy = SandboxPolicy::standard(&tree.workspace()?)?.with_enabled(sandboxed);
     let consent = Consent::new(Routes::production());
     consent.keeps_in(crate::Desk::new(tree, &[])?.choosing);
     let state = catalog_fetch::state_in(tree.home()?.path());
@@ -987,7 +981,7 @@ fn own_stepped(
         Launcher::new(service, runtime()?, &policy, &consent, &state, &sessions).homed(user(tree));
     let steps = Steps::new(
         launcher,
-        Arc::new(SandboxEnablement::new(true, false)),
+        Arc::new(SandboxEnablement::new(sandboxed, false)),
         &REGISTRY,
         Some(path.as_os_str().to_owned()),
     );
@@ -1171,28 +1165,12 @@ fn written(tree: &Tree, name: &str) -> Result<Option<Value>, Failed> {
     Ok(file.pointer(&format!("/externalAgents/{name}")).cloned())
 }
 
-/// The probe record kept for the instance `name` of goose, started as its
-/// entry here proposes, where one holds.
-fn goose_record(tree: &Tree, name: &str) -> Result<Option<own_program::Record>, Failed> {
-    let args: [Box<str>; 1] = ["acp".into()];
-    Ok(own_program::read(
-        tree.home()?.path(),
-        &own_program::Instance {
-            name,
-            driver: "catalog",
-            agent: Some("goose"),
-            args: &args,
-            env: &[],
-        },
-    ))
-}
-
 /// What the facts say of the directory `directory` an own program lies in,
 /// where it is given to the program read-only.
 fn readable(directory: &str) -> String {
     format!(
-        "Everything in {directory} is readable to it, read-only, during its probe and at every \
-         launch, where the network is open to its vendor."
+        "Everything in {directory} is readable to it, read-only, at every launch under the \
+         sandbox, where the network is open to its vendor."
     )
 }
 
@@ -1254,11 +1232,10 @@ fn a_catalog_agent_on_path_is_offered_as_the_users_own_before_install() -> Resul
     Ok(())
 }
 
-/// Choosing the user's own program probes it once, confined, after the door's
-/// own yes, and writes an instance that runs it by the path its links lead
-/// to, keeping what it answered for that instance.
+/// Choosing the user's own program asks the door's own yes, and writes an
+/// instance that runs it by the path its links lead to.
 #[test]
-fn trying_your_own_probes_it_and_writes_the_instance() -> Result<(), Failed> {
+fn trying_your_own_writes_the_instance_that_runs_it() -> Result<(), Failed> {
     let tree = Tree::new("external-choosing-own-tried")?;
     trusting(&tree, &[entry("goose", "1.0.0", ONE)])?;
     let program = own_goose(&tools(&tree), true)?;
@@ -1288,8 +1265,6 @@ fn trying_your_own_probes_it_and_writes_the_instance() -> Result<(), Failed> {
             "executable": program.to_string_lossy(),
         }))
     );
-    let record = goose_record(&tree, "goose")?.ok_or("no probe record was kept")?;
-    assert_eq!((record.name(), record.version()), ("goose-acp", "1.2.3"));
     Ok(())
 }
 
@@ -1301,78 +1276,6 @@ fn question_asked(put: &[Pending]) -> Option<String> {
         }
         _ => None,
     })
-}
-
-/// A guessed name that finds a program that is no agent is refused by its
-/// probe, saying it did not answer as one, and nothing is written or kept.
-#[test]
-fn a_wrong_guess_is_refused_and_writes_nothing() -> Result<(), Failed> {
-    let tree = Tree::new("external-choosing-own-wrong")?;
-    trusting(&tree, &[entry("goose", "1.0.0", ONE)])?;
-    own_goose(&tools(&tree), false)?;
-    let mut conversation = own_sandboxed(&tree)?;
-    let (action, _) = chose_own(&tree, &mut conversation, "{}", "goose")?;
-
-    let tried = carried(
-        &tree,
-        &conversation,
-        &action,
-        &mut Picking::of([Some("Try it")]),
-    )?;
-
-    let Err(refused @ AgentsError::Own { .. }) = tried else {
-        return Err(format!("the door answered {tried:?}").into());
-    };
-    assert!(
-        refused.to_string().contains("did not answer as an agent"),
-        "{refused}"
-    );
-    assert!(
-        refused.to_string().contains("nothing was written"),
-        "{refused}"
-    );
-    assert_eq!(written(&tree, "goose")?, None);
-    assert!(goose_record(&tree, "goose")?.is_none(), "a record was kept");
-    Ok(())
-}
-
-/// Where the sandbox cannot close the network the user's own program is not
-/// started: the refusal says it could not be checked, quotes why and points
-/// at the sandboxing page, and nothing is written or kept.
-#[test]
-fn trying_your_own_where_the_sandbox_cannot_close_writes_nothing() -> Result<(), Failed> {
-    let tree = Tree::new("external-choosing-own-unclosable")?;
-    trusting(&tree, &[entry("goose", "1.0.0", ONE)])?;
-    own_goose(&tools(&tree), true)?;
-    let mut conversation = own_stepped(
-        &tree,
-        Arc::new(crate::agents::registry::Unclosing),
-        &tools(&tree),
-    )?;
-    let (action, _) = chose_own(&tree, &mut conversation, "{}", "goose")?;
-
-    let tried = carried(
-        &tree,
-        &conversation,
-        &action,
-        &mut Picking::of([Some("Try it")]),
-    )?;
-
-    let Err(refused @ AgentsError::Own { .. }) = tried else {
-        return Err(format!("the door answered {tried:?}").into());
-    };
-    let said = refused.to_string();
-    assert!(said.contains("could not be checked"), "{said}");
-    assert!(said.contains("docs/security/sandboxing.md"), "{said}");
-    assert!(!said.contains("crucible agents install"), "{said}");
-    assert_eq!(
-        fake_peer::played(&tools(&tree)),
-        0,
-        "the program was started"
-    );
-    assert_eq!(written(&tree, "goose")?, None);
-    assert!(goose_record(&tree, "goose")?.is_none(), "a record was kept");
-    Ok(())
 }
 
 /// The choices and facts of the question about goose a connect of
@@ -1403,10 +1306,10 @@ fn goose_managed(
     ))
 }
 
-/// An instance that runs the user's own program, once a probe of it as it is
-/// configured is kept, is offered Connect, and no longer the try; its facts
-/// name the program it runs, and its note says that crucible did not review
-/// it and what its admission proves.
+/// An instance that runs the user's own program, once trying it wrote it, is
+/// offered Connect, and no longer the try; its facts name the program it
+/// runs, and its note says that crucible did not review it and uses it as
+/// found.
 #[test]
 fn an_instance_running_your_own_program_is_offered_connect() -> Result<(), Failed> {
     let tree = Tree::new("external-choosing-own-connect")?;
@@ -1434,8 +1337,8 @@ fn an_instance_running_your_own_program_is_offered_connect() -> Result<(), Faile
     assert_eq!(facts.first(), Some(&format!("Program: {shown}.")));
     assert!(
         facts.contains(&portable(
-            "Runs your own program, which Crucible did not review: its admission proves it \
-             speaks ACP, not which program it is."
+            "Runs your own program, which Crucible did not review: it is used as found, with \
+             nothing checked before it starts."
         )),
         "{facts:?}"
     );
@@ -1480,12 +1383,11 @@ fn a_refused_root_is_listed_with_its_reason_and_runs_nothing() -> Result<(), Fai
         "the program was started"
     );
     assert_eq!(written(&tree, "goose")?, None);
-    assert!(goose_record(&tree, "goose")?.is_none(), "a record was kept");
     Ok(())
 }
 
 /// The facts say everything in the directory the program lies in is
-/// readable to it, read-only, at its probe and at every launch, and never
+/// readable to it, read-only, at every launch under the sandbox, and never
 /// that the directory holds no credential.
 #[test]
 fn the_facts_say_the_programs_directory_is_readable() -> Result<(), Failed> {
@@ -1549,60 +1451,6 @@ fn trying_your_own_agy_writes_an_antigravity_instance_with_no_profile() -> Resul
             "driver": "antigravity",
             "executable": program.to_string_lossy(),
         }))
-    );
-    Ok(())
-}
-
-/// Where the sandbox cannot close the network the user's own `agy` is not
-/// started: the refusal says it could not be checked, quotes why, points at
-/// the sandboxing page and at the release Crucible's store holds, and nothing
-/// is written.
-#[test]
-fn trying_your_own_agy_where_the_sandbox_cannot_close_points_at_the_store() -> Result<(), Failed> {
-    let tree = Tree::new("external-choosing-own-agy-unclosable")?;
-    own_agy(&tree)?;
-    let mut conversation = own_stepped(
-        &tree,
-        Arc::new(crate::agents::registry::Unclosing),
-        &tools(&tree),
-    )?;
-    let (action, _) = chose_own(&tree, &mut conversation, "{}", "Antigravity")?;
-    let before = std::fs::read_to_string(crate::Desk::new(&tree, &[])?.choosing).ok();
-
-    let tried = carried(
-        &tree,
-        &conversation,
-        &action,
-        &mut Picking::of([Some("Try it")]),
-    )?;
-
-    let Err(refused @ AgentsError::Own { .. }) = tried else {
-        return Err(format!("the door answered {tried:?}").into());
-    };
-    let said = refused.to_string();
-    let why = crucible_sandbox::SandboxError::Unsupported {
-        feature: crucible_sandbox::SandboxFeature::NetworkDeny,
-    }
-    .to_string();
-    assert!(said.contains("could not be checked"), "{said}");
-    assert!(said.contains(&format!("({why})")), "{said}");
-    assert!(said.contains("docs/security/sandboxing.md"), "{said}");
-    assert!(
-        said.ends_with(
-            "Crucible's own release of Antigravity works on this machine: run `crucible agents \
-             install antigravity`."
-        ),
-        "{said}"
-    );
-    assert_eq!(
-        fake_peer::played(&tools(&tree)),
-        0,
-        "the program was started"
-    );
-    assert_eq!(
-        std::fs::read_to_string(crate::Desk::new(&tree, &[])?.choosing).ok(),
-        before,
-        "the user file was written"
     );
     Ok(())
 }
@@ -1760,7 +1608,7 @@ fn an_own_agy_beside_a_configured_antigravity_is_neither_offered_nor_written() -
 }
 
 /// An Antigravity instance configured that runs the user's own `agy` keeps it
-/// listed, and a try of it probes it as that instance and writes no second.
+/// listed, and a try of it names that instance and writes no second.
 #[test]
 fn an_own_agy_a_configured_antigravity_runs_is_tried_as_that_instance() -> Result<(), Failed> {
     let tree = Tree::new("external-choosing-own-agy-configured")?;
@@ -1852,6 +1700,100 @@ pub(crate) fn goose_of_your_own(tree: &Tree) -> Result<(Conversation, PathBuf), 
     Ok((own_sandboxed(tree)?, program))
 }
 
+/// The user's own goose in `directory`, answering as an agent and taking a
+/// turn at its first start, and keeping count of every start beside it, so
+/// [`fake_peer::played`] says how often it was started; the path its links
+/// lead to. A start that cannot keep its count, as one in a directory the
+/// sandbox gives it read-only, plays nothing.
+pub(crate) fn counted_goose(directory: &std::path::Path) -> Result<PathBuf, Failed> {
+    use crucible_external_harnesses::fake_peer::scripts::acp;
+
+    let turning = Peer::of([
+        acp::opening(&acp::offering("goose-acp", "1.2.3", &json!([])))
+            .say(acp::stopped(2, "end_turn")),
+    ]);
+    let program = fake_peer::install(directory, "goose", &turning)?;
+    Ok(std::fs::canonicalize(program)?)
+}
+
+/// A tree whose catalog offers goose, saying how its vendor uses what it is
+/// sent, and whose user installed their own goose on the `PATH` a
+/// conversation's steps look on, as [`counted_goose`] installs
+/// it; that conversation, whose steps start each agent under `service` with
+/// the sandbox on where `sandboxed`, and the path the program's links lead to.
+pub(crate) fn counted_goose_of_your_own(
+    tree: &Tree,
+    (service, sandboxed): (Arc<dyn SandboxService>, bool),
+) -> Result<(Conversation, PathBuf), Failed> {
+    trusting_goose_saying_its_use(tree)?;
+    let program = counted_goose(&tools(tree))?;
+    Ok((
+        own_stepped_with(tree, service, &tools(tree), sandboxed)?,
+        program,
+    ))
+}
+
+/// This machine's sandbox, watching on the runtime these tests share.
+pub(crate) fn this_sandbox() -> Result<Arc<dyn SandboxService>, Failed> {
+    Ok(Arc::new(LocalSandbox::new().watching_on(runtime()?)))
+}
+
+/// A sandbox that cannot close the network, as on a machine with no backend
+/// for it: it holds nothing in, so it prepares a program only where its policy
+/// has the sandbox off, through this machine's sandbox, and refuses every
+/// other.
+#[cfg(unix)]
+pub(crate) struct Unconfining(Arc<dyn SandboxService>);
+
+#[cfg(unix)]
+impl Unconfining {
+    /// The sandbox that cannot close the network, preparing what it does
+    /// through [`this_sandbox`].
+    pub(crate) fn here() -> Result<Arc<dyn SandboxService>, Failed> {
+        Ok(Arc::new(Self(this_sandbox()?)))
+    }
+}
+
+#[cfg(unix)]
+impl SandboxService for Unconfining {
+    fn probe(
+        &self,
+    ) -> crucible_runtime::BoxFuture<
+        '_,
+        Result<
+            (
+                crucible_sandbox::SandboxBackendIdentity,
+                crucible_sandbox::SandboxCapabilities,
+            ),
+            crucible_sandbox::SandboxError,
+        >,
+    > {
+        Box::pin(async { Err(unclosed()) })
+    }
+
+    fn prepare(
+        &self,
+        request: crucible_sandbox::SandboxRequest,
+    ) -> crucible_runtime::BoxFuture<
+        '_,
+        Result<Box<dyn crucible_sandbox::SandboxSession>, crucible_sandbox::SandboxError>,
+    > {
+        if request.policy().enabled() {
+            Box::pin(async { Err(unclosed()) })
+        } else {
+            self.0.prepare(request)
+        }
+    }
+}
+
+/// Why a sandbox that cannot close the network refuses.
+#[cfg(unix)]
+fn unclosed() -> crucible_sandbox::SandboxError {
+    crucible_sandbox::SandboxError::Unsupported {
+        feature: crucible_sandbox::SandboxFeature::NetworkDeny,
+    }
+}
+
 /// A tree whose catalog offers goose, saying how its vendor uses what it is
 /// sent, and whose user installed their own goose in a directory no `PATH`
 /// names, answering as an agent and taking a turn, with a link to it under
@@ -1859,8 +1801,17 @@ pub(crate) fn goose_of_your_own(tree: &Tree) -> Result<(Conversation, PathBuf), 
 /// conversation, and the path the link leads to.
 #[cfg(unix)]
 pub(crate) fn goose_through_a_link(tree: &Tree) -> Result<(Conversation, PathBuf), Failed> {
-    use crucible_external_harnesses::fake_peer::scripts::acp;
+    trusting_goose_saying_its_use(tree)?;
+    let program = fake_peer::install(&tree.0.join("elsewhere"), "goose", &goose_turning())?;
+    let program = std::fs::canonicalize(program)?;
+    std::fs::create_dir_all(tools(tree))?;
+    std::os::unix::fs::symlink(&program, tools(tree).join("goose"))?;
+    Ok((own_sandboxed(tree)?, program))
+}
 
+/// Trusts in `tree` a catalog that offers goose, saying how its vendor uses
+/// what it is sent, so a launch of it can be given its route's hold.
+fn trusting_goose_saying_its_use(tree: &Tree) -> Result<(), Failed> {
     let mut goose = entry("goose", "1.0.0", ONE);
     if let Some(goose) = goose.as_object_mut() {
         goose.insert(
@@ -1873,16 +1824,30 @@ pub(crate) fn goose_through_a_link(tree: &Tree) -> Result<(Conversation, PathBuf
             }),
         );
     }
-    trusting(tree, &[goose])?;
-    let turning = Peer::once(
+    trusting(tree, &[goose])
+}
+
+/// A goose answering as an agent and taking a turn at every start, keeping
+/// no count, so it plays in a directory nothing may write to.
+#[cfg(unix)]
+fn goose_turning() -> Peer {
+    use crucible_external_harnesses::fake_peer::scripts::acp;
+
+    Peer::once(
         acp::opening(&acp::offering("goose-acp", "1.2.3", &json!([])))
             .say(acp::stopped(2, "end_turn")),
-    );
-    let program = fake_peer::install(&tree.0.join("elsewhere"), "goose", &turning)?;
-    let program = std::fs::canonicalize(program)?;
-    std::fs::create_dir_all(tools(tree))?;
-    std::os::unix::fs::symlink(&program, tools(tree).join("goose"))?;
-    Ok((own_sandboxed(tree)?, program))
+    )
+}
+
+/// A tree whose catalog offers goose, saying how its vendor uses what it is
+/// sent, and whose user installed their own goose on the `PATH` a
+/// conversation's steps look on, as [`goose_turning`] plays; that
+/// conversation, and the path the program's links lead to.
+#[cfg(unix)]
+pub(crate) fn turning_goose_of_your_own(tree: &Tree) -> Result<(Conversation, PathBuf), Failed> {
+    trusting_goose_saying_its_use(tree)?;
+    let program = fake_peer::install(&tools(tree), "goose", &goose_turning())?;
+    Ok((own_sandboxed(tree)?, std::fs::canonicalize(program)?))
 }
 
 /// The catalog instance `name` of goose, run as `executable`.
@@ -1906,30 +1871,6 @@ fn path_in(tree: &Tree) -> impl Fn(&str) -> Option<std::ffi::OsString> + use<> {
     move |name: &str| (name == "PATH").then(|| path.clone())
 }
 
-/// Probes the catalog instance of goose that runs `program` in `tree` as
-/// `crucible agents try` does, keeping its record.
-#[cfg(unix)]
-pub(crate) fn goose_tried_at(tree: &Tree, program: &std::path::Path) -> Result<(), Failed> {
-    use crucible_app::own_program::Places;
-
-    let configured = &catalog_goose("goose", &program.to_string_lossy())?;
-    let home = tree.home()?;
-    own_program::tried(
-        &Places {
-            home: &user(tree),
-            crucible: home.path(),
-            sessions: &tree.sessions(),
-        },
-        configured,
-        &[configured.name()],
-        path_in(tree),
-        &crucible_app::probing::local,
-        std::time::Duration::from_secs(20),
-    )
-    .map_err(|why| why.to_string())?;
-    Ok(())
-}
-
 /// How a turn ended that the catalog instance of goose naming its program by
 /// its command took in `tree` on `runtime`, started under the sandbox with
 /// its programs looked for on `tree`'s `PATH` and its route's hold given by
@@ -1940,22 +1881,46 @@ pub(crate) fn goose_turned_by_command(
     runtime: &tokio::runtime::Runtime,
     consent: fn(&str) -> Result<Consent, Failed>,
 ) -> Result<Result<String, String>, Failed> {
+    goose_turned(
+        tree,
+        runtime,
+        consent,
+        (
+            "goose",
+            (crucible_app::probing::local(runtime.handle().clone()), true),
+        ),
+    )
+}
+
+/// How a turn ended that the catalog instance of goose run as `executable`
+/// took in `tree` on `runtime`, started under `service` with the sandbox on
+/// where `sandboxed`, with its programs looked for on `tree`'s `PATH` and its
+/// route's hold given by `consent`; else why it did not.
+#[cfg(unix)]
+pub(crate) fn goose_turned(
+    tree: &Tree,
+    runtime: &tokio::runtime::Runtime,
+    consent: fn(&str) -> Result<Consent, Failed>,
+    (executable, (service, sandboxed)): (&str, (Arc<dyn SandboxService>, bool)),
+) -> Result<Result<String, String>, Failed> {
     use crucible_app::backends::Sandboxing;
     use crucible_app::launching::Launcher;
     use crucible_execution::{SessionRef, TurnRequest};
     use crucible_external_harnesses::Control;
     use crucible_types::TurnId;
 
-    let configured = &catalog_goose("goose", "goose")?;
+    let configured = &catalog_goose("goose", executable)?;
     let home = tree.home()?;
     let state = catalog_fetch::state_in(home.path());
-    let agent = Agent::believing(configured, &REGISTRY, &state, path_in(tree))
-        .map_err(|why| why.to_string())?;
+    let agent = match Agent::believing(configured, &REGISTRY, &state, path_in(tree)) {
+        Ok(agent) => agent,
+        Err(why) => return Ok(Err(why.to_string())),
+    };
     let consent = consent(agent.row().route())?;
-    let policy = SandboxPolicy::standard(&tree.workspace()?)?.with_enabled(true);
+    let policy = SandboxPolicy::standard(&tree.workspace()?)?.with_enabled(sandboxed);
     let sessions = tree.sessions();
     let launcher = Launcher::new(
-        crucible_app::probing::local(runtime.handle().clone()),
+        service,
         runtime.handle().clone(),
         &policy,
         &consent,
@@ -1970,7 +1935,7 @@ pub(crate) fn goose_turned_by_command(
         &trust,
         &home.path().join("programs"),
         Sandboxing {
-            on: true,
+            on: sandboxed,
             required: false,
         },
     )?;

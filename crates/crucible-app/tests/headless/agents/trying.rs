@@ -8,14 +8,15 @@ use crucible_app::Conversation;
 use crucible_app::client::agents::{Outcome as Door, OwnProgram};
 use crucible_client_api::{Command, Name, Text};
 
-use crate::external::choosing::{
-    agy_of_your_own, found_at_door, goose_of_the_registry, goose_of_your_own,
-    goose_past_the_listing, instance_written, listed_with_the_registry, tried_at_door,
-    tried_through_login,
-};
 #[cfg(unix)]
 use crate::external::choosing::{
-    goose_through_a_link, goose_tried_at, goose_turned_by_command, tools,
+    Unconfining, counted_goose, goose_through_a_link, goose_turned, goose_turned_by_command,
+    turning_goose_of_your_own,
+};
+use crate::external::choosing::{
+    agy_of_your_own, counted_goose_of_your_own, found_at_door, goose_of_the_registry,
+    goose_of_your_own, goose_past_the_listing, instance_written, listed_with_the_registry,
+    this_sandbox, tools, tried_at_door, tried_through_login,
 };
 use crate::{Failed, Tree};
 
@@ -214,15 +215,13 @@ fn a_program_found_through_a_link_into_another_directory_is_tried_and_admitted()
 
 /// An instance that names the user's own goose by its command, found through
 /// a link on `PATH` into a directory no `PATH` names, is started under the
-/// sandbox, once its program was probed at the path the link leads to, and
-/// answers a turn.
+/// sandbox at the path the link leads to, and answers a turn.
 #[cfg(unix)]
 #[test]
 fn an_instance_naming_a_program_through_a_link_is_launched_under_the_sandbox() -> Result<(), Failed>
 {
     let tree = Tree::new("agents-launch-through-a-link")?;
-    let (_, program) = goose_through_a_link(&tree)?;
-    goose_tried_at(&tree, &program)?;
+    goose_through_a_link(&tree)?;
 
     let turned = goose_turned_by_command(
         &tree,
@@ -231,5 +230,110 @@ fn an_instance_naming_a_program_through_a_link_is_launched_under_the_sandbox() -
     )?;
 
     assert_eq!(turned.as_deref(), Ok("Answered"));
+    Ok(())
+}
+
+/// The instance a try of the user's own goose writes, with the directory its
+/// programs lie in written `<tools>`: one that runs it by the path its links
+/// lead to.
+const GOOSE_WRITTEN: &str = r#"{"agent":"goose","driver":"catalog","executable":"<tools>/goose"}"#;
+
+/// `crucible agents try goose`, with the user's own goose on the steps'
+/// `PATH`, asks, starts nothing and writes an instance that runs the program
+/// at the path its links lead to.
+#[test]
+fn trying_your_own_program_starts_nothing_and_writes_the_instance() -> Result<(), Failed> {
+    let tree = Tree::new("agents-try-starts-nothing")?;
+
+    let tried = tried_from_the_command_line(
+        &tree,
+        |tree| counted_goose_of_your_own(tree, (this_sandbox()?, true)),
+        "goose",
+    )?;
+
+    assert_eq!(
+        super::fake_peer::played(&tools(&tree)),
+        0,
+        "the program was started"
+    );
+    assert_eq!(tried, GOOSE_WRITTEN);
+    Ok(())
+}
+
+/// With the sandbox off, the user's own goose is tried and launched where the
+/// sandbox cannot close the network: nothing refuses it, and it is started
+/// once, as a plain process, and answers a turn.
+#[cfg(unix)]
+#[test]
+fn your_own_program_is_launched_with_the_sandbox_off_where_no_sandbox_can_close()
+-> Result<(), Failed> {
+    let tree = Tree::new("agents-own-unsandboxed")?;
+    let tried = tried_from_the_command_line(
+        &tree,
+        |tree| counted_goose_of_your_own(tree, (Unconfining::here()?, false)),
+        "goose",
+    )?;
+    assert_eq!(tried, GOOSE_WRITTEN);
+    let program = std::fs::canonicalize(tools(&tree).join("goose"))?;
+
+    let turned = goose_turned(
+        &tree,
+        &super::runtime()?,
+        super::shipped_hold::shipped_given,
+        (&program.to_string_lossy(), (Unconfining::here()?, false)),
+    )?;
+
+    assert_eq!(turned.as_deref(), Ok("Answered"));
+    assert_eq!(super::fake_peer::played(&tools(&tree)), 1);
+    Ok(())
+}
+
+/// With the sandbox on where it cannot close the network, an instance that
+/// runs the user's own goose is refused as any start is there, and the
+/// program is never started.
+#[cfg(unix)]
+#[test]
+fn your_own_program_is_refused_with_the_sandbox_on_where_no_sandbox_can_close() -> Result<(), Failed>
+{
+    let tree = Tree::new("agents-own-unclosable")?;
+    let (_, program) = counted_goose_of_your_own(&tree, (Unconfining::here()?, true))?;
+
+    let turned = goose_turned(
+        &tree,
+        &super::runtime()?,
+        super::shipped_hold::shipped_given,
+        (&program.to_string_lossy(), (Unconfining::here()?, true)),
+    )?;
+
+    assert!(turned.is_err(), "the program answered: {turned:?}");
+    assert_eq!(
+        super::fake_peer::played(&tools(&tree)),
+        0,
+        "the program was started"
+    );
+    Ok(())
+}
+
+/// An instance that runs the user's own goose, whose program was rewritten
+/// after the instance was written, as a program that updates itself is, is
+/// launched as it is now with nothing started first: the program is started
+/// once, and answers a turn.
+#[cfg(unix)]
+#[test]
+fn a_changed_own_program_is_launched_without_a_probe() -> Result<(), Failed> {
+    let tree = Tree::new("agents-own-changed")?;
+    let tried = tried_from_the_command_line(&tree, turning_goose_of_your_own, "goose")?;
+    assert_eq!(tried, GOOSE_WRITTEN);
+    let program = counted_goose(&tools(&tree))?;
+
+    let turned = goose_turned(
+        &tree,
+        &super::runtime()?,
+        super::shipped_hold::shipped_given,
+        (&program.to_string_lossy(), (this_sandbox()?, false)),
+    )?;
+
+    assert_eq!(turned.as_deref(), Ok("Answered"));
+    assert_eq!(super::fake_peer::played(&tools(&tree)), 1);
     Ok(())
 }

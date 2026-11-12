@@ -572,26 +572,29 @@ fn an_agent_no_believed_catalog_offers_is_refused_with_no_fetch_naming_the_comma
     Ok(())
 }
 
-/// A program the configuration alone names gets no row, though its key is one
-/// the catalog offers: an executable outside the store, and one in the version
-/// that is not the program its entry's `cmd` names.
+/// A program the configuration names in the version's directory that is not
+/// the program its entry's `cmd` names gets no row, though its key is one the
+/// catalog offers; an executable outside the store is the user's own and is
+/// used as found, asked about before anything is started.
 #[test]
-fn a_program_that_is_not_the_installed_entrys_gets_no_row_however_it_is_configured()
+fn a_program_in_the_version_that_is_not_its_entrys_gets_no_row_and_one_outside_the_store_is_used()
 -> Result<(), Failed> {
     let bench = Bench::new("agents-shipped-own-program")?;
     let (_, root, _) = installed_from_the_catalog(&bench)?;
     let elsewhere = bench.tree.0.join("own");
     let own = fake_peer::install(&elsewhere, "goose", &Peer::of([]))?;
 
-    let outside = refused_onto(
-        &bench,
-        &instance_of("goose", &own.to_string_lossy())?,
-        &elsewhere,
-    )?;
-    assert!(
-        outside.contains("crucible agents install goose"),
-        "the refusal names the command"
-    );
+    let runtime = tokio::runtime::Runtime::new()?;
+    let tree = Tree::new("agents-shipped-own-program-tree")?;
+    let consent = shipped()?;
+    let mut conversation = on_the_shipped_registry(&bench, &tree, &consent, &runtime)?;
+    let outside = instance_of("goose", &own.to_string_lossy())?;
+    let moved =
+        runtime.block_on(conversation.onto(&tree.sessions(), &tree.workspace()?, None, &outside));
+    assert!(moved.is_ok(), "{:?}", moved.err());
+    assert_eq!(conversation.launching().as_deref(), Some("agent:goose"));
+    assert!(conversation.unlaunched().is_some(), "nothing was asked");
+    assert_eq!(fake_peer::played(&elsewhere), 0, "started before the yes");
 
     let beside = root.join("script");
     let other = refused_onto(

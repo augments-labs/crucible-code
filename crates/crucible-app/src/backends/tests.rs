@@ -660,7 +660,7 @@ fn goose_listed() -> Value {
 /// A program lying in crucible's install store is never taken for the user's
 /// own, though the registry proposes it by the same name: it stays held to
 /// its receipt and the hash it was installed with. The same program outside
-/// the store is the user's own, and is refused until it is tried.
+/// the store is the user's own, and is believed as it is found.
 #[test]
 #[allow(clippy::panic)]
 fn a_program_inside_the_store_is_still_held_by_its_receipt_and_hash() {
@@ -713,7 +713,7 @@ fn a_program_inside_the_store_is_still_held_by_its_receipt_and_hash() {
     assert!(
         matches!(
             crate::own_program::believed(&instance(&own), &key, &state, lookup),
-            Some(Err(Unbelieved::OwnUnprobed { .. }))
+            Some(Ok(_))
         ),
         "a program outside the store was not the user's own"
     );

@@ -1,12 +1,10 @@
-//! How a start of the user's own program is held to its probe record: its
-//! wire records every start's answer, and a program changed since its probe
-//! is probed again before it starts. An account step also gives back what
+//! How a start of the user's own program is made: used as found, with no
+//! probe before it, at the path its links lead to, and confined only where
+//! the conversation's sandbox is on. An account step also gives back what
 //! the program it started answered of itself, which a person reading the
 //! user's own program signed out is shown.
 
 use std::path::Path;
-
-use std::sync::Arc;
 use std::time::SystemTime;
 
 use crucible_config::ExternalAgent;
@@ -20,8 +18,8 @@ use crucible_tools::Mode;
 use super::{
     Agent, AuthMethod, Launcher, Steps, Trust, Unlaunched, Unpiped, programs_beside, quoted,
 };
-use crate::backends::{AgentRow, Sandboxing, Unbelieved, Wire};
-use crate::own_program::{Introduced, Owned, Places, Recording, Trying, Unowned, homeless};
+use crate::backends::{Sandboxing, Unbelieved, Wire};
+use crate::own_program::{Introduced, Places, Trying, homeless};
 
 impl Unpiped {
     /// Why the user's own program is not signed in by `method`'s command.
@@ -34,29 +32,17 @@ impl Unpiped {
 
 impl Agent {
     /// Its wire where its program, `installed`, is the user's own outside the
-    /// install store `programs`: as its row speaks to that under `sandbox`,
-    /// and for a catalog agent recording every start's answer against its
-    /// probe record.
-    // Each is an input of its own, as for `Agent::dialect`, which passes them on.
-    #[allow(clippy::too_many_arguments)]
+    /// install store: as its row speaks to that under `sandbox`.
     pub(super) fn own_wire(
         &self,
         mode: Mode,
         trust: &Trust,
-        programs: &Path,
         installed: &Path,
         sandbox: Sandboxing,
     ) -> Wire {
         let canonical = std::fs::canonicalize(installed);
         let program = canonical.as_deref().unwrap_or(installed);
-        let wire = self.row.own_dialect(mode, Some(trust), program, sandbox)?;
-        let crucible = programs.parent().unwrap_or(programs);
-        Ok(
-            match Owned::of(crucible, &self.instance, &self.row, program) {
-                Some(Ok(owned)) => Box::new(Recording::new(wire, owned)),
-                Some(Err(_)) | None => wire,
-            },
-        )
+        self.row.own_dialect(mode, Some(trust), program, sandbox)
     }
 }
 
@@ -64,35 +50,37 @@ impl Agent {
 pub(super) struct Own<'a> {
     /// The program.
     pub(super) program: &'a Program,
-    /// Crucible's home, which its record is kept under.
+    /// Crucible's home, which its directory is judged against.
     pub(super) crucible: &'a Path,
-    /// Whether it is started as the agent, not to run a sign-in command.
-    pub(super) started: bool,
 }
 
 impl Launcher<'_> {
     /// `policy` as `agent`'s start `own` of the user's own program is
-    /// confined, once it is held to its probe record where it is started as
-    /// the agent, and the program it is started as: for a row held to its
+    /// confined, and the program it is started as: for a row held to its
     /// directory, the program at the path its links lead to, the path that
-    /// directory is decided from. Its directory is judged, at its launch and
-    /// at the probe a change since its probe brings, against the user's own
-    /// home: the one this launcher was told of where that is absolute, else
-    /// this process's. A home the child is started with is never that, since
-    /// an entry can set its own. That home is asked for only where it is
-    /// used; where it is and no home of the user's is known, the program is
-    /// not started.
+    /// directory is decided from. Nothing is asked of the program before it
+    /// starts. Where `policy` has the sandbox off it is started under `policy`
+    /// unchanged, as a plain local process; where it is on, its directory is
+    /// judged against the user's own home: the one this launcher was told of
+    /// where that is absolute, else this process's. A home the child is
+    /// started with is never that, since an entry can set its own. That home
+    /// is asked for only where it is used; where it is and no home of the
+    /// user's is known, the program is not started.
     ///
     /// # Errors
     ///
-    /// As [`Launcher::probed_now`], why its directory cannot be given, or
-    /// that the program its links lead to is not the one that was found.
-    pub(super) async fn own_held(
+    /// Why its directory cannot be given, or that the program its links lead
+    /// to is not the one that was found.
+    pub(super) fn own_held(
         &self,
         agent: &Agent,
         own: &Own<'_>,
         policy: &SandboxPolicy,
     ) -> Result<(SandboxPolicy, Program), Unlaunched> {
+        let program = crate::own_program::started_at(&agent.row, own.program)?;
+        if !crate::own_program::judged(policy, &agent.row) {
+            return Ok((policy.clone(), program));
+        }
         let home = self
             .home
             .clone()
@@ -104,75 +92,17 @@ impl Launcher<'_> {
             crucible: own.crucible,
             sessions: self.sessions,
         });
-        let places = || places.as_ref().ok_or_else(|| homeless(own.program));
-        if own.started {
-            self.probed_now(agent, own.program, own.crucible, places)
-                .await?;
-        }
-        let program = crate::own_program::started_at(&agent.row, own.program)?;
-        if !crate::own_program::judged(policy, &agent.row) {
-            return Ok((policy.clone(), program));
-        }
-        let policy = crate::own_program::launched(policy, &agent.row, program.path(), places()?)?;
+        let places = places.as_ref().ok_or_else(|| homeless(own.program))?;
+        let policy = crate::own_program::launched(policy, &agent.row, program.path(), places)?;
         Ok((policy, program))
-    }
-
-    /// Holds a start of `agent`, whose program at `program` is the user's
-    /// own, to its probe record under `crucible`, crucible's home: a catalog
-    /// agent's program that changed since its probe, as one that updates
-    /// itself does, is probed again, confined, before it is started, against
-    /// the places `places` gives, and is started only where it is still
-    /// admitted; its record is then replaced, and removed where it is not. A
-    /// program of any other row is held to nothing here.
-    ///
-    /// # Errors
-    ///
-    /// [`Unlaunched::Changed`] where it is no longer admitted,
-    /// [`Unbelieved::OwnUnprobed`] where no record holds for it, and why
-    /// `places` gives none where it is probed again.
-    async fn probed_now<'p>(
-        &self,
-        agent: &Agent,
-        program: &Program,
-        crucible: &Path,
-        places: impl FnOnce() -> Result<&'p Places<'p>, Unowned>,
-    ) -> Result<(), Unlaunched> {
-        let AgentRow::Catalog(catalog) = &agent.row else {
-            return Ok(());
-        };
-        let Some(owned) = Owned::of(crucible, &agent.instance, &agent.row, program.path()) else {
-            return Ok(());
-        };
-        let owned = owned?;
-        match owned.record() {
-            Some(record) if record.current(owned.canonical()) => Ok(()),
-            Some(_) => crate::own_program::reprobe(
-                Arc::clone(&self.service),
-                self.runtime.clone(),
-                places()?,
-                &owned.instance(),
-                program.clone(),
-                catalog.dialect(Mode::Ask),
-            )
-            .await
-            .map(drop)
-            .map_err(|why| Unlaunched::Changed {
-                agent: agent.instance.to_string(),
-                why: Box::new(why),
-            }),
-            None => Err(Unbelieved::OwnUnprobed {
-                key: catalog.key().clone(),
-            }
-            .into()),
-        }
     }
 }
 
 impl Steps {
-    /// What a trial of the user's own program is found and probed with from
-    /// these steps: their sandbox and runtime, the home every catalog agent
-    /// is given, else the shell's, their trust state, session logs and
-    /// `PATH`, and whether the sandbox is on now.
+    /// What a trial of the user's own program is found with from these
+    /// steps: the home every catalog agent is given, else the shell's, their
+    /// trust state, session logs and `PATH`, and whether the sandbox is on
+    /// now.
     pub(crate) fn trying(&self) -> Trying {
         let home = self
             .home
@@ -180,7 +110,6 @@ impl Steps {
             .filter(|home| home.is_absolute())
             .or_else(std::env::home_dir);
         Trying::new(
-            (Arc::clone(&self.service), self.runtime.clone()),
             home,
             (self.state.clone(), self.sessions.clone()),
             self.path.clone(),

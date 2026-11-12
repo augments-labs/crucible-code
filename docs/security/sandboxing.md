@@ -98,12 +98,9 @@ creates isolated user, PID, IPC, UTS and network namespaces, drops capabilities,
 sets no-new-privileges through Bubblewrap, disables nested user namespaces,
 clears the environment, and closes every undeclared file descriptor. Closed
 networking has no usable host, loopback, Unix-socket, DNS, metadata-service or
-inherited-socket route, and refuses binding and listening. The one exception is
-the probe of a program you named as your own agent, which may bind and listen
-on the namespace's private loopback; it can open only Unix, IP and netlink
-sockets, so it still reaches nothing outside, and `io_uring` stays refused.
-Killing the namespace owner also kills descendants that deliberately leave the
-original process group or session.
+inherited-socket route, and refuses binding and listening. Killing the
+namespace owner also kills descendants that deliberately leave the original
+process group or session.
 
 On macOS, the production backend uses the built-in Seatbelt framework through
 the fixed `/usr/bin/sandbox-exec` executable. The launcher must be root-owned
@@ -310,10 +307,7 @@ persistence and snapshot requests still require an enforcing implementation.
 | `usage` | observed | observed | observed | observed |
 
 A capability being enforced says what a backend *can* apply, not what the
-default policy asks for. `network_deny` stays enforced where the probe of your
-own agent may listen: on Linux that listening reaches only the network
-namespace's private loopback, and macOS and Windows ignore the allowance, so
-the probe there stays as closed as any other command. With confinement enabled,
+default policy asks for. With confinement enabled,
 Linux's standard policy states `cpu_limit` at one hour per process and
 `open_file_limit` at 4096. Windows states one hour of aggregate Job processor
 time and no handle-count limit.
@@ -541,35 +535,32 @@ environment, and it is run from the version installed, which stays read-only
 for the agent's other runs.
 
 A program you installed yourself and configured as a catalog or registry
-agent, one outside `programs`, is probed before it is first started: once, in
-the sandbox, with the network closed and nothing of yours readable but the
-directory it lies in. Where the sandbox cannot close the network, as where its
-backend is missing or unavailable, it is not probed and is not started; a
-registry install has the same need, while Antigravity's store release does
-not. Everything in the program's directory is readable to it during the probe
-and at every launch, where the network is open to its vendor. That directory
-is refused when it is your home or `/`, or is, lies within or contains a place
-no agent is made able to write, such as `~/.ssh` or crucible's home; `bin`,
-`.local/bin` and `.cargo/bin` in your home may themselves be read, unless
-crucible's home or its session logs are kept in one. Your home
-here is your own, the one crucible itself was started with (`HOME`, or
-`USERPROFILE` on Windows), even where the agent's entry gives the program a
-home of its own; where crucible knows no home of yours, a program whose
-directory would be judged, or that is probed again, is not started. Your home
-is judged both as written and where its links lead, and where it is not a full
-path or a link in it leads nowhere, no program's directory is given. A directory
-the sandbox already lets every program read, such as `/usr/bin`, gets no rule
-of its own, and any other is given read-only, never writable. The probe runs
-in an empty directory of its own, which is removed after.
+agent, one outside `programs`, is used as found: nothing is asked of it before
+it starts, and it is started under the conversation's sandbox setting, as every
+agent is. With the sandbox off it starts as a plain local process. With it on
+it starts confined, with nothing of yours readable but the directory it lies
+in, and where the sandbox is on and cannot run it is refused as any
+conversation start is. Everything in the program's directory is readable to it
+at every launch under the sandbox, where the network is open to its vendor.
+That directory is refused when it is your home or `/`, or is, lies within or
+contains a place no agent is made able to write, such as `~/.ssh` or
+crucible's home; `bin`, `.local/bin` and `.cargo/bin` in your home may
+themselves be read, unless crucible's home or its session logs are kept in
+one. Your home here is your own, the one crucible itself was started with
+(`HOME`, or `USERPROFILE` on Windows), even where the agent's entry gives the
+program a home of its own; where crucible knows no home of yours, a program
+whose directory would be judged is not started. Your home is judged both as
+written and where its links lead, and where it is not a full path or a link in
+it leads nowhere, no program's directory is given. A directory the sandbox
+already lets every program read, such as `/usr/bin`, gets no rule of its own,
+and any other is given read-only, never writable.
 
-A program changed since its probe, whose path leads elsewhere or whose size or
-modification time differs, is probed again in the same way before it is
-started, as is one dated before 1970 at every start, and a refusal there is the launch's: the program is not started and
-its old record is removed. Every start's answer to `initialize` is held to
-protocol version 1 and its capabilities as the probe's was, and an answer that
-differs from the record replaces it. On Linux the probe and every launch under
-the sandbox run with the sandbox's private home as `HOME`; on macOS and Windows
-the sandbox gives them none.
+The program is started at the path its links lead to, and one whose path leads
+elsewhere than where it was found is not started. Every start's answer to
+`initialize` is held to protocol version 1 and its capabilities, and one that
+does not hold fails that start with its cause. On Linux every launch under the
+sandbox runs with the sandbox's private home as `HOME`; on macOS and Windows
+the sandbox gives it none.
 
 Google's own `agy` or `antigravity`, run under the sandbox with no
 `profileDir`, cannot read the sign-in it keeps in `~/.gemini`, so it starts

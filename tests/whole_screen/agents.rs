@@ -1799,7 +1799,7 @@ fn a_catalog_agent_on_path_offers_trying_your_own_with_its_facts() {
             "No instance of it is configured, so there is nothing to sign in.",
             "Key: goose.",
             "Arguments: none.",
-            "readable to it, read-only, during its probe and at every",
+            "readable to it, read-only, at every launch under the",
             "› Try your own",
             "Install goose 1.0.0.",
         ] {

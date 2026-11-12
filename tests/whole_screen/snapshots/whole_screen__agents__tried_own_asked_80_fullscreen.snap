@@ -31,13 +31,13 @@ expression: picture
 |--------------------------------------------------------------------------------|
 |--------------------------------------------------------------------------------|
 |/a-directory-to-be-working-in/and-something-below-that-again/workspace/agents is|
-|readable to it, read-only, during its probe and at every launch, where the      |
-|network is open to its vendor.                                                  |
+|readable to it, read-only, at every launch under the sandbox, where the network |
+|is open to its vendor.                                                          |
 |Under the sandbox on Linux it starts with a private home of its own, and a      |
 |sign-in made there is gone when that start ends.                                |
 |                                                                                |
 |› Try it                                                                        |
-|  Start it once, confined with the network closed, ask it only `initialize`, an…|
+|  Write the instance that runs it; nothing is started.                          |
 |                                                                                |
 |  Cancel                                                                        |
 |  Change nothing.                                                               |
