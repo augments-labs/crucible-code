@@ -79,8 +79,10 @@ pub(super) struct Prompts {
     at: usize,
     /// Whether the last Ctrl+E found no room in the box, until the next key.
     refused: bool,
-    /// Which turns the lines are on offer to. Back on offer when the queue is
-    /// next taken whole, or empties.
+    /// Which turns the lines are on offer to: see [`Standing`] for what holds
+    /// them back from one, or leaves them to the reader. Back on offer when the
+    /// queue is next taken whole, or empties, or the reader's next turn is
+    /// offered them.
     standing: Standing,
     /// Whether the next turn is the oldest line alone, as Ctrl+S sent it.
     ///
@@ -424,9 +426,11 @@ impl Prompts {
     /// turn they send (see [`Prompts::offered`]), and none of them to go alone.
     fn let_go(&mut self) {
         self.alone = false;
-        if !self.lines.is_empty() {
-            self.standing = Standing::Loose;
-        }
+        self.standing = if self.lines.is_empty() {
+            Standing::Offered
+        } else {
+            Standing::Loose
+        };
     }
 
     /// Clears what the panel said about a line the box had no room for, and

@@ -768,3 +768,26 @@ fn lines_a_used_up_plan_let_go_are_on_offer_to_no_turn_the_reader_did_not_send()
     queue.offered(&steer);
     assert_eq!(steer.take(), ["second"]);
 }
+
+#[test]
+fn a_line_sent_or_typed_under_a_turn_the_reader_did_not_send_keeps_its_place() {
+    // Under a turn the application starts while a used-up plan leaves the
+    // lines to the reader, Ctrl+S still sends the highlighted one alone, and a
+    // line typed meanwhile waits behind the rest instead of going to that turn.
+    let (mut queue, steer) = queued(&["first", "second"]);
+    drop(steer.take());
+    queue.let_go();
+
+    let mut editor = Editor::new();
+    for key in "third".chars() {
+        editor.press(Key::Char(key));
+    }
+    let offer = queue.offer(&steer);
+    assert_eq!(queue.accept(&mut editor), Retained::Accepted);
+    assert!(matches!(offer, Offer::Nowhere), "{offer:?}");
+
+    assert!(queue.send_now(&steer), "the key found the line nowhere");
+    assert!(steer.take().is_empty());
+    assert_eq!(batched(&mut queue, &steer).as_deref(), Some("first"));
+    assert_eq!(waiting(&queue), ["second", "third"]);
+}
