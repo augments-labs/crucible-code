@@ -23,8 +23,9 @@
 use std::sync::OnceLock;
 
 use syntect::easy::HighlightLines;
-use syntect::highlighting::{Theme as Highlighting, ThemeSet};
+use syntect::highlighting::Theme as Highlighting;
 use syntect::parsing::{SyntaxReference, SyntaxSet};
+use two_face::theme::LazyThemeSet;
 
 use crate::color::Slot;
 
@@ -34,9 +35,6 @@ use crate::color::Slot;
 /// block in every session and holds no state of its own — what carries state
 /// from line to line is [`Syntax`], which is per block.
 static PARSERS: OnceLock<SyntaxSet> = OnceLock::new();
-
-/// The themes that ship, read once and kept, for the same reason.
-static THEMES: OnceLock<ThemeSet> = OnceLock::new();
 
 /// What a session draws code in when nothing has said.
 ///
@@ -49,13 +47,19 @@ fn parsers() -> &'static SyntaxSet {
     PARSERS.get_or_init(SyntaxSet::load_defaults_newlines)
 }
 
-/// The themes, loading them if this is the first fence.
+/// The themes that ship, each still packed until it is asked for.
+///
+/// Built for the call that wants it and dropped when that call returns, so
+/// nothing here outlives an answer. A session asks what a theme is worth when
+/// its palette settles and again for every row of the picker, and a set kept
+/// across those would end up holding every theme decoded for a session that
+/// draws in one.
 ///
 /// The ones people name — Monokai, GitHub, Dracula, Nord, gruvbox and the rest
 /// — rather than the seven base16-and-Solarized that syntect alone ships. A
 /// picker whose list nobody recognises is a picker nobody uses.
-fn themes() -> &'static ThemeSet {
-    THEMES.get_or_init(|| two_face::theme::extra().into())
+fn themes() -> LazyThemeSet {
+    two_face::theme::extra().into()
 }
 
 /// What the six slots are worth in `theme`, in the order [`Palette::reading`]
@@ -69,7 +73,9 @@ fn themes() -> &'static ThemeSet {
 /// [`Palette::reading`]: crate::Palette::reading
 #[must_use]
 pub fn colours(theme: &str) -> Option<[(u8, u8, u8); 6]> {
-    let theme = themes().themes.get(theme)?;
+    // Decodes this theme and no other; both go when this returns.
+    let themes = themes();
+    let theme = themes.get(theme)?;
 
     Some([
         of(theme, Slot::Comment),
@@ -84,7 +90,7 @@ pub fn colours(theme: &str) -> Option<[(u8, u8, u8); 6]> {
 /// Every syntax theme there is to choose from, built in and otherwise.
 #[must_use]
 pub fn every_theme() -> Vec<String> {
-    let mut named: Vec<String> = themes().themes.keys().cloned().collect();
+    let mut named: Vec<String> = themes().theme_names().map(str::to_owned).collect();
     named.sort();
     named
 }
