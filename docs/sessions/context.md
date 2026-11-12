@@ -134,9 +134,9 @@ holds anything said to the agent, by you or by crucible for you, but never
 recorded that state has lost the copy: crucible stopped before writing it, the
 first turn ended before anything was sent, or the session was saved before
 crucible kept your request. When your request is next restated, the model is
-told it was not kept, and nothing you say afterwards is taken for it. Until a
-compaction replaces it with its summary, the model can still read your request
-where you wrote it in the conversation.
+told it was not kept, and nothing you say afterwards is taken for it. Whatever
+you did write stays in the conversation, where the model can read it, until a
+compaction replaces it with its recap.
 
 ## Why it is split this way
 
