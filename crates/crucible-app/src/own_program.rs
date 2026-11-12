@@ -12,7 +12,10 @@
 //! listed as one, where no other such place lies there. A directory the
 //! sandbox already lets every program read gets no rule of its own, and any
 //! other is given read-only, never writable. Everything in that directory is
-//! readable to the agent while it runs.
+//! readable to the agent while it runs. The probe and every launch start the
+//! program at the path its links lead to, the one that directory is decided
+//! from, held to the file that was found, so a link pointed elsewhere since
+//! it was found is refused and nothing is started.
 //!
 //! [`probe`] is what admits one: started confined, with the network closed and
 //! never without the sandbox, though free to listen on a loopback of its own
@@ -982,6 +985,42 @@ pub(crate) fn launched(
     launch_policy(conversation, &places.root(&canonical))
 }
 
+/// The program a launch of `row`'s agent starts where `program`, as it was
+/// found, is the user's own: for a catalog agent's own program and
+/// Antigravity's, `program` at the path its links lead to, inside the
+/// directory decided from that path; every other row's program as it was
+/// found.
+///
+/// # Errors
+///
+/// [`Unowned::Unreachable`] where the program cannot be followed, and
+/// [`Refusal::Changed`] where the file it leads to now, or the one found, is
+/// not the one that was found.
+pub(crate) fn started_at(row: &AgentRow, program: &Program) -> Result<Program, Unowned> {
+    if !own_row(row) {
+        return Ok(program.clone());
+    }
+    let canonical = fs::canonicalize(program.path())
+        .map_err(|why| Unowned::Unreachable(program.path().to_owned(), why))?;
+    Ok(followed(program, &canonical)?)
+}
+
+/// `program`, as it was found, at `canonical`, the path its links led to when
+/// its directory was decided, so the file started is inside that directory.
+/// The found program is checked again once it is followed, so a link pointed
+/// elsewhere since it was found is refused and never followed to a file it
+/// did not lead to.
+///
+/// # Errors
+///
+/// [`Refusal::Changed`] where the file at `canonical`, or at the path it was
+/// found at, is not the one that was found.
+fn followed(program: &Program, canonical: &Path) -> Result<Program, Refusal> {
+    let followed = program.followed_to(canonical)?;
+    program.unchanged()?;
+    Ok(followed)
+}
+
 /// Probes `instance`'s own program at `program` through `dialect`, in the
 /// sandbox `service` gives on `runtime`, and keeps what it answered under
 /// `places`' crucible home, among the records of `instances` alone. It is
@@ -1088,6 +1127,7 @@ async fn answer<D: Dialect>(
         ..Shape::default()
     });
     let control = Control::new().ok_or(Unowned::Control)?;
+    let program = followed(&program, &canonical)?;
     let launch = Launch::new(program, policy, Held::granted(PROBING)).asking(request);
     let host = Host::launch(service, runtime, &control, launch).await?;
     let frames = hearing.spoken(Account::Version).ok_or_else(|| {

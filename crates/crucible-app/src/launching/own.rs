@@ -73,22 +73,26 @@ pub(super) struct Own<'a> {
 impl Launcher<'_> {
     /// `policy` as `agent`'s start `own` of the user's own program is
     /// confined, once it is held to its probe record where it is started as
-    /// the agent. Its directory is judged, at its launch and at the probe a
-    /// change since its probe brings, against the user's own home: the one
-    /// this launcher was told of where that is absolute, else this process's.
-    /// A home the child is started with is never that, since an entry can set
-    /// its own. That home is asked for only where it is used; where it is and
-    /// no home of the user's is known, the program is not started.
+    /// the agent, and the program it is started as: for a row held to its
+    /// directory, the program at the path its links lead to, the path that
+    /// directory is decided from. Its directory is judged, at its launch and
+    /// at the probe a change since its probe brings, against the user's own
+    /// home: the one this launcher was told of where that is absolute, else
+    /// this process's. A home the child is started with is never that, since
+    /// an entry can set its own. That home is asked for only where it is
+    /// used; where it is and no home of the user's is known, the program is
+    /// not started.
     ///
     /// # Errors
     ///
-    /// As [`Launcher::probed_now`], or why its directory cannot be given.
+    /// As [`Launcher::probed_now`], why its directory cannot be given, or
+    /// that the program its links lead to is not the one that was found.
     pub(super) async fn own_held(
         &self,
         agent: &Agent,
         own: &Own<'_>,
         policy: &SandboxPolicy,
-    ) -> Result<SandboxPolicy, Unlaunched> {
+    ) -> Result<(SandboxPolicy, Program), Unlaunched> {
         let home = self
             .home
             .clone()
@@ -105,15 +109,12 @@ impl Launcher<'_> {
             self.probed_now(agent, own.program, own.crucible, places)
                 .await?;
         }
+        let program = crate::own_program::started_at(&agent.row, own.program)?;
         if !crate::own_program::judged(policy, &agent.row) {
-            return Ok(policy.clone());
+            return Ok((policy.clone(), program));
         }
-        Ok(crate::own_program::launched(
-            policy,
-            &agent.row,
-            own.program.path(),
-            places()?,
-        )?)
+        let policy = crate::own_program::launched(policy, &agent.row, program.path(), places()?)?;
+        Ok((policy, program))
     }
 
     /// Holds a start of `agent`, whose program at `program` is the user's

@@ -13,6 +13,10 @@ use crate::external::choosing::{
     goose_past_the_listing, instance_written, listed_with_the_registry, tried_at_door,
     tried_through_login,
 };
+#[cfg(unix)]
+use crate::external::choosing::{
+    goose_through_a_link, goose_tried_at, goose_turned_by_command, tools,
+};
 use crate::{Failed, Tree};
 
 /// The instance `crucible agents try agent` writes in `tree`, set up by
@@ -183,5 +187,49 @@ fn the_door_tells_an_agent_with_no_program_from_one_it_does_not_list() -> Result
     assert_eq!(found("listed-00")?.ok(), Some(OwnProgram::Unfound));
     assert_eq!(found("nonesuch")?.ok(), Some(OwnProgram::Unlisted));
     assert_eq!(found("claude")?.ok(), Some(OwnProgram::Unlisted));
+    Ok(())
+}
+
+/// `crucible agents try goose` finds the user's own goose through a link on
+/// `PATH` into a directory no `PATH` names, tries it there, admits it, and
+/// writes an instance that runs it by the path the link leads to.
+#[cfg(unix)]
+#[test]
+fn a_program_found_through_a_link_into_another_directory_is_tried_and_admitted()
+-> Result<(), Failed> {
+    let tree = Tree::new("agents-try-through-a-link")?;
+
+    let tried = tried_from_the_command_line(&tree, goose_through_a_link, "goose")?;
+
+    let program = std::fs::canonicalize(tools(&tree).join("goose"))?;
+    assert_ne!(program.parent(), Some(tools(&tree).as_path()));
+    let written = serde_json::json!({
+        "driver": "catalog",
+        "agent": "goose",
+        "executable": program.to_string_lossy(),
+    });
+    assert_eq!(tried, written.to_string());
+    Ok(())
+}
+
+/// An instance that names the user's own goose by its command, found through
+/// a link on `PATH` into a directory no `PATH` names, is started under the
+/// sandbox, once its program was probed at the path the link leads to, and
+/// answers a turn.
+#[cfg(unix)]
+#[test]
+fn an_instance_naming_a_program_through_a_link_is_launched_under_the_sandbox() -> Result<(), Failed>
+{
+    let tree = Tree::new("agents-launch-through-a-link")?;
+    let (_, program) = goose_through_a_link(&tree)?;
+    goose_tried_at(&tree, &program)?;
+
+    let turned = goose_turned_by_command(
+        &tree,
+        &super::runtime()?,
+        super::shipped_hold::shipped_given,
+    )?;
+
+    assert_eq!(turned.as_deref(), Ok("Answered"));
     Ok(())
 }

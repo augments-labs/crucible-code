@@ -165,6 +165,25 @@ impl Program {
             Ok(_) | Err(_) => Err(Refusal::Changed(self.path.clone())),
         }
     }
+
+    /// This program at `canonical`, the absolute path its links lead to,
+    /// still identified by what it was when it was found, so each start
+    /// compares the file at `canonical` with the one that was found and never
+    /// with one stamped afresh.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::Changed`] when `canonical` is no full path, or the file
+    /// there is not the one that was found or can no longer be reached.
+    pub fn followed_to(&self, canonical: &Path) -> Result<Self, Refusal> {
+        match fs::metadata(canonical) {
+            Ok(there) if canonical.is_absolute() && Stamp::of(&there) == self.stamp => Ok(Self {
+                path: canonical.to_path_buf(),
+                stamp: self.stamp.clone(),
+            }),
+            Ok(_) | Err(_) => Err(Refusal::Changed(self.path.clone())),
+        }
+    }
 }
 
 /// What looking for an agent's program found. Nothing was run to find it.

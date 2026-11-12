@@ -3385,7 +3385,7 @@ impl<'a> Launcher<'a> {
             Life::SigningIn { program } => Some(program),
             Life::Conversation { .. } | Life::Step => None,
         };
-        let program = signing_in.unwrap_or(program).clone();
+        let mut program = signing_in.unwrap_or(program).clone();
         let held = content_use::held(self.consent, row.route()).map_err(|unheld| match unheld {
             Unheld::Asks(warned) => Unlaunched::Asks(warned),
             Unheld::Unknown => Unlaunched::Unknown(row.route().to_owned()),
@@ -3449,7 +3449,7 @@ impl<'a> Launcher<'a> {
                 crucible,
                 started: signing_in.is_none(),
             };
-            policy = self.own_held(agent, &held, &policy).await?;
+            (policy, program) = self.own_held(agent, &held, &policy).await?;
         }
         for root in &kept {
             // Made only where the child may write it, as the profile is, and
