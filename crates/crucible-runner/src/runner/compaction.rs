@@ -682,12 +682,10 @@ impl Runner {
             attempt: cache.attempt,
             reporting: cache.capabilities.usage(),
             model_revision,
-            retention: cache
-                .selection
-                .selected()
-                .map_or(cache.policy.retention().class(), |selected| {
-                    selected.retention()
-                }),
+            retention: crucible_models::PromptCachePricedRetention::of(
+                cache.selection,
+                cache.policy,
+            ),
             pricing_date,
         };
         let said = self

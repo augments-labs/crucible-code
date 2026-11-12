@@ -44,7 +44,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crucible_context::{ContextSection, PermissionsSection, Room};
 use crucible_models::{
     Content, Delta, DeltaStream, Effort, PromptCacheAttempt, PromptCachePreparationError,
-    PromptCachePricing, Provider, ProviderError, Request,
+    PromptCachePricedRetention, PromptCachePricing, Provider, ProviderError, Request,
 };
 use crucible_runtime::{Aside, Cancel, Steer};
 use crucible_sandbox::SandboxAuditRegistry;
@@ -56,9 +56,9 @@ use crucible_tools::{
 use crucible_types::{
     Attachment, Compacting, Message, Modalities, PlanWindows, PromptCacheEncoding, PromptCacheFact,
     PromptCacheOutcome, PromptCacheRequestDisposition, PromptCacheRequestFact,
-    PromptCacheResourceError, PromptCacheResourceRecord, PromptCacheRetentionClass,
-    PromptCacheUsageFact, PromptCacheUsageReporting, ProviderUsage, Spend, StopReason, ToolCall,
-    ToolSchema, Transcript, TurnId, UsageCost,
+    PromptCacheResourceError, PromptCacheResourceRecord, PromptCacheUsageFact,
+    PromptCacheUsageReporting, ProviderUsage, Spend, StopReason, ToolCall, ToolSchema, Transcript,
+    TurnId, UsageCost,
 };
 
 use crucible_context::ContextInputs;
@@ -142,7 +142,7 @@ struct CacheObservation {
     attempt: crucible_types::ProviderAttemptId,
     reporting: PromptCacheUsageReporting,
     model_revision: Option<&'static str>,
-    retention: PromptCacheRetentionClass,
+    retention: PromptCachePricedRetention,
     pricing_date: crucible_types::PricingDate,
 }
 
@@ -1751,12 +1751,7 @@ impl Runner {
                 attempt: cache.attempt,
                 reporting: cache.capabilities.usage(),
                 model_revision: cache.capabilities.model_revision(),
-                retention: cache
-                    .selection
-                    .selected()
-                    .map_or(cache.policy.retention().class(), |selected| {
-                        selected.retention()
-                    }),
+                retention: PromptCachePricedRetention::of(cache.selection, cache.policy),
                 pricing_date,
             };
             self.went_out(disposition, observation);

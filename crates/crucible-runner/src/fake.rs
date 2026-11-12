@@ -10,10 +10,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use crucible_models::{
-    Delta, DeltaStream, Effort, FastForm, PriceRate, PromptCacheCapabilities, PromptCachePricing,
-    PromptCacheRates, PromptCacheResourceCreate, PromptCacheResourceCreated,
-    PromptCacheResourceDeadline, PromptCacheResourceLifecycle, PromptCacheResourceRemote,
-    PromptCacheRoute, Provider, ProviderError, Request, Served, Speed, UsageRate,
+    Delta, DeltaStream, Effort, FastForm, PriceRate, PromptCacheCapabilities,
+    PromptCachePricedRetention, PromptCachePricing, PromptCacheRates, PromptCacheResourceCreate,
+    PromptCacheResourceCreated, PromptCacheResourceDeadline, PromptCacheResourceLifecycle,
+    PromptCacheResourceRemote, PromptCacheRoute, Provider, ProviderError, Request, Served, Speed,
+    UsageRate,
 };
 use crucible_runtime::BoxFuture;
 use crucible_runtime::{Cancel, Steer};
@@ -537,14 +538,14 @@ impl Provider for Script {
         model: &str,
         revision: Option<&str>,
         input_tokens: Option<u64>,
-        retention: PromptCacheRetentionClass,
+        retention: PromptCachePricedRetention,
         at: PricingDate,
     ) -> Result<Option<PromptCachePricing>, PricingError> {
         if !self.cache.priced
             || model != "claude-test"
             || revision.is_some()
             || input_tokens.is_none()
-            || retention != PromptCacheRetentionClass::ProviderDefault
+            || retention.class() != PromptCacheRetentionClass::ProviderDefault
             || at < PricingDate::new(2026, 8, 31)
         {
             return Ok(None);

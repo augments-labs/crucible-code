@@ -427,6 +427,7 @@ fn price(route: Option<Serving>, asked: Priced<'_>) -> Option<PromptCachePricing
         retention,
         at,
     } = asked;
+    let retention = retention.class();
     let (reviewed, short_version, long_version) = price_review(model);
     if route != Some(Serving::Api) || at < reviewed {
         return None;
@@ -725,7 +726,9 @@ mod tests {
                 "gpt-5.6-sol",
                 Some("gpt-5.6-sol"),
                 Some(272_000),
-                PromptCacheRetentionClass::ProviderDefault,
+                crucible_models::PromptCachePricedRetention::NotSelected(
+                    PromptCacheRetentionClass::ProviderDefault,
+                ),
                 date,
             )
             .unwrap()
@@ -735,7 +738,9 @@ mod tests {
                 "gpt-5.6-sol",
                 Some("gpt-5.6-sol"),
                 Some(272_001),
-                PromptCacheRetentionClass::ProviderDefault,
+                crucible_models::PromptCachePricedRetention::NotSelected(
+                    PromptCacheRetentionClass::ProviderDefault,
+                ),
                 date,
             )
             .unwrap()
@@ -776,7 +781,9 @@ mod tests {
                     "gpt-5.6-sol",
                     Some("gpt-5.6-sol"),
                     Some(1_000),
-                    PromptCacheRetentionClass::ProviderDefault,
+                    crucible_models::PromptCachePricedRetention::NotSelected(
+                        PromptCacheRetentionClass::ProviderDefault
+                    ),
                     PricingDate::new(2026, 8, 31),
                 )
                 .unwrap()
