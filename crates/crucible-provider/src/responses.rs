@@ -42,8 +42,9 @@ use std::time::SystemTime;
 
 use crucible_credentials::{Credential, Outgoing, Redactions};
 use crucible_models::{
-    Asked, Delta, DeltaStream, FastForm, PromptCacheCapabilities, PromptCachePricing,
-    PromptCacheProvenance, PromptCacheRoute, Provider, ProviderError, Request, Served, Speed,
+    Asked, Delta, DeltaStream, FastForm, PromptCacheCapabilities, PromptCachePricedRetention,
+    PromptCachePricing, PromptCacheProvenance, PromptCacheRoute, Provider, ProviderError, Request,
+    Served, Speed,
 };
 use crucible_runtime::{BoxFuture, Cancel};
 use crucible_types::{
@@ -105,8 +106,9 @@ pub struct Priced<'a> {
     pub revision: Option<&'a str>,
     /// How much the request carries, where that is known.
     pub input_tokens: Option<u64>,
-    /// How long its prefix is asked to be kept.
-    pub retention: PromptCacheRetentionClass,
+    /// How long its prefix is asked to be kept, and whether a mechanism was
+    /// selected with that class: an unselected class asked for nothing.
+    pub retention: PromptCachePricedRetention,
     /// The day the price is asked for.
     pub at: PricingDate,
 }
@@ -506,7 +508,7 @@ impl<D: Dialect> Provider for Responses<D> {
         model: &str,
         revision: Option<&str>,
         input_tokens: Option<u64>,
-        retention: PromptCacheRetentionClass,
+        retention: PromptCachePricedRetention,
         at: PricingDate,
     ) -> Result<Option<PromptCachePricing>, PricingError> {
         D::prompt_cache_pricing(

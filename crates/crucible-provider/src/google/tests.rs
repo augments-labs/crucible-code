@@ -213,7 +213,13 @@ fn google_cache_and_prices_use_exact_model_date_and_long_context_tiers() {
             ]
         } {
             let price = provider
-                .prompt_cache_pricing(model, Some(model), Some(tokens), retention, date)
+                .prompt_cache_pricing(
+                    model,
+                    Some(model),
+                    Some(tokens),
+                    crucible_models::PromptCachePricedRetention::NotSelected(retention),
+                    date,
+                )
                 .unwrap()
                 .unwrap();
             assert_eq!(
@@ -231,7 +237,13 @@ fn google_cache_and_prices_use_exact_model_date_and_long_context_tiers() {
         }
         assert!(
             provider
-                .prompt_cache_pricing(model, Some(model), None, retention, now)
+                .prompt_cache_pricing(
+                    model,
+                    Some(model),
+                    None,
+                    crucible_models::PromptCachePricedRetention::NotSelected(retention),
+                    now
+                )
                 .unwrap()
                 .is_none()
         );
@@ -241,7 +253,7 @@ fn google_cache_and_prices_use_exact_model_date_and_long_context_tiers() {
                     model,
                     Some("different-revision"),
                     Some(5000),
-                    retention,
+                    crucible_models::PromptCachePricedRetention::NotSelected(retention),
                     now
                 )
                 .unwrap()
@@ -261,7 +273,7 @@ fn google_cache_and_prices_use_exact_model_date_and_long_context_tiers() {
                 "gemini-3.8-flash",
                 Some("gemini-3.8-flash"),
                 Some(5000),
-                retention,
+                crucible_models::PromptCachePricedRetention::NotSelected(retention),
                 now
             )
             .unwrap()
@@ -300,7 +312,13 @@ fn argon_is_implicit_only_and_priced_in_two_steps_with_the_change_on_2026_12_01(
         ),
     ] {
         let price = provider
-            .prompt_cache_pricing(model, Some(model), Some(500_000), retention, date)
+            .prompt_cache_pricing(
+                model,
+                Some(model),
+                Some(500_000),
+                crucible_models::PromptCachePricedRetention::NotSelected(retention),
+                date,
+            )
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -325,7 +343,7 @@ fn argon_is_implicit_only_and_priced_in_two_steps_with_the_change_on_2026_12_01(
                 model,
                 Some(model),
                 Some(5000),
-                retention,
+                crucible_models::PromptCachePricedRetention::NotSelected(retention),
                 PricingDate::new(2026, 11, 4)
             )
             .unwrap()

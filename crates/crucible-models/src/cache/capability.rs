@@ -112,6 +112,7 @@ pub struct PromptCacheMechanismCapability {
     content: Box<[PromptCacheContent]>,
     boundaries: Box<[PromptCacheBoundary]>,
     retentions: Box<[PromptCacheRetentionClass]>,
+    kept_at_least: Box<[(PromptCacheRetentionClass, u32)]>,
 }
 
 impl PromptCacheMechanismCapability {
@@ -136,6 +137,7 @@ impl PromptCacheMechanismCapability {
                 PromptCacheRetentionClass::ProviderDefault,
                 PromptCacheRetentionClass::Ephemeral,
             ]),
+            kept_at_least: Box::new([]),
         }
     }
 
@@ -152,6 +154,7 @@ impl PromptCacheMechanismCapability {
             content: unique(content),
             boundaries: Box::new([]),
             retentions: Box::new([PromptCacheRetentionClass::ProviderDefault]),
+            kept_at_least: Box::new([]),
         }
     }
 
@@ -177,6 +180,7 @@ impl PromptCacheMechanismCapability {
                 PromptCacheRetentionClass::Ephemeral,
                 PromptCacheRetentionClass::Extended,
             ]),
+            kept_at_least: Box::new([]),
         }
     }
 
@@ -196,6 +200,7 @@ impl PromptCacheMechanismCapability {
                 PromptCacheRetentionClass::ProviderDefault,
                 PromptCacheRetentionClass::Extended,
             ]),
+            kept_at_least: Box::new([]),
         }
     }
 
@@ -210,6 +215,21 @@ impl PromptCacheMechanismCapability {
     #[must_use]
     pub fn with_retentions(mut self, retentions: &[PromptCacheRetentionClass]) -> Self {
         self.retentions = unique(retentions);
+        self
+    }
+
+    /// Records that this mechanism keeps `class` for no less than `seconds`,
+    /// so a policy whose ceiling is shorter cannot select it with that class.
+    #[must_use]
+    pub fn with_kept_at_least(mut self, class: PromptCacheRetentionClass, seconds: u32) -> Self {
+        let mut kept: Vec<_> = self
+            .kept_at_least
+            .iter()
+            .copied()
+            .filter(|(stated, _)| *stated != class)
+            .collect();
+        kept.push((class, seconds));
+        self.kept_at_least = kept.into_boxed_slice();
         self
     }
 
@@ -267,6 +287,14 @@ impl PromptCacheMechanismCapability {
         &self.retentions
     }
 
+    /// The shortest time this record says `class` is kept, where it says one.
+    #[must_use]
+    pub fn kept_at_least(&self, class: PromptCacheRetentionClass) -> Option<u32> {
+        self.kept_at_least
+            .iter()
+            .find_map(|(stated, seconds)| (*stated == class).then_some(*seconds))
+    }
+
     fn intersection(&self, model: &Self) -> Option<Self> {
         (self.mechanism == model.mechanism).then(|| Self {
             mechanism: self.mechanism,
@@ -278,8 +306,24 @@ impl PromptCacheMechanismCapability {
             content: common(&self.content, &model.content),
             boundaries: common(&self.boundaries, &model.boundaries),
             retentions: common(&self.retentions, &model.retentions),
+            kept_at_least: longest(&self.kept_at_least, &model.kept_at_least),
         })
     }
+}
+
+/// Every class either record states a time for, at the larger of the two.
+fn longest(
+    route: &[(PromptCacheRetentionClass, u32)],
+    model: &[(PromptCacheRetentionClass, u32)],
+) -> Box<[(PromptCacheRetentionClass, u32)]> {
+    let mut kept: Vec<(PromptCacheRetentionClass, u32)> = route.to_vec();
+    for (class, seconds) in model.iter().copied() {
+        match kept.iter_mut().find(|(stated, _)| *stated == class) {
+            Some((_, longer)) => *longer = (*longer).max(seconds),
+            None => kept.push((class, seconds)),
+        }
+    }
+    kept.into_boxed_slice()
 }
 
 fn common<T: Copy + PartialEq>(ordered: &[T], allowed: &[T]) -> Box<[T]> {
@@ -590,6 +634,55 @@ mod tests {
         assert_eq!(explicit.boundaries(), &[PromptCacheBoundary::AfterMessage]);
         assert_eq!(explicit.maximum_breakpoints(), 2);
         assert_eq!(explicit.content(), &[PromptCacheContent::Text]);
+    }
+
+    #[test]
+    fn intersection_keeps_the_longer_time_either_record_says_a_class_is_kept() {
+        let extended = [
+            PromptCacheRetentionClass::ProviderDefault,
+            PromptCacheRetentionClass::Ephemeral,
+            PromptCacheRetentionClass::Extended,
+        ];
+        let record = |mechanism: PromptCacheMechanismCapability| {
+            PromptCacheCapabilities::supported(
+                "fixture-v1",
+                None,
+                SOURCE,
+                StatefulTransportCapability::Unsupported,
+                &[mechanism],
+                PromptCacheUsageReporting::ReadAndWriteTokens,
+            )
+        };
+        let adapter = record(
+            automatic(1_024)
+                .with_retentions(&extended)
+                .with_kept_at_least(PromptCacheRetentionClass::Extended, 43_200)
+                .with_kept_at_least(PromptCacheRetentionClass::Ephemeral, 1_800),
+        );
+        let model = record(
+            automatic(1_024)
+                .with_retentions(&extended)
+                .with_kept_at_least(PromptCacheRetentionClass::Extended, 86_400),
+        );
+
+        let effective = adapter.intersection(&model);
+        let [automatic] = effective.mechanisms() else {
+            panic!("expected the one intersected fixture mechanism");
+        };
+
+        assert_eq!(
+            automatic.kept_at_least(PromptCacheRetentionClass::Extended),
+            Some(86_400)
+        );
+        assert_eq!(
+            automatic.kept_at_least(PromptCacheRetentionClass::Ephemeral),
+            Some(1_800),
+            "a time only one record states still stands"
+        );
+        assert_eq!(
+            automatic.kept_at_least(PromptCacheRetentionClass::ProviderDefault),
+            None
+        );
     }
 
     #[test]

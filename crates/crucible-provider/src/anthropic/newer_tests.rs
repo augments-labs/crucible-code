@@ -174,7 +174,9 @@ fn the_5_5_models_cache_from_512_tokens_at_their_own_prices() {
                 model,
                 Some(model),
                 Some(64_000),
-                PromptCacheRetentionClass::Ephemeral,
+                crucible_models::PromptCachePricedRetention::NotSelected(
+                    PromptCacheRetentionClass::Ephemeral,
+                ),
                 at,
             )
             .unwrap()
@@ -215,7 +217,13 @@ fn haiku_5_5_pays_its_long_prices_once_its_prompt_is_over_100_000_tokens() {
     let haiku = "claude-haiku-5-5";
     let priced = |tokens, retention, at| {
         provider
-            .prompt_cache_pricing(haiku, Some(haiku), Some(tokens), retention, at)
+            .prompt_cache_pricing(
+                haiku,
+                Some(haiku),
+                Some(tokens),
+                crucible_models::PromptCachePricedRetention::NotSelected(retention),
+                at,
+            )
             .unwrap()
             .map(|price| {
                 (

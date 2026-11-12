@@ -254,7 +254,9 @@ fn membership_billing_is_not_invented_as_a_pay_as_you_go_token_price() {
                 "kimi-for-coding",
                 Some("kimi-for-coding"),
                 Some(1_000),
-                PromptCacheRetentionClass::ProviderDefault,
+                crucible_models::PromptCachePricedRetention::NotSelected(
+                    PromptCacheRetentionClass::ProviderDefault
+                ),
                 PricingDate::new(2026, 8, 31),
             )
             .unwrap()

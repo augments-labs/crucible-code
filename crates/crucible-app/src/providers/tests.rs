@@ -259,7 +259,9 @@ fn every_offered_openai_model_is_priced_or_says_why_not() {
                     name,
                     record.model_revision(),
                     Some(64_000),
-                    PromptCacheRetentionClass::ProviderDefault,
+                    crucible_models::PromptCachePricedRetention::NotSelected(
+                        PromptCacheRetentionClass::ProviderDefault,
+                    ),
                     OpenAi::prices_reviewed(),
                 )
                 .expect("a compiled record is never ambiguous")
@@ -1218,7 +1220,9 @@ fn every_offered_model_keeps_its_own_reviewed_cache_record_through_the_registry(
                     model.name,
                     revision.into(),
                     Some(64_000),
-                    PromptCacheRetentionClass::ProviderDefault,
+                    crucible_models::PromptCachePricedRetention::NotSelected(
+                        PromptCacheRetentionClass::ProviderDefault,
+                    ),
                     REVIEWED,
                 )
                 .expect("a compiled record is never ambiguous");
@@ -1265,7 +1269,9 @@ fn a_configured_address_leaves_every_offered_models_cache_record_unknown() {
                         model.name,
                         Some(model.name),
                         Some(64_000),
-                        PromptCacheRetentionClass::ProviderDefault,
+                        crucible_models::PromptCachePricedRetention::NotSelected(
+                            PromptCacheRetentionClass::ProviderDefault
+                        ),
                         REVIEWED,
                     )
                     .expect("a compiled record is never ambiguous"),
