@@ -1,12 +1,13 @@
 //! What the agent catalog's intake records of an agent by starting it once.
 //!
 //! [`probe`] starts the program an entry lists, from the directory its release
-//! was unpacked into, through `launching::probing`, under the sandbox setting
-//! the user configured: with it on, the sandbox required, the network closed
-//! and that directory read-only; with it off, as a plain local process. It
-//! sends the one `initialize` a client sends and keeps what comes back as JSON
-//! the intake can compare from run to run: whether the sandbox closed the
-//! network or was off,
+//! was unpacked into, through `launching::probing`: the sandbox required, the
+//! network closed and that directory read-only. The intake's own run takes its
+//! [`Mode`] from [`Mode::of`], whatever the sandbox setting says; a registry
+//! install takes it from [`Mode::under`], which with the sandbox setting off
+//! starts the program as a plain local process. It sends the one `initialize`
+//! a client sends and keeps what comes back as JSON the intake can compare
+//! from run to run: whether the sandbox closed the network or was off,
 //! the `agentInfo` the agent gave, each sign-in method with its kind and, for a
 //! terminal method, the command, arguments and environment it names and
 //! whether it says it needs a real terminal, the capabilities, and that the

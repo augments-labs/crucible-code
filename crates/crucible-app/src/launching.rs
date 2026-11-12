@@ -58,10 +58,12 @@
 //! the trust state unusable it is admitted as none.
 //! The catalog intake and a registry install start an agent's program too,
 //! with `probing`: from the directory its release was unpacked into and the
-//! entry that describes it, under the sandbox setting the user configured.
-//! With it on, the policy requires the sandbox, closes the network and leaves
-//! that directory read-only; with it off, the program is started as a plain
-//! local process and the output says the sandbox was off. No route was asked
+//! entry that describes it. The intake's run keeps the sandbox whatever the
+//! sandbox setting says, and a registry install follows the setting the user
+//! configured. With the sandbox on, the policy requires the sandbox, closes
+//! the network and leaves that directory read-only; with the setting off, the
+//! program is started as a plain local process and the output says the sandbox
+//! was off. No route was asked
 //! about content use, since all the program is sent is one fixed `initialize`
 //! that carries nothing a user wrote. Confined, the sandbox closes the network,
 //! so nothing it is sent can be passed on. With the sandbox on and this
