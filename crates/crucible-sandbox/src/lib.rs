@@ -44,7 +44,7 @@ pub use policy::{
     MAX_SANDBOX_FILESYSTEM_RULES, MAX_SANDBOX_HOST_BYTES, MAX_SANDBOX_PATH_BYTES,
     MAX_SANDBOX_PATTERN_COMPONENTS, MAX_SANDBOX_UNREADABLE_PATTERNS, PROTECTED_METADATA,
     SandboxFilesystemRule, SandboxNetworkEndpoint, SandboxNetworkPolicy, SandboxNetworkProvenance,
-    SandboxPolicy, SandboxPolicyError, SandboxUnreadablePattern,
+    SandboxPolicy, SandboxPolicyError, SandboxPrivateLoopback, SandboxUnreadablePattern,
 };
 pub use service::{
     MAX_SANDBOX_COMMAND_ARGUMENTS, MAX_SANDBOX_COMMAND_BYTES, MAX_SANDBOX_CREDENTIAL_HANDLE_BYTES,

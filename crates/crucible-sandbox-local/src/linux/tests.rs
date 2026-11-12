@@ -16,8 +16,8 @@ use crucible_sandbox::{
     SandboxCredentialProvenance, SandboxEnvironment, SandboxFactKind, SandboxFilesystemAccess,
     SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxInvocationMode, SandboxLifecycle,
     SandboxManifest, SandboxManifestEntry, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy,
-    SandboxProcess, SandboxRead, SandboxRequest, SandboxResourceLimits, SandboxService,
-    SandboxUnreadablePattern,
+    SandboxPrivateLoopback, SandboxProcess, SandboxRead, SandboxRequest, SandboxResourceLimits,
+    SandboxService, SandboxUnreadablePattern,
 };
 use crucible_storage::{CallResultKey, CallResultReceipt, InvocationId};
 use crucible_types::{Ancestry, SandboxId, ToolId};
@@ -1306,6 +1306,292 @@ finally:
         "{status}: {}",
         String::from_utf8_lossy(&errors)
     );
+}
+
+/// Runs `script` under Python in a sandbox over `sample` with the standard
+/// policy, its closed network granted or refusing a private loopback, and
+/// returns how it ended and what it said on standard error.
+fn closed_python(
+    service: &crate::LocalSandbox,
+    sample: &Sample,
+    loopback: SandboxPrivateLoopback,
+    script: &str,
+    arguments: impl IntoIterator<Item = OsString>,
+) -> (ExitStatus, String) {
+    let policy = SandboxPolicy::standard(&sample.workspace())
+        .expect("policy")
+        .with_private_loopback(loopback);
+    assert_eq!(policy.network(), &SandboxNetworkPolicy::Closed);
+    let request = SandboxRequest::new(
+        SandboxId::new(),
+        Ancestry::new(),
+        ToolId::new("loopback"),
+        policy,
+        SandboxManifest::empty(),
+    );
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request)).expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut command = vec![OsString::from("-c"), OsString::from(script)];
+    command.extend(arguments);
+    let (status, _, errors) = finish(
+        crucible_runtime::answered!(session.start(direct("/usr/bin/python3", command)))
+            .expect("started command"),
+    );
+    (status, String::from_utf8_lossy(&errors).into_owned())
+}
+
+#[test]
+fn a_closed_network_with_private_loopback_listens_inside_and_reaches_nothing_outside() {
+    let service = crate::sample::service();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::socket("sandbox-private-loopback");
+    let tcp = TcpListener::bind(("127.0.0.1", 0)).expect("host TCP listener");
+    let port = tcp.local_addr().expect("listener address").port();
+    let socket_path = sample
+        .root()
+        .parent()
+        .expect("sample parent")
+        .join("host.sock");
+    let _unix = UnixListener::bind(&socket_path).expect("host Unix listener");
+    // The host is tried before anything listens inside, so a port number the
+    // two happen to share cannot answer for the host.
+    let script = r#"
+import socket
+import sys
+
+def tcp_refused(address):
+    stream = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    stream.settimeout(0.25)
+    try:
+        return stream.connect_ex(address) != 0
+    except OSError:
+        return True
+    finally:
+        stream.close()
+
+if not tcp_refused(("127.0.0.1", int(sys.argv[1]))):
+    raise SystemExit("host loopback was reachable")
+if not tcp_refused(("169.254.169.254", 80)):
+    raise SystemExit("cloud metadata address was reachable")
+stream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+try:
+    if stream.connect_ex(sys.argv[2]) == 0:
+        raise SystemExit("host Unix socket was reachable")
+finally:
+    stream.close()
+
+with open("/proc/net/dev") as devices:
+    names = sorted(line.split(":")[0].strip() for line in devices.readlines()[2:])
+if names != ["lo"]:
+    raise SystemExit(f"interfaces other than lo: {names}")
+
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server.bind(("127.0.0.1", 0))
+server.listen(1)
+client = socket.create_connection(server.getsockname(), timeout=1)
+accepted, _ = server.accept()
+client.sendall(b"inside")
+if accepted.recv(6) != b"inside":
+    raise SystemExit("the private loopback did not carry bytes")
+"#;
+    let (status, errors) = closed_python(
+        &service,
+        &sample,
+        SandboxPrivateLoopback::Granted,
+        script,
+        [
+            OsString::from(port.to_string()),
+            socket_path.into_os_string(),
+        ],
+    );
+
+    assert!(status.success(), "{status}: {errors}");
+}
+
+#[test]
+fn a_closed_network_with_private_loopback_still_refuses_io_uring() {
+    let service = crate::sample::service();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-private-loopback-io-uring");
+    // The numbers are the generic table's, shared by x86_64 and aarch64. Each
+    // call's arguments draw an error of the kernel's own (a bad descriptor, a
+    // null pointer) where no filter answers first, so EPERM is the filter's.
+    // Listening first proves the filter in force is the one that lifts it.
+    let script = r#"
+import ctypes
+import errno
+import socket
+
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server.bind(("127.0.0.1", 0))
+server.listen(1)
+
+libc = ctypes.CDLL(None, use_errno=True)
+for name, number, arguments in [
+    ("io_uring_setup", 425, (0, None)),
+    ("io_uring_enter", 426, (-1, 0, 0, 0, None, 0)),
+    ("io_uring_register", 427, (-1, 0, None, 0)),
+]:
+    ctypes.set_errno(0)
+    answer = libc.syscall(number, *arguments)
+    if answer != -1 or ctypes.get_errno() != errno.EPERM:
+        raise SystemExit(f"{name} answered {answer} with errno {ctypes.get_errno()}")
+"#;
+    let (status, errors) = closed_python(
+        &service,
+        &sample,
+        SandboxPrivateLoopback::Granted,
+        script,
+        [],
+    );
+
+    assert!(status.success(), "{status}: {errors}");
+}
+
+#[test]
+fn a_closed_network_with_private_loopback_opens_only_local_ip_and_netlink_sockets() {
+    let service = crate::sample::service();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-private-loopback-families");
+    // AF_MCTP (45) is built into the kernels this runs on, so opening or
+    // pairing one where no filter refuses it loads no module. The families the
+    // allowance means still open, Unix sockets still listen by path and
+    // abstractly, and a Unix socketpair still connects.
+    let script = r#"
+import errno
+import socket
+
+for family, kind in [
+    (socket.AF_UNIX, socket.SOCK_STREAM),
+    (socket.AF_INET, socket.SOCK_STREAM),
+    (socket.AF_INET6, socket.SOCK_STREAM),
+    (socket.AF_NETLINK, socket.SOCK_RAW),
+]:
+    socket.socket(family, kind).close()
+
+for address in ["/tmp/private-loopback.sock", "\0private-loopback"]:
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(address)
+    server.listen(1)
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.connect(address)
+    client.close()
+    server.close()
+
+try:
+    socket.socket(45, socket.SOCK_DGRAM).close()
+except OSError as error:
+    if error.errno != errno.EPERM:
+        raise SystemExit(f"AF_MCTP refused with {error}, not EPERM")
+else:
+    raise SystemExit("an AF_MCTP socket opened")
+
+for end in socket.socketpair(socket.AF_UNIX):
+    end.close()
+
+try:
+    ends = socket.socketpair(45, socket.SOCK_DGRAM)
+except OSError as error:
+    if error.errno != errno.EPERM:
+        raise SystemExit(f"an AF_MCTP socketpair refused with {error}, not EPERM")
+else:
+    for end in ends:
+        end.close()
+    raise SystemExit("an AF_MCTP socketpair opened")
+"#;
+    let (status, errors) = closed_python(
+        &service,
+        &sample,
+        SandboxPrivateLoopback::Granted,
+        script,
+        [],
+    );
+
+    assert!(status.success(), "{status}: {errors}");
+}
+
+#[test]
+fn a_closed_network_with_private_loopback_refuses_vsock() {
+    let service = crate::sample::service();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-private-loopback-vsock");
+    // A vsock listener is reachable from the host and the hypervisor whatever
+    // the network namespace. Where no filter refused it, opening one would
+    // load the vsock modules into the running kernel, so the script opens it
+    // only once a built-in family is seen refused by the same filter.
+    let script = r#"
+import errno
+import socket
+
+def refused(family, kind):
+    try:
+        socket.socket(family, kind).close()
+    except OSError as error:
+        return error.errno == errno.EPERM
+    return False
+
+if not refused(45, socket.SOCK_DGRAM):
+    raise SystemExit("the family filter is not in force; vsock was not tried")
+if not refused(socket.AF_VSOCK, socket.SOCK_STREAM):
+    raise SystemExit("an AF_VSOCK socket was not refused with EPERM")
+"#;
+    let (status, errors) = closed_python(
+        &service,
+        &sample,
+        SandboxPrivateLoopback::Granted,
+        script,
+        [],
+    );
+
+    assert!(status.success(), "{status}: {errors}");
+}
+
+#[test]
+fn a_closed_network_without_private_loopback_still_refuses_listen() {
+    let service = crate::sample::service();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-closed-listen");
+    // An unbound stream socket that listens binds itself first, so listen is
+    // tried on its own as well as after an explicit bind.
+    let script = r#"
+import errno
+import socket
+
+def refused(step):
+    stream = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        step(stream)
+    except OSError as error:
+        if error.errno != errno.EPERM:
+            raise SystemExit(f"refused with {error}, not EPERM")
+        return
+    finally:
+        stream.close()
+    raise SystemExit("a closed network let the command listen")
+
+refused(lambda stream: stream.bind(("127.0.0.1", 0)))
+refused(lambda stream: stream.listen(1))
+"#;
+    let (status, errors) = closed_python(
+        &service,
+        &sample,
+        SandboxPrivateLoopback::Refused,
+        script,
+        [],
+    );
+
+    assert!(status.success(), "{status}: {errors}");
 }
 
 #[test]
