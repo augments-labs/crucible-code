@@ -127,7 +127,7 @@ fn writing(picture: &str) -> bool {
 
 /// Types `keys` and waits for the open dock to have the keys again.
 ///
-/// Its quiet row is the first thing a short band gives up, so a screen can
+/// Its quiet row goes once a short band has no blank rows left, so a screen can
 /// look the same before and after: an escape is let settle, so that the key
 /// after it is not read as one with it.
 fn chooses(window: &mut Watched, keys: &str) {
@@ -254,9 +254,9 @@ fn questions_opens_the_dock_and_tab_walks_to_the_composer_and_back_with_drafts_k
         window.types_and_catches("a note kept", "a note kept");
         chooses(&mut window, ESCAPE);
 
-        // The quiet row is the first thing the band gives up once the note
-        // has made the dock taller, so where the keys went is read from what
-        // they did: a line in the box, then the mark moved.
+        // The band may give up the quiet row once the note has made the dock
+        // taller and its blank rows are gone, so where the keys went is read
+        // from what they did: a line in the box, then the mark moved.
         presses(&mut window, "\t");
         window.types_and_catches("half a line", "│ › half a line");
         presses(&mut window, "\t");

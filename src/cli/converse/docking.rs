@@ -274,9 +274,9 @@ impl Docking {
         glyphs: Glyphs,
     ) -> (Vec<Row>, Option<Caret>) {
         // The second press a decline waits for is asked in a row of its own,
-        // under the dock, which gives up its row of keys first when room is
-        // short: asked there, a decline in a short window would look like a
-        // key that did nothing.
+        // under the dock, rather than in its row of keys, which a short window
+        // takes away once the dock's blank rows are gone: asked there, a
+        // decline in a short window would look like a key that did nothing.
         let asking = usize::from(self.confirming);
         let room = room.saturating_sub(asking);
         self.laid.set(Some((columns, room, glyphs)));

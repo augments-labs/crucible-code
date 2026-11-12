@@ -703,12 +703,7 @@ struct Laid {
     spacing: Spacing,
 }
 
-/// Which blanks a rung of the ladder still draws.
-///
-/// The order is the argument: the footer names keys documented elsewhere, the
-/// blanks part blocks whose own words still identify them, and a description is
-/// the only place an answer may explain what choosing it means. Descriptions go
-/// only after the air around them has gone.
+/// Which blanks a rung of a ladder still draws.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Spacing {
     /// The quiet row of keys under the frame.
@@ -721,7 +716,12 @@ pub(crate) struct Spacing {
 
 impl Spacing {
     /// The rungs, in the order they are given up.
-    pub(crate) const LADDER: [Self; 4] = [
+    ///
+    /// The order is the argument: the footer names keys documented elsewhere,
+    /// the blanks part blocks whose own words still identify them, and a
+    /// description is the only place an answer may explain what choosing it
+    /// means. Descriptions go only after the air around them has gone.
+    const LADDER: [Self; 4] = [
         Self {
             footer: true,
             says: true,

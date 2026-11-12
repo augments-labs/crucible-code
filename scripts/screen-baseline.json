@@ -1317,7 +1317,7 @@
         "Watched::native(case, columns, rows, vendor)",
         "Watched::answering(case, columns, rows, vendor)"
       ],
-      "sha256": "93dcdd5d935339d6edbd96ab6a28c414379c5d1f14093c3e970de17e14ff7074"
+      "sha256": "ea2c384e36c4d0893decd6f88c5c3d46242eebb1487259cc0141c9d491c89502"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__docking__narrow_native.snap",
@@ -1327,7 +1327,7 @@
         "Watched::native(case, columns, rows, vendor)",
         "Watched::answering(case, columns, rows, vendor)"
       ],
-      "sha256": "f37d76b7280f7ffbeeab838404b41e6e6e226ecbab8add4668a5dbab97d882e7"
+      "sha256": "b1f5a5dacdeca0a29469eb0214edda7bb5616f6cdb73d396084cbeca10055e63"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__docking__opened_fullscreen.snap",
@@ -1377,7 +1377,7 @@
         "Watched::native(case, columns, rows, vendor)",
         "Watched::answering(case, columns, rows, vendor)"
       ],
-      "sha256": "e5d11ecc40612cf2403c68c53cdb27135fedf96e7e8bfeb16bb3d06b29b518bc"
+      "sha256": "d25715eb5f65102d00e5d6d0d29c9d3199d5d8ca00a21f59edd6c344525800d2"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__docking__reopened_native.snap",
@@ -1387,7 +1387,7 @@
         "Watched::native(case, columns, rows, vendor)",
         "Watched::answering(case, columns, rows, vendor)"
       ],
-      "sha256": "c4237c893495990ca484671439a7e57cefa943b66f366834ce89bbe634028a26"
+      "sha256": "9a3e78a2360a1d02763da2ee78ece115ef68a45810afa8fe57dc18a5b604b178"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__docking__review_fullscreen.snap",

@@ -6,7 +6,7 @@
 //! stands where the box was and takes the keyboard until it is answered; this
 //! one stands above the box, which stays where it is, and the reader moves
 //! between the two. So it shares that panel's frame, slots, glyphs, spacing
-//! ladder and specimen box, and none of its orchestration: it holds no channel,
+//! and specimen box, and none of its orchestration: it holds no channel,
 //! reads no key and decides nothing. [`Dock`] is the whole of what it draws and
 //! the caller is the only one that changes it, and [`Phase::actions`] is the
 //! one list both this and the caller read the marked action from.
@@ -39,9 +39,9 @@
 //! **Height gives way, and the words never do.** Nothing the dock shows is cut
 //! to fit: every answer, description, written answer and note is folded in
 //! full, because what the reader wrote is what is sent, and a draft read back
-//! in part would be read as the whole. The rungs of [`Spacing::LADDER`] that
-//! keep every description go first, giving up the row of keys and then the
-//! air between blocks. Where the open question or the review is still taller
+//! in part would be read as the whole. The rungs of [`RUNGS`] go first, giving
+//! up the air between blocks and then the row of keys, which is what tells the
+//! reader how to answer. Where the open question or the review is still taller
 //! than the window, the dock becomes a window onto it, as the transcript's
 //! [`crate::Expanded`] does: the row saying what state it is in and the actions
 //! stay where they are, the rest scrolls, and the row under the frame says
@@ -486,12 +486,61 @@ const MORE: &str = "pgup pgdn to see more";
 /// this and the row drops it, rather than showing a word and a half of it.
 const DETAIL: usize = 8;
 
+/// The rungs the dock is drawn at, in the order they are given up: the
+/// blanks of the blocking panel's [`Spacing`], in an order of the dock's own.
+///
+/// Every one keeps the row under each answer, since a description is part of
+/// what the reader chooses between. Unlike the blocking panel, the dock gives
+/// up the air between blocks before the row of keys: the dock stands beside a
+/// box that takes keys of its own, so what each key does here is not
+/// something the reader can be expected to know already.
+const RUNGS: [Spacing; 3] = [
+    Spacing {
+        footer: true,
+        says: true,
+        opening: true,
+    },
+    Spacing {
+        footer: true,
+        says: true,
+        opening: false,
+    },
+    Spacing {
+        footer: false,
+        says: true,
+        opening: false,
+    },
+];
+
+/// The keys in `footer`, one row of them where `room` columns hold it, and
+/// folded between two keys where they do not: half of a key's name is not a
+/// key anybody can press. A single key wider than `room` keeps what fits.
+fn keys(footer: &str, room: usize) -> Vec<Row> {
+    const PARTED: &str = " · ";
+    let mut lines: Vec<String> = Vec::new();
+    for key in footer.split(PARTED).filter(|key| !key.is_empty()) {
+        match lines.last_mut() {
+            Some(line) if wide(line) + wide(PARTED) + wide(key) <= room => {
+                line.push_str(PARTED);
+                line.push_str(key);
+            }
+            _ => lines.push(clip(key, room).to_owned()),
+        }
+    }
+    lines
+        .iter()
+        .map(|line| said(SAID, Slot::Quiet, line))
+        .collect()
+}
+
 /// The dock, drawn.
 #[derive(Debug)]
 pub struct Docked<'a, K> {
     /// What it draws.
     pub dock: &'a Dock<K>,
-    /// The quiet row under the frame, naming the keys, or empty.
+    /// The quiet row under the frame, naming the keys, or empty. Its keys are
+    /// parted by ` · `, and a window too narrow for the row folds it between
+    /// two of them.
     pub footer: &'a str,
 }
 
@@ -616,7 +665,7 @@ impl<K: PartialEq> Docked<'_, K> {
         }
 
         let mut tightest = None;
-        for spacing in Spacing::LADDER.into_iter().filter(|spacing| spacing.says) {
+        for spacing in RUNGS {
             let Some(opened) = self.open(batch, columns, glyphs, spacing) else {
                 return Drawn::Closed;
             };
@@ -782,10 +831,11 @@ impl<K: PartialEq> Docked<'_, K> {
             ((None, None), self.reviewed(batch, laid, &mut body))
         };
 
-        let footer = (spacing.footer && !self.footer.is_empty()).then(|| {
-            let room = columns.saturating_sub(SAID);
-            said(SAID, Slot::Quiet, clip(&spoken(self.footer), room))
-        });
+        let footer = if spacing.footer {
+            keys(&spoken(self.footer), columns.saturating_sub(SAID))
+        } else {
+            Vec::new()
+        };
 
         Some(Opened {
             head,
@@ -1178,8 +1228,9 @@ struct Opened {
     pinned: Vec<Row>,
     /// The frame's foot.
     bottom: Row,
-    /// The caller's row of keys under the frame, where this rung keeps it.
-    footer: Option<Row>,
+    /// The caller's row of keys under the frame, folded where it must be,
+    /// where this rung keeps it.
+    footer: Vec<Row>,
     /// Where the cursor stands, counted in rows of `body`.
     caret: Option<Caret>,
     /// The row of `body` the mark stands on, where it stands on one that
@@ -1190,11 +1241,7 @@ struct Opened {
 impl Opened {
     /// How many rows it is drawn whole.
     fn height(&self) -> usize {
-        self.head.len()
-            + self.body.len()
-            + self.pinned.len()
-            + 1
-            + usize::from(self.footer.is_some())
+        self.head.len() + self.body.len() + self.pinned.len() + 1 + self.footer.len()
     }
 
     /// Every row of it, top to bottom.
@@ -2324,5 +2371,52 @@ mod tests {
         let review = dock(vec![format, scope()], Phase::Reviewing);
         let rows = art(&review, 80, 40);
         row(&rows, "No answer yet");
+    }
+
+    /// The keys the terminal names under an open question.
+    const KEYS: &str = "enter choose · n note · tab composer · esc close";
+
+    /// What the dock draws with `KEYS` under it, row by row.
+    fn keyed(dock: &Dock<u32>, columns: usize, room: usize) -> Vec<String> {
+        Docked { dock, footer: KEYS }
+            .within(columns, room, Glyphs::Unicode)
+            .0
+            .iter()
+            .map(Row::text)
+            .collect()
+    }
+
+    #[test]
+    fn a_row_of_keys_wider_than_the_window_folds_between_keys_and_loses_none() {
+        let open = dock(vec![format()], Phase::Answering);
+        for columns in [44, 30, 20] {
+            let rows = keyed(&open, columns, 40);
+            for key in KEYS.split(" · ") {
+                assert!(
+                    rows.iter().any(|row| row.contains(key)),
+                    "{columns} columns: {key:?} is on one row whole: {rows:#?}"
+                );
+            }
+            assert!(
+                rows.iter().all(|row| wide(row) <= columns),
+                "{columns} columns: no row is wider than the window: {rows:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_room_one_row_short_of_the_whole_dock_gives_up_its_air_before_its_keys() {
+        let open = dock(vec![format(), scope()], Phase::Answering);
+        let whole = keyed(&open, 80, 40);
+        let short = keyed(&open, 80, whole.len() - 1);
+        assert!(
+            short.iter().any(|row| row.contains("esc close")),
+            "the keys are still named one row short: {short:#?}"
+        );
+        assert!(
+            !short.iter().any(|row| row.contains("pgup")),
+            "the question still fits whole: {short:#?}"
+        );
+        assert!(short.len() < whole.len(), "{short:#?}");
     }
 }
