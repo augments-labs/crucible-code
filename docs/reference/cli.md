@@ -870,26 +870,21 @@ was unpacked into and `ENTRY` is one catalog entry that lists the program to
 start there for this platform. A program that is the interpreter a release pins
 is given its arguments and `launch.py` at the top of `ROOT` before the agent's,
 and is not started where that file is not there or where the entry's
-`interpreter_args` are not exactly `-I`. With the sandbox setting of crucible's
-home on, the program is started in the sandbox with the network closed and
-`ROOT` read-only; with it off, as it is until you turn it on, it is started as
-a plain local process. Either way it is sent `initialize` and nothing else, and
-stopped; it is given 30 seconds to answer. It is never signed
+`interpreter_args` are not exactly `-I`. The program is started in the sandbox
+with the network closed and `ROOT` read-only, sent `initialize` and
+nothing else, and stopped; it is given 30 seconds to answer. It is never signed
 in, and no credential is read. On standard output it writes JSON: `sandbox`
-(`closed`, or `off` with the sandbox setting off), `agentInfo`, `authMethods`
-(each with its `id`, `name` and `kind`,
+(`closed`), `agentInfo`, `authMethods` (each with its `id`, `name` and `kind`,
 and for a `terminal` method its `command`, `args`, `env` and `tty`, which is
 `unknown` unless the method says whether it needs a real terminal),
 `capabilities`, and `conformance`, which is `not run`: the conformance cases
 need a turn, and a turn needs an account. Every text and list is bounded, and
-`incomplete` is `true` where anything was cut. With the sandbox setting on and
-this machine's sandbox unable to close the network, as on FreeBSD or on Windows
-without its broker,
+`incomplete` is `true` where anything was cut. Where this machine's sandbox
+cannot close the network, as on FreeBSD or on Windows without its broker,
 nothing is started and the run says so; with `--unconfined` the program is
 started without the sandbox, `sandbox` reads `unavailable: ` and why, and the
 run belongs on a machine to be thrown away: `--unconfined` is refused unless
-the environment variable `CI` is `true`, as a CI runner sets it. With the
-sandbox setting off, neither `--unconfined` nor `CI` is needed. A refusal says
+the environment variable `CI` is `true`, as a CI runner sets it. A refusal says
 why on standard error.
 
 ## Credentials from the command line
