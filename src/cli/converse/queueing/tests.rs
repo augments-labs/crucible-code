@@ -795,3 +795,56 @@ fn a_line_sent_or_typed_under_a_turn_the_reader_did_not_send_keeps_its_place() {
         "the rest are offered to the turn they wait behind"
     );
 }
+
+#[test]
+fn a_queue_kept_after_its_turn_was_held_back_is_whole_and_goes_with_the_next_prompt() {
+    // The turn taken from the queue was held back unsent. Its prompt goes back
+    // to the front, the rest behind it in the order they were typed, and none
+    // of them is left on offer to whatever runs first. The reader's next
+    // prompt is offered every one, oldest first, as it would have been
+    // offered the lines had they never been taken.
+    let (mut queue, steer) = queued(&["first", "second", "third"]);
+    let before = queue.bytes;
+    let prompt = batched(&mut queue, &steer).expect("the oldest line as the prompt");
+
+    queue.kept(&prompt, &steer);
+
+    assert_eq!(waiting(&queue), ["first", "second", "third"]);
+    assert_eq!(queue.bytes, before, "a kept line is not counted");
+    assert_eq!(steer.take(), Vec::<String>::new());
+    queue.offered(&steer);
+    assert_eq!(steer.take(), ["first", "second", "third"]);
+}
+
+#[test]
+fn a_line_sent_alone_and_held_back_waits_next_as_ctrl_s_under_a_turn_leaves_it() {
+    // Ctrl+S sends the highlighted line next, so held back it waits next: at
+    // the front, the rest behind it in the order they were typed, between turns
+    // as under one, where Ctrl+S moves the line to the front before it goes.
+    let (mut idle, steer) = queued(&["first", "second", "third"]);
+    assert!(idle.walk(false));
+    let alone = idle.sent_alone().expect("the highlighted line");
+    assert_eq!(alone, "second");
+
+    idle.kept(&alone, &steer);
+
+    assert_eq!(waiting(&idle), ["second", "first", "third"]);
+    assert_eq!(
+        idle.highlighted(),
+        0,
+        "the highlight is not on the line kept"
+    );
+
+    let (mut running, steer) = queued(&["first", "second", "third"]);
+    assert!(running.walk(false));
+    assert!(running.send_now(&steer));
+    let alone = batched(&mut running, &steer).expect("the line sent alone");
+    running.kept(&alone, &steer);
+
+    assert_eq!(waiting(&running), waiting(&idle), "the two keys disagree");
+    assert_eq!(
+        running.highlighted(),
+        idle.highlighted(),
+        "the two keys leave the highlight apart"
+    );
+}

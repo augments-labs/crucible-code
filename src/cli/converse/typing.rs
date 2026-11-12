@@ -164,14 +164,30 @@ pub(super) enum Asked {
     Answer(Submission),
 }
 
-/// A finished line and the local-command provenance established while typing.
+/// A finished line, the local-command provenance established while typing,
+/// and where the line was sent from.
 ///
 /// The fields stay private to this module so a caller cannot pair arbitrary
 /// expanded source with a `true` local verdict. The parent can only consume
-/// the pair that [`said`] constructed from the editor and its visible menu.
+/// what [`said`] constructed from the editor and its visible menu, or what
+/// [`sent_now`] took from the queue.
 pub(super) struct Said {
-    said: String,
+    line: String,
     local: bool,
+    origin: Origin,
+}
+
+/// Where a line the reader sent was sent from.
+///
+/// Told apart because a line held back on its way out goes back where it came
+/// from: one from the box goes back into the box, and one Ctrl+S sent from the
+/// queue goes back to the front of the queue, leaving the box as it was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Origin {
+    /// Typed in the box, or a command chosen off its list.
+    Box,
+    /// The highlighted queued line, which Ctrl+S sent alone between turns.
+    Queue,
 }
 
 /// The note a turn nobody typed is over, and who wrote it.
@@ -190,12 +206,16 @@ impl Woke {
 }
 
 impl Said {
-    fn new(said: String, local: bool) -> Self {
-        Self { said, local }
+    fn new(line: String, local: bool, origin: Origin) -> Self {
+        Self {
+            line,
+            local,
+            origin,
+        }
     }
 
-    pub(super) fn into_parts(self) -> (String, bool) {
-        (self.said, self.local)
+    pub(super) fn into_parts(self) -> (String, bool, Origin) {
+        (self.line, self.local, self.origin)
     }
 }
 
@@ -393,7 +413,8 @@ pub(crate) struct Between<'a> {
     /// nobody took is a turn the model still owes, and this loop is what stands
     /// between the two.
     pub(crate) aside: &'a Aside,
-    /// The lines a used-up plan left waiting behind the turn it stopped, whose
+    /// The lines left waiting for the reader, behind the turn a used-up plan
+    /// stopped or as the turn the content-use question held back, whose
     /// panel stands over the box and answers the same keys it does under a
     /// turn. Empty at every other prompt: the loop above runs the queue as the
     /// next turn before it asks for a line.
@@ -624,8 +645,8 @@ pub(crate) fn ask<T: Terminal>(
         let settled = queued.settle();
 
         // Ctrl+Enter is Return here. There is no turn to stop, so sending
-        // everything now is sending the line, and the lines a used-up plan
-        // holds go with it as they do for Return.
+        // everything now is sending the line, and the lines left to the
+        // reader go with it as they do for Return.
         let arrived = match arrived {
             Pressed::SendAll => Pressed::Key(Key::Enter),
             arrived => arrived,
@@ -710,10 +731,12 @@ pub(crate) fn ask<T: Terminal>(
             // turn to stop is sending it as Return sends the box's, alone: the
             // rest stay queued and held back from its turn, as Ctrl+S holds
             // them under one, and the box keeps what is typed in it.
-            Pressed::SendNow if queued.waiting_count() > 0 => match queued.sent_alone() {
-                Some(line) => return sent(renderer, line, false, recalling, style),
-                None => offered.is_some(),
-            },
+            Pressed::SendNow if queued.waiting_count() > 0 => {
+                match sent_now(renderer, queued, recalling, style)? {
+                    Some(asked) => return Ok(asked),
+                    None => offered.is_some(),
+                }
+            }
 
             // The command list a `/`-started line has open is standing, and Esc
             // backs out of it; the line stays as it was typed. With no list
@@ -2368,15 +2391,34 @@ fn said<T: Terminal>(
     let typed = editor.take();
     let said = chosen.map_or(typed, str::to_owned);
 
-    sent(renderer, said, local, recalling, style)
+    sent(
+        renderer,
+        Said::new(said, local, Origin::Box),
+        recalling,
+        style,
+    )
+}
+
+/// The highlighted queued line, sent alone between turns as Return sends the
+/// box's, or `None` where the queue had none to send.
+fn sent_now<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    queued: &mut Prompts,
+    recalling: &mut Recalling,
+    style: Style,
+) -> Result<Option<Asked>, Fatal> {
+    let Some(line) = queued.sent_alone() else {
+        return Ok(None);
+    };
+    let said = Said::new(line, false, Origin::Queue);
+    sent(renderer, said, recalling, style).map(Some)
 }
 
 /// Leaves `said` in the record as the line sent, wherever it came from: the
 /// box, or the queue Ctrl+S sent it from.
 fn sent<T: Terminal>(
     renderer: &mut Renderer<T>,
-    said: String,
-    local: bool,
+    said: Said,
     recalling: &mut Recalling,
     style: Style,
 ) -> Result<Asked, Fatal> {
@@ -2384,7 +2426,7 @@ fn sent<T: Terminal>(
     // a command run off a marked row was sent as that command, whatever half
     // of it was typed. It also ends whatever walk was open, which is what
     // takes the place off the border of a box that has just been emptied.
-    recalling.keep(&said);
+    recalling.keep(&said.line);
 
     // Back to the foot before a word of it is drawn: what was just sent is
     // about to be answered at the bottom, and somebody who had scrolled up to
@@ -2399,7 +2441,7 @@ fn sent<T: Terminal>(
     // shell's own prompt would come back one row lower than it left.
     renderer.apart()?;
     renderer.landmark();
-    let responsive = said.clone();
+    let responsive = said.line.clone();
     renderer.responsive(
         responsive.len(),
         Box::new(move |columns| {
@@ -2412,7 +2454,7 @@ fn sent<T: Terminal>(
         }),
     )?;
 
-    Ok(Asked::Said(Said::new(said, local)))
+    Ok(Asked::Said(said))
 }
 
 /// Whether visible non-element text selected the local command path.

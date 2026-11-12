@@ -444,7 +444,7 @@ fn a_finished_line_is_left_in_the_record_and_the_box_is_taken_off() {
     )
     .expect("the line to be taken");
 
-    assert!(matches!(asked, Asked::Said(said) if said.said == "hi"));
+    assert!(matches!(asked, Asked::Said(said) if said.line == "hi"));
 
     // The box goes and the line stays: everything written after the box was on
     // screen is the record of it, with no border and no status row in it.
@@ -1000,7 +1000,7 @@ fn return_takes_the_row_the_list_is_pointing_at_and_not_the_letters_typed() {
     )
     .expect("the line to be taken");
 
-    assert!(matches!(asked, Asked::Said(said) if said.said == "/resume"));
+    assert!(matches!(asked, Asked::Said(said) if said.line == "/resume"));
 }
 
 #[test]
@@ -1019,7 +1019,7 @@ fn a_line_that_is_no_command_is_taken_exactly_as_it_was_typed() {
     )
     .expect("the line to be taken");
 
-    assert!(matches!(asked, Asked::Said(said) if said.said == "what does /resume do"));
+    assert!(matches!(asked, Asked::Said(said) if said.line == "what does /resume do"));
 }
 
 #[test]
@@ -1129,7 +1129,7 @@ fn esc_closes_the_command_list_and_leaves_the_line_as_it_was_typed() {
         Style::plain(),
     )
     .expect("the line to be taken");
-    assert!(matches!(asked, Asked::Said(said) if said.said == "/resu"));
+    assert!(matches!(asked, Asked::Said(said) if said.line == "/resu"));
 }
 
 #[test]
@@ -1817,7 +1817,7 @@ fn a_hidden_leading_command_is_committed_and_sent_but_not_selected_locally() {
     let Asked::Said(said) = asked else {
         panic!("the pasted prompt to be said");
     };
-    let (said, local) = said.into_parts();
+    let (said, local, _) = said.into_parts();
 
     assert_eq!(said, source);
     assert!(!local, "hidden pasted source selected a local command");
@@ -1847,7 +1847,7 @@ fn a_visible_command_prefix_cannot_authorize_a_compact_pasted_argument() {
     let Asked::Said(said) = asked else {
         panic!("the command to be said");
     };
-    let (said, local) = said.into_parts();
+    let (said, local, _) = said.into_parts();
 
     assert_eq!(said, source);
     assert!(!local, "hidden pasted source selected a local command");
@@ -1873,7 +1873,7 @@ fn padded_compact_source_cannot_hide_a_full_access_local_command() {
     let Asked::Said(said) = asked else {
         panic!("the command to be said");
     };
-    let (said, local) = said.into_parts();
+    let (said, local, _) = said.into_parts();
 
     assert_eq!(said, source.replace('\t', "    "));
     assert!(!local, "compact source escalated the local permission mode");
@@ -2446,4 +2446,33 @@ fn the_route_s_row_names_the_model_an_agent_was_started_on() {
         "execution: work, model: opus"
     );
     assert_eq!(super::execution("work", None), "execution: work");
+}
+
+#[test]
+fn a_line_ctrl_s_sends_between_turns_is_sent_as_the_queues() {
+    // Held back on its way out, a line goes back where it came from. One that
+    // Ctrl+S sent from the queue is the queue's, and says so: sent as the
+    // box's, it would go back into the box over what the reader had typed
+    // there, and out of the queue it was waiting in.
+    let mut queued = Prompts::default();
+    for line in ["first", "second"] {
+        let mut editor = Editor::new();
+        editor.put(line);
+        assert_eq!(queued.accept(&mut editor), Retained::Accepted);
+    }
+    let mut renderer = Renderer::new(Recording::redirected(80, 24));
+
+    let asked = sent_now(&mut renderer, &mut queued, &mut unwalked(), Style::plain())
+        .expect("the line to be sent");
+
+    let sent = match asked {
+        Some(Asked::Said(said)) => Some(said.into_parts()),
+        _ => None,
+    };
+    assert_eq!(
+        sent,
+        Some(("first".to_owned(), false, Origin::Queue)),
+        "the line was not sent as the queue's"
+    );
+    assert_eq!(queued.waiting_all().collect::<Vec<_>>(), ["second"]);
 }

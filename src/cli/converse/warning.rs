@@ -42,6 +42,10 @@ pub(super) enum Put {
     /// turn. Held back, it is dropped rather than put in the prompt box,
     /// where it would read as the person's message.
     Note,
+    /// The lines queued behind a turn about to be sent as the next one, or
+    /// the one Ctrl+S sent alone. Held back, they stay in the queue, or the one
+    /// line goes back to it, and the box is left as it is.
+    Queue,
     /// The dock's answers about to be sent.
     Answer,
     /// Room about to be made, which sends the conversation for its recap.
@@ -60,6 +64,7 @@ impl Put {
             Work::Answer(_) => Self::Answer,
             Work::Turn(_, _, Author::Application) => Self::Note,
             Work::Turn(_, _, Author::Person) => Self::Send,
+            Work::Queued(..) => Self::Queue,
             Work::Room(_) => Self::Room,
         }
     }
@@ -70,6 +75,7 @@ impl Put {
         match self {
             Self::Send => Some(&SENDING),
             Self::Note => Some(&NOTING),
+            Self::Queue => Some(&QUEUING),
             Self::Answer => Some(&ANSWERING),
             Self::Room => Some(&MAKING_ROOM),
             Self::Choice => Some(&CHOOSING),
@@ -98,6 +104,19 @@ const SENDING: [Offered<'static>; 2] = [
     Offered {
         name: "Go back",
         says: "Keeps your message in the prompt box; nothing is sent",
+    },
+];
+
+/// The answers offered before the lines queued behind a turn are sent, which
+/// stay in the queue where they are not.
+const QUEUING: [Offered<'static>; 2] = [
+    Offered {
+        name: "Use it anyway",
+        says: "Sends what you queued; this route is not asked about again",
+    },
+    Offered {
+        name: "Go back",
+        says: "Keeps it all in the queue for your next prompt; nothing is sent",
     },
 ];
 
@@ -154,6 +173,9 @@ const CHOOSING: [Offered<'static>; 2] = [
 pub(super) const CRAMPED_SEND: &str =
     "! this route needs an answer first; make the window taller and send again";
 
+/// Said where no panel fits before the lines queued behind a turn are sent.
+pub(super) const CRAMPED_QUEUE: &str = "! this route needs an answer first; make the window taller, and your queue goes with your next prompt";
+
 /// Said where the panel did not fit at a choice.
 pub(super) const CRAMPED_CHOICE: &str =
     "! this route needs an answer first; make the window taller and choose again";
@@ -169,6 +191,10 @@ pub(super) const UNSENT: &str = "nothing was sent";
 
 /// Said once the message is back in the box.
 pub(super) const KEPT: &str = "nothing was sent; your message is back in the prompt box";
+
+/// Said once the queue is back as it was, waiting for the reader's next prompt.
+pub(super) const QUEUE_KEPT: &str =
+    "nothing was sent; your queued messages go with the next prompt you send";
 
 /// Said once the note about a command that ended was going to start a turn,
 /// and nothing was sent.
@@ -230,12 +256,17 @@ pub(super) fn ask_while<T: Terminal>(
     };
     let shown: &[Offered<'_>] = put.offered().unwrap_or(&launching);
     let told: &[&str] = match put {
-        // A message, a note or an answer on an installed agent's route that starts
-        // the agent says what starting it runs, as a launch does.
-        Put::Send | Put::Note | Put::Answer if content_use::launches(&warned.route) => launched,
+        // A message, a note, the queue or an answer on an installed agent's
+        // route that starts the agent says what starting it runs, as a launch
+        // does.
+        Put::Send | Put::Note | Put::Queue | Put::Answer
+            if content_use::launches(&warned.route) =>
+        {
+            launched
+        }
         Put::Launch => launched,
         // Room is not made on an agent's route, so making it starts nothing.
-        Put::Send | Put::Note | Put::Answer | Put::Room | Put::Choice => &[],
+        Put::Send | Put::Note | Put::Queue | Put::Answer | Put::Room | Put::Choice => &[],
     };
     let cited = warned.warning.cited();
     let footer = format!("enter to choose {} esc to go back", style.glyphs().dot());
@@ -286,7 +317,9 @@ pub(super) fn recorded(terms: &Terms, warned: &Warned) -> Result<(), String> {
 /// route it would go on has no yes, and handed back whole where the answer
 /// was anything but yes, or a yes that could not be written down. The
 /// application's note about a command that ended is not handed back: it is
-/// dropped, and the prompt box keeps what it held. A turn
+/// dropped, and the prompt box keeps what it held. The queue's turn is handed
+/// back to the queue, which waits for the reader (see
+/// [`super::queueing::taken`]), and the box keeps what it held. A turn
 /// [`Conversation::unlaunchable`] refuses is not held: it goes on to that
 /// refusal unasked.
 ///
@@ -313,7 +346,7 @@ pub(super) fn held<T: Terminal>(
         // A turn that would be refused before it started the agent, whatever
         // the answer, is not asked about: it goes on to be refused as it
         // would be after a yes, drawn as a failed turn is, and nothing starts.
-        if let Work::Turn(_, attached, _) = work
+        if let Work::Turn(_, attached, _) | Work::Queued(_, attached) = work
             && conversation.unlaunchable(attached).is_err()
         {
             return Ok(false);
@@ -340,6 +373,10 @@ pub(super) fn held<T: Terminal>(
     if let Some(prompt) = returned(work) {
         held.editor.put(prompt);
     }
+    if let Work::Queued(prompt, _) = work {
+        held.queued.kept(prompt, &terms.steer);
+        held.left_to_reader = true;
+    }
     renderer.commit(&said)?;
     Ok(true)
 }
@@ -348,26 +385,32 @@ pub(super) fn held<T: Terminal>(
 /// with no or with a yes that could not be written down, or did not fit where
 /// `cramped`. Room to be made has no message to give back and the dock's
 /// answers stay in the dock; the application's note is not the person's to
-/// have back, and is dropped.
+/// have back, and is dropped; the queued lines stay queued.
 pub(super) fn left(work: &Work, cramped: bool) -> &'static str {
     match (work, cramped) {
         (Work::Turn(_, _, Author::Person), false) => KEPT,
         (Work::Turn(_, _, Author::Person), true) => CRAMPED_SEND,
         (Work::Turn(_, _, Author::Application), false) => DROPPED,
         (Work::Turn(_, _, Author::Application), true) => CRAMPED_NOTE,
+        (Work::Queued(..), false) => QUEUE_KEPT,
+        (Work::Queued(..), true) => CRAMPED_QUEUE,
         (Work::Room(_) | Work::Answer(_), false) => UNSENT,
         (Work::Room(_) | Work::Answer(_), true) => CRAMPED_ROOM,
     }
 }
 
 /// The message held back that goes back in the prompt box: only one the
-/// person wrote. Putting it back replaces what the box holds, so the
+/// person wrote in it. Putting it back replaces what the box holds, so the
 /// application's note would overwrite a half-typed line and then be sent as
-/// the person's own.
+/// the person's own, and the queue's first line would overwrite it and leave
+/// the lines behind it to be asked about one by one.
 pub(super) fn returned(work: &Work) -> Option<&str> {
     match work {
         Work::Turn(prompt, _, Author::Person) => Some(prompt),
-        Work::Turn(_, _, Author::Application) | Work::Room(_) | Work::Answer(_) => None,
+        Work::Turn(_, _, Author::Application)
+        | Work::Queued(..)
+        | Work::Room(_)
+        | Work::Answer(_) => None,
     }
 }
 
@@ -399,7 +442,9 @@ fn unsent(conversation: &Conversation, terms: &Terms, work: &Work) -> Option<War
             .consent
             .unanswered(provider, conversation.settled().model()),
         None => match work {
-            Work::Turn(..) | Work::Answer(_) => terms.consent.asks(&conversation.launching()?),
+            Work::Turn(..) | Work::Queued(..) | Work::Answer(_) => {
+                terms.consent.asks(&conversation.launching()?)
+            }
             Work::Room(_) => None,
         },
     }
