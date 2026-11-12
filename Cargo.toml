@@ -47,6 +47,14 @@ resvg = { version = "=0.49.0", default-features = false, features = ["text"] }
 # choosing at most 256 colours and dithering to them, in a quantiser written for
 # it. The crate is pure Rust and takes pixels, never a file or a terminal.
 icy_sixel = { version = "=0.7.0" }
+# Draws a Mermaid flowchart, state, class or entity-relationship diagram as
+# box-drawing text, which `std` has no parser or graph layout for: each type
+# has its own grammar, and placing nodes in layers and routing edges between
+# them is a layout engine, not a few lines. It takes a string and returns one,
+# opening no file and no connection, and adds no colour unless asked. It has
+# no features of its own to turn off; `chrono` comes with it, without its
+# default features.
+mermaid-text = "=0.58.0"
 # Parses an SVG attribute's own grammar (path data, lengths with their units,
 # transforms, number lists, view boxes, the `font` shorthand), which `std`
 # cannot: the raster crate reads a picture's numbers with the very parser

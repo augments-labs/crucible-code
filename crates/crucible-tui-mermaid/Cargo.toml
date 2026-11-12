@@ -1,0 +1,18 @@
+[package]
+name = "crucible-tui-mermaid"
+description = "Mermaid diagrams in an answer drawn as text: flowcharts, state, class and entity-relationship diagrams in box-drawing rows."
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# The engine that lays a diagram out as text, called only once this crate's
+# own count of the source is inside its caps.
+[dependencies]
+mermaid-text.workspace = true
+
+[lints]
+workspace = true
