@@ -529,7 +529,7 @@ fn a_permission_question_fits_the_window_it_is_answered_in() {
         question: "Allow it?",
         answers: &ANSWERS,
         marked: 1,
-        footer: "enter to take it · esc to leave",
+        footer: &["enter to take it", "esc to leave"],
     };
     down("a permission question", |columns, room, glyphs| {
         question.within(columns, room, glyphs)
