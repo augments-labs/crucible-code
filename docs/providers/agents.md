@@ -206,8 +206,7 @@ A release read from the ACP Registry has no review, revocation list or
 anti-rollback. What holds it is the registry's SHA-256, recorded in its receipt,
 and the probe record taken at its install; there is no catalog signature or
 trust state to read. With the sandbox setting off, that probe started the
-vendor's program as a plain local process rather than in the sandbox; the
-receipt keeps what the program answered, not which of the two it ran in. A
+vendor's program as a plain local process rather than in the sandbox. A
 fresh install accepts a same-version archive the registry replaces; an installed version keeps the hash its receipt recorded and
 refuses a different same-version archive until it is removed. A registry release
 whose receipt has no probe record for this machine is not started, and
