@@ -14,7 +14,15 @@
 //! common; as many lines and bytes as a change reads for colour; every one of
 //! those caps reached in the one change; and a tool's edit with as many
 //! numbered lines as a file keeps. Each is laid out at a common terminal's
-//! width, at the narrowest a drawer is given, and in both glyph sets. Two
+//! width, at the narrowest a drawer is given, and in both glyph sets.
+//!
+//! A formula is laid out on the same thread when its block closes, and drawn
+//! in a line as the line is read: a block at the formula drawer's byte cap, a
+//! matrix as tall as its rows allow, a continued fraction as deep as those
+//! rows allow, which lays every level out again under the next, a span at the
+//! byte cap and a span nested as deep as the drawer reads. A formula wider
+//! than its room is refused for it rather than drawn, so each is laid out in
+//! a room as wide as the drawer draws, in both glyph sets. Two
 //! milliseconds is the budget for text laid out on the drawing thread: a tenth
 //! of the first frame's twenty, so a block closing beside a streaming answer
 //! still leaves the frame its room.
@@ -35,6 +43,7 @@ use crucible_tui_diff::{
     Change, Changes, FOLD, File, MOST_BYTES, MOST_FILES, MOST_LINES, PAIRS, SYNTAX_BYTES,
     SYNTAX_LINES, Side, TOKENS,
 };
+use crucible_tui_math::{Formulas, MOST_COLUMNS, MOST_ROWS};
 
 /// The budget on a quiet machine, in milliseconds.
 const LIMIT: f64 = 2.0;
@@ -62,6 +71,18 @@ const WIDE: usize = 80;
 /// The narrowest a drawer is given a block to lay out in.
 const NARROW: usize = 8;
 
+/// The rooms a change is laid out in.
+const CHANGE_ROOMS: &[usize] = &[WIDE, NARROW];
+
+/// The room a formula is laid out in: as wide as the formula drawer draws,
+/// its gutter counted, so a formula at its column cap is drawn and the
+/// reading is of a layout rather than of a refusal for the room.
+const FORMULA_ROOMS: &[usize] = &[MOST_COLUMNS + 2];
+
+/// The deepest a continued fraction in a line is read: one level more and the
+/// formula drawer reads its nesting as past what it holds.
+const DEEPEST_SPAN: usize = 32;
+
 #[derive(Debug, thiserror::Error)]
 enum ProbeError {
     #[error("bench-drawing: {0}")]
@@ -78,11 +99,17 @@ enum Input {
     Diff(String),
     /// A change already built, laid out as a tool's edit is.
     Change(Change),
+    /// A formula, laid out as display math is.
+    Formula(String),
+    /// A formula, drawn in a line as an inline span is.
+    Span(String),
 }
 
 struct Case {
     name: &'static str,
     input: Input,
+    /// The columns it is laid out at, in each glyph set.
+    rooms: &'static [usize],
 }
 
 /// One case's readings, sorted.
@@ -275,35 +302,119 @@ fn a_tools_edit() -> Change {
     ])
 }
 
+/// A formula of aligned rows, each a sum of fractions holding scripts and a
+/// root, in as many rows as the formula drawer's bytes hold.
+fn aligned_at_the_byte_cap() -> String {
+    let term = r"\frac{\alpha_{k}+\beta}{\sqrt{\gamma}}";
+    let row = format!("y &= {}", [term; 6].join(" + "));
+    let ends = r"\begin{aligned}  \end{aligned}".len();
+    let rows = (crucible_tui_math::MOST_BYTES - ends) / (row.len() + r" \\ ".len());
+    format!(
+        r"\begin{{aligned}} {} \end{{aligned}}",
+        vec![row; rows].join(r" \\ ")
+    )
+}
+
+/// A matrix as tall as the formula drawer lays out, between bracket pieces
+/// as tall as it.
+fn the_tallest_matrix() -> String {
+    let rows: Vec<String> = (0..MOST_ROWS)
+        .map(|row| {
+            (0..4)
+                .map(|column| format!(r"\alpha_{{{row}{column}}}"))
+                .collect::<Vec<_>>()
+                .join(" & ")
+        })
+        .collect();
+    format!(r"\begin{{pmatrix}} {} \end{{pmatrix}}", rows.join(r" \\ "))
+}
+
+/// A fraction under a fraction `levels` deep, each level a sum beside it.
+fn continued_fraction(levels: usize) -> String {
+    format!(
+        "x = {}y{}",
+        r"1 + \frac{1}{".repeat(levels),
+        "}".repeat(levels)
+    )
+}
+
+/// A continued fraction as deep as the formula drawer's rows allow: two rows a
+/// level, its rule and the row over it, and the innermost row.
+fn the_deepest_block() -> String {
+    continued_fraction((MOST_ROWS - 1) / 2)
+}
+
+/// A sum of fractions of roots and scripts in a line, in as many terms as the
+/// formula drawer's bytes hold.
+fn a_span_at_the_byte_cap() -> String {
+    let term = r"\frac{\sqrt{\alpha_{1}}}{\beta^{2}} + ";
+    format!(
+        "{}y",
+        term.repeat((crucible_tui_math::MOST_BYTES - 1) / term.len())
+    )
+}
+
 fn cases() -> Vec<Case> {
     vec![
         Case {
             name: "one file at the caps",
             input: Input::Diff(at_the_caps(1)),
+            rooms: CHANGE_ROOMS,
         },
         Case {
             name: "every file a change holds",
             input: Input::Diff(at_the_caps(MOST_FILES)),
+            rooms: CHANGE_ROOMS,
         },
         Case {
             name: "the longest lines a change holds",
             input: Input::Diff(the_longest_lines()),
+            rooms: CHANGE_ROOMS,
         },
         Case {
             name: "word pairs at the caps",
             input: Input::Diff(word_pairs_at_the_caps()),
+            rooms: CHANGE_ROOMS,
         },
         Case {
             name: "colour at the caps",
             input: Input::Diff(colour_at_the_caps()),
+            rooms: CHANGE_ROOMS,
         },
         Case {
             name: "every cap at once",
             input: Input::Diff(every_cap_at_once()),
+            rooms: CHANGE_ROOMS,
         },
         Case {
             name: "a tool's edit at the caps",
             input: Input::Change(a_tools_edit()),
+            rooms: CHANGE_ROOMS,
+        },
+        Case {
+            name: "a formula at the byte cap",
+            input: Input::Formula(aligned_at_the_byte_cap()),
+            rooms: FORMULA_ROOMS,
+        },
+        Case {
+            name: "a matrix at the row cap",
+            input: Input::Formula(the_tallest_matrix()),
+            rooms: FORMULA_ROOMS,
+        },
+        Case {
+            name: "a continued fraction at the row cap",
+            input: Input::Formula(the_deepest_block()),
+            rooms: FORMULA_ROOMS,
+        },
+        Case {
+            name: "a span at the byte cap",
+            input: Input::Span(a_span_at_the_byte_cap()),
+            rooms: FORMULA_ROOMS,
+        },
+        Case {
+            name: "a span at the depth cap",
+            input: Input::Span(continued_fraction(DEEPEST_SPAN)),
+            rooms: FORMULA_ROOMS,
         },
     ]
 }
@@ -313,14 +424,20 @@ fn lay(case: &Case, room: &Room) -> Option<usize> {
     match &case.input {
         Input::Diff(text) => Changes.block(text, room).ok().map(|laid| laid.rows.len()),
         Input::Change(change) => Some(Changes.draw(change, room).rows.len()),
+        Input::Formula(text) => Formulas.block(text, room).ok().map(|laid| laid.rows.len()),
+        Input::Span(text) => Formulas.inline(text, room).map(|runs| runs.len()),
     }
 }
 
 fn time(case: &Case) -> Result<Timed, ProbeError> {
     let rooms = [Glyphs::Unicode, Glyphs::Ascii]
         .into_iter()
-        .flat_map(|glyphs| [WIDE, NARROW].map(|columns| Room { columns, glyphs }));
-    let mut readings = Vec::with_capacity(RUNS * 4);
+        .flat_map(|glyphs| {
+            case.rooms
+                .iter()
+                .map(move |&columns| Room { columns, glyphs })
+        });
+    let mut readings = Vec::with_capacity(RUNS * 2 * case.rooms.len());
     for room in rooms {
         for _ in 0..WARM {
             lay(case, &room).ok_or(ProbeError::Undrawn(case.name))?;

@@ -1783,10 +1783,10 @@ fi
 # lend the calls they time, so what they time includes handing the work to it,
 # `crucible_runtime` for the future their permission prompts answer with, and
 # `crucible_types` and `crucible_workspace` for the call they build and the
-# directory it reaches. `bench-drawing` names `crucible_tui_diff` for the
-# drawer whose worst block it times, and `crucible_tui` for the contract that
-# drawer is called through and the room it is handed, so what it times is the
-# call the drawing thread makes. `bench-render-burst` names `crucible_tui_diff`
+# directory it reaches. `bench-drawing` names `crucible_tui_diff` and
+# `crucible_tui_math` for the drawers whose worst blocks it times, and
+# `crucible_tui` for the contract those drawers are called through and the room
+# each is handed, so what it times is the call the drawing thread makes. `bench-render-burst` names `crucible_tui_diff`
 # for the drawer it hands the renderer it streams to, so the diff fences of its
 # burst are timed drawn as the changes a session draws them as, and
 # `bench-live-burst` names it for the drawer that draws the answers its band
@@ -1797,6 +1797,7 @@ fi
 # built binary like every other startup probe.
 probes='src/bin/bench-drawing.rs crucible_tui
 src/bin/bench-drawing.rs crucible_tui_diff
+src/bin/bench-drawing.rs crucible_tui_math
 src/bin/bench-first-input-colour-silent.rs crucible_tui
 src/bin/bench-grep.rs crucible_builtins
 src/bin/bench-grep.rs crucible_runtime
