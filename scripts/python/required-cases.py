@@ -35,6 +35,9 @@ A case is rerun by exact name in the test binary the selection built, from its
 package's directory as cargo would run it, so the rerun is the code the suite
 ran and costs no build. Asking cargo for one package instead would resolve that
 package's features alone and build it again, different from what was tested.
+A binary with more cases than one command line holds is asked for them in
+several runs: Windows refuses to start a longer line, however many names the
+binary itself would take.
 
     scripts/python/required-cases.py <artifacts> <doc-list> <doc-ignored-list> <selection>...
     scripts/python/required-cases.py --self-test  prove the source reader reads,
@@ -56,6 +59,12 @@ PLATFORM = {"linux": "linux", "darwin": "macos", "win32": "windows"}.get(
 )
 
 DOCTEST = re.compile(r"^(?P<source>.+?) - (?P<case>\S+) \(line (?P<line>\d+)\): test$")
+
+# Windows starts no command whose line is longer than 32,767 characters, and it
+# counts the program's path and every space and quote the line is joined with.
+# What is left under that is room for a line joined some other way than it is
+# measured here.
+LONGEST_COMMAND = 30_000
 
 
 def slashed(path):
@@ -216,6 +225,31 @@ def self_test():
         print("    FAIL a rerun of the examples would not ask for the selection the suite ran")
         return 1
 
+    if invocations(built, ["one", "two"]) != [invocation(built, ["one", "two"])]:
+        print("    FAIL a rerun one command can hold would not be that one command")
+        return 1
+    # More cases than one line holds, with names as long as a real library's.
+    many = [f"markdown::tests::a_case_named_at_length_{index:03}_" + "x" * 40 for index in range(700)]
+    parts = invocations(built, many)
+    if any(measured(command) > LONGEST_COMMAND for command, _, _ in parts):
+        print("    FAIL a rerun would start a command longer than Windows will start")
+        return 1
+    if [name for command, _, _ in parts for name in command[2:]] != many:
+        print("    FAIL a rerun in parts would not name each case once, in the order listed")
+        return 1
+    alone = invocation(built, [])
+    if any((command[:2], *rest) != alone for command, *rest in parts):
+        print("    FAIL a part of a rerun would run another binary, or start it somewhere else")
+        return 1
+    held = (0, "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out\n")
+    broke = (101, "test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 9 filtered out\n")
+    if passed([held, held]) != 4:
+        print("    FAIL a rerun in parts would not count the cases every part passed")
+        return 1
+    if passed([held, broke]) != -1 or passed([broke, held]) != -1:
+        print("    FAIL a rerun in parts would let a part that failed pass for the binary")
+        return 1
+
     with tempfile.TemporaryDirectory() as root:
         for where in ("tests", os.path.join(".worktrees", "other", "tests")):
             os.makedirs(os.path.join(root, where))
@@ -320,6 +354,36 @@ def invocation(built, names):
     return [built.executable, "--exact", *names], built.directory, built.environment()
 
 
+def measured(command):
+    """How long a line Windows is handed for this command.
+
+    Python joins the arguments itself before Windows sees them, quoting any
+    that need it, so the joined line is the length the refusal is about.
+    """
+    return len(subprocess.list2cmdline(command))
+
+
+def invocations(built, names):
+    """The commands that between them run exactly these cases, each short enough to start.
+
+    One command does until a binary's cases outgrow a line. Past that the
+    names are split in the order given, and every part is asked of the same
+    binary from the same directory, so each case still runs once and a part
+    differs from the run it stands in for only in the names it carries.
+    """
+    fixed, _, _ = invocation(built, [])
+    parts, length = [[]], measured(fixed)
+    for name in names:
+        # A space, then the name as it is joined on.
+        cost = 1 + measured([name])
+        if parts[-1] and length + cost > LONGEST_COMMAND:
+            parts.append([])
+            length = measured(fixed)
+        parts[-1].append(name)
+        length += cost
+    return [invocation(built, part) for part in parts]
+
+
 def documented_invocation(selection, names):
     """The command that runs the examples with these names under the selection.
 
@@ -342,14 +406,25 @@ def attempted(command, directory=None, environment=None):
     return result.returncode, result.stdout
 
 
+def passed(runs):
+    """How many cases the runs passed between them, or -1 when one of them failed.
+
+    A binary asked in parts passed its cases only if every part did, so a part
+    that exits in failure answers for the whole binary, as its one run did.
+    """
+    total = 0
+    for code, printed in runs:
+        if code != 0:
+            return -1
+        total += sum(
+            int(line.split()[3]) for line in printed.splitlines() if line.startswith("test result:")
+        )
+    return total
+
+
 def ran(built, names):
     """How many cases passed when the built binary was asked for exactly these."""
-    code, printed = attempted(*invocation(built, names))
-    if code != 0:
-        return -1
-    return sum(
-        int(line.split()[3]) for line in printed.splitlines() if line.startswith("test result:")
-    )
+    return passed(attempted(*one) for one in invocations(built, names))
 
 
 def reported(printed, source, name, line):
