@@ -19,8 +19,10 @@
 //! A formula is laid out on the same thread when its block closes, and drawn
 //! in a line as the line is read: a block at the formula drawer's byte cap, a
 //! matrix as tall as its rows allow, a continued fraction as deep as those
-//! rows allow, which lays every level out again under the next, a span at the
-//! byte cap and a span nested as deep as the drawer reads. A formula wider
+//! rows allow, which lays every level out again under the next, matrices
+//! nested as deep as the drawer reads, each level looking for its own end,
+//! matrices nested past that to the byte cap, timed to their refusal, a span
+//! at the byte cap and a span nested as deep as the drawer reads. A formula wider
 //! than its room is refused for it rather than drawn, so each is laid out in
 //! a room as wide as the drawer draws, in both glyph sets. Two
 //! milliseconds is the budget for text laid out on the drawing thread: a tenth
@@ -43,7 +45,7 @@ use crucible_tui_diff::{
     Change, Changes, FOLD, File, MOST_BYTES, MOST_FILES, MOST_LINES, PAIRS, SYNTAX_BYTES,
     SYNTAX_LINES, Side, TOKENS,
 };
-use crucible_tui_math::{Formulas, MOST_COLUMNS, MOST_ROWS};
+use crucible_tui_math::{Formulas, MOST_COLUMNS, MOST_DEPTH, MOST_ROWS};
 
 /// The budget on a quiet machine, in milliseconds.
 const LIMIT: f64 = 2.0;
@@ -91,6 +93,8 @@ enum ProbeError {
     Runner(String),
     #[error("bench-drawing: {0} was not drawn; a reading of it would time a refusal")]
     Undrawn(&'static str),
+    #[error("bench-drawing: {0} was drawn; a reading of it would time a layout, not its refusal")]
+    Drawn(&'static str),
 }
 
 /// What a case hands the drawer.
@@ -103,6 +107,8 @@ enum Input {
     Formula(String),
     /// A formula, drawn in a line as an inline span is.
     Span(String),
+    /// A formula display math must refuse, timed to its refusal.
+    Refused(String),
 }
 
 struct Case {
@@ -354,6 +360,20 @@ fn a_span_at_the_byte_cap() -> String {
     )
 }
 
+/// `levels` matrices each inside the last, the innermost holding as many
+/// letters as the formula drawer's bytes leave room for.
+fn nested_matrices(levels: usize) -> String {
+    let (open, close, letter) = (r"\begin{matrix}", r"\end{matrix}", r"\alpha");
+    let ends = levels * (open.len() + close.len());
+    let letters = crucible_tui_math::MOST_BYTES.saturating_sub(ends) / letter.len();
+    format!(
+        "{}{}{}",
+        open.repeat(levels),
+        letter.repeat(letters),
+        close.repeat(levels)
+    )
+}
+
 fn cases() -> Vec<Case> {
     vec![
         Case {
@@ -407,6 +427,18 @@ fn cases() -> Vec<Case> {
             rooms: FORMULA_ROOMS,
         },
         Case {
+            name: "matrices nested as deep as a formula is read",
+            input: Input::Formula(nested_matrices(MOST_DEPTH - 1)),
+            rooms: FORMULA_ROOMS,
+        },
+        Case {
+            name: "matrices nested past the depth cap to the byte cap",
+            input: Input::Refused(nested_matrices(
+                crucible_tui_math::MOST_BYTES / r"\begin{matrix}\end{matrix}".len(),
+            )),
+            rooms: FORMULA_ROOMS,
+        },
+        Case {
             name: "a span at the byte cap",
             input: Input::Span(a_span_at_the_byte_cap()),
             rooms: FORMULA_ROOMS,
@@ -426,6 +458,18 @@ fn lay(case: &Case, room: &Room) -> Option<usize> {
         Input::Change(change) => Some(Changes.draw(change, room).rows.len()),
         Input::Formula(text) => Formulas.block(text, room).ok().map(|laid| laid.rows.len()),
         Input::Span(text) => Formulas.inline(text, room).map(|runs| runs.len()),
+        // One row stands for the refusal, and none for a formula drawn.
+        Input::Refused(text) => Formulas.block(text, room).err().map(|_| 1),
+    }
+}
+
+/// What a reading that did not answer as its case says would have timed.
+fn misread(case: &Case) -> ProbeError {
+    match case.input {
+        Input::Refused(_) => ProbeError::Drawn(case.name),
+        Input::Diff(_) | Input::Change(_) | Input::Formula(_) | Input::Span(_) => {
+            ProbeError::Undrawn(case.name)
+        }
     }
 }
 
@@ -440,14 +484,14 @@ fn time(case: &Case) -> Result<Timed, ProbeError> {
     let mut readings = Vec::with_capacity(RUNS * 2 * case.rooms.len());
     for room in rooms {
         for _ in 0..WARM {
-            lay(case, &room).ok_or(ProbeError::Undrawn(case.name))?;
+            lay(case, &room).ok_or_else(|| misread(case))?;
         }
         for _ in 0..RUNS {
             let started = Instant::now();
             let rows = lay(case, &room);
             readings.push(started.elapsed());
             if rows.unwrap_or(0) == 0 {
-                return Err(ProbeError::Undrawn(case.name));
+                return Err(misread(case));
             }
         }
     }
