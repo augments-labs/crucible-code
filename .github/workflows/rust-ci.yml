@@ -123,9 +123,11 @@ jobs:
       fail-fast: false
       # macOS Intel and Windows ARM64 are the slowest platforms to test, so a
       # pull request leaves them to the run on dev that follows its merge,
-      # and compiles for Windows ARM64 in the job below instead. Apple silicon
-      # runs its tests in one part: macOS machines are the ones a run queues
-      # longest for, and a second one costs more waiting than it saves.
+      # and compiles for Windows ARM64 in the job below instead. A Free, Pro
+      # or Team account runs at most five macOS jobs at once, across all its
+      # runs. A run on dev or main asks for five, so it tests Apple silicon in
+      # one part. A pull request tests it in two and asks for three, so two
+      # pull requests running together can wait for a macOS machine.
       matrix:
         include: >-
           ${{ fromJSON(inputs.all-platforms && '[
@@ -136,7 +138,8 @@ jobs:
           {"name": "Windows x86_64", "os": "windows-latest", "shard": 2, "shards": 2},
           {"name": "Windows ARM64", "os": "windows-11-arm", "shard": 1, "shards": 2},
           {"name": "Windows ARM64", "os": "windows-11-arm", "shard": 2, "shards": 2}]' || '[
-          {"name": "macOS Apple silicon", "os": "macos-26", "shard": 1, "shards": 1},
+          {"name": "macOS Apple silicon", "os": "macos-26", "shard": 1, "shards": 2},
+          {"name": "macOS Apple silicon", "os": "macos-26", "shard": 2, "shards": 2},
           {"name": "Windows x86_64", "os": "windows-latest", "shard": 1, "shards": 2},
           {"name": "Windows x86_64", "os": "windows-latest", "shard": 2, "shards": 2}]') }}
     steps:
