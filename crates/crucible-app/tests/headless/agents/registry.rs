@@ -2848,6 +2848,71 @@ fn more_unhashed_entries_on_path_than_a_listing_names_give_catalog_no_more() -> 
     Ok(())
 }
 
+/// An ACP Registry agent crucible installs a version of, past the most a
+/// listing shows, is one more to a list of only the agents crucible installs.
+#[test]
+fn an_offered_registry_agent_past_the_listing_gives_catalog_more() -> Result<(), Failed> {
+    use crate::external::choosing::{goose_past_the_listing, listed_with_the_registry};
+
+    let tree = crate::Tree::new("registry-offered-past-catalog")?;
+    let (conversation, _) = goose_past_the_listing(&tree)?;
+
+    let listed = listed_with_the_registry(&tree, &conversation)?;
+    let Ok(Outcome::Catalog {
+        agents,
+        more,
+        installable,
+        ..
+    }) = listed
+    else {
+        return Err(format!("the listing answered {listed:?}").into());
+    };
+    assert!(
+        agents.iter().all(|listed| listed.agent.as_str() != "goose"),
+        "goose was within the listing"
+    );
+    assert!(more, "the door did not say more were listed");
+    assert!(
+        installable.more,
+        "a list of what crucible installs was not told more were offered"
+    );
+    Ok(())
+}
+
+/// A signed catalog offering more agents than a listing shows gives a list of
+/// only the agents crucible installs more to say.
+#[test]
+fn a_signed_catalog_past_the_listing_gives_catalog_more() -> Result<(), Failed> {
+    use crate::external::choosing::{listed_with_the_registry, signed_past_the_listing};
+    use crucible_app::client::agents::LISTED;
+
+    let tree = crate::Tree::new("signed-past-catalog")?;
+    let conversation = signed_past_the_listing(&tree)?;
+
+    let listed = listed_with_the_registry(&tree, &conversation)?;
+    let Ok(Outcome::Catalog {
+        agents,
+        more,
+        installable,
+        ..
+    }) = listed
+    else {
+        return Err(format!("the listing answered {listed:?}").into());
+    };
+    assert_eq!(
+        agents.len(),
+        LISTED,
+        "the door listed {} agents",
+        agents.len()
+    );
+    assert!(more, "the door did not say more were listed");
+    assert!(
+        installable.more,
+        "a list of what crucible installs was not told more were offered"
+    );
+    Ok(())
+}
+
 /// The agents door's listing whose only ACP Registry row is an entry with no
 /// SHA-256, listed as the user's own program, says where that row comes from:
 /// the day the index was read, and that it is not reviewed by Crucible.

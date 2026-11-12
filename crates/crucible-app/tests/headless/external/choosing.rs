@@ -1868,6 +1868,20 @@ pub(crate) fn goose_past_the_listing(tree: &Tree) -> Result<(Conversation, PathB
     Ok((own_sandboxed(tree)?, program))
 }
 
+/// A tree whose signed catalog offers one more agent than a listing shows,
+/// `signed-00` on, and whose ACP Registry index is cached with none; a
+/// conversation there.
+pub(crate) fn signed_past_the_listing(tree: &Tree) -> Result<Conversation, Failed> {
+    use crucible_app::client::agents::LISTED;
+
+    let entries: Vec<Value> = (0..=LISTED)
+        .map(|at| entry(&format!("signed-{at:02}"), "1.0.0", ONE))
+        .collect();
+    trusting(tree, &entries)?;
+    registry_cached(tree, &[])?;
+    own_sandboxed(tree)
+}
+
 /// A tree whose user installed their own Antigravity on the `PATH` a
 /// conversation's steps look on, which answers as the reviewed release does;
 /// that conversation, and the path the program's links lead to.
