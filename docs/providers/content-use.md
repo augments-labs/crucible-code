@@ -18,6 +18,18 @@ of a token.
 - **Go back**, or Escape, sends nothing and leaves your message in the prompt
   box.
 
+The note that starts a turn when a command left running
+[ends on its own](../tools/commands.md#when-one-ends-on-its-own) is asked about
+the same way. It is not your message, so going back drops it rather than
+putting it in the box, and whatever you had typed there stays. A window too
+short to ask in drops it too, and so does a yes that could not be written down.
+In each case the model is not told of that ending; the first two lines say so:
+
+```text
+nothing was sent; the model was not told the command ended
+! this route needs an answer first; nothing was sent, so the model was not told the command ended
+```
+
 The same question is asked when you choose such a route in `/login`, or a
 model of one in `/model`, before the choice is taken. A yes given in `/login`
 is written down once the credential is stored; a sign-in that fails or is

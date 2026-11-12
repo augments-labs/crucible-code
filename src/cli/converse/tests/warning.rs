@@ -11,6 +11,7 @@ use crucible_client_api::Author;
 use crucible_runner::Tools;
 use crucible_session::Session;
 use crucible_tui::{Recording, Renderer};
+use crucible_types::Compacting;
 
 use crate::cli::Fatal;
 use crate::cli::converse::{First, Terms, converse};
@@ -18,7 +19,10 @@ use crate::cli::fake::Script;
 
 use crate::cli::converse::answering::Answers;
 use crate::cli::converse::docking::Submission;
-use crate::cli::converse::warning::{CRAMPED_ROOM, CRAMPED_SEND, Put, UNSENT, unanswered};
+use crate::cli::converse::warning::{
+    CRAMPED_NOTE, CRAMPED_ROOM, CRAMPED_SEND, DROPPED, KEPT, Put, UNSENT, left, returned,
+    unanswered,
+};
 use crate::cli::converse::{Held, Work, ran, refreshed};
 
 use super::{opening, paired, plain, saying, scripted};
@@ -491,4 +495,102 @@ fn the_question_before_a_dock_answer_says_the_answers_stay_in_the_dock() {
         "{}",
         going_back(&turn)
     );
+}
+
+#[test]
+fn a_woken_note_held_back_leaves_the_box_as_the_person_left_it() {
+    // The note that wakes the model when a background command ends is the
+    // application's words. Held back, it is not handed to the person as their
+    // message: what they had half-typed stays, and nothing claims otherwise.
+    let script = Script::new(vec![saying("answered")]);
+    let asked = script.asked();
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(script, Tools::new(), session)
+    });
+    let warned = Terms {
+        consent: serving_google(),
+        ..plain()
+    };
+    let opening = opening();
+    let mut input = Cursor::new(Vec::new());
+    let mut held = Held::new(
+        warned.plan.clone(),
+        warned.sending.get(),
+        Answers {
+            input: &mut input,
+            keys: true,
+        },
+        &opening,
+    );
+    held.editor.put("half a thought");
+    // Redirected and too short for the panel, so the warning ends unasked.
+    let mut cramped = Renderer::new(Recording::redirected(80, 3));
+    let note = "Background command finished: exit status 0".to_owned();
+
+    let ended = ran(
+        conversation,
+        &mut cramped,
+        &warned,
+        Work::Turn(note, Box::default(), Author::Application),
+        &mut held,
+    )
+    .map(|(_, leaving)| leaving);
+
+    assert!(matches!(ended, Ok(false)), "{ended:?}");
+    assert_eq!(asked.load(Ordering::SeqCst), 0, "the note was sent");
+    assert_eq!(held.editor.text(), "half a thought");
+    let written = cramped.terminal().written().to_string();
+    assert!(written.contains(CRAMPED_NOTE), "{written}");
+    assert!(!written.contains(CRAMPED_SEND), "{written}");
+}
+
+#[test]
+fn what_is_said_after_holding_back_names_what_became_of_it() {
+    // The person's message is back in the box; the note is dropped, and says
+    // the model was not told; room and the dock's answers had nothing to give
+    // back. Neither of the note's lines promises a send to try again.
+    let message = Work::Turn("hello".to_owned(), Box::default(), Author::Person);
+    let note = Work::Turn(
+        "Background command finished: exit status 0".to_owned(),
+        Box::default(),
+        Author::Application,
+    );
+    let room = Work::Room(Compacting::Full);
+    let answers = Work::Answer(Submission {
+        era: crucible_client_api::Era::Stint(1),
+        id: crucible_types::QuestionId::numbered(1),
+        replies: Vec::new(),
+    });
+
+    assert_eq!(left(&message, false), KEPT);
+    assert_eq!(left(&message, true), CRAMPED_SEND);
+    assert_eq!(left(&note, false), DROPPED);
+    assert_eq!(left(&note, true), CRAMPED_NOTE);
+    assert_eq!(left(&room, false), UNSENT);
+    assert_eq!(left(&room, true), CRAMPED_ROOM);
+    assert_eq!(left(&answers, false), UNSENT);
+    assert_eq!(left(&answers, true), CRAMPED_ROOM);
+    // The line says the message is back in the box exactly where it is put
+    // back, and only the person's own message is.
+    for work in [&message, &note, &room, &answers] {
+        assert_eq!(left(work, false) == KEPT, returned(work).is_some());
+    }
+    assert_eq!(returned(&message), Some("hello"));
+    for said in [DROPPED, CRAMPED_NOTE] {
+        assert!(said.contains("not told the command ended"), "{said}");
+        assert!(!said.contains("again"), "{said}");
+    }
+}
+
+#[test]
+fn the_question_before_a_woken_note_does_not_promise_it_to_the_prompt_box() {
+    let note = Work::Turn(
+        "Background command finished: exit status 0".to_owned(),
+        Box::default(),
+        Author::Application,
+    );
+
+    let back = going_back(&note);
+    assert!(!back.contains("Keeps your message"), "{back}");
+    assert!(back.contains("nothing is sent"), "{back}");
 }

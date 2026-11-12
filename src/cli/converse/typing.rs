@@ -493,7 +493,10 @@ fn arriving<T: Terminal>(
 /// Both queues, because there are two ways a command's ending can still be owed
 /// by the time the keyboard is idle: it ended with nothing running to be told,
 /// or it was handed to a turn that finished before taking it. Each is take-once,
-/// so an ending is the turn or under one and never both.
+/// so an ending is the turn or under one and never both. Taken here, it is
+/// gone even where the turn is then held back unsent: [`super::warning::held`]
+/// drops the note rather than hand it back, so the panel is not asked again
+/// at once and the model is not told.
 ///
 /// The aside is read first because what is in it is older. `None` is what almost
 /// every call gets, and it is the answer that costs nothing.
