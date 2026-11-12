@@ -399,8 +399,9 @@ enum AgentsAction {
         out: PathBuf,
     },
     /// Start an agent the agent catalog describes from where its release was
-    /// unpacked, in a sandbox with no network, ask it to initialize, write
-    /// what it said as JSON, and stop.
+    /// unpacked, in a sandbox with no network with the sandbox setting on and
+    /// as a plain local process with it off, ask it to initialize, write what
+    /// it said as JSON, and stop.
     ///
     /// The catalog's intake runs it, so `--help` leaves it out.
     #[command(hide = true)]
