@@ -1187,6 +1187,7 @@ fn a_listing_fetches_the_catalog_even_where_updates_are_never_checked() -> Resul
     let Ok(Outcome::Catalog {
         agents,
         more: false,
+        installable: _,
         unrefreshed: None,
         registry: None,
         antigravity: None,

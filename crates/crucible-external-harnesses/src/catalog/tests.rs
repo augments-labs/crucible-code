@@ -3330,6 +3330,99 @@ fn a_registry_offers_only_a_hashed_target_with_an_archive_crucible_unpacks() {
     ));
 }
 
+/// Each entry the index lists for this build's platform, by id, with why it is
+/// not offered where it is not.
+fn listed_here(index: &RegistryIndex) -> Vec<(&str, Option<Unoffered>)> {
+    index
+        .listed()
+        .into_iter()
+        .map(|(entry, offer)| (entry.id.as_str(), offer.err()))
+        .collect()
+}
+
+/// An entry whose target here carries no SHA-256 is listed, with the reason
+/// that names the hash, and is still never offered.
+#[test]
+fn an_unhashed_target_is_listed_with_its_reason_and_never_offered() {
+    let platform = super::trust::here();
+    let index = registry_of(&platform);
+
+    let listed = listed_here(&index);
+
+    assert!(
+        listed.contains(&(
+            "unhashed",
+            Some(Unoffered::Unhashed {
+                id: agent("unhashed"),
+                platform: platform.as_str().into(),
+            })
+        )),
+        "{listed:?}"
+    );
+    assert!(
+        index
+            .offers()
+            .iter()
+            .all(|offer| offer.entry().id.as_str() != "unhashed")
+    );
+    assert!(index.offer(&agent("unhashed")).is_err());
+}
+
+/// An entry whose archive here is one crucible does not unpack is listed,
+/// with the reason that names the archive, and is still never offered.
+#[test]
+fn an_unread_archive_is_listed_with_its_reason_and_never_offered() {
+    let platform = super::trust::here();
+    let index = registry_of(&platform);
+
+    let listed = listed_here(&index);
+
+    assert!(
+        listed.contains(&(
+            "zipped",
+            Some(Unoffered::Archive {
+                id: agent("zipped"),
+                platform: platform.as_str().into(),
+                archive: "https://downloads.example.com/agent.rar".into(),
+            })
+        )),
+        "{listed:?}"
+    );
+    assert!(
+        index
+            .offers()
+            .iter()
+            .all(|offer| offer.entry().id.as_str() != "zipped")
+    );
+    assert!(index.offer(&agent("zipped")).is_err());
+}
+
+/// The listing holds every entry with a target here, offered or not, in
+/// registry order, and none with no binary or only another platform's.
+#[test]
+fn an_entry_with_no_target_for_this_platform_is_not_listed() {
+    let index = registry_of(&super::trust::here());
+
+    let listed = listed_here(&index);
+    let ids: Vec<&str> = listed.iter().map(|(id, _)| *id).collect();
+    let offered: Vec<&str> = listed
+        .iter()
+        .filter(|(_, why)| why.is_none())
+        .map(|(id, _)| *id)
+        .collect();
+
+    assert_eq!(
+        ids,
+        [
+            "hashed", "unhashed", "bzipped", "one", "two", "three", "four", "zipped"
+        ]
+    );
+    assert_eq!(
+        offered,
+        ["hashed", "bzipped", "one", "two", "three", "four"]
+    );
+}
+
 #[test]
 fn a_registry_target_reaches_its_archive_host_and_the_four_redirect_hosts() {
     let index = registry_of(&super::trust::here());

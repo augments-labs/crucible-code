@@ -562,6 +562,9 @@ impl Desk<'_> {
             Outcome::Catalog {
                 agents,
                 more,
+                // A search names every agent listed, the user's own programs
+                // among them, so it says `more` of those.
+                installable: _,
                 unrefreshed,
                 registry,
                 antigravity,
@@ -845,7 +848,9 @@ fn listing(
             .as_deref()
             .is_none_or(|wanted| listed.agent.as_str().to_lowercase().contains(wanted))
     }) {
-        let offered = if listed.offered.is_empty() {
+        let offered = if let Some(why) = &listed.unoffered {
+            format!("offers nothing crucible installs: {}", escaped(why))
+        } else if listed.offered.is_empty() {
             "offers nothing for this platform".to_owned()
         } else {
             format!("offers {}", joined(&listed.offered))

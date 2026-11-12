@@ -640,7 +640,12 @@ program of an agent is found, as
 [`agents try`](#agents-try-agent) would find it, outside crucible's install
 store, the line ends with where it is and the command that tries it, such as
 `goose: offers 2.0.0; not installed; your own at /usr/local/bin/goose (crucible
-agents try goose)`. `TEXT` keeps only the agents whose name holds it, ignoring
+agents try goose)`. A registry agent crucible installs no version of is listed
+only where your own program of it is found, with why in place of the versions,
+such as `cursor: offers nothing crucible installs: the ACP Registry gives
+cursor no SHA-256 for linux-x86_64, so its program cannot be pinned and it is
+not offered; not installed; your own at /opt/tools/cursor-agent (crucible
+agents try cursor)`. `TEXT` keeps only the agents whose name holds it, ignoring
 case. Antigravity, which `/login` sets up, is left out, as it is from
 `/catalog`, unless your own `agy` or `antigravity` is on your `PATH`: then a
 line of its own follows the others, such as `antigravity: your own at
