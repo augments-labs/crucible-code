@@ -226,8 +226,12 @@ it as text; `written` shows every formula exactly as the model wrote it, its
 markers included. A change in `/settings` takes effect at once: every display
 formula already drawn is laid out again in the new form, while a span already
 drawn in a line keeps the form it was drawn in and the next span is drawn in
-the new one. Output with no colour, including output that is not a terminal,
-keeps every formula as written.
+the new one. In native mode a display formula already written to the
+terminal's scrollback changes only when the scrollback is written again, once
+the window has been resized; see
+[What native mode cannot do](../configuration/configuration.md#what-native-mode-cannot-do).
+Output with no colour, including output that is not a terminal, keeps every
+formula as written.
 
 ## Lists and quotes that wrap
 
