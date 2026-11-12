@@ -325,7 +325,9 @@ fn cut_before_its_task() -> Arc<Recording> {
         Verdict::Allow,
         Arc::clone(&store),
     );
-    first.turn("make the parser streaming").expect("a first turn");
+    first
+        .turn("make the parser streaming")
+        .expect("a first turn");
     drop(first);
     let lost = store
         .kept()
@@ -396,6 +398,39 @@ fn a_session_continued_from_a_log_that_lost_its_task_says_the_request_was_not_ke
     later.turn("go on").expect("the first continued turn");
 
     says_the_request_was_not_kept(&later.sent, "go on");
+}
+
+#[test]
+fn a_new_session_after_one_whose_log_lost_its_task_keeps_its_own_request() {
+    let (picked, replayed) = cut_before_its_task().reopened();
+    let mut later = compacting(
+        vec![
+            saying("continued"),
+            saying("started"),
+            saying("measured"),
+            recap("kept context"),
+            saying("finished"),
+        ],
+        Tools::new(),
+    );
+    later.runner.pick_up(picked, replayed);
+    later.turn("go on").expect("the turn after the pick-up");
+
+    later
+        .runner
+        .pick_up(Recording::started("a new session"), Transcript::new());
+    later
+        .turn("add a benchmark")
+        .expect("the new session's turn");
+    later.turn("and run it").expect("a second turn");
+    compacted(&mut later);
+    later.turn("finish").expect("the turn after compaction");
+
+    let told = restated(&later.sent).expect("the person's words were restated");
+    assert!(
+        told.contains("Their request:\n> add a benchmark\n"),
+        "the new session took the lost request of the one before for its own: {told:?}"
+    );
 }
 
 #[test]

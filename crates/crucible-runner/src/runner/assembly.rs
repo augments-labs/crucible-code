@@ -47,7 +47,7 @@ use crucible_context::{
     ContextSection, Live, Questions, QuestionsSection, Task, TaskSection, asked, assemble,
 };
 use crucible_tools::Deferred;
-use crucible_types::{Ancestry, Message, Transcript};
+use crucible_types::{Ancestry, Message};
 
 use super::Runner;
 use super::passes::Ending;
@@ -219,15 +219,6 @@ impl Runner {
                 }),
         };
         self.task.insert(task)
-    }
-
-    /// Whether `transcript` holds anything said to the agent, by the person
-    /// or by the application on their behalf.
-    pub(super) fn said_in(transcript: &Transcript) -> bool {
-        transcript
-            .messages()
-            .iter()
-            .any(|message| matches!(message, Message::User { .. }))
     }
 
     /// Records the batches a root run's registry was asked during the tool

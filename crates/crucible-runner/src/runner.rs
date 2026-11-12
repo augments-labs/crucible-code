@@ -458,7 +458,7 @@ impl Runner {
     pub fn resuming(mut self, transcript: Transcript) -> Self {
         self.state.forget_checked();
         self.state.turn = Self::counting(&transcript);
-        self.inherited_words = Self::said_in(&transcript);
+        self.inherited_words = transcript.turns() > 0;
         self.state.transcript = transcript;
         let reading = self.admit_restricted();
         self.recount(reading);
@@ -534,7 +534,7 @@ impl Runner {
         self.permission.forget();
         self.state.forget_checked();
         self.state.turn = Self::counting(&transcript);
-        self.inherited_words = Self::said_in(&transcript);
+        self.inherited_words = transcript.turns() > 0;
         self.state.transcript = transcript;
         self.state.totals = Totals::new();
 
