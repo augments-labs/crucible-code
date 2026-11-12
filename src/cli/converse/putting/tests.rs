@@ -285,6 +285,14 @@ fn the_footer_names_a_key_only_where_it_does_something() {
 }
 
 #[test]
+fn the_last_stop_names_no_note() {
+    assert_eq!(
+        last(Glyphs::Unicode),
+        "esc to cancel · ←→ between questions"
+    );
+}
+
+#[test]
 fn the_footer_is_drawn_in_the_glyph_set_the_screen_uses() {
     // A terminal that cannot draw the dot or the arrows shows boxes in their
     // place, so under the ASCII set neither may reach the row.
@@ -304,8 +312,13 @@ fn the_footer_is_drawn_in_the_glyph_set_the_screen_uses() {
     let (rows, _) = drawn(&mut standing, &questions, 80, 30, ascii);
     let art: Vec<String> = rows.iter().map(crucible_tui::Row::text).collect();
     assert!(
-        art.iter()
-            .any(|row| row.contains("esc to cancel - <> between questions")),
+        art.iter().any(|row| row
+            .trim_end()
+            .ends_with("esc to cancel - <> between questions")),
+        "{art:#?}"
+    );
+    assert!(
+        !art.iter().any(|row| row.contains("n for a note")),
         "{art:#?}"
     );
     assert!(

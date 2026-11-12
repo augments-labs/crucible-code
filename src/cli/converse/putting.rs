@@ -72,11 +72,11 @@ const NOTHING: &str = "nothing chosen";
 /// Rows kept for the transcript above a panel nobody asked for.
 const KEPT: usize = 4;
 
-/// The keys the quiet row under the frame names, each written out whole,
-/// because what a footer costs is read off the row somebody sees and not off
-/// smaller words. The arrows in front of [`BETWEEN`] and the dot that parts the
-/// keys are the glyph set's, so a terminal that cannot draw them is never sent
-/// them.
+// The keys the quiet row under the frame names. Each row names every key it
+// shows rather than adding to another row, because what a footer costs is read
+// off the row somebody sees and not off the pieces it was assembled from. The
+// arrows in front of `BETWEEN` and the dot that parts the keys are the glyph
+// set's, so a terminal that cannot draw them is never sent them.
 const CANCEL: &str = "esc to cancel";
 const CHOOSE: &str = "space to choose";
 const BETWEEN: &str = "between questions";

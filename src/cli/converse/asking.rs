@@ -102,13 +102,13 @@ const EXPLAIN: &[&str] = &["esc to cancel", "ctrl+e to explain"];
 /// pieces it was assembled from. The panel parts them with the glyph set's dot.
 const HIDE: &[&str] = &["esc to cancel", "ctrl+e to hide"];
 
-/// The item the panel adds to whichever of those it was given, where the prose
-/// did not fit. Named here and drawn there, because the panel is the only party
-/// that knows how tall the paragraphs folded to.
+/// The words of the item [`more`] builds.
 const MORE: &str = "to see more";
 
-/// [`MORE`] behind the glyph set's arrows, so a terminal that cannot draw
-/// them is never sent them.
+/// The item the panel adds to whichever of those it was given, where the prose
+/// did not fit. Named here and drawn there, because the panel is the only party
+/// that knows how tall the paragraphs folded to. The arrows are the glyph
+/// set's, so a terminal that cannot draw them is never sent them.
 fn more(glyphs: Glyphs) -> String {
     let (up, down) = glyphs.walking();
     format!("{up}{down} {MORE}")
