@@ -704,7 +704,7 @@ fn the_picker_says_the_words_it_was_drawn_to_say() {
     // own below.
     assert_eq!(HINT, "a session, or a branch");
     assert_eq!(NOVIEW, "nothing to show");
-    assert_eq!(TAKES, "Enter to resume · Esc to cancel");
+    assert_eq!(TAKES, ["Enter to resume", "Esc to cancel"]);
     assert_eq!(NEVER, "no earlier session for this workspace");
     assert_eq!(CUT, "the rest could not be read");
 
@@ -1297,7 +1297,7 @@ fn drawn_keys(forms: &[String], columns: usize) -> String {
         refused: None,
         preview: &[],
         preview_meta: "",
-        takes: TAKES,
+        takes: &parted(TAKES, Glyphs::Unicode),
         nothing: NEVER,
         noview: NOVIEW,
         keys: &forms,
@@ -1420,7 +1420,11 @@ fn enter_on_a_session_recorded_elsewhere_says_how_to_resume_it_there() {
     // what it does on a session of this directory.
     let marked = stood.marked().expect("marked");
     assert_eq!(
-        taken(marked, sample.workspace().root()),
+        taken(marked, sample.workspace().root(), Glyphs::Ascii),
+        "Enter to see how to resume - Esc to cancel"
+    );
+    assert_eq!(
+        taken(marked, sample.workspace().root(), Glyphs::Unicode),
         "Enter to see how to resume · Esc to cancel"
     );
 
@@ -1431,8 +1435,12 @@ fn enter_on_a_session_recorded_elsewhere_says_how_to_resume_it_there() {
     // A session of this directory is taken as it always was.
     stood.standing.marked = at(&home, &stood);
     assert_eq!(
-        taken(stood.marked().expect("marked"), sample.workspace().root()),
-        TAKES
+        taken(
+            stood.marked().expect("marked"),
+            sample.workspace().root(),
+            Glyphs::Ascii
+        ),
+        "Enter to resume - Esc to cancel"
     );
     assert_eq!(
         pressed(Pressed::Key(Key::Enter), &mut stood, &here),
@@ -1488,7 +1496,7 @@ fn the_command_to_resume_elsewhere_breaks_after_its_and_and_never_cuts_the_id() 
         refused: None,
         preview: &[],
         preview_meta: "",
-        takes: TAKES,
+        takes: &parted(TAKES, Glyphs::Unicode),
         nothing: NEVER,
         noview: NOVIEW,
         keys: &["esc"],

@@ -173,7 +173,7 @@ impl Standing {
         Self {
             tab: SandboxTab::Sandbox,
             selected: [usize::from(!settings.enabled()), 0],
-            summary: format!("Sandbox {state} · {source}"),
+            summary: format!("Sandbox {state} {} {source}", terms.style().glyphs().dot()),
             settings: choices,
             dependencies: dependencies(terms),
         }
@@ -281,6 +281,22 @@ fn walking(key: Pressed, standing: &mut Standing) -> Moved {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_summary_is_parted_with_the_glyph_sets_own_dot() {
+        // Said on a line of its own when the panel is not stood, and drawn
+        // over it when it is: either way a terminal set to ASCII glyphs is not
+        // sent U+00B7.
+        let terms = crate::cli::converse::tests::plain();
+        terms
+            .style
+            .set(terms.style().drawing(crucible_tui::Glyphs::Ascii));
+
+        let summary = Standing::new(&terms).summary;
+        assert!(summary.starts_with("Sandbox "), "{summary:?}");
+        assert!(summary.contains(" - "), "{summary:?}");
+        assert!(summary.is_ascii(), "{summary:?}");
+    }
 
     #[test]
     fn an_unsaved_choice_preserves_the_effective_policy() {

@@ -65,8 +65,9 @@ const HINT: &str = "an agent, or a licence";
 /// What the preview pane says where the query left nothing to preview.
 const NOVIEW: &str = "nothing to show";
 
-/// What Enter and Escape do, under the marked agent.
-const TAKES: &str = "Enter to open · Esc to cancel";
+/// What Enter and Escape do, under the marked agent, parted by the glyph set's
+/// dot when it is drawn.
+const TAKES: &[&str] = &["Enter to open", "Esc to cancel"];
 
 /// What the agent's screen says its Escape does.
 const BACK: &str = "esc to go back";
@@ -148,7 +149,7 @@ pub(super) fn run<T: Terminal>(
             Err(refusal) => return say(renderer, &refused(&refusal)),
         };
         if listing.agents.is_empty() || !keys {
-            return printed(renderer, &listing);
+            return printed(renderer, &listing, terms.style().glyphs());
         }
         listing.query = std::mem::take(&mut query);
         loop {
@@ -163,7 +164,7 @@ pub(super) fn run<T: Terminal>(
             match ended {
                 Ended::Took => {}
                 Ended::Left => return Ok(()),
-                Ended::Cramped => return printed(renderer, &listing),
+                Ended::Cramped => return printed(renderer, &listing, terms.style().glyphs()),
             }
             let Some(entry) = listing.marked() else {
                 continue;
@@ -205,7 +206,12 @@ fn carried<T: Terminal>(
 /// A line is folded rather than cut, and there is no preview to open, so
 /// each names the versions the store holds where its entry says only that
 /// one is.
-fn printed<T: Terminal>(renderer: &mut Renderer<T>, listing: &Listing) -> Result<(), Fatal> {
+fn printed<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    listing: &Listing,
+    glyphs: Glyphs,
+) -> Result<(), Fatal> {
+    let dot = glyphs.dot();
     if listing.agents.is_empty() {
         say(renderer, NONE_OFFERED)?;
     }
@@ -216,7 +222,7 @@ fn printed<T: Terminal>(renderer: &mut Renderer<T>, listing: &Listing) -> Result
         };
         say(
             renderer,
-            &format!("{} · {} · {installed}", entry.title, entry.licence),
+            &format!("{} {dot} {} {dot} {installed}", entry.title, entry.licence),
         )?;
     }
     for line in &listing.notice {
@@ -354,7 +360,7 @@ impl Listing {
             refused: None,
             preview: &preview,
             preview_meta: &meta,
-            takes: TAKES,
+            takes: &TAKES.join(&format!(" {} ", glyphs.dot())),
             nothing: &nothing,
             noview: NOVIEW,
             keys: &forms,
