@@ -5200,11 +5200,10 @@ fn a_yes_that_cannot_be_written_down_says_the_message_is_back_and_sends_nothing(
     );
     assert!(!said.contains("Use it anyway"), "{said}");
 
-    // Nothing kept the yes, so once the file is free the question stands
-    // again at the next send.
-    drop(held);
+    // Nothing kept the yes, so the question stands again at the next send.
     window.types_until("\r", "Use it anyway");
     assert_eq!(proxy.asked(), Vec::<String>::new(), "sent without a yes");
+    drop(held);
 }
 
 #[test]
