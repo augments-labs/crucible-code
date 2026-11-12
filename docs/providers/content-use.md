@@ -36,6 +36,17 @@ nothing was sent; the model was not told the command ended
 ! this route needs an answer first; nothing was sent, so the model was not told the command ended
 ```
 
+The prompts you queued behind a turn are asked about the same way when they
+are about to go as the next turn. Going back keeps every one of them in the
+queue and leaves the prompt box as you left it; they go with the next prompt
+you send. A yes that could not be written down keeps them the same way, after
+a line saying why, and so does a window too short to ask in:
+
+```text
+nothing was sent; your queued messages go with the next prompt you send
+! this route needs an answer first; make the window taller, and your queue goes with your next prompt
+```
+
 Making room with `/compact`, or answering **Carry on from summary** when you
 pick up a large session, sends the conversation for its recap, and is asked
 about the same way. There is no message to send or keep: **Go back** sends

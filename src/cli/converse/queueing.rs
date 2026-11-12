@@ -108,10 +108,12 @@ enum Standing {
     Held,
     /// To the next turn the reader sends, and to nothing that runs before it.
     ///
-    /// Set where a used-up plan leaves the lines to the reader between turns.
-    /// That turn is offered them as it starts (see [`Prompts::offered`]); a
-    /// turn the application starts on its own, or room made for the window,
-    /// is not the one they wait for, and is offered none of them.
+    /// Set where a used-up plan leaves the lines to the reader between turns,
+    /// and where the content-use question held back the turn taken from them
+    /// (see [`Prompts::kept`]). That turn is offered them as it starts (see
+    /// [`Prompts::offered`]); a turn the application starts on its own, or
+    /// room made for the window, is not the one they wait for, and is offered
+    /// none of them, nor is the queue taken as a turn of its own after one.
     Loose,
 }
 
@@ -422,6 +424,23 @@ impl Prompts {
         self.standing = Standing::Held;
     }
 
+    /// Puts `line`, taken from the front as the turn the content-use question
+    /// held back, back at the front, and leaves every line to the reader's
+    /// next prompt, as a used-up plan does.
+    ///
+    /// Taken again at once, the queue would be asked about again, once a line,
+    /// and each answer of no would be one more line the reader did not send
+    /// and did not get back. The steer is emptied of what the held-back turn
+    /// offered, so a turn that runs first takes none of it.
+    pub(super) fn kept(&mut self, line: &str, steer: &Steer) {
+        drop(steer.take());
+        self.bytes = self.bytes.saturating_add(line.len());
+        self.lines.push_front(line.to_owned());
+        self.at = 0;
+        self.alone = false;
+        self.standing = Standing::Loose;
+    }
+
     /// Leaves every line to the reader between turns: on offer to the next
     /// turn they send (see [`Prompts::offered`]), and none of them to go alone.
     fn let_go(&mut self) {
@@ -462,8 +481,12 @@ impl Prompts {
 /// The one exception is a line Ctrl+S sent: it is the turn alone, and the rest
 /// stay queued and held back from it, to be taken whole after it.
 ///
-/// `None` where nothing is waiting, which is the ordinary case.
+/// `None` where nothing is waiting, which is the ordinary case, and where the
+/// lines are left to the reader's next prompt (see [`Standing::Loose`]).
 pub(super) fn batched(queued: &mut Prompts, steer: &Steer) -> Option<String> {
+    if queued.standing == Standing::Loose {
+        return None;
+    }
     if std::mem::take(&mut queued.alone) {
         return queued.pop();
     }
@@ -542,7 +565,7 @@ pub(super) fn taken<T: Terminal>(
         },
         style,
     )?;
-    let work = Work::Turn(said, attached, author);
+    let work = Work::Queued(said, attached);
     let (back, leaving) = ran(conversation, renderer, terms, work, held)?;
     Ok((back, Some(leaving)))
 }

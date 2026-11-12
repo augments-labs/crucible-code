@@ -1112,7 +1112,7 @@ fn ran<T: Terminal>(
     // is the one that decides.
     let answering = match &work {
         Work::Answer(submission) => Some((submission.era.clone(), submission.id)),
-        Work::Turn(..) | Work::Room(_) => None,
+        Work::Turn(..) | Work::Queued(..) | Work::Room(_) => None,
     };
     if let Some((era, id)) = &answering {
         if !waits(held, era, *id) {
@@ -1148,7 +1148,7 @@ fn ran<T: Terminal>(
     // Lines a used-up plan left to the reader go with the next turn the
     // reader sends, and with nothing the application starts on its own.
     let sent = match &work {
-        Work::Turn(_, _, Author::Person) | Work::Answer(_) => true,
+        Work::Turn(_, _, Author::Person) | Work::Queued(..) | Work::Answer(_) => true,
         Work::Turn(_, _, Author::Application) | Work::Room(_) => false,
     };
     if sent {
@@ -1984,6 +1984,13 @@ fn sent(
                 }
                 Err(refusal) => Ended::Refused(refusal),
             },
+            Work::Queued(prompt, attached) => match Prompt::new(&prompt) {
+                Ok(prompt) => {
+                    let asked = Command::Prompt(prompt);
+                    asking.turn(&mut conversation, asked, attached, &run).await
+                }
+                Err(refusal) => Ended::Refused(refusal),
+            },
             Work::Room(Compacting::Asked) => {
                 asking
                     .turn(&mut conversation, Command::Compact, Box::default(), &run)
@@ -2104,6 +2111,12 @@ enum Work {
     /// One prompt, the files it named, who wrote it, and everything that
     /// follows from it until the agent yields.
     Turn(String, Box<[Attachment]>, Author),
+    /// The lines the reader queued behind a turn, as the turn they are taken
+    /// as: the oldest is its prompt, with the files it named, and the rest are
+    /// offered to it. The person's words, run as any prompt of theirs is; told
+    /// apart from one sent from the box because, held back, they go back to
+    /// the queue rather than into the box.
+    Queued(String, Box<[Attachment]>),
     /// Room, made for the reason it names.
     Room(Compacting),
     /// The dock's answers to questions the model asked without waiting,

@@ -19,13 +19,16 @@ use crate::cli::fake::Script;
 
 use crate::cli::converse::answering::Answers;
 use crate::cli::converse::docking::Submission;
+use crate::cli::converse::queueing::{self, Retained};
 use crate::cli::converse::warning::{
-    CRAMPED_NOTE, CRAMPED_ROOM, CRAMPED_SEND, DROPPED, KEPT, Put, UNSENT, left, returned,
-    unanswered,
+    CRAMPED_NOTE, CRAMPED_QUEUE, CRAMPED_ROOM, CRAMPED_SEND, DROPPED, KEPT, Put, QUEUE_KEPT,
+    UNSENT, left, returned, unanswered,
 };
 use crate::cli::converse::{Held, Work, ran, refreshed};
 
-use super::{opening, paired, plain, saying, scripted};
+use crate::cli::style::Style;
+
+use super::{opening, paired, plain, saying, scripted, typed};
 
 /// Consent that serves the fake provider on the Google key row's route.
 fn serving_google() -> Consent {
@@ -479,6 +482,15 @@ fn going_back(work: &Work) -> &'static str {
 }
 
 #[test]
+fn the_question_before_a_queued_turn_says_the_lines_stay_queued() {
+    let queue = Work::Queued("first".to_owned(), Box::default());
+
+    let answered = going_back(&queue);
+    assert!(answered.contains("in the queue"), "{answered}");
+    assert!(!answered.contains("prompt box"), "{answered}");
+}
+
+#[test]
 fn the_question_before_a_dock_answer_says_the_answers_stay_in_the_dock() {
     let answer = Work::Answer(Submission {
         era: crucible_client_api::Era::Stint(1),
@@ -548,8 +560,10 @@ fn a_woken_note_held_back_leaves_the_box_as_the_person_left_it() {
 fn what_is_said_after_holding_back_names_what_became_of_it() {
     // The person's message is back in the box; the note is dropped, and says
     // the model was not told; room and the dock's answers had nothing to give
-    // back. Neither of the note's lines promises a send to try again.
+    // back, and the queue stays queued. Neither of the note's lines promises a
+    // send to try again.
     let message = Work::Turn("hello".to_owned(), Box::default(), Author::Person);
+    let queue = Work::Queued("first".to_owned(), Box::default());
     let note = Work::Turn(
         "Background command finished: exit status 0".to_owned(),
         Box::default(),
@@ -570,9 +584,11 @@ fn what_is_said_after_holding_back_names_what_became_of_it() {
     assert_eq!(left(&room, true), CRAMPED_ROOM);
     assert_eq!(left(&answers, false), UNSENT);
     assert_eq!(left(&answers, true), CRAMPED_ROOM);
+    assert_eq!(left(&queue, false), QUEUE_KEPT);
+    assert_eq!(left(&queue, true), CRAMPED_QUEUE);
     // The line says the message is back in the box exactly where it is put
     // back, and only the person's own message is.
-    for work in [&message, &note, &room, &answers] {
+    for work in [&message, &note, &room, &answers, &queue] {
         assert_eq!(left(work, false) == KEPT, returned(work).is_some());
     }
     assert_eq!(returned(&message), Some("hello"));
@@ -610,4 +626,77 @@ fn the_question_before_room_is_made_offers_no_message_to_send_or_keep() {
         assert!(back.contains("nothing is sent"), "{back}");
         assert!(back.contains("conversation"), "{back}");
     }
+}
+
+#[test]
+fn a_queue_held_back_keeps_every_line_and_the_box_as_the_reader_left_it() {
+    // The lines queued behind a turn are the next turn. Held back on a route
+    // with no yes, every one of them stays in the queue: none is lost, none
+    // takes the place of what the reader has typed in the box, and they are
+    // not asked about again until the reader sends the prompt they go with.
+    let script = Script::new(vec![saying("answered")]);
+    let asked = script.asked();
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(script, Tools::new(), session)
+    });
+    let warned = Terms {
+        consent: serving_google(),
+        ..plain()
+    };
+    let opening = opening();
+    let mut input = Cursor::new(Vec::new());
+    let mut held = Held::new(
+        warned.plan.clone(),
+        warned.sending.get(),
+        Answers {
+            input: &mut input,
+            keys: true,
+        },
+        &opening,
+    );
+    for line in ["first", "second", "third"] {
+        assert_eq!(held.queued.accept(&mut typed(line)), Retained::Accepted);
+    }
+    held.editor.put("half a thought");
+    // Redirected and too short for the panel, so the warning ends unasked.
+    let mut cramped = Renderer::new(Recording::redirected(80, 3));
+
+    let (conversation, taken) = queueing::taken(
+        conversation,
+        &mut cramped,
+        &warned,
+        &mut held,
+        Style::plain(),
+    )
+    .expect("the queue to be taken");
+
+    assert_eq!(taken, Some(false), "the session left");
+    assert_eq!(asked.load(Ordering::SeqCst), 0, "the queue was sent");
+    assert_eq!(held.editor.text(), "half a thought");
+    let waiting = held.queued.waiting_all().collect::<Vec<_>>();
+    assert_eq!(waiting, ["first", "second", "third"]);
+    let written = cramped.terminal().written().to_string();
+    assert!(written.contains(CRAMPED_QUEUE), "{written}");
+    assert!(!written.contains(CRAMPED_SEND), "{written}");
+
+    // Nothing the held-back turn offered is left for a turn that runs first.
+    assert!(!warned.steer.any(), "a held-back line is still on offer");
+    // Back at the top of the loop, before the reader has sent anything.
+    let (_, again) = queueing::taken(
+        conversation,
+        &mut cramped,
+        &warned,
+        &mut held,
+        Style::plain(),
+    )
+    .expect("the queue to be asked");
+    assert_eq!(
+        again, None,
+        "the queue was taken again before the reader sent"
+    );
+    assert_eq!(held.queued.waiting_count(), 3);
+    assert_eq!(
+        cramped.terminal().written().matches(CRAMPED_QUEUE).count(),
+        1
+    );
 }
