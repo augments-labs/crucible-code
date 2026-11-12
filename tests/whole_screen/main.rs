@@ -5170,6 +5170,43 @@ fn a_send_on_a_warned_route_stands_the_question_and_sends_nothing_before_the_yes
 }
 
 #[test]
+fn a_yes_that_cannot_be_written_down_says_the_message_is_back_and_sends_nothing() {
+    let proxy = warning::Proxy::new();
+    let mut window = warning::through(
+        "warning-unwritten",
+        (80, 30),
+        warning::GOOGLE,
+        &proxy,
+        (&[], None),
+    );
+    window.types_until("hello\r", "Use it anyway");
+
+    // Another crucible holds the file the yes is written into, so the yes
+    // cannot be written down and the question is left unanswered.
+    let held = std::fs::File::create(window.home().join("config.json.lock")).expect("a lock");
+    held.lock().expect("the lock held");
+    window.types_until("\r", "could not be written down");
+    let said = window.picture();
+    assert!(
+        said.contains("nothing was sent; your message is back in the prompt box"),
+        "{said}"
+    );
+    assert!(said.contains("hello"), "{said}");
+    assert_eq!(proxy.asked(), Vec::<String>::new(), "sent without a yes");
+    assert!(
+        !warning::said(&window).contains("key:google"),
+        "{}",
+        warning::said(&window)
+    );
+    assert!(!said.contains("Use it anyway"), "{said}");
+
+    // Nothing kept the yes, so the question stands again at the next send.
+    window.types_until("\r", "Use it anyway");
+    assert_eq!(proxy.asked(), Vec::<String>::new(), "sent without a yes");
+    drop(held);
+}
+
+#[test]
 fn the_question_stands_at_forty_and_eighty_columns_in_either_glyph_set() {
     for (columns, ascii) in [(40, false), (40, true), (80, true)] {
         let proxy = warning::Proxy::new();

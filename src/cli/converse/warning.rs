@@ -284,10 +284,11 @@ pub(super) fn recorded(terms: &Terms, warned: &Warned) -> Result<(), String> {
 
 /// Whether `work` is held back rather than sent: asked about first where the
 /// route it would go on has no yes, and handed back whole where the answer
-/// was anything but yes. The application's note about a command that ended is
-/// not handed back: it is dropped, and the prompt box keeps what it held. A
-/// turn [`Conversation::unlaunchable`] refuses is not held: it goes on to
-/// that refusal unasked.
+/// was anything but yes, or a yes that could not be written down. The
+/// application's note about a command that ended is not handed back: it is
+/// dropped, and the prompt box keeps what it held. A turn
+/// [`Conversation::unlaunchable`] refuses is not held: it goes on to that
+/// refusal unasked.
 ///
 /// # Errors
 ///
@@ -303,7 +304,8 @@ pub(super) fn held<T: Terminal>(
     // Every route that holds the send is asked about in turn: two warned
     // routes at one origin each keep the request back until each has its
     // yes. A yes is written down before the next question, so a route comes
-    // back only where its yes could not be, and that is said and stops here.
+    // back only where its yes could not be, and that is said, with what
+    // became of the work, and stops here.
     let said = loop {
         let Some(warned) = unsent(conversation, terms, work) else {
             return Ok(false);
@@ -322,9 +324,14 @@ pub(super) fn held<T: Terminal>(
             return Err(Fatal::Unanswered(unanswered(&warned)));
         }
         break match ask(renderer, terms.style(), &warned, Put::before(work))? {
+            // Nothing was sent where the yes could not be written down, as
+            // after going back, so what became of the work is said after why.
             Answer::Yes => match recorded(terms, &warned) {
                 Ok(()) => continue,
-                Err(said) => said,
+                Err(why) => {
+                    renderer.commit(&why)?;
+                    left(work, false).to_owned()
+                }
             },
             Answer::Back => left(work, false).to_owned(),
             Answer::Cramped => left(work, true).to_owned(),
@@ -338,9 +345,10 @@ pub(super) fn held<T: Terminal>(
 }
 
 /// What is said once `work` was held back unsent, where the panel was answered
-/// with no, or did not fit where `cramped`. Room to be made has no message to
-/// give back and the dock's answers stay in the dock; the application's note
-/// is not the person's to have back, and is dropped.
+/// with no or with a yes that could not be written down, or did not fit where
+/// `cramped`. Room to be made has no message to give back and the dock's
+/// answers stay in the dock; the application's note is not the person's to
+/// have back, and is dropped.
 pub(super) fn left(work: &Work, cramped: bool) -> &'static str {
     match (work, cramped) {
         (Work::Turn(_, _, Author::Person), false) => KEPT,
