@@ -5,8 +5,10 @@
 //! Over the same conversations and responses as Kimi's differential fixtures,
 //! and through nothing but what this crate makes public. The expected counts in
 //! `src/moonshot/fixtures/allocations.txt` were written by the revision this
-//! test arrived in; a case may allocate fewer times or fewer bytes than it
-//! says, never more.
+//! test arrived in, and their bytes written again, by a product decision, when
+//! a count added to the usage a response reports made every streamed piece
+//! larger with no allocation more; a case may allocate fewer times or fewer
+//! bytes than it says, never more.
 //!
 //! No probe of `scripts/sh/bench.sh` builds a provider request or reads a
 //! provider stream, which is why this is counted here.

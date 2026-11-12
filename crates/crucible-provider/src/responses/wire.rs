@@ -362,6 +362,12 @@ pub(crate) struct Counts {
     pub(crate) cache_read: Option<u64>,
     /// `input_tokens_details.cache_write_tokens`: the part written to it.
     pub(crate) cache_write: Option<u64>,
+    /// `input_tokens_details.cache_write_tokens_details.ttl_12h_tokens`: the
+    /// part of the write kept for twelve hours.
+    pub(crate) cache_write_12h: Option<u64>,
+    /// `input_tokens_details.cache_write_tokens_details.ttl_30m_tokens`: the
+    /// part of the write kept for thirty minutes.
+    pub(crate) cache_write_30m: Option<u64>,
     /// `output_tokens`.
     pub(crate) output: Option<u64>,
     /// `output_tokens_details.reasoning_tokens`.
@@ -378,10 +384,14 @@ impl Counts {
             .get("response")
             .and_then(|response| response.get("usage"))?;
         let input_details = usage.get("input_tokens_details");
+        let write_details =
+            input_details.and_then(|details| details.get("cache_write_tokens_details"));
         Some(Self {
             input: number(usage, "input_tokens"),
             cache_read: input_details.and_then(|details| number(details, "cached_tokens")),
             cache_write: input_details.and_then(|details| number(details, "cache_write_tokens")),
+            cache_write_12h: write_details.and_then(|details| number(details, "ttl_12h_tokens")),
+            cache_write_30m: write_details.and_then(|details| number(details, "ttl_30m_tokens")),
             output: number(usage, "output_tokens"),
             reasoning: usage
                 .get("output_tokens_details")
@@ -403,18 +413,44 @@ impl Counts {
         let mut details = Vec::new();
         detail::<D>(&mut details, "cached_tokens", self.cache_read)?;
         detail::<D>(&mut details, "cache_write_tokens", self.cache_write)?;
+        detail::<D>(&mut details, "ttl_12h_tokens", self.cache_write_12h)?;
+        detail::<D>(&mut details, "ttl_30m_tokens", self.cache_write_30m)?;
         detail::<D>(&mut details, "reasoning_tokens", self.reasoning)?;
 
-        let input = if cache_write_reporting || self.cache_write.is_some() {
+        let mut input = if cache_write_reporting || self.cache_write.is_some() {
             InputTokenUsage::inclusive_read_write(self.input, self.cache_read, self.cache_write)
         } else {
             InputTokenUsage::inclusive_read(self.input, self.cache_read)
         }
         .map_err(usage_problem::<D>)?;
+        if let Some(kept) = self.kept_longer().map_err(usage_problem::<D>)? {
+            input = input
+                .with_cache_write_extended(kept)
+                .map_err(usage_problem::<D>)?;
+        }
         let normalized =
             ProviderUsage::new(input, self.output, self.reasoning, self.total, &details)
                 .map_err(usage_problem::<D>)?;
         Ok(Delta::Usage(normalized))
+    }
+
+    /// The part of the write kept twelve hours, where the response splits its
+    /// write by how long it is kept. A split is both parts adding up to the
+    /// write; anything short of that is refused rather than dropped, since a
+    /// price read off it would charge part of the write at the wrong rate.
+    fn kept_longer(self) -> Result<Option<u64>, UsageError> {
+        match (self.cache_write_12h, self.cache_write_30m) {
+            (None, None) => Ok(None),
+            (Some(longer), Some(shorter)) => {
+                let whole = longer.checked_add(shorter).ok_or(UsageError::Overflow)?;
+                if self.cache_write == Some(whole) {
+                    Ok(Some(longer))
+                } else {
+                    Err(UsageError::SplitContradictsWhole)
+                }
+            }
+            (Some(_), None) | (None, Some(_)) => Err(UsageError::SplitContradictsWhole),
+        }
     }
 }
 

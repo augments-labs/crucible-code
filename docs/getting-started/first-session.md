@@ -1134,7 +1134,9 @@ it.
 pays for it (`API key`, or the sign-in's name, such as `ChatGPT sign-in`), with
 what the session has used: its cost, the time its requests were out and the time
 since it started, the lines edits added and removed, and its tokens in, out,
-read from a cache and written to one. A session with a model crucible has no
+read from a cache and written to one. Where the provider reports which part of
+those writes it kept for its longer retention class, that part is named too, as
+`kept longer`; it is counted inside the writes, not added to them. A session with a model crucible has no
 price for says `not priced` rather than `$0.00`, as does one where an answer
 finished without saying what it used, and one where a model's
 [fast form](../providers/fast.md) was asked for and not refused. A cost that

@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::fake::inclusive_usage;
+use crucible_types::{InputTokenUsage, ProviderNumericDetail, ProviderUsage};
 
 /// One event, as the framing above hands it over.
 ///
@@ -519,4 +520,96 @@ fn a_finished_response_says_what_the_request_carried() {
             Delta::Stopped(StopReason::Yielded),
         ]
     );
+}
+
+/// A finished response whose cache write of 100 is split by retention class
+/// as `split`, the JSON members inside `cache_write_tokens_details`, or not
+/// split at all where `split` is `None`.
+fn written_apart(split: Option<&str>) -> String {
+    let details = split.map_or_else(String::new, |split| {
+        format!(r#","cache_write_tokens_details":{{{split}}}"#)
+    });
+    format!(
+        r#"{{"type":"response.completed","response":{{"output":[],"usage":{{"input_tokens":1200,"input_tokens_details":{{"cached_tokens":700,"cache_write_tokens":100{details}}},"output_tokens":58,"total_tokens":1258}}}}}}"#
+    )
+}
+
+fn usage_of(done: &str) -> ProviderUsage {
+    match out(done).first() {
+        Some(Delta::Usage(usage)) => usage.clone(),
+        other => panic!("usage must precede the stop: {other:?}"),
+    }
+}
+
+#[test]
+fn the_part_of_a_cache_write_kept_twelve_hours_is_counted_inside_the_write() {
+    let split = usage_of(&written_apart(Some(
+        r#""ttl_12h_tokens":70,"ttl_30m_tokens":30"#,
+    )));
+    let whole = usage_of(&written_apart(None));
+
+    assert_eq!(split.input.cache_write_extended, Some(70));
+    assert_eq!(split.input.cache_write_or_creation, Some(100));
+    assert_eq!(split.input.uncached, whole.input.uncached);
+    assert_eq!(split.input.uncached, Some(400));
+    assert_eq!(split.total, Some(1_258));
+    let labelled = |label: &str| {
+        split
+            .details()
+            .iter()
+            .find(|detail| detail.label == label)
+            .map(|detail| detail.value)
+    };
+    assert_eq!(labelled("ttl_12h_tokens"), Some(70));
+    assert_eq!(labelled("ttl_30m_tokens"), Some(30));
+}
+
+#[test]
+fn a_cache_write_split_that_does_not_add_up_to_the_write_is_a_protocol_failure() {
+    let done = written_apart(Some(r#""ttl_12h_tokens":70,"ttl_30m_tokens":29"#));
+
+    let problem = deltas(&event(&done), &mut Responses::default()).expect_err("a failure");
+
+    assert!(
+        matches!(problem, ProviderError::Protocol { .. }),
+        "{problem:?}"
+    );
+    assert!(
+        problem.to_string().contains("invalid usage accounting"),
+        "{problem}"
+    );
+}
+
+#[test]
+fn half_a_cache_write_split_or_one_with_no_write_is_a_protocol_failure() {
+    let without_write = r#"{"type":"response.completed","response":{"output":[],"usage":{"input_tokens":1200,"input_tokens_details":{"cached_tokens":700,"cache_write_tokens_details":{"ttl_12h_tokens":70,"ttl_30m_tokens":30}},"output_tokens":58}}}"#;
+    for done in [
+        written_apart(Some(r#""ttl_12h_tokens":70"#)),
+        written_apart(Some(r#""ttl_30m_tokens":30"#)),
+        without_write.to_owned(),
+    ] {
+        let problem = deltas(&event(&done), &mut Responses::default()).expect_err(&done);
+
+        assert!(
+            matches!(problem, ProviderError::Protocol { .. }),
+            "{done}: {problem:?}"
+        );
+        assert!(
+            problem.to_string().contains("invalid usage accounting"),
+            "{done}: {problem}"
+        );
+    }
+}
+
+#[test]
+fn a_cache_write_not_split_reads_as_it_always_has() {
+    let input = InputTokenUsage::inclusive_read_write(Some(1_200), Some(700), Some(100)).unwrap();
+    let details = [
+        ProviderNumericDetail::new("cached_tokens", 700).unwrap(),
+        ProviderNumericDetail::new("cache_write_tokens", 100).unwrap(),
+    ];
+    let expected = ProviderUsage::new(input, Some(58), None, Some(1_258), &details).unwrap();
+
+    assert_eq!(usage_of(&written_apart(None)), expected);
+    assert_eq!(expected.input.cache_write_extended, None);
 }

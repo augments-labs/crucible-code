@@ -29,9 +29,10 @@ impl Version {
     /// client without that capability and one for a conversation, and the move
     /// on an agent a login's connect can end on in their place, and the sixth
     /// the command and the move that try the user's own program for a catalog
-    /// agent. A test holds
-    /// the number and what the frames are made of together, so that one
-    /// cannot move without the other being looked at.
+    /// agent, and the part of the cache writes kept longer that a usage
+    /// reading counts. A test holds the number and what the frames are made
+    /// of together, so that one cannot move without the other being looked
+    /// at.
     pub const CURRENT: Self = Self(6);
 
     /// The revision numbered `number`, spoken or not.

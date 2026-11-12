@@ -85,6 +85,14 @@ Use `/cache cleanup` for one bounded, cancellable cleanup pass. A cache read is
 called a hit only when provider-reported usage says so; a local fingerprint
 match or accepted request is not a hit.
 
+A provider that reports apart the part of its cache writes kept for its longer
+retention class has that part shown in `/usage`'s token row, as `kept longer`,
+and on `/cache`'s normalized-usage line. The part is counted inside the cache
+write total, never added to it. OpenAI reports it as `ttl_12h_tokens`, beside
+`ttl_30m_tokens`, and a response whose two parts do not add up to its write
+total is refused. Where a provider does not say, `/usage` leaves the part out
+and `/cache` reads `kept longer=unknown`.
+
 ## Shipped capability records
 
 Each record's official source and version are compiled into its adapter, so

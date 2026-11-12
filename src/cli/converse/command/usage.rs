@@ -676,12 +676,20 @@ pub(crate) fn body(
             wall,
         ]),
     }
-    let tokens = [
+    let mut tokens = vec![
         format!("{} in", count(usage.used.input)),
         format!("{} out", count(usage.used.output)),
         format!("{} cache read", count(usage.used.cache_read)),
         format!("{} cache write", count(usage.used.cache_write)),
     ];
+    // The part of the writes kept for the longer retention class is inside
+    // the write count, and only a provider that reports it apart has one.
+    if usage.used.cache_write_extended > 0 {
+        tokens.push(format!(
+            "{} kept longer",
+            count(usage.used.cache_write_extended)
+        ));
+    }
     let lines = wrapped(&tokens, glyphs.dot(), columns.saturating_sub(at));
     for (line, words) in lines.into_iter().enumerate() {
         let lead = if line == 0 {
