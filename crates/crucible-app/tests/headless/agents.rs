@@ -3224,6 +3224,49 @@ fn a_kept_key_is_asked_for_by_its_method_where_a_conversation_lent_its_launcher(
     Ok(())
 }
 
+/// The user's own program is signed in by no command, even one its catalog
+/// entry gives: the terminal method is refused before anything is asked or
+/// started, saying to sign the program in itself in a terminal as its entry
+/// says.
+#[test]
+fn an_own_programs_terminal_method_is_refused_for_it_to_run_itself() -> Result<(), Failed> {
+    let bench = Bench::new("agents-door-sign-in-own-terminal")?;
+    bench
+        .server
+        .catalog(1, &[signing_in("goose", ONE)], &json!([]))?;
+    let made = Tree::new("agents-door-sign-in-own-terminal-peer")?;
+    let program = fake_peer::install(
+        &made.0,
+        "goose",
+        &Peer::once(
+            Played::new()
+                .hear(1)
+                .say(acp::initialized("goose", "1.0.0", "terminal")),
+        ),
+    )?;
+    bench.configure(&program, &json!({}))?;
+    let mut front = answering(&bench.server, Some("Yes"));
+
+    let (outcome, _) = bench.ask(sign_in("work", "terminal")?, &mut front, false)?;
+
+    let refused = match &outcome {
+        Err(AgentsError::Piped(why)) => why.to_string(),
+        other => {
+            return Err(format!(
+                "the own program's command was not refused: {}",
+                shape(other)
+            )
+            .into());
+        }
+    };
+    assert!(refused.contains("your own program"), "{refused}");
+    assert!(refused.contains("in a terminal"), "{refused}");
+    assert!(refused.contains("Sign in at a terminal"), "{refused}");
+    assert!(front.put.is_empty(), "something was asked");
+    assert_eq!(fake_peer::played(&made.0), 0, "something started");
+    Ok(())
+}
+
 #[test]
 fn a_sign_in_link_is_shown_only_on_a_listed_host_and_a_paste_only_with_its_state()
 -> Result<(), Failed> {
