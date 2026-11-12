@@ -674,6 +674,38 @@ def load_intake():
     return module
 
 
+def check_probe_with_the_sandbox_off_on_an_unconfined_runner() -> None:
+    """A probe that crucible ran with its sandbox setting off is taken in on a
+    runner the matrix lists as unconfined, and marked as probed without a
+    sandbox."""
+    module = load_intake()
+    runner = {"confined": False, "reason": "FreeBSD has no sandbox backend"}
+    admits, _, record = module.probe({**UNCONFINED, "sandbox": "off"}, "freebsd-x86_64", runner)
+    assert admits == {"name": "fake-agent", "version": "1.0.0"}, admits
+    assert record["sandbox"] == "off" and record["confined"] is False, record
+    line = module.probe_line("freebsd-x86_64", record)
+    assert "probed without a sandbox" in line and "FreeBSD has no sandbox backend" in line, line
+
+
+def check_probe_with_the_sandbox_off_on_a_confined_runner() -> None:
+    """A probe that crucible ran with its sandbox setting off is dropped on a
+    runner the matrix lists as confined, and no other open value is taken."""
+    module = load_intake()
+    try:
+        module.probe({**UNCONFINED, "sandbox": "off"}, "linux-x86_64", {"confined": True})
+    except module.Dropped as dropped:
+        assert "without a sandbox on a runner the matrix lists as confined" in str(dropped), dropped
+    else:
+        raise AssertionError("a probe with the sandbox off was taken in on a confined runner")
+    for sandbox in ["Off", "off ", "open"]:
+        try:
+            module.probe({**UNCONFINED, "sandbox": sandbox}, "freebsd-x86_64", {"confined": False})
+        except module.Dropped as dropped:
+            assert "does not say whether its sandbox was closed" in str(dropped), (sandbox, dropped)
+        else:
+            raise AssertionError(f"a probe whose sandbox reads {sandbox!r} was taken in")
+
+
 def check_budget(scratch: pathlib.Path) -> None:
     """One run reads within a named budget, and writes no more review data
     than `diff` reads back."""
@@ -4435,6 +4467,8 @@ def main() -> int:
             ("full values", lambda: check_full_values(scratch, data)),
             ("escapes", lambda: check_escapes(scratch, data)),
             ("budget", lambda: check_budget(scratch)),
+            ("probe off unconfined", check_probe_with_the_sandbox_off_on_an_unconfined_runner),
+            ("probe off confined", check_probe_with_the_sandbox_off_on_a_confined_runner),
             ("render", lambda: check_render(scratch)),
             ("render refuses", lambda: check_render_refuses(scratch)),
             ("render previous and entries", lambda: check_render_previous_and_entries(scratch)),

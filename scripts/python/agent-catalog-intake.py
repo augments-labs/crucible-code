@@ -98,8 +98,10 @@ what a catalog may hold, `env` naming a loader variable among them, or when its
 per-file list breaks a rule, a link that escapes its tree among them. An entry
 is dropped when no target is left, when its reach names a literal address or
 every host, or when any target left lacks complete probe output: a probe that
-ran without a sandbox is accepted only on a runner the matrix lists as
-unconfined, and is marked for the reviewer; a sign-in method whose `tty` is
+ran without a sandbox, which crucible says as `off` when its sandbox setting
+was off and as `unavailable: ...` when no sandbox could close, is accepted only
+on a runner the matrix lists as unconfined, and is marked for the reviewer, so
+a confined runner must run crucible with the sandbox setting on; a sign-in method whose `tty` is
 not `true`, `false` or `unknown`, and any conformance result but `not run`, is
 refused; and probes on different targets must agree on `agentInfo` and the
 sign-in methods, the refusal naming the field that differs. Each drop is
@@ -3547,7 +3549,7 @@ def probe(value: object, platform: str, runner: dict) -> tuple[dict, list[dict],
         raise Dropped(f"the probe output for {platform} is incomplete")
     sandbox = text(value.get("sandbox"), f"the probe's sandbox for {platform}")
     if sandbox != "closed":
-        if not sandbox.startswith("unavailable"):
+        if not (sandbox == "off" or sandbox.startswith("unavailable")):
             raise Dropped(f"the probe for {platform} does not say whether its sandbox was closed")
         if runner["confined"]:
             raise Dropped(
