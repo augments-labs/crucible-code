@@ -572,6 +572,7 @@ fn a_registry_agent_is_listed_installed_probed_and_answers_a_turn() {
         &serde_json::json!([{"type": "env_var", "id": "key", "name": "API key"}]),
     );
 
+    // The install probe runs with the sandbox on, so the peer writes nothing into its tree.
     let mut window = Watched::shipped(case, (80, 40), (SANDBOXED, &[]), &published);
     window.types_until("/catalog\r", "1 of 1 offered");
     let listing = window.picture();
@@ -638,7 +639,8 @@ fn a_registry_agent_is_listed_installed_probed_and_answers_a_turn() {
             .say(acp::stopped(2, "end_turn")),
     ]);
     std::fs::write(root.join("script"), script.encoded()).expect("the launch script");
-    let document = said(&window);
+    // The conversation runs with the sandbox off, so the peer's script can keep its count.
+    let document = said(&window).replace("\"enabled\": true", "\"enabled\": false");
     window.ends_on("TERM");
     let mut restarted = Watched::shipped(case, (80, 40), (&document, &["--continue"]), &published);
     restarted.types_until("/login\r", "Use an installed coding agent");
@@ -680,6 +682,9 @@ fn a_registry_agent_is_listed_installed_probed_and_answers_a_turn() {
         serde_json::to_vec(&index2).expect("a registry index"),
     )
     .expect("the cached registry index");
+    // The update probe runs with the sandbox on, so the peer writes nothing into its tree.
+    let sandboxed = said(&moved).replace("\"enabled\": false", "\"enabled\": true");
+    std::fs::write(moved.home().join("config.json"), sandboxed).expect("the user file");
 
     moved.types_until("/login\r", "Use an installed coding agent");
     takes(&mut moved, "Use an installed coding agent");
@@ -690,6 +695,9 @@ fn a_registry_agent_is_listed_installed_probed_and_answers_a_turn() {
     takes(&mut moved, "Update");
     moved.types_until("", "goose updated to 2.0.0");
     moved.types_until("", "Manage goose");
+    // The roll back's smoke test and the sign-in run with the sandbox off, as the conversation did.
+    let unsandboxed = said(&moved).replace("\"enabled\": true", "\"enabled\": false");
+    std::fs::write(moved.home().join("config.json"), unsandboxed).expect("the user file");
     takes(&mut moved, "goose");
     moved.types_until("", "Connect");
     moved.types_until("\x1b[A\x1b[A\x1b[A", "› Roll back");
