@@ -31,8 +31,9 @@ mod wire;
 use crucible_credentials::{Credential, Outgoing};
 use crucible_models::{
     DeltaStream, PriceRate, PromptCacheBoundary, PromptCacheCapabilities, PromptCacheContent,
-    PromptCacheMechanismCapability, PromptCachePricing, PromptCacheProvenance, PromptCacheRates,
-    PromptCacheRoute, Provider, ProviderError, Request, StatefulTransportCapability, UsageRate,
+    PromptCacheMechanismCapability, PromptCachePricedRetention, PromptCachePricing,
+    PromptCacheProvenance, PromptCacheRates, PromptCacheRoute, Provider, ProviderError, Request,
+    StatefulTransportCapability, UsageRate,
 };
 use crucible_runtime::{BoxFuture, Cancel};
 use crucible_types::{
@@ -102,6 +103,7 @@ const fn anthropic_rates(input: u64, read: u64, write: u64, output: u64) -> Prom
         uncached_input: UsageRate::priced(PriceRate::per_million(input)),
         cache_read: UsageRate::priced(PriceRate::per_million(read)),
         cache_write_or_creation: UsageRate::priced(PriceRate::per_million(write)),
+        cache_write_extended: UsageRate::Unknown,
         output: UsageRate::priced(PriceRate::per_million(output)),
         reasoning: UsageRate::NotApplicable,
         storage: UsageRate::NotApplicable,
@@ -252,9 +254,10 @@ impl Provider for Anthropic {
         model: &str,
         revision: Option<&str>,
         input_tokens: Option<u64>,
-        retention: PromptCacheRetentionClass,
+        retention: PromptCachePricedRetention,
         at: PricingDate,
     ) -> Result<Option<PromptCachePricing>, PricingError> {
+        let retention = retention.class();
         let reviewed = match model {
             FABLE_51 => FABLE_51_REVIEWED,
             OPUS_55 => NEWER_REVIEWED,
@@ -608,7 +611,9 @@ mod tests {
                 "claude-fable-5",
                 Some("claude-fable-5"),
                 Some(1_000),
-                PromptCacheRetentionClass::ProviderDefault,
+                crucible_models::PromptCachePricedRetention::NotSelected(
+                    PromptCacheRetentionClass::ProviderDefault,
+                ),
                 PricingDate::new(2026, 8, 31),
             )
             .unwrap()
@@ -618,7 +623,9 @@ mod tests {
                 "claude-fable-5",
                 Some("claude-fable-5"),
                 Some(1_000),
-                PromptCacheRetentionClass::Extended,
+                crucible_models::PromptCachePricedRetention::NotSelected(
+                    PromptCacheRetentionClass::Extended,
+                ),
                 PricingDate::new(2026, 8, 31),
             )
             .unwrap()
@@ -628,7 +635,9 @@ mod tests {
                 "claude-sonnet-5",
                 Some("claude-sonnet-5"),
                 Some(1_000),
-                PromptCacheRetentionClass::ProviderDefault,
+                crucible_models::PromptCachePricedRetention::NotSelected(
+                    PromptCacheRetentionClass::ProviderDefault,
+                ),
                 PricingDate::new(2026, 9, 1),
             )
             .unwrap()

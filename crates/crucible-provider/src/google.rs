@@ -108,11 +108,11 @@ impl Provider for Google {
         model: &str,
         revision: Option<&str>,
         tokens: Option<u64>,
-        retention: crucible_types::PromptCacheRetentionClass,
+        retention: crucible_models::PromptCachePricedRetention,
         at: crucible_types::PricingDate,
     ) -> Result<Option<crucible_models::PromptCachePricing>, crucible_types::PricingError> {
         Ok(if self.endpoint == VENDOR {
-            cache::pricing(model, revision, tokens, retention, at)
+            cache::pricing(model, revision, tokens, retention.class(), at)
         } else {
             None
         })

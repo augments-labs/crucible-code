@@ -29,8 +29,8 @@ use crucible_runtime::{BoxFuture, Cancel};
 use crate::speed::{FastForm, Served, Speed};
 use crucible_types::{
     Carried, Continuation, Modalities, Modality, PlanWindows, PricingDate, PricingError,
-    PromptCacheEncoding, PromptCacheRetentionClass, ProviderUsage, Spend, StopReason, ToolId,
-    ToolSchema, Transcript, Utc, Window,
+    PromptCacheEncoding, ProviderUsage, Spend, StopReason, ToolId, ToolSchema, Transcript, Utc,
+    Window,
 };
 
 /// Why a provider could not produce a response.
@@ -732,7 +732,7 @@ pub trait Provider: Send + Sync {
         _model: &str,
         _revision: Option<&str>,
         _input_tokens: Option<u64>,
-        _retention: PromptCacheRetentionClass,
+        _retention: crate::PromptCachePricedRetention,
         _at: PricingDate,
     ) -> Result<Option<crate::PromptCachePricing>, PricingError> {
         Ok(None)

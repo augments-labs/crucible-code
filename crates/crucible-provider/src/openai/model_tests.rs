@@ -78,7 +78,9 @@ fn astra_exact_rates_and_capabilities_respect_route_revision_retention_and_long_
                     MODEL,
                     Some(MODEL),
                     Some(tokens),
-                    PromptCacheRetentionClass::ProviderDefault,
+                    crucible_models::PromptCachePricedRetention::NotSelected(
+                        PromptCacheRetentionClass::ProviderDefault,
+                    ),
                     date,
                 )
                 .unwrap();
@@ -113,7 +115,13 @@ fn astra_exact_rates_and_capabilities_respect_route_revision_retention_and_long_
         ] {
             assert!(
                 provider
-                    .prompt_cache_pricing(MODEL, revision, Some(1000), retention, at)
+                    .prompt_cache_pricing(
+                        MODEL,
+                        revision,
+                        Some(1000),
+                        crucible_models::PromptCachePricedRetention::NotSelected(retention),
+                        at
+                    )
                     .unwrap()
                     .is_none()
             );
@@ -138,7 +146,9 @@ fn terra_prices_the_published_rates_and_doubles_input_and_cache_over_272k() {
                 TERRA,
                 Some(TERRA),
                 Some(tokens),
-                PromptCacheRetentionClass::Ephemeral,
+                crucible_models::PromptCachePricedRetention::NotSelected(
+                    PromptCacheRetentionClass::Ephemeral,
+                ),
                 date,
             )
             .unwrap()
@@ -160,7 +170,9 @@ fn terra_prices_the_published_rates_and_doubles_input_and_cache_over_272k() {
             TERRA,
             Some(TERRA),
             Some(1000),
-            PromptCacheRetentionClass::Ephemeral,
+            crucible_models::PromptCachePricedRetention::NotSelected(
+                PromptCacheRetentionClass::Ephemeral
+            ),
             date
         )
         .unwrap()
@@ -205,7 +217,9 @@ fn sol_and_luna_price_their_published_rates_and_double_input_and_cache_over_272k
                     model,
                     Some(model),
                     Some(tokens),
-                    PromptCacheRetentionClass::Ephemeral,
+                    crucible_models::PromptCachePricedRetention::NotSelected(
+                        PromptCacheRetentionClass::Ephemeral,
+                    ),
                     at,
                 )
                 .unwrap()

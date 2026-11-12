@@ -495,7 +495,7 @@ fn fable_51_cache_prices_and_capabilities_use_exact_reviewed_model_and_route() {
                 FABLE_51,
                 Some(FABLE_51),
                 Some(999_000),
-                retention,
+                crucible_models::PromptCachePricedRetention::NotSelected(retention),
                 PricingDate::new(2026, 9, 6),
             )
             .unwrap()
@@ -536,7 +536,9 @@ fn fable_51_cache_prices_and_capabilities_use_exact_reviewed_model_and_route() {
                     model,
                     revision,
                     Some(1000),
-                    PromptCacheRetentionClass::ProviderDefault,
+                    crucible_models::PromptCachePricedRetention::NotSelected(
+                        PromptCacheRetentionClass::ProviderDefault
+                    ),
                     at
                 )
                 .unwrap()
@@ -561,7 +563,9 @@ fn fable_51_cache_prices_and_capabilities_use_exact_reviewed_model_and_route() {
                 FABLE_51,
                 Some(FABLE_51),
                 Some(1000),
-                PromptCacheRetentionClass::ProviderDefault,
+                crucible_models::PromptCachePricedRetention::NotSelected(
+                    PromptCacheRetentionClass::ProviderDefault
+                ),
                 PricingDate::new(2026, 9, 6)
             )
             .unwrap()

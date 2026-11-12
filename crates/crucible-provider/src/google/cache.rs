@@ -151,6 +151,7 @@ pub(super) fn pricing(
             cache_read: UsageRate::priced(PriceRate::per_million(read)),
             output: UsageRate::priced(PriceRate::per_million(output)),
             cache_write_or_creation: UsageRate::NotApplicable,
+            cache_write_extended: UsageRate::Unknown,
             reasoning: UsageRate::NotApplicable,
             storage: UsageRate::NotApplicable,
             other: UsageRate::Unknown,
