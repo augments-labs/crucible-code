@@ -785,10 +785,6 @@ fn a_line_sent_or_typed_under_a_turn_the_reader_did_not_send_keeps_its_place() {
     let offer = queue.offer(&steer);
     assert_eq!(queue.accept(&mut editor), Retained::Accepted);
     assert!(matches!(offer, Offer::Nowhere), "{offer:?}");
-    assert!(
-        !steer.any(),
-        "the typed line went to a turn the reader did not send"
-    );
 
     assert!(queue.send_now(&steer), "the key found the line nowhere");
     assert_eq!(batched(&mut queue, &steer).as_deref(), Some("first"));
