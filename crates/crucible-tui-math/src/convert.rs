@@ -1111,26 +1111,51 @@ fn symbol(command: &str) -> Option<&'static str> {
 
 /// Rows of text with one of them the baseline, the row the next thing to the
 /// right lines up with.
+///
+/// Every row is exactly [`Self::width`] columns, padded on the right, so a
+/// layout placed beside or centred over another moves as one piece, and its
+/// width is counted once when it is made rather than again at every level it
+/// is nested under: a continued fraction at the row cap would otherwise count
+/// every row it holds once for each level above it, several times over.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Layout {
     lines: Vec<String>,
     baseline: usize,
+    width: usize,
 }
 
 impl Layout {
     fn text(text: impl Into<String>) -> Self {
+        let text = text.into();
         Self {
-            lines: vec![text.into()],
+            width: columns(&text),
+            lines: vec![text],
             baseline: 0,
         }
     }
 
-    fn width(&self) -> usize {
-        self.lines
-            .iter()
-            .map(|line| columns(line))
-            .max()
-            .unwrap_or(0)
+    /// `lines` padded to the widest of them, with `baseline` the row the next
+    /// thing lines up with.
+    fn padded(lines: Vec<String>, baseline: usize) -> Self {
+        let counted: Vec<usize> = lines.iter().map(|line| columns(line)).collect();
+        let width = counted.iter().copied().max().unwrap_or(0);
+        let lines = lines
+            .into_iter()
+            .zip(counted)
+            .map(|(mut line, counted)| {
+                line.push_str(&" ".repeat(width.saturating_sub(counted)));
+                line
+            })
+            .collect();
+        Self {
+            lines,
+            baseline,
+            width,
+        }
+    }
+
+    const fn width(&self) -> usize {
+        self.width
     }
 
     /// This layout, or its refusal where it is past the caps.
@@ -1157,19 +1182,21 @@ impl Layout {
             .max()
             .unwrap_or(0);
         let mut lines = vec![String::new(); above.saturating_add(below).saturating_add(1)];
+        let mut width = 0_usize;
         for item in items {
-            let width = item.width();
             let offset = above.saturating_sub(item.baseline);
             for (row, line) in lines.iter_mut().enumerate() {
                 match row.checked_sub(offset).and_then(|at| item.lines.get(at)) {
-                    Some(content) => line.push_str(&pad_right(content, width)),
-                    None => line.push_str(&" ".repeat(width)),
+                    Some(content) => line.push_str(content),
+                    None => line.push_str(&" ".repeat(item.width)),
                 }
             }
+            width = width.saturating_add(item.width);
         }
         Self {
             lines,
             baseline: above,
+            width,
         }
     }
 
@@ -1182,7 +1209,7 @@ impl Layout {
         let mut lines: Vec<String> = numerator
             .lines
             .iter()
-            .map(|line| centre(line, width))
+            .map(|line| centre(line, numerator.width, width))
             .collect();
         let rule = match glyphs {
             Glyphs::Unicode => "─",
@@ -1190,8 +1217,17 @@ impl Layout {
         };
         lines.push(rule.repeat(width));
         let baseline = lines.len().saturating_sub(1);
-        lines.extend(denominator.lines.iter().map(|line| centre(line, width)));
-        Self { lines, baseline }
+        lines.extend(
+            denominator
+                .lines
+                .iter()
+                .map(|line| centre(line, denominator.width, width)),
+        );
+        Self {
+            lines,
+            baseline,
+            width,
+        }
     }
 
     fn scripts(base: Self, superscript: Option<Self>, subscript: Option<Self>) -> Self {
@@ -1203,27 +1239,35 @@ impl Layout {
             .map_or(0, Self::width)
             .max(subscript.as_ref().map_or(0, Self::width));
         let raised = superscript.as_ref().map_or(0, |script| script.lines.len());
-        let base_width = base.width();
+        let base_width = base.width;
+        let width = base_width.saturating_add(script_width);
+        let beside = |line: &str, line_width: usize| {
+            format!(
+                "{}{line}{}",
+                " ".repeat(base_width),
+                " ".repeat(script_width.saturating_sub(line_width))
+            )
+        };
         let mut lines = Vec::new();
         if let Some(superscript) = superscript {
             for line in superscript.lines {
-                lines.push(format!("{}{line}", " ".repeat(base_width)));
+                lines.push(beside(&line, superscript.width));
             }
         }
         let baseline = raised.saturating_add(base.baseline);
-        for (at, line) in base.lines.into_iter().enumerate() {
-            let mut combined = pad_right(&line, base_width);
-            if at == base.baseline {
-                combined.push_str(&" ".repeat(script_width));
-            }
-            lines.push(combined);
+        for line in base.lines {
+            lines.push(format!("{line}{}", " ".repeat(script_width)));
         }
         if let Some(subscript) = subscript {
             for line in subscript.lines {
-                lines.push(format!("{}{line}", " ".repeat(base_width)));
+                lines.push(beside(&line, subscript.width));
             }
         }
-        Self { lines, baseline }
+        Self {
+            lines,
+            baseline,
+            width,
+        }
     }
 
     fn matrix(rows: &[Vec<Expr>], delimiters: Delimiters, cells: Cells, glyphs: Glyphs) -> Self {
@@ -1260,7 +1304,7 @@ impl Layout {
                     .map(|(column, width)| {
                         let text = row.get(column).map_or("", String::as_str);
                         match cells {
-                            Cells::Centred => centre(text, *width),
+                            Cells::Centred => centre(text, columns(text), *width),
                             // The left of each pair stands against the mark,
                             // the right of it after.
                             Cells::Aligned if column % 2 == 0 => pad_left(text, *width),
@@ -1279,10 +1323,7 @@ impl Layout {
                 }
             })
             .collect();
-        Self {
-            lines,
-            baseline: height / 2,
-        }
+        Self::padded(lines, height / 2)
     }
 }
 
@@ -1481,8 +1522,9 @@ impl Delimiters {
     }
 }
 
-fn centre(text: &str, width: usize) -> String {
-    let padding = width.saturating_sub(columns(text));
+/// `text`, `counted` columns wide, centred in `width`.
+fn centre(text: &str, counted: usize, width: usize) -> String {
+    let padding = width.saturating_sub(counted);
     let left = padding / 2;
     format!(
         "{}{text}{}",

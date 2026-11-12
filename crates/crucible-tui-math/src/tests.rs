@@ -192,6 +192,22 @@ fn a_block_is_framed_as_math_and_stacks_its_fraction() {
     assert!(texts.iter().any(|row| row.contains("2a")), "{texts:#?}");
 }
 
+#[test]
+fn scripts_stacked_over_a_rule_stand_beside_their_base() {
+    // No subscript character for `q`, so the scripts are stacked, and the
+    // rule is wider than they are, so the numerator is centred over it.
+    for source in [
+        r"\frac{x_{qqq}^{2}}{yyyyyyy}",
+        r"\frac{x_{qq}^{2}}{yyyyyyyy}",
+    ] {
+        let texts = texts(&block(source, 64, UNICODE).unwrap_or_default());
+        let at = |text: &str| texts.iter().find_map(|row| row.find(text));
+        let base = at("x").map(|column| column + 1);
+        assert_eq!(at("2"), base, "{source}: {texts:#?}");
+        assert_eq!(at("q"), base, "{source}: {texts:#?}");
+    }
+}
+
 /// What the ASCII set must not draw in a structure: box drawing, the bracket
 /// pieces and the Unicode minus.
 fn structural_unicode(character: char) -> bool {
