@@ -230,6 +230,45 @@ fn in_the_ascii_glyph_set_the_second_press_of_a_decline_is_asked_in_ascii() {
 }
 
 #[test]
+fn in_a_window_too_narrow_for_the_second_press_of_a_decline_it_folds_between_its_keys() {
+    let mut docking = opened(single(1));
+    press(&mut docking, &[Pressed::Down, Pressed::Down, Pressed::Down]);
+    press(&mut docking, &[enter()]);
+    let columns = 40;
+
+    let drawn: Vec<String> = docking
+        .rows(columns, 40, Glyphs::default())
+        .0
+        .iter()
+        .map(Row::text)
+        .collect();
+    for key in CONFIRMING {
+        assert!(
+            drawn.iter().any(|row| *row == format!("  {key}")),
+            "{key:?} has a row of its own under the dock's indent\n{drawn:#?}"
+        );
+    }
+
+    for glyphs in [Glyphs::default(), Glyphs::Ascii] {
+        for columns in 1..=80 {
+            let whole = docking.rows(columns, 40, glyphs).0.len();
+            for room in 0..=whole {
+                let (rows, _) = docking.rows(columns, room, glyphs);
+                let drawn: Vec<String> = rows.iter().map(Row::text).collect();
+                assert!(
+                    rows.len() <= room,
+                    "{columns} columns, {room} rows of room\n{drawn:#?}"
+                );
+                assert!(
+                    rows.iter().all(|row| row.columns() <= columns),
+                    "{columns} columns, {room} rows of room: a row is wider\n{drawn:#?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn undoing_a_decline_before_submitting_restores_the_draft() {
     let mut docking = opened(single(1));
     press(&mut docking, &[enter()]);

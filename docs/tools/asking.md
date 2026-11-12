@@ -212,7 +212,8 @@ wrote stays where you left it, and `/questions` opens the dock on it again.
 
 **Decline question** is how you say you will not decide one. It asks once more
 before it counts, with the row under the dock reading
-`enter to decline this question · esc keep it`. A declined question goes back
+`enter to decline this question · esc keep it`, folded between the two as the
+keys are where the window is narrow. A declined question goes back
 as declined with nothing beside it.
 
 ### Sending the answers

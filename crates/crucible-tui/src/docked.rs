@@ -537,6 +537,19 @@ fn keys(footer: &[&str], room: usize, glyphs: Glyphs) -> Vec<Row> {
         .collect()
 }
 
+/// `named` as the dock draws its own keys under the frame in `columns`:
+/// indented, parted by the glyph set's dot, and folded between two keys where
+/// one row cannot hold them. For a row drawn beside the dock, such as the one
+/// that asks for a decline's second press, so it folds as the dock's keys do.
+/// The dock draws its keys only where they fit; this is drawn at any width the
+/// dock is, so each row is clipped to `columns`, indent included.
+pub fn dock_keys(named: &[&str], columns: usize, glyphs: Glyphs) -> Vec<Row> {
+    keys(named, columns.saturating_sub(SAID), glyphs)
+        .iter()
+        .map(|row| row.clipped(columns))
+        .collect()
+}
+
 /// The dock, drawn.
 #[derive(Debug)]
 pub struct Docked<'a, K> {
