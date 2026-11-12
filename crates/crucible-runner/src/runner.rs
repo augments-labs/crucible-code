@@ -221,6 +221,11 @@ pub struct Runner {
     /// root run; `None` until this process first needs it, when it is read
     /// back from what the session's log recorded.
     task: Option<Task>,
+    /// Whether the transcript this runner was handed, by
+    /// [`Runner::resuming`] or [`Runner::pick_up`], held anything said to it:
+    /// then a log that recorded no task lost the request, rather than never
+    /// having one.
+    inherited_words: bool,
 }
 
 struct Tooling {
@@ -310,6 +315,7 @@ impl Runner {
             told: 0,
             recalled: false,
             task: None,
+            inherited_words: false,
         };
         runner
             .state
@@ -452,6 +458,7 @@ impl Runner {
     pub fn resuming(mut self, transcript: Transcript) -> Self {
         self.state.forget_checked();
         self.state.turn = Self::counting(&transcript);
+        self.inherited_words = Self::said_in(&transcript);
         self.state.transcript = transcript;
         let reading = self.admit_restricted();
         self.recount(reading);
@@ -527,6 +534,7 @@ impl Runner {
         self.permission.forget();
         self.state.forget_checked();
         self.state.turn = Self::counting(&transcript);
+        self.inherited_words = Self::said_in(&transcript);
         self.state.transcript = transcript;
         self.state.totals = Totals::new();
 
