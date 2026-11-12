@@ -201,6 +201,40 @@ fn reviewed_retention_hints_use_the_model_specific_wire_shape() {
 }
 
 #[test]
+fn a_selected_extended_class_asks_the_guide_named_models_for_the_twelve_hour_write() {
+    // The fixture selects the extended class under a ceiling of an hour, which
+    // the selection itself refuses for these models: the ceiling is the
+    // selection's to read, and the body writes what was selected.
+    for model in [
+        "gpt-6-astra",
+        "gpt-6.1-sol",
+        "gpt-6.1-terra",
+        "gpt-6-sol",
+        "gpt-6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+    ] {
+        let mut asked = request(said("hello"));
+        asked.model = model;
+        let asked = cached(
+            asked,
+            PromptCacheMechanism::AutomaticPrefix,
+            PromptCacheRetentionClass::Extended,
+            false,
+        );
+        let body = build(&asked);
+
+        assert_eq!(
+            at(&body, "/prompt_cache_options"),
+            &json!({"mode": "implicit", "ttl": "12h"}),
+            "{model}"
+        );
+        assert_eq!(at(&body, "/prompt_cache_retention"), &NOTHING, "{model}");
+    }
+}
+
+#[test]
 fn recap_uses_the_responses_breakpoint_field() {
     let mut transcript = Transcript::new();
     transcript.push(Message::said("stable history")).unwrap();

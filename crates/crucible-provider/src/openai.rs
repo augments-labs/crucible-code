@@ -51,6 +51,8 @@ mod rate_limits;
 #[cfg(test)]
 mod rate_limits_tests;
 mod stream;
+#[cfg(test)]
+mod twelve_hour_tests;
 mod wire;
 
 use std::time::SystemTime;
@@ -59,8 +61,9 @@ use std::time::SystemTime;
 use crucible_models::Provider;
 use crucible_models::{
     Delta, FastForm, PriceRate, PromptCacheBoundary, PromptCacheCapabilities, PromptCacheContent,
-    PromptCacheMechanismCapability, PromptCachePricing, PromptCacheProvenance, PromptCacheRates,
-    ProviderError, Request, Served, StatefulTransportCapability, UsageRate,
+    PromptCacheMechanismCapability, PromptCachePricedRetention, PromptCachePricing,
+    PromptCacheProvenance, PromptCacheRates, ProviderError, Request, Served,
+    StatefulTransportCapability, UsageRate,
 };
 #[cfg(test)]
 use crucible_runtime::Cancel;
@@ -111,6 +114,40 @@ const OPENAI_55_RETENTIONS: &[PromptCacheRetentionClass] = &[
     PromptCacheRetentionClass::ProviderDefault,
     PromptCacheRetentionClass::Extended,
 ];
+/// The automatic prefix's classes on the published API for a model that can be
+/// asked for the 12-hour write: the extended class is that write.
+const OPENAI_TWELVE_HOUR_RETENTIONS: &[PromptCacheRetentionClass] = &[
+    PromptCacheRetentionClass::ProviderDefault,
+    PromptCacheRetentionClass::Ephemeral,
+    PromptCacheRetentionClass::Extended,
+];
+/// The least `"12h"` keeps an entry for, in seconds. OpenAI may keep it
+/// longer, so a policy whose ceiling is shorter is never sent it.
+const TWELVE_HOURS: u32 = 12 * 60 * 60;
+/// The models the prompt-caching guide offers the 12-hour write ("GPT-5.6 and
+/// later"), each with that write's rate per million input tokens up to 272K
+/// input tokens and above. The guide prices it at 2.5x the band's uncached
+/// input rate, as the pricing page's "12h write" column shows for the models
+/// it lists. The record, the hint and the price all read this one list.
+const TWELVE_HOUR_WRITES: [(&str, u64, u64); 8] = [
+    (ASTRA, 25_000_000_000, 50_000_000_000),
+    ("gpt-6.1-sol", 5_000_000_000, 10_000_000_000),
+    (TERRA, 2_500_000_000, 5_000_000_000),
+    ("gpt-6-sol", 5_000_000_000, 10_000_000_000),
+    ("gpt-6-luna", 250_000_000, 500_000_000),
+    ("gpt-5.6-sol", 10_000_000_000, 20_000_000_000),
+    ("gpt-5.6-terra", 5_000_000_000, 10_000_000_000),
+    ("gpt-5.6-luna", 500_000_000, 1_000_000_000),
+];
+
+/// `model`'s 12-hour write rates, up to 272K input tokens and above, if the
+/// guide offers it that write.
+fn twelve_hour_write(model: &str) -> Option<(u64, u64)> {
+    TWELVE_HOUR_WRITES
+        .iter()
+        .find(|(named, ..)| *named == model)
+        .map(|&(_, short, long)| (short, long))
+}
 
 const USD: PricingCurrency = PricingCurrency::new("USD");
 const PRICING_REVIEWED: PricingDate = PricingDate::new(2026, 8, 31);
@@ -120,14 +157,17 @@ const TERRA_REVIEWED: PricingDate = PricingDate::new(2026, 11, 5);
 /// When the pages of `gpt-6.1-sol`, `gpt-6-sol` and `gpt-6-luna` were read for
 /// their prices.
 const SOL_LUNA_REVIEWED: PricingDate = PricingDate::new(2026, 11, 11);
+/// When the guide and the pricing page were read for the 12-hour write.
+const TWELVE_HOUR_REVIEWED: PricingDate = PricingDate::new(2026, 11, 11);
 /// Every day a price record here was read from OpenAI's pages. A record read
 /// on a new day adds that day here, so the newest of them is a day every
 /// record is in force on.
-const PRICES_REVIEWED: [PricingDate; 4] = [
+const PRICES_REVIEWED: [PricingDate; 5] = [
     PRICING_REVIEWED,
     ASTRA_REVIEWED,
     TERRA_REVIEWED,
     SOL_LUNA_REVIEWED,
+    TWELVE_HOUR_REVIEWED,
 ];
 const PRICING_SOURCE: &str = "https://developers.openai.com/api/docs/pricing";
 const MODEL_55_PRICING_SOURCE: &str = "https://developers.openai.com/api/docs/models/gpt-5.5";
@@ -236,6 +276,14 @@ impl Dialect for Gpt {
                     options.text("ttl", "30m");
                 });
             }),
+            (true, PromptCacheRetentionClass::Extended) if twelve_hour_write(model).is_some() => {
+                Some(|body: &mut Object<'_>| {
+                    body.object("prompt_cache_options", |options| {
+                        options.text("mode", "implicit");
+                        options.text("ttl", "12h");
+                    });
+                })
+            }
             (false, PromptCacheRetentionClass::Extended) => Some(|body: &mut Object<'_>| {
                 body.text("prompt_cache_retention", "24h");
             }),
@@ -353,8 +401,16 @@ fn prompt_cache(route: Serving, model: &str) -> PromptCacheCapabilities {
         _ => return PromptCacheCapabilities::unknown("unreviewed model"),
     };
     let automatic =
-        PromptCacheMechanismCapability::automatic_prefix(minimum, true, true, OPENAI_CACHE_CONTENT)
-            .with_retentions(retentions);
+        PromptCacheMechanismCapability::automatic_prefix(minimum, true, true, OPENAI_CACHE_CONTENT);
+    // The guide offers the 12-hour write in the published API alone; the
+    // explicit breakpoints keep their list, since no time is written for them
+    // under the extended class.
+    let automatic = match (route, twelve_hour_write(model)) {
+        (Serving::Api, Some(_)) => automatic
+            .with_retentions(OPENAI_TWELVE_HOUR_RETENTIONS)
+            .with_kept_at_least(PromptCacheRetentionClass::Extended, TWELVE_HOURS),
+        (Serving::Api | Serving::Subscription, _) => automatic.with_retentions(retentions),
+    };
     let mechanisms = if route == Serving::Api && cache_writes(model) {
         vec![
             automatic,
@@ -419,16 +475,35 @@ fn price_review(model: &str) -> (PricingDate, &'static str, &'static str) {
 }
 
 /// What `asked` costs, priced only at the published API's own address.
+///
+/// An extended class on a model the guide offers the 12-hour write is priced
+/// only where it was selected: a request that selected nothing asked for no
+/// such write, whatever its policy wanted.
 fn price(route: Option<Serving>, asked: Priced<'_>) -> Option<PromptCachePricing> {
     let Priced {
         model,
         revision,
         input_tokens,
-        retention,
+        retention: priced,
         at,
     } = asked;
-    let retention = retention.class();
-    let (reviewed, short_version, long_version) = price_review(model);
+    let retention = priced.class();
+    let twelve_hours = match priced {
+        PromptCachePricedRetention::Selected(PromptCacheRetentionClass::Extended) => {
+            twelve_hour_write(model)
+        }
+        PromptCachePricedRetention::Selected(_) | PromptCachePricedRetention::NotSelected(_) => {
+            None
+        }
+    };
+    let (reviewed, short_version, long_version) = match twelve_hours {
+        Some(_) => (
+            TWELVE_HOUR_REVIEWED.max(price_review(model).0),
+            "openai-standard-12h-short-2026-11-11",
+            "openai-standard-12h-long-2026-11-11",
+        ),
+        None => price_review(model),
+    };
     if route != Some(Serving::Api) || at < reviewed {
         return None;
     }
@@ -571,14 +646,17 @@ fn price(route: Option<Serving>, asked: Priced<'_>) -> Option<PromptCachePricing
             PromptCacheRetentionClass::ProviderDefault | PromptCacheRetentionClass::Ephemeral
         )
     };
-    if !allowed_retention {
+    if !(allowed_retention || twelve_hours.is_some()) {
         return None;
     }
-    let (rates, minimum, maximum, version) = if input_tokens <= 272_000 {
+    let (mut rates, minimum, maximum, version) = if input_tokens <= 272_000 {
         (short, 0, Some(272_000), short_version)
     } else {
         (long, 272_001, None, long_version)
     };
+    if let Some((short, long)) = twelve_hours {
+        rates.cache_write_extended = rate(if maximum.is_some() { short } else { long });
+    }
     Some(
         PromptCachePricing::new(
             "openai-responses",
