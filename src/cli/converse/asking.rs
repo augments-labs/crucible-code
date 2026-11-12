@@ -105,7 +105,7 @@ const HIDE: &[&str] = &["esc to cancel", "ctrl+e to hide"];
 /// The words of the item [`more`] builds.
 const MORE: &str = "to see more";
 
-/// The item the panel adds to whichever of those it was given, where the prose
+/// The item the panel adds to whichever footer it was given, where the prose
 /// did not fit. Named here and drawn there, because the panel is the only party
 /// that knows how tall the paragraphs folded to. The arrows are the glyph
 /// set's, so a terminal that cannot draw them is never sent them.
