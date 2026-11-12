@@ -1607,6 +1607,14 @@ fn trying_your_own_agy_where_the_sandbox_cannot_close_points_at_the_store() -> R
     Ok(())
 }
 
+/// Every fact the account questions `put` state, in the order put.
+pub(crate) fn every_fact(put: &[Pending]) -> Vec<String> {
+    (0..)
+        .map_while(|at| question(put, at))
+        .flat_map(|(_, facts, _)| facts.into_iter().map(str::to_owned))
+        .collect()
+}
+
 /// Every choice's name among the account questions `put`.
 pub(crate) fn every_choice(put: &[Pending]) -> Vec<String> {
     (0..)
@@ -1994,6 +2002,58 @@ pub(crate) fn many_unhashed(tree: &Tree, count: usize) -> Result<Conversation, F
     registry_cached(tree, &entries)?;
     own_goose(&tools(tree), true)?;
     own_sandboxed(tree)
+}
+
+/// The ACP Registry agent `id`, released at 1.0.0 with no binary for any
+/// platform, published only as `package` for the package runner `runner` and
+/// started with `args`: an entry crucible never installs, whose package it
+/// never runs.
+pub(crate) fn packaged(id: &str, runner: &str, package: &str, args: &[&str]) -> Value {
+    json!({
+        "id": id,
+        "name": id,
+        "version": "1.0.0",
+        "license": "Apache-2.0",
+        "distribution": {runner: {"package": package, "args": args}},
+    })
+}
+
+/// A tree whose catalog offers nothing and whose cached ACP Registry index
+/// lists goose published only as the npx package `@example/goose@1.0.0`,
+/// started with `acp`, and whose user installed their own goose on the `PATH`
+/// a conversation's steps look on, which answers as an agent; that
+/// conversation, and the path the program's links lead to.
+pub(crate) fn goose_packaged(tree: &Tree) -> Result<(Conversation, PathBuf), Failed> {
+    registry_cached(
+        tree,
+        &[packaged("goose", "npx", "@example/goose@1.0.0", &["acp"])],
+    )?;
+    let program = own_goose(&tools(tree), true)?;
+    Ok((own_sandboxed(tree)?, program))
+}
+
+/// As [`goose_packaged`], but with no program of goose on that `PATH`.
+pub(crate) fn packaged_with_nothing_on_path(tree: &Tree) -> Result<Conversation, Failed> {
+    registry_cached(
+        tree,
+        &[packaged("goose", "npx", "@example/goose@1.0.0", &["acp"])],
+    )?;
+    own_sandboxed(tree)
+}
+
+/// As [`goose_packaged`], but the index lists a second agent, `goose-next`,
+/// published only as the uvx package `goose==2.0.0` and started with
+/// `serve --stdio`, whose package guesses the same name.
+pub(crate) fn two_packaged_guessing_goose(tree: &Tree) -> Result<(Conversation, PathBuf), Failed> {
+    registry_cached(
+        tree,
+        &[
+            packaged("goose", "npx", "@example/goose@1.0.0", &["acp"]),
+            packaged("goose-next", "uvx", "goose==2.0.0", &["serve", "--stdio"]),
+        ],
+    )?;
+    let program = own_goose(&tools(tree), true)?;
+    Ok((own_sandboxed(tree)?, program))
 }
 
 /// The name of each choice the first question of a connect of `conversation`
