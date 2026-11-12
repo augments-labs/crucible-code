@@ -65,7 +65,7 @@ readonly BUDGETS=(
     "startup|bench-read-back|a result read back from the deepest session's log <= 20 ms p95"
     "tools|bench-tools|deterministic read, glob, edit, write and sandbox medians <= 40 ms"
     "mem|bench-session-rss|peak and retained RSS after a long session <= 35 MB"
-    "mem|bench-session-rss-colour|peak and retained RSS with colour on <= 35 MB"
+    "mem|bench-session-rss-colour|peak and retained RSS with colour on <= 42 MB"
     "grep|bench-grep|grep worst paired median within 1.25x the rg binary"
     "stream|bench-render-burst|rendered frames >= 30/s and sustained/opening pace >= 0.5"
     "live|bench-live-burst|turn-band redraws >= 30/s and sustained/opening pace >= 0.5"

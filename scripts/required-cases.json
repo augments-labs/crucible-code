@@ -12125,6 +12125,94 @@
       "platforms": [
         "linux"
       ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SYNTAX-MEMORY-FIXTURE",
+      "family": "transcript-blocks",
+      "obligation": "In every measured turn the colour memory probe's fixture serves, the edit changes the file and leaves at least one line of it as it was, the answer's diff fence holds a row of a line that stayed, and the answer holds a fence that names rust and is not empty.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-session-rss-colour"
+      },
+      "case": "tests::every_measured_turn_keeps_a_line_of_its_file_and_answers_with_it_kept_and_with_rust",
+      "source": "src/bin/bench-session-rss-colour.rs",
+      "body_sha256": "273fba12c9d7633e54e58174f0ef1ad90f10e6202278eb08df68fab05a861c69",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SYNTAX-THEMES-AS-THEY-WERE",
+      "family": "transcript-blocks",
+      "obligation": "Every syntax theme offered answers with six colours, and the names in the order offered with the six colours of each are the ones recorded.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "syntax::tests::every_theme_offered_is_worth_what_it_was",
+      "source": "crates/crucible-tui/src/syntax/tests.rs",
+      "body_sha256": "745a724b1f150e2bf1d90c2f0bb447897e807ec50dd0c5e7a11971c1c1b3eae4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SYNTAX-SAMPLES-AS-THEY-WERE",
+      "family": "transcript-blocks",
+      "obligation": "Every spelling a fence is called by has a sample, and each sampled spelling resolves to the definition recorded and reads every run of every line of its sample as the slot and text recorded.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "syntax::tests::every_spelling_with_a_sample_reads_it_as_it_did",
+      "source": "crates/crucible-tui/src/syntax/tests.rs",
+      "body_sha256": "2dd489a70994a11427746d1e4feea72c4027aa7ab6605d4da58c7f5d6d26f9c4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SYNTAX-NAMES-AS-THEY-WERE",
+      "family": "transcript-blocks",
+      "obligation": "Every name and every file extension a definition of the pinned default set carries resolves to the definition recorded for it, or to none where none is recorded.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "syntax::tests::every_name_and_extension_a_definition_carries_resolves_as_it_did",
+      "source": "crates/crucible-tui/src/syntax/tests.rs",
+      "body_sha256": "56e1d34be2fec9f547ee93c1a02322199f04ca3e497d0ded260647ac62ba21d5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SYNTAX-LENT-PARTS-LIVE",
+      "family": "transcript-blocks",
+      "obligation": "Each listed part of a sample that a definition other than the sample's own reads holds, on its line, the listed run with the listed slot, under every spelling that shares the sample.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "syntax::tests::every_part_another_definition_reads_comes_back_as_what_it_is",
+      "source": "crates/crucible-tui/src/syntax/tests.rs",
+      "body_sha256": "d08b953cad1d826ee5ff4beb8a9ea3f91d5007c3ffe49296e2cb5983b8fc4a98",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
     }
   ]
 }

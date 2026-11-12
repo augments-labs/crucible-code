@@ -15,28 +15,32 @@
 //! leave the machine and no production-only seam is involved.
 //!
 //! Each turn asks the real read tool to read a planted file and the real edit
-//! tool to rewrite the twenty lines of a second one, then receives a streamed
-//! answer that ends in a table and the diff of that rewrite in a fence. A table
-//! is kept as the source it was written as beside the rows it was laid out as,
-//! and so is a diff, which is drawn as a change; the edit's own change is drawn
-//! too, and being folded is kept written out for the key that shows it whole.
+//! tool to rewrite the twenty lines of a second one, all but its first and its
+//! last, then receives a streamed answer that ends in a table, the two lines
+//! that stayed in a fence of Rust, and the diff of that rewrite in a fence. A
+//! table is kept as the source it was written as beside the rows it was laid
+//! out as, and so is a diff, which is drawn as a change; the edit's own change
+//! is drawn too, and being folded is kept written out for the key that shows it
+//! whole.
 //! So a session of them holds more than a session of prose the same length, and
 //! the fill below rolls every one of them out past the ceiling with its source.
 //! The measurement is refused if the second file does not end as the last edit
 //! leaves it, since a session whose edits were turned away drew no change of a
 //! tool's.
 //!
-//! One cost of a change is not in this reading. A line of a change that did not
-//! move is drawn in the colours of its file's language, and the first such line
-//! of a session loads the syntax definitions, which are megabytes kept for the
-//! rest of it. Every edit here takes out every line of its file, and the diff
-//! in the answer says the same, so no change of this session holds a line that
-//! stayed and none loads them. RSS and
-//! proportional set size come from `smaps_rollup` at
-//! startup and after turns one, five and twenty; `VmHWM` supplies the child's
-//! peak, including spikes between samples. Thread, descriptor and process-tree
-//! counts are emitted beside the budget so a flat total cannot hide a growing
-//! resource of another kind.
+//! What reading code costs is in this reading. A line of a change that did not
+//! move is drawn in the colours of its file's language, and so is a fence that
+//! names one, and the first such line of a session loads the syntax
+//! definitions, which are megabytes kept for the rest of it. Every edit here
+//! leaves two lines where they were, the diff in the answer says the same, and
+//! the fence beside it names Rust, so the first turn loads them and every
+//! figure after it holds them.
+//!
+//! RSS and proportional set size come from `smaps_rollup` at startup and after
+//! turns one, five and twenty; `VmHWM` supplies the child's peak, including
+//! spikes between samples. Thread, descriptor and process-tree counts are
+//! emitted beside the budget so a flat total cannot hide a growing resource of
+//! another kind.
 //!
 //! Twenty turns is the budget's session and the reading it reports. It is not
 //! the longest session anybody has, and this process now keeps the transcript
@@ -91,7 +95,13 @@ use rustix::pty::{self, OpenptFlags};
 use rustix::termios::{self, OptionalActions, Winsize};
 
 /// The budget, in megabytes.
-const LIMIT: f64 = 35.0;
+///
+/// Seven above the no-colour probe's, for what reading code in colour costs.
+/// Each language a session reads compiles its patterns and keeps them, about
+/// 5 MB for the one this session reads, and no way of loading the definitions
+/// removes that: a set read whole and a set read a language at a time come to
+/// the same patterns compiled.
+const LIMIT: f64 = 42.0;
 
 /// How much resident memory may grow across one more full lifecycle after the
 /// retained record has already rolled past its ceiling.
@@ -655,13 +665,23 @@ fn tool() -> &'static str {
 #[cfg(target_os = "linux")]
 const REWRITTEN: &str = "rewritten.rs";
 
+/// Whether line `at` of that file is one no edit moves: its first and its
+/// last, which every change of it keeps to read the others against.
+#[cfg(target_os = "linux")]
+const fn stays(at: usize) -> bool {
+    at == 0 || at + 1 == EDITED
+}
+
 /// The file an edit rewrites as `turn` leaves it, its last line not ended:
-/// as it is planted, for turn zero. Every line names the turn, so no line of
-/// it is the same after another turn.
+/// as it is planted, for turn zero. Every line but the two that stay names the
+/// turn, so none of those is the same after another turn.
 #[cfg(target_os = "linux")]
 fn left_by(turn: usize) -> String {
     (0..EDITED)
-        .map(|at| row(at, &format!("settled_{turn}")))
+        .map(|at| {
+            let turn = if stays(at) { 0 } else { turn };
+            row(at, &format!("settled_{turn}"))
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -678,7 +698,7 @@ fn quoted(text: &str) -> String {
 /// what `turn` leaves.
 ///
 /// The edit tool is given the text to find and what to put there, so the call
-/// quotes every line of the file whole.
+/// quotes every line of the file whole, the two that stay among them.
 #[cfg(target_os = "linux")]
 fn edit(turn: usize) -> String {
     let input = format!(
@@ -704,10 +724,11 @@ fn edit(turn: usize) -> String {
 /// takes; a fill turn ends every delta, so every delta is a line. Lines are what
 /// the record bounds, so filling it is a question of how many endings arrive
 /// rather than of how much text does. A measured turn's prose is followed by a
-/// table, streamed a row at a time, which the blank line after it closes, and
-/// then by the change the turn's edit made, written as the unified diff of it
-/// in a fence and streamed a line at a time, which the fence's last line
-/// closes.
+/// table, streamed a row at a time, which the blank line after it closes, then
+/// by the lines the turn's edit left where they were in a fence that names
+/// Rust, and then by the change that edit made, written as the unified diff of
+/// it in a fence with those lines as the rows it keeps. Both fences are
+/// streamed a line at a time and closed by their last line.
 #[cfg(target_os = "linux")]
 fn answer(turn: usize, deltas: usize, lines: bool) -> String {
     // Two bytes into the JSON, where they are the escape a line ending is
@@ -716,7 +737,7 @@ fn answer(turn: usize, deltas: usize, lines: bool) -> String {
     let ending = if lines { "\\n" } else { "" };
     let mut body = String::with_capacity(
         deltas
-            .saturating_add(TABLE_ROWS + 2 + EDITED * 2 + 2)
+            .saturating_add(TABLE_ROWS + 2 + EDITED * 2 + 4)
             .saturating_mul(112)
             .saturating_add(512),
     );
@@ -745,14 +766,25 @@ fn answer(turn: usize, deltas: usize, lines: bool) -> String {
             "event: content_block_delta\ndata: {\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"\\n\"}}\n\n",
         );
 
-        let mut diff = vec![format!(
-            "```diff\n--- a/{REWRITTEN}\n+++ b/{REWRITTEN}\n@@ -1,{EDITED} +1,{EDITED} @@\n"
-        )];
         let (was, now) = (left_by(turn.saturating_sub(1)), left_by(turn));
-        diff.extend(was.lines().map(|line| format!("-{line}\n")));
-        diff.extend(now.lines().map(|line| format!("+{line}\n")));
-        diff.push("```\n\n".to_owned());
-        for line in diff {
+        let moved = |at: &usize| !stays(*at);
+        let kept = |at: usize| now.lines().nth(at).map(|line| format!("{line}\n"));
+
+        let mut fences = vec!["```rust\n".to_owned()];
+        fences.extend((0..EDITED).filter(|at| stays(*at)).filter_map(kept));
+        fences.push("```\n\n".to_owned());
+
+        fences.push(format!(
+            "```diff\n--- a/{REWRITTEN}\n+++ b/{REWRITTEN}\n@@ -1,{EDITED} +1,{EDITED} @@\n"
+        ));
+        fences.extend(kept(0).map(|line| format!(" {line}")));
+        let taken = was.lines().enumerate().filter(|(at, _)| moved(at));
+        fences.extend(taken.map(|(_, line)| format!("-{line}\n")));
+        let put = now.lines().enumerate().filter(|(at, _)| moved(at));
+        fences.extend(put.map(|(_, line)| format!("+{line}\n")));
+        fences.extend(kept(EDITED - 1).map(|line| format!(" {line}")));
+        fences.push("```\n\n".to_owned());
+        for line in fences {
             let _ = write!(
                 body,
                 "event: content_block_delta\ndata: {{\"index\":0,\"delta\":{{\"type\":\"text_delta\",\"text\":\"{}\"}}}}\n\n",
@@ -1170,7 +1202,7 @@ mod tests {
     }
 
     #[test]
-    fn every_edit_rewrites_the_whole_of_its_file_and_leaves_no_line_of_it_as_it_was() {
+    fn every_edit_rewrites_the_whole_of_its_file_and_leaves_its_first_and_last_line_as_they_were() {
         let mut file = format!("{}\n", left_by(0));
         for turn in 1..=TURNS {
             let call = said(&edit(turn));
@@ -1183,24 +1215,92 @@ mod tests {
 
             // The tool refuses text it finds twice or not at all.
             assert_eq!(file.matches(find).count(), 1, "turn {turn}");
-            // Every line of the file goes, and none comes back as it was: a
-            // line that stayed would be kept in the change to read the others
-            // against, and be read for its language's colours.
+            // Every line of the file is quoted, and all but the first and the
+            // last come back otherwise: those two are kept in the change to
+            // read the others against, and are read for their language's
+            // colours.
             assert_eq!(format!("{find}\n"), file, "turn {turn}");
             assert_eq!(find.lines().count(), EDITED, "turn {turn}");
             assert_eq!(replace.lines().count(), EDITED, "turn {turn}");
-            assert!(
-                find.lines()
-                    .zip(replace.lines())
-                    .all(|(was, now)| was != now),
-                "turn {turn}"
-            );
+            let stayed: Vec<usize> = find
+                .lines()
+                .zip(replace.lines())
+                .enumerate()
+                .filter_map(|(at, (was, now))| (was == now).then_some(at))
+                .collect();
+            assert_eq!(stayed, [0, EDITED - 1], "turn {turn}");
             file = file.replacen(find, replace, 1);
         }
 
         assert_eq!(file, format!("{}\n", left_by(TURNS)));
         // The file the read tool reads is another, and no edit touches it.
         assert_ne!(REWRITTEN, "big.rs");
+    }
+
+    #[test]
+    fn every_measured_turn_keeps_a_line_of_its_file_and_answers_with_it_kept_and_with_rust() {
+        // What makes a session read code for a language's colours, asked of
+        // every measured turn as the fixture serves it. Each one missing is
+        // named rather than the first, so a fixture that loses one says which.
+        let mut file = format!("{}\n", left_by(0));
+        let mut missing = Vec::new();
+        for turn in 1..=TURNS {
+            let first = (turn - 1) * REQUESTS + 1;
+
+            let call = said(&replied(first + 1));
+            let input: serde_json::Value =
+                serde_json::from_str(&call.input).expect("the input in JSON");
+            let find = at(&input, "/find").expect("the text to find");
+            let replace = at(&input, "/replace").expect("the text to put");
+            let after = file.replacen(find, replace, 1);
+            assert_ne!(after, file, "turn {turn}: the edit changes nothing");
+
+            // A line the edit leaves where and as it was is a line its change
+            // keeps, and a kept line is drawn in the colours of its language.
+            let stayed: Vec<&str> = file
+                .lines()
+                .zip(after.lines())
+                .filter_map(|(was, now)| (was == now).then_some(was))
+                .collect();
+            if stayed.is_empty() {
+                missing.push(format!(
+                    "turn {turn}: the edit leaves no line of {REWRITTEN} as it was"
+                ));
+            }
+
+            // The diff the answer writes says the same: a row neither taken
+            // out nor put in, which is one of the lines that stayed.
+            let text = said(&replied(first + 2)).text;
+            let kept = text
+                .split_once("\n```diff\n")
+                .and_then(|(_, fence)| fence.split_once("```\n"))
+                .is_some_and(|(diff, _)| {
+                    diff.lines()
+                        .filter_map(|row| row.strip_prefix(' '))
+                        .any(|row| stayed.contains(&row))
+                });
+            if !kept {
+                missing.push(format!(
+                    "turn {turn}: the answer's diff fence holds no row of a line that stayed"
+                ));
+            }
+
+            // And code the answer shows for itself, in a fence that names the
+            // language by the word a model writes.
+            let code = text
+                .split_once("\n```rust\n")
+                .and_then(|(_, fence)| fence.split_once("```\n"))
+                .is_some_and(|(code, _)| !code.trim().is_empty());
+            if !code {
+                missing.push(format!(
+                    "turn {turn}: the answer holds no fence that names rust"
+                ));
+            }
+
+            file = after;
+        }
+
+        assert!(missing.is_empty(), "{missing:#?}");
     }
 
     #[test]
@@ -1211,37 +1311,51 @@ mod tests {
         assert_eq!(after, format!("\n{}", marker(3)));
 
         // A unified diff of what the third turn's edit does: the file it is
-        // made to, and a hunk whose counts are the lines under it, every line
-        // the second turn left taken out and every line the third leaves put.
+        // made to, and a hunk whose counts are the lines under it, the first
+        // line and the last kept around every line the second turn left taken
+        // out and every line the third leaves put.
         let mut lines = diff.lines();
         assert_eq!(lines.next(), Some("--- a/rewritten.rs"));
         assert_eq!(lines.next(), Some("+++ b/rewritten.rs"));
         assert_eq!(lines.next(), Some("@@ -1,20 +1,20 @@"));
         let lines: Vec<&str> = lines.collect();
-        let (out, put) = lines.split_at(EDITED);
+        let [first, moved @ .., last] = lines.as_slice() else {
+            panic!("a hunk of two rows or more: {lines:?}");
+        };
+        assert_eq!(*first, "     let field_0 = settled_0(&state, 0)?;");
+        assert_eq!(*last, "     let field_19 = settled_0(&state, 19)?;");
+        let (out, put) = moved.split_at(EDITED - 2);
         assert_eq!(
             out.first().copied(),
-            Some("-    let field_0 = settled_2(&state, 0)?;")
+            Some("-    let field_1 = settled_2(&state, 1)?;")
         );
         assert_eq!(
             out.last().copied(),
-            Some("-    let field_19 = settled_2(&state, 19)?;")
+            Some("-    let field_18 = settled_2(&state, 18)?;")
         );
         assert!(out.iter().all(|line| line.starts_with('-')), "{out:?}");
-        assert_eq!(put.len(), EDITED);
+        assert_eq!(put.len(), EDITED - 2);
         assert_eq!(
             put.first().copied(),
-            Some("+    let field_0 = settled_3(&state, 0)?;")
+            Some("+    let field_1 = settled_3(&state, 1)?;")
         );
         assert_eq!(
             put.last().copied(),
-            Some("+    let field_19 = settled_3(&state, 19)?;")
+            Some("+    let field_18 = settled_3(&state, 18)?;")
         );
         assert!(put.iter().all(|line| line.starts_with('+')), "{put:?}");
 
-        // The table is still there, before it.
+        // The table is still there, before the two lines that stayed, in a
+        // fence of their own that names their language.
         assert!(
-            text.contains("| 3 | field 23 | 23 |\n\n```diff\n"),
+            text.contains(concat!(
+                "| 3 | field 23 | 23 |\n\n",
+                "```rust\n",
+                "    let field_0 = settled_0(&state, 0)?;\n",
+                "    let field_19 = settled_0(&state, 19)?;\n",
+                "```\n\n",
+                "```diff\n",
+            )),
             "{text}"
         );
 

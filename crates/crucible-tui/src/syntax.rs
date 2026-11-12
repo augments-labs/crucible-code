@@ -7,9 +7,19 @@
 //! what something *means*. Everything else in a block is the reader's own
 //! foreground, which is what most of a block is anyway.
 //!
-//! **Nothing is loaded until a fence arrives.** The syntax definitions and the
-//! themes are about a megabyte and a millisecond between them, and the first
-//! frame is budgeted at twenty. A session that never shows code never pays.
+//! **Nothing is read before it is wanted, and what is kept is counted.** The
+//! figures are readings on Linux x86-64. The syntax definitions are read at the
+//! first fence, or at the first line of a change that did not move: about
+//! 1.1 MB and half a millisecond, kept from then on. A language's patterns are
+//! compiled when its first line is read and kept for the rest of the session:
+//! 5.0 to 5.5 MB and some twenty milliseconds for Rust, and as much as 16 MB
+//! for one language. No byte count bounds that. Its ceiling is a count, the 75
+//! definitions of the default set, and reading each of the 23 languages the
+//! tests here list held about 127 MB between them. A theme is not kept at all:
+//! the packed set and the one theme a call names, 0.4 to 0.7 MB between them,
+//! are built for that call and dropped when it answers. So a session that never
+//! shows code pays for six colours as its palette settles, and the first frame,
+//! budgeted at twenty milliseconds, meets none of the rest.
 //!
 //! **A language nothing knows is not read at all.** [`Syntax::of`] answers
 //! `None`, the caller leaves the block quiet, and that is the same block this
@@ -23,8 +33,9 @@
 use std::sync::OnceLock;
 
 use syntect::easy::HighlightLines;
-use syntect::highlighting::{Theme as Highlighting, ThemeSet};
+use syntect::highlighting::Theme as Highlighting;
 use syntect::parsing::{SyntaxReference, SyntaxSet};
+use two_face::theme::LazyThemeSet;
 
 use crate::color::Slot;
 
@@ -34,9 +45,6 @@ use crate::color::Slot;
 /// block in every session and holds no state of its own — what carries state
 /// from line to line is [`Syntax`], which is per block.
 static PARSERS: OnceLock<SyntaxSet> = OnceLock::new();
-
-/// The themes that ship, read once and kept, for the same reason.
-static THEMES: OnceLock<ThemeSet> = OnceLock::new();
 
 /// What a session draws code in when nothing has said.
 ///
@@ -49,13 +57,19 @@ fn parsers() -> &'static SyntaxSet {
     PARSERS.get_or_init(SyntaxSet::load_defaults_newlines)
 }
 
-/// The themes, loading them if this is the first fence.
+/// The themes that ship, each still packed until it is asked for.
+///
+/// Built for the call that wants it and dropped when that call returns, so
+/// nothing here outlives an answer. A session asks what a theme is worth when
+/// its palette settles and again for every row of the picker, and a set kept
+/// across those would end up holding every theme decoded for a session that
+/// draws in one.
 ///
 /// The ones people name — Monokai, GitHub, Dracula, Nord, gruvbox and the rest
 /// — rather than the seven base16-and-Solarized that syntect alone ships. A
 /// picker whose list nobody recognises is a picker nobody uses.
-fn themes() -> &'static ThemeSet {
-    THEMES.get_or_init(|| two_face::theme::extra().into())
+fn themes() -> LazyThemeSet {
+    two_face::theme::extra().into()
 }
 
 /// What the six slots are worth in `theme`, in the order [`Palette::reading`]
@@ -69,7 +83,9 @@ fn themes() -> &'static ThemeSet {
 /// [`Palette::reading`]: crate::Palette::reading
 #[must_use]
 pub fn colours(theme: &str) -> Option<[(u8, u8, u8); 6]> {
-    let theme = themes().themes.get(theme)?;
+    // Decodes this theme and no other; both go when this returns.
+    let themes = themes();
+    let theme = themes.get(theme)?;
 
     Some([
         of(theme, Slot::Comment),
@@ -84,7 +100,7 @@ pub fn colours(theme: &str) -> Option<[(u8, u8, u8); 6]> {
 /// Every syntax theme there is to choose from, built in and otherwise.
 #[must_use]
 pub fn every_theme() -> Vec<String> {
-    let mut named: Vec<String> = themes().themes.keys().cloned().collect();
+    let mut named: Vec<String> = themes().theme_names().map(str::to_owned).collect();
     named.sort();
     named
 }
@@ -122,6 +138,10 @@ fn of(theme: &Highlighting, slot: Slot) -> (u8, u8, u8) {
 /// a reader that started fresh each line would draw the middle of it as code.
 pub struct Syntax {
     reading: HighlightLines<'static>,
+    /// The name of the definition this reads with, kept for the tests that
+    /// hold what every spelling resolves to.
+    #[cfg(test)]
+    definition: String,
 }
 
 impl std::fmt::Debug for Syntax {
@@ -158,6 +178,8 @@ impl Syntax {
 
         Some(Self {
             reading: HighlightLines::new(found, plain()),
+            #[cfg(test)]
+            definition: found.name.clone(),
         })
     }
 

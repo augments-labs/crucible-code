@@ -169,7 +169,7 @@ impl Style {
 
         // The six colours a fenced block is drawn in. Settled here with
         // everything else, because a palette is settled once — and it is
-        // only the *themes* that are read now, about half a millisecond of
+        // only one *theme* that is read now, under half a millisecond of
         // the startup budget. The syntax definitions, which are the larger
         // half, stay unread until a fence actually arrives.
         let code = color
