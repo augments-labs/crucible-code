@@ -9209,6 +9209,158 @@
       "platforms": [
         "linux"
       ]
+    },
+    {
+      "id": "CASE-QUESTIONS-DECLINE-ALONE",
+      "family": "questions",
+      "obligation": "A declined question asks for a second press and is sent as declined alone, never with the draft its member held.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::docking::tests::a_decline_asks_once_and_is_sent_alone_though_the_member_had_a_draft",
+      "source": "src/cli/converse/docking/tests.rs",
+      "body_sha256": "6fca84481c167d90764e20100563ef5fa6eeb57433c3e9c5072f27d76bab98d8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-QUESTIONS-DECLINE-ALONE-SCREEN",
+      "family": "questions",
+      "obligation": "Through the terminal, a declined question reaches the model as unresolved, without the answer or the note it had.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "docking::a_declined_question_is_sent_declined_alone_though_it_had_a_draft",
+      "source": "tests/whole_screen/docking.rs",
+      "body_sha256": "1975b6ee475e348f40a83bd1113c243283188c868d3318a460a90c71fb2d3d0a",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-QUESTIONS-ONE-SUBMIT",
+      "family": "questions",
+      "obligation": "A second submit while one is in flight sends nothing more.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::docking::tests::a_second_submit_while_one_is_in_flight_does_nothing",
+      "source": "src/cli/converse/docking/tests.rs",
+      "body_sha256": "0aabbb9ebce326572a19ad32d0c14c1c32cd69ef0adad782d87bc220c96d90a4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-QUESTIONS-REFUSED-KEEPS-DRAFT",
+      "family": "questions",
+      "obligation": "A refused submission keeps the draft and offers a retry that sends it.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::docking::tests::a_refused_submission_keeps_the_draft_and_offers_a_retry",
+      "source": "src/cli/converse/docking/tests.rs",
+      "body_sha256": "08ed7b1e09ec1bcc3dae1112a37ecf221f284ef3c4348b1140e9c974e1f709f1",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-QUESTIONS-OTHER-ERA-DROPS",
+      "family": "questions",
+      "obligation": "A listing from another era drops every draft, so no answer made for an earlier one is carried into it.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::docking::tests::a_listing_of_another_era_drops_every_draft",
+      "source": "src/cli/converse/docking/tests.rs",
+      "body_sha256": "c591c191a410b3721804f0b90f4324da1c5cd719432e2ec81327c8d08ae27e49",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-QUESTIONS-ESCAPE-NEVER-DECLINES",
+      "family": "questions",
+      "obligation": "Escape leaves the editor, then closes the dock; neither declines, and the answer and note are sent as drafted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "docking::escape_leaves_the_editor_then_closes_the_dock_and_neither_declines",
+      "source": "tests/whole_screen/docking.rs",
+      "body_sha256": "6286276051db23d6253e5dcb0ecb86b07d741fb2f6c479ecab6245ecba2bc463",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-QUESTIONS-BOX-ANSWERS-NOTHING",
+      "family": "questions",
+      "obligation": "A line typed in the box beside the open dock steers the turn and answers no question.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "docking::a_line_typed_beside_the_open_dock_steers_the_turn_and_answers_nothing",
+      "source": "tests/whole_screen/docking.rs",
+      "body_sha256": "ed09354958d34abddca650c476a4f13033012011fa8c84e08a7318b3e4094073",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-QUESTIONS-DELIVERED-UNDER-TURN",
+      "family": "questions",
+      "obligation": "Answers submitted under a running turn are accepted on screen and reach the model when the turn ends.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "docking::a_batch_submitted_under_a_running_turn_is_accepted_and_goes_once_delivered",
+      "source": "tests/whole_screen/docking.rs",
+      "body_sha256": "5cebc0c217a06a881c74432cfdd1e970328d02ebe9620701600b296a9e46cfbb",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-QUESTIONS-PIPE-NOT-OFFERED",
+      "family": "questions",
+      "obligation": "A run reading its input from a pipe, with nobody at the keys, is not offered the question tool.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "docking::a_run_reading_its_input_from_a_pipe_is_not_offered_the_question_tool",
+      "source": "tests/whole_screen/docking.rs",
+      "body_sha256": "4dce0d72b81a5777620214dd5430390513a1912857d0aa95a1f164d657cf676f",
+      "platforms": [
+        "linux"
+      ]
     }
   ]
 }
