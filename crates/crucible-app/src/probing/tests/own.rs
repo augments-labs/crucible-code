@@ -7,10 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crucible_config::Driver;
 use crucible_external_harnesses::{Dialect as _, Shape};
-use crucible_sandbox::{
-    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxNetworkPolicy, SandboxPolicy,
-    SandboxPrivateLoopback,
-};
+use crucible_sandbox::{SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxPolicy};
 
 use crate::backends::REGISTRY;
 use crate::launching::guarded;
@@ -409,37 +406,6 @@ fn the_own_root_rules_of_a_launch_under_the_sandbox() {
         matches!(&refusal, Some(Unowned::Root(said)) if said == why),
         "{refusal:?}"
     );
-}
-
-#[test]
-fn no_own_launch_policy_asks_for_private_loopback() {
-    let sample = Sample::new("own-private-loopback");
-    let program = program_in(&sample);
-    let granted = program.parent().expect("a directory").to_path_buf();
-    let conversation = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
-
-    // A launch of the user's own program, granted a directory or not, keeps
-    // the conversation's loopback: nothing is started before it that asks
-    // for one of its own.
-    for root in [Root::Grant(granted.clone()), Root::NoRule] {
-        let launching = launch_policy(&conversation, &root).expect("a launch policy");
-        assert_eq!(
-            launching.private_loopback(),
-            conversation.private_loopback(),
-            "{root:?}"
-        );
-        assert_eq!(
-            launching.private_loopback(),
-            SandboxPrivateLoopback::Refused,
-            "{root:?}"
-        );
-    }
-
-    // Nor does the store intake probe's policy.
-    let intake = crate::probing::policy(&granted, SandboxFilesystemProvenance::Workspace, true)
-        .expect("an intake probe policy");
-    assert_eq!(intake.private_loopback(), SandboxPrivateLoopback::Refused);
-    assert_eq!(intake.network(), &SandboxNetworkPolicy::Closed);
 }
 
 #[test]

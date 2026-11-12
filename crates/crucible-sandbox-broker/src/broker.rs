@@ -66,12 +66,7 @@ fn run() -> Option<u8> {
     } else {
         None
     };
-    let filter = if network_flags.private_loopback {
-        binding::compile_private_loopback().map(Some)
-    } else {
-        binding::compile(network_flags.allow_local_binding)
-    };
-    let Ok(filter) = filter else {
+    let Ok(filter) = binding::compile(network_flags.allow_local_binding) else {
         drop(network.take());
         return write_failure(&mut status_channel);
     };
@@ -248,15 +243,8 @@ fn parse_plan(
                 limits.processes = Some(parse_limit(arguments, limits.processes)?);
             }
             "--network-proxy" if !network.proxy => network.proxy = true,
-            // Each answers what a closed network may bind, so one plan gives
-            // one of them, once.
-            "--allow-local-binding"
-                if !network.allow_local_binding && !network.private_loopback =>
-            {
+            "--allow-local-binding" if !network.allow_local_binding => {
                 network.allow_local_binding = true;
-            }
-            "--private-loopback" if !network.private_loopback && !network.allow_local_binding => {
-                network.private_loopback = true;
             }
             "--" => return Some((roots, exclusions, limits, network)),
             _ => return None,
@@ -268,7 +256,6 @@ fn parse_plan(
 struct NetworkFlags {
     proxy: bool,
     allow_local_binding: bool,
-    private_loopback: bool,
 }
 
 fn parse_limit(
@@ -397,6 +384,13 @@ mod tests {
     }
 
     #[test]
+    fn a_removed_flag_is_refused() {
+        // A flag the broker no longer reads is refused as any unknown flag is,
+        // never read as an empty plan.
+        assert!(parse_plan(&mut ["--private-loopback", "--"].iter().map(OsString::from)).is_none());
+    }
+
+    #[test]
     fn a_plan_names_each_ceiling_once_and_the_broker_reads_every_one_of_them() {
         let plan = [
             "--limit-cpu-seconds",
@@ -444,30 +438,6 @@ mod tests {
             ["--limit-processes", "0", "--"].as_slice(),
             ["--limit-processes", "--"].as_slice(),
             ["--limit-threads", "8", "--"].as_slice(),
-        ] {
-            assert!(
-                parse_plan(&mut refused.iter().map(OsString::from)).is_none(),
-                "{refused:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_private_loopback_plan_is_read_once_and_never_beside_local_binding() {
-        let (_, _, _, network) =
-            parse_plan(&mut ["--private-loopback", "--"].iter().map(OsString::from))
-                .expect("a readable plan");
-        assert!(network.private_loopback && !network.allow_local_binding && !network.proxy);
-        let (_, _, _, network) =
-            parse_plan(&mut ["--"].iter().map(OsString::from)).expect("a readable plan");
-        assert!(!network.private_loopback);
-
-        // Twice is ambiguous, and beside local binding, which lifts the whole
-        // filter, the host would have asked for two answers to one question.
-        for refused in [
-            ["--private-loopback", "--private-loopback", "--"].as_slice(),
-            ["--private-loopback", "--allow-local-binding", "--"].as_slice(),
-            ["--allow-local-binding", "--private-loopback", "--"].as_slice(),
         ] {
             assert!(
                 parse_plan(&mut refused.iter().map(OsString::from)).is_none(),
