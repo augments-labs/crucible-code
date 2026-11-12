@@ -512,19 +512,23 @@ const RUNGS: [Spacing; 3] = [
     },
 ];
 
-/// The keys in `footer`, one row of them where `room` columns hold it, and
-/// folded between two keys where they do not: half of a key's name is not a
-/// key anybody can press. A single key wider than `room` keeps what fits.
-fn keys(footer: &str, room: usize) -> Vec<Row> {
-    const PARTED: &str = " · ";
+/// The keys in `footer`, one row of them parted by the glyph set's dot where
+/// `room` columns hold it, and folded between two keys where they do not:
+/// half of a key's name is not a key anybody can press. A single key wider
+/// than `room` keeps what fits.
+fn keys(footer: &[&str], room: usize, glyphs: Glyphs) -> Vec<Row> {
+    let parted = format!(" {} ", glyphs.dot());
     let mut lines: Vec<String> = Vec::new();
-    for key in footer.split(PARTED).filter(|key| !key.is_empty()) {
+    for key in footer.iter().map(|key| spoken(key)) {
+        if key.is_empty() {
+            continue;
+        }
         match lines.last_mut() {
-            Some(line) if wide(line) + wide(PARTED) + wide(key) <= room => {
-                line.push_str(PARTED);
-                line.push_str(key);
+            Some(line) if wide(line) + wide(&parted) + wide(&key) <= room => {
+                line.push_str(&parted);
+                line.push_str(&key);
             }
-            _ => lines.push(clip(key, room).to_owned()),
+            _ => lines.push(clip(&key, room).to_owned()),
         }
     }
     lines
@@ -538,10 +542,10 @@ fn keys(footer: &str, room: usize) -> Vec<Row> {
 pub struct Docked<'a, K> {
     /// What it draws.
     pub dock: &'a Dock<K>,
-    /// The quiet row under the frame, naming the keys, or empty. Its keys are
-    /// parted by ` · `, and a window too narrow for the row folds it between
-    /// two of them.
-    pub footer: &'a str,
+    /// The keys named in the quiet row under the frame, or none. The dock
+    /// parts them with the glyph set's dot, and a window too narrow for the
+    /// row folds it between two of them.
+    pub footer: &'a [&'a str],
 }
 
 impl<K> Clone for Docked<'_, K> {
@@ -832,7 +836,7 @@ impl<K: PartialEq> Docked<'_, K> {
         };
 
         let footer = if spacing.footer {
-            keys(&spoken(self.footer), columns.saturating_sub(SAID))
+            keys(self.footer, columns.saturating_sub(SAID), glyphs)
         } else {
             Vec::new()
         };
@@ -1386,7 +1390,7 @@ mod tests {
 
     /// What the dock draws, row by row.
     fn art(dock: &Dock<u32>, columns: usize, room: usize) -> Vec<String> {
-        Docked { dock, footer: "" }
+        Docked { dock, footer: &[] }
             .within(columns, room, Glyphs::Unicode)
             .0
             .iter()
@@ -1532,7 +1536,7 @@ mod tests {
 
             let (rows, caret) = Docked {
                 dock: &open,
-                footer: "",
+                footer: &[],
             }
             .within(80, 40, Glyphs::Unicode);
             let texts: Vec<String> = rows.iter().map(Row::text).collect();
@@ -1561,7 +1565,7 @@ mod tests {
         let open = dock(vec![format()], Phase::Answering);
         let (rows, caret) = Docked {
             dock: &open,
-            footer: "",
+            footer: &[],
         }
         .within(80, 40, Glyphs::Unicode);
         assert!(!rows.is_empty());
@@ -1867,7 +1871,7 @@ mod tests {
         let open = dock(vec![hostile], Phase::Answering);
 
         for (dock, phase) in [(&review, "review"), (&open, "open")] {
-            let rows = Docked { dock, footer: "" }
+            let rows = Docked { dock, footer: &[] }
                 .within(80, 40, Glyphs::Unicode)
                 .0;
             for row in &rows {
@@ -1987,7 +1991,7 @@ mod tests {
                     for room in [0, 1, 2, 5, 12, 40, 200] {
                         let (rows, caret) = Docked {
                             dock: &dock,
-                            footer: "tab composer \u{1b}[1m· esc close",
+                            footer: &["tab composer \u{1b}[1m", "esc close"],
                         }
                         .within(columns, room, glyphs);
                         assert!(rows.len() <= room, "{:?} {columns}x{room}", dock.phase);
@@ -2014,7 +2018,7 @@ mod tests {
         for dock in hostile_docks() {
             let rows = Docked {
                 dock: &dock,
-                footer: "esc close",
+                footer: &["esc close"],
             }
             .within(80, 200, Glyphs::Unicode)
             .0;
@@ -2035,7 +2039,7 @@ mod tests {
         }
         let rows = Docked {
             dock: &ready,
-            footer: "enter choose · tab composer · esc close",
+            footer: &["enter choose", "tab composer", "esc close"],
         }
         .within(80, 40, Glyphs::Unicode)
         .0;
@@ -2047,7 +2051,7 @@ mod tests {
         let refused = drafted(Phase::Refused("the session could not save it".to_owned()));
         let rows = Docked {
             dock: &refused,
-            footer: "enter choose · tab composer · esc close",
+            footer: &["enter choose", "tab composer", "esc close"],
         }
         .within(80, 40, Glyphs::Unicode)
         .0;
@@ -2062,7 +2066,7 @@ mod tests {
         open.focus.marked = 0;
         let rows = Docked {
             dock: &open,
-            footer: "enter review · esc close",
+            footer: &["enter review", "esc close"],
         }
         .within(36, 40, Glyphs::Unicode)
         .0;
@@ -2078,7 +2082,7 @@ mod tests {
 
     /// Every window the dock can be scrolled to at this size, top to bottom.
     fn windows(dock: &Dock<u32>, columns: usize, room: usize) -> Vec<Vec<String>> {
-        let end = Docked { dock, footer: "" }.end(columns, room, Glyphs::Unicode);
+        let end = Docked { dock, footer: &[] }.end(columns, room, Glyphs::Unicode);
         (0..=end)
             .map(|scrolled| {
                 let mut at = dock.clone();
@@ -2175,7 +2179,7 @@ mod tests {
             marked.focus.marked = member.declines_at();
             let end = Docked {
                 dock: &marked,
-                footer: "",
+                footer: &[],
             }
             .end(80, room, Glyphs::Unicode);
             assert_ne!(end, 0, "room {room} is a window");
@@ -2186,7 +2190,7 @@ mod tests {
             writing.focus.editing = Some(Editing::Written { column: 0 });
             let (_, caret) = Docked {
                 dock: &writing,
-                footer: "",
+                footer: &[],
             }
             .within(80, room, Glyphs::Unicode);
             assert!(
@@ -2231,7 +2235,7 @@ mod tests {
         set.scroll_to(10);
         let opens = Docked {
             dock: &set,
-            footer: "",
+            footer: &[],
         }
         .opens_at(80, 30, Glyphs::Unicode);
         assert_eq!(opens, 10);
@@ -2257,7 +2261,7 @@ mod tests {
                         let keys = rows.last().is_some_and(|row| row.contains("pgup"));
                         let end = Docked {
                             dock: &sized,
-                            footer: "",
+                            footer: &[],
                         }
                         .end(columns, room, Glyphs::Unicode);
                         assert_eq!(
@@ -2288,7 +2292,7 @@ mod tests {
         assert_eq!(
             Docked {
                 dock: &short,
-                footer: ""
+                footer: &[]
             }
             .end(80, 60, Glyphs::Unicode),
             0
@@ -2301,7 +2305,7 @@ mod tests {
         assert!(
             Docked {
                 dock: &long,
-                footer: ""
+                footer: &[]
             }
             .end(80, 60, Glyphs::Unicode)
                 > 0
@@ -2317,7 +2321,7 @@ mod tests {
         }
         let end = Docked {
             dock: &long,
-            footer: "",
+            footer: &[],
         }
         .end(80, 60, Glyphs::Unicode);
         let mut last = long.clone();
@@ -2374,7 +2378,7 @@ mod tests {
     }
 
     /// The keys the terminal names under an open question.
-    const KEYS: &str = "enter choose · n note · tab composer · esc close";
+    const KEYS: &[&str] = &["enter choose", "n note", "tab composer", "esc close"];
 
     /// What the dock draws with `KEYS` under it, row by row.
     fn keyed(dock: &Dock<u32>, columns: usize, room: usize) -> Vec<String> {
@@ -2391,7 +2395,7 @@ mod tests {
         let open = dock(vec![format()], Phase::Answering);
         for columns in [44, 30, 20] {
             let rows = keyed(&open, columns, 40);
-            for key in KEYS.split(" · ") {
+            for key in KEYS {
                 assert!(
                     rows.iter().any(|row| row.contains(key)),
                     "{columns} columns: {key:?} is on one row whole: {rows:#?}"
@@ -2402,6 +2406,46 @@ mod tests {
                 "{columns} columns: no row is wider than the window: {rows:#?}"
             );
         }
+    }
+
+    #[test]
+    fn in_the_ascii_glyph_set_the_keys_are_parted_by_its_mark_and_fold_between_keys() {
+        let open = dock(vec![format()], Phase::Answering);
+        for columns in [80, 44, 30, 20] {
+            let rows: Vec<String> = Docked {
+                dock: &open,
+                footer: KEYS,
+            }
+            .within(columns, 40, Glyphs::Ascii)
+            .0
+            .iter()
+            .map(Row::text)
+            .collect();
+            assert!(
+                rows.iter().all(|row| row.is_ascii()),
+                "{columns} columns: every row is ASCII: {rows:#?}"
+            );
+            for key in ["enter choose", "n note", "tab composer", "esc close"] {
+                assert!(
+                    rows.iter().any(|row| row.contains(key)),
+                    "{columns} columns: {key:?} is on one row whole: {rows:#?}"
+                );
+            }
+        }
+        let wide: Vec<String> = Docked {
+            dock: &open,
+            footer: KEYS,
+        }
+        .within(80, 40, Glyphs::Ascii)
+        .0
+        .iter()
+        .map(Row::text)
+        .collect();
+        assert!(
+            wide.iter()
+                .any(|row| row.contains("enter choose - n note - tab composer - esc close")),
+            "{wide:#?}"
+        );
     }
 
     #[test]

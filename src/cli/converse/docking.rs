@@ -39,22 +39,28 @@ use crucible_tui::{
 use crucible_types::{Batch, QuestionId};
 
 /// The quiet row under the open dock while a question is open.
-const CHOOSING: &str = "enter choose · n note · tab composer · esc close";
+const CHOOSING: &[&str] = &["enter choose", "n note", "tab composer", "esc close"];
 
 /// The same, on a question that takes several answers.
-const CHOOSING_SEVERAL: &str = "enter next · space toggle · n note · tab composer · esc close";
+const CHOOSING_SEVERAL: &[&str] = &[
+    "enter next",
+    "space toggle",
+    "n note",
+    "tab composer",
+    "esc close",
+];
 
 /// While a line is being written.
-const WRITING: &str = "enter or esc done · tab composer";
+const WRITING: &[&str] = &["enter or esc done", "tab composer"];
 
-/// While a decline waits for its second press.
-const CONFIRMING: &str = "enter to decline this question · esc keep it";
+/// While a decline waits for its second press, parted by the glyph set's dot.
+const CONFIRMING: [&str; 2] = ["enter to decline this question", "esc keep it"];
 
 /// While the answers are read back, or what became of them is shown.
-const ACTING: &str = "enter select · tab composer · esc close";
+const ACTING: &[&str] = &["enter select", "tab composer", "esc close"];
 
 /// While the dock is open and the composer has the keys.
-const ELSEWHERE: &str = "tab questions";
+const ELSEWHERE: &[&str] = &["tab questions"];
 
 /// The dock, and what the terminal keeps beside it.
 ///
@@ -289,15 +295,15 @@ impl Docking {
             rows.push(
                 Row::new()
                     .then(Slot::Plain, "  ")
-                    .then(Slot::Quiet, CONFIRMING)
+                    .then(Slot::Quiet, CONFIRMING.join(&format!(" {} ", glyphs.dot())))
                     .clipped(columns),
             );
         }
         (rows, caret)
     }
 
-    /// The quiet row under the open dock, naming the keys that work now.
-    fn footer(&self) -> &'static str {
+    /// The keys that work now, named in the quiet row under the open dock.
+    fn footer(&self) -> &'static [&'static str] {
         if !self.focus {
             return ELSEWHERE;
         }
@@ -306,7 +312,7 @@ impl Docking {
         }
         // Asked under the dock instead, by [`Docking::rows`].
         if self.confirming {
-            return "";
+            return &[];
         }
         match self.dock.phase {
             Phase::Answering

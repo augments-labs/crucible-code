@@ -653,7 +653,7 @@ fn a_dock_fits_the_window_its_questions_wait_in() {
         down("a dock", |columns, room, glyphs| {
             Docked {
                 dock: &dock,
-                footer: PROSE,
+                footer: &[PROSE],
             }
             .within(columns, room, glyphs)
             .0
