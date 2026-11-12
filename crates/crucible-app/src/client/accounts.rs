@@ -1354,8 +1354,9 @@ type Cataloged = (AgentKey, Option<Box<str>>);
 /// offers, then each the ACP Registry offers, once, by its key, with the first
 /// version offered, but one whose key is a word a built-in driver is spelled
 /// with; at most [`LISTED`], and whether more are offered than are listed.
-/// Among the registry's, an entry with a target here that crucible does not
-/// install is listed with no version, and only where `trying` finds the user's
+/// Among the registry's, an entry crucible does not install, one with a
+/// target here it cannot install or one published only as a package, is
+/// listed with no version, and only where `trying` finds the user's
 /// own program of it, as the door finds it; past the most listed, it is not
 /// looked for, and is said to be one more, as the door says it. Where it is
 /// looked for is decided by its instances in the user file, read once for the

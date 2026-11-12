@@ -3066,3 +3066,172 @@ fn two_unhashed_entries_guessing_the_same_command_are_each_listed_under_their_ow
     }
     Ok(())
 }
+
+/// An ACP Registry entry with no binary for this machine, published only as
+/// a package for npx, is listed by the agents door and by `/login` where the
+/// name its package guesses is on `PATH`: as the user's own program at the
+/// path that name leads to, offering no version and saying why. Where that
+/// name is on no `PATH`, neither lists it.
+#[test]
+fn a_package_only_entry_is_listed_when_its_command_is_on_path_and_not_otherwise()
+-> Result<(), Failed> {
+    use crate::external::choosing::{first_choices, goose_packaged, packaged_with_nothing_on_path};
+
+    let found = crate::Tree::new("registry-package-found")?;
+    let (mut conversation, program) = goose_packaged(&found)?;
+    let agents = rows_listed(&found, &conversation)?;
+    let goose = agents
+        .iter()
+        .find(|listed| listed.agent.as_str() == "goose")
+        .ok_or("the package-only goose was not listed")?;
+    assert_eq!(
+        goose.own.as_ref(),
+        Some(&program),
+        "the listing's own goose"
+    );
+    assert!(goose.registry, "goose was listed as no registry entry");
+    let why = format!(
+        "the ACP Registry gives goose no binary for {}, only a package for npx, which crucible \
+         never runs, so it is not offered",
+        platform()
+    );
+    assert_eq!(goose.unoffered.as_deref(), Some(why.as_str()));
+    let choices = first_choices(&found, &mut conversation)?;
+    assert!(
+        choices.iter().any(|choice| choice == "goose"),
+        "{choices:?}"
+    );
+
+    let unfound = crate::Tree::new("registry-package-unfound")?;
+    let mut conversation = packaged_with_nothing_on_path(&unfound)?;
+    let agents = rows_listed(&unfound, &conversation)?;
+    assert!(
+        agents.iter().all(|listed| listed.agent.as_str() != "goose"),
+        "a package-only goose on no PATH was listed"
+    );
+    let choices = first_choices(&unfound, &mut conversation)?;
+    assert!(
+        choices.iter().all(|choice| choice != "goose"),
+        "{choices:?}"
+    );
+    Ok(())
+}
+
+/// An ACP Registry entry published only as a package, listed as the user's
+/// own program, offers no version, and `/login` offers nothing for it but
+/// trying that program, started with the package's arguments: no install,
+/// update or roll back. Crucible's store is left as it was.
+#[test]
+fn a_package_only_entry_is_never_offered_an_install() -> Result<(), Failed> {
+    use crate::external::choosing::{chose_own, every_choice, every_fact, goose_packaged};
+    use crucible_client_api::AgentAction;
+
+    let tree = crate::Tree::new("registry-package-uninstalled")?;
+    let (mut conversation, _) = goose_packaged(&tree)?;
+    let agents = rows_listed(&tree, &conversation)?;
+    let goose = agents
+        .iter()
+        .find(|listed| listed.agent.as_str() == "goose")
+        .ok_or("the package-only goose was not listed")?;
+    assert!(goose.offered.is_empty(), "{:?}", goose.offered);
+
+    let (action, put) = chose_own(&tree, &mut conversation, "{}", "goose")?;
+
+    assert!(matches!(action, AgentAction::TryOwn { .. }), "{action:?}");
+    let choices = every_choice(&put);
+    assert!(
+        choices.iter().any(|choice| choice == "Try your own"),
+        "{choices:?}"
+    );
+    for move_ in ["Install", "Update", "Roll back"] {
+        assert!(
+            choices.iter().all(|choice| choice != move_),
+            "{move_} was offered: {choices:?}"
+        );
+    }
+    let facts = every_fact(&put);
+    assert!(
+        facts.iter().any(|fact| fact == "Arguments: acp."),
+        "{facts:?}"
+    );
+    let programs = tree.home()?.path().join("programs");
+    let untouched = match fs::read_dir(&programs) {
+        Ok(mut held) => held.next().is_none(),
+        Err(why) => why.kind() == std::io::ErrorKind::NotFound,
+    };
+    assert!(
+        untouched,
+        "crucible's store at {} changed",
+        programs.display()
+    );
+    Ok(())
+}
+
+/// Two ACP Registry entries published only as packages, one for npx and one
+/// for uvx, whose packages guess the same name, are each offered as the
+/// user's own program at the path that name leads to, each with its own
+/// arguments shown, each found by a try of its own key, and each tried and
+/// written under its own key.
+#[test]
+fn two_entries_guessing_the_same_command_are_each_offered_under_their_own_key() -> Result<(), Failed>
+{
+    use crate::external::choosing::{
+        chose_own, every_fact, found_at_door, instance_written, tried_at_door,
+        two_packaged_guessing_goose,
+    };
+    use crucible_app::client::agents::OwnProgram;
+    use crucible_client_api::{Name, Text};
+
+    let tree = crate::Tree::new("registry-package-two")?;
+    let (mut conversation, program) = two_packaged_guessing_goose(&tree)?;
+    let agents = rows_listed(&tree, &conversation)?;
+    let keys: [(&'static str, &str); 2] = [
+        ("goose", "Arguments: acp."),
+        ("goose-next", "Arguments: serve --stdio."),
+    ];
+
+    for (key, arguments) in keys {
+        let row = agents
+            .iter()
+            .find(|listed| listed.agent.as_str() == key)
+            .ok_or_else(|| format!("{key} was not listed"))?;
+        assert_eq!(row.own.as_ref(), Some(&program), "{key}'s own program");
+        assert!(row.unoffered.is_some(), "{key} was listed as offered");
+        let (_, put) = chose_own(&tree, &mut conversation, "{}", key)?;
+        let facts = every_fact(&put);
+        assert!(
+            facts.iter().any(|fact| fact == arguments),
+            "{key}: {facts:?}"
+        );
+        let found = found_at_door(&tree, &conversation, key)?;
+        assert_eq!(
+            found.ok(),
+            Some(OwnProgram::Found(program.clone())),
+            "{key}"
+        );
+    }
+    for (key, _) in keys {
+        let tried = tried_at_door(
+            &tree,
+            &conversation,
+            Command::TryOwnAgent {
+                agent: Name::new(key)?,
+                program: Text::cut(&program.to_string_lossy()),
+            },
+        )?;
+        let Ok(Outcome::Tried {
+            agent, instance, ..
+        }) = tried
+        else {
+            return Err(format!("the door answered {tried:?} for {key}").into());
+        };
+        assert_eq!(agent.as_str(), key);
+        let written: Value = serde_json::from_str(&instance_written(&tree, &instance)?)?;
+        assert_eq!(
+            (written.get("driver"), written.get("agent")),
+            (Some(&json!("catalog")), Some(&json!(key))),
+            "the instance {instance} written for {key}"
+        );
+    }
+    Ok(())
+}

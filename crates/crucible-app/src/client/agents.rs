@@ -356,9 +356,10 @@ pub struct Listed {
     /// The versions offered for this platform, newest source first.
     pub offered: Vec<Box<str>>,
     /// Why crucible installs no version of it, where its entry has a target
-    /// for this platform that crucible does not install: such a row is listed
-    /// only where the user's own program of it was found, offers no version,
-    /// and is reached only as that program.
+    /// for this platform that crucible does not install, or is published only
+    /// as a package: such a row is listed only where the user's own program
+    /// of it was found, offers no version, and is reached only as that
+    /// program.
     pub unoffered: Option<Box<str>>,
     /// The licence of the newest offered.
     pub license: Box<str>,

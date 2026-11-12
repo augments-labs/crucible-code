@@ -11,16 +11,28 @@
 //! carries a SHA-256 and an archive the hardened unpacker reads. One whose
 //! target here has no hash, or an archive of another format, is never offered
 //! or installed: it is listed with why, so that it can be shown only as the
-//! user's own program where its command is found on `PATH`. An entry with no
-//! target here is absent and says why. There is no review, revocation, serial
-//! or key, so nothing here consults [`Trust`](super::Trust) or [`KEYS`](super::KEYS).
+//! user's own program where its command is found on `PATH`.
+//!
+//! An entry with no target here but a package for `npx` or `uvx` is listed
+//! the same way, with why, and is likewise shown only as the user's own
+//! program where the name its package guesses is found on `PATH`. A package
+//! runner fetches and starts code that nothing pins, so crucible never runs
+//! one and its store never installs a package-only agent: such an agent is
+//! reached only as a program the user installed, started with the package's
+//! arguments and environment and no runner. This narrows the earlier rule
+//! that a registry agent published only for `npx` or `uvx` is not offered at
+//! all: it is still never installed, but a program of it the user has is
+//! listed. Any other entry with no target here is absent, and an offer of it
+//! says why. There is no review, revocation, serial or key, so nothing here
+//! consults [`Trust`](super::Trust) or [`KEYS`](super::KEYS).
 //!
 //! The text is JSON: a `version` whose major is [`SCHEMA`], and `agents`, each
 //! an `id`, a `name`, a `version`, a `license` and a `distribution` whose
 //! `binary` maps a platform to an `archive`, a `cmd` and a SHA-256, with the
-//! `args` and `env` the agent is started with. A key this reader does not know
-//! is passed over. The index is bounded before it is parsed and holds at most
-//! [`AGENTS`] agents.
+//! `args` and `env` the agent is started with, and whose `npx` or `uvx` names
+//! a `package` with its `args` and `env`. A package that does not read so is
+//! passed over, as a key this reader does not know is. The index is bounded
+//! before it is parsed and holds at most [`AGENTS`] agents.
 //!
 //! An offer becomes a [`Entry`] the same way a catalog entry does: the adapter
 //! writes the fields the registry gives, the install-time survey and the stored
@@ -143,15 +155,26 @@ impl RegistryIndex {
     }
 
     /// Every entry with a target for the platform this build runs on, in
-    /// registry order, each with its offer or why it is not offered; an entry
-    /// with no target here is absent.
+    /// registry order, each with its offer or why it is not offered, and every
+    /// entry with no target here that is published as a package, with why it
+    /// is not offered; any other entry with no target here is absent.
     #[must_use]
     pub fn listed(&self) -> Vec<(&RegistryEntry, Result<RegistryOffer<'_>, Unoffered>)> {
         let platform = platform();
         self.agents
             .iter()
-            .filter(|entry| entry.target(&platform).is_some())
-            .map(|entry| (entry, entry.offered(&platform)))
+            .filter_map(|entry| match (entry.target(&platform), entry.package()) {
+                (Some(_), _) => Some((entry, entry.offered(&platform))),
+                (None, Some(package)) => Some((
+                    entry,
+                    Err(Unoffered::Package {
+                        id: entry.id.clone(),
+                        platform: platform.as_str().into(),
+                        runner: package.runner,
+                    }),
+                )),
+                (None, None) => None,
+            })
             .collect()
     }
 
@@ -217,6 +240,8 @@ pub struct RegistryEntry {
     pub terms: Option<Box<str>>,
     /// Its binary targets, by platform.
     targets: Vec<RegistryTarget>,
+    /// The package it is published as for a package runner, where it is.
+    package: Option<RegistryPackage>,
 }
 
 impl RegistryEntry {
@@ -278,6 +303,11 @@ impl RegistryEntry {
                 targets.push(RegistryTarget::read(rail, value, &at)?);
             }
         }
+        let package = distribution.and_then(|distribution| {
+            [Runner::Npx, Runner::Uvx]
+                .into_iter()
+                .find_map(|runner| RegistryPackage::read(runner, distribution.get(runner.key())?))
+        });
         Ok(Self {
             id,
             name,
@@ -285,7 +315,15 @@ impl RegistryEntry {
             license,
             terms,
             targets,
+            package,
         })
+    }
+
+    /// The package it is published as for a package runner, `npx` before
+    /// `uvx`, where it is published as one that reads.
+    #[must_use]
+    pub const fn package(&self) -> Option<&RegistryPackage> {
+        self.package.as_ref()
     }
 
     /// The binary target it publishes for `platform`, whether or not it is one
@@ -335,6 +373,39 @@ impl RegistryEntry {
 
 /// One environment variable and its value, as a target sets them.
 pub type Env = Vec<(Box<str>, Box<str>)>;
+
+/// A package the registry publishes an agent as, for a package runner to
+/// fetch and start. Crucible neither fetches nor starts it: it is read only
+/// for the name the user's own program of it may go by, and what that
+/// program is started with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegistryPackage {
+    /// The runner it is published for.
+    pub runner: Runner,
+    /// The package, as the registry spells it, version and all.
+    pub package: Box<str>,
+    /// The agent's own arguments.
+    pub args: Vec<Box<str>>,
+    /// The agent's environment.
+    pub env: Env,
+}
+
+impl RegistryPackage {
+    /// The package `value` publishes for `runner`, or nothing where it is not
+    /// an object whose `package` is text and whose `args` and `env` are what a
+    /// target's are: such a package is passed over, as a key this reader does
+    /// not know is, rather than refusing the index every other agent is read
+    /// from.
+    fn read(runner: Runner, value: &Value) -> Option<Self> {
+        let object = value.as_object()?;
+        Some(Self {
+            runner,
+            package: text(object, "package", "").ok()?,
+            args: texts(object, "args", "").ok()?,
+            env: variables(object, "env", "").ok()?,
+        })
+    }
+}
 
 /// One binary target the registry publishes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -734,6 +805,43 @@ pub enum Unoffered {
         /// The archive's address.
         archive: Box<str>,
     },
+    /// There is no binary for this platform, only a package a package runner
+    /// fetches and starts.
+    #[error(
+        "the ACP Registry gives {id} no binary for {platform}, only a package for {runner}, which \
+         crucible never runs, so it is not offered",
+        runner = .runner.key()
+    )]
+    Package {
+        /// The agent.
+        id: AgentKey,
+        /// This build's platform.
+        platform: Box<str>,
+        /// The package runner it is published for.
+        runner: Runner,
+    },
+}
+
+/// A package runner the registry publishes an agent for, which fetches a
+/// package and starts it. Crucible runs neither.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Runner {
+    /// `npx`, for an npm package.
+    Npx,
+    /// `uvx`, for a Python package.
+    Uvx,
+}
+
+impl Runner {
+    /// The key the registry's `distribution` names it by, which is also the
+    /// runner's program name; kept to this module, so no other code is handed
+    /// a runner's program name to start.
+    const fn key(self) -> &'static str {
+        match self {
+            Self::Npx => "npx",
+            Self::Uvx => "uvx",
+        }
+    }
 }
 
 /// Why the text is not a registry index this reader knows.

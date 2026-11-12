@@ -116,8 +116,9 @@ impl Door<'_> {
     /// What the door finds of the user's own program of `key` alone, as
     /// `trying` finds it: Antigravity's as a listing names it, and a catalog
     /// or registry agent's as [`Door::own`] finds it for the row a listing
-    /// would give it, wherever that row would fall, a registry entry with a
-    /// target here that crucible does not install among them. Where neither
+    /// would give it, wherever that row would fall, a registry entry crucible
+    /// does not install among them, one with a target here it cannot install
+    /// or one published only as a package. Where neither
     /// finds one, it is [`Door::unrun`]'s answer.
     pub(super) fn own_program(&self, trying: &Trying, key: &AgentKey) -> OwnProgram {
         if key.as_str() == ANTIGRAVITY_KEY {
