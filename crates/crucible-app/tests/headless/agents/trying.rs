@@ -192,8 +192,8 @@ fn the_door_tells_an_agent_with_no_program_from_one_it_does_not_list() -> Result
 }
 
 /// `crucible agents try goose` finds the user's own goose through a link on
-/// `PATH` into a directory no `PATH` names, tries it there, admits it, and
-/// writes an instance that runs it by the path the link leads to.
+/// `PATH` into a directory no `PATH` names, tries it there, and writes an
+/// instance that runs it by the path the link leads to.
 #[cfg(unix)]
 #[test]
 fn a_program_found_through_a_link_into_another_directory_is_tried_and_admitted()

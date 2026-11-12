@@ -222,16 +222,18 @@
 //! ([`Listed::keeps_no_sign_in`]).
 //!
 //! A try of the user's own program of an agent, a catalog agent's or
-//! Antigravity's, starts it, so it is refused as no conversation where no
-//! steps were lent ([`AgentsError::Untried`]). The door finds the program again
-//! as a launch of the instance that runs it, or of a new one where none of the
-//! agent is configured, would, as `/login` offers it, and refuses where that
-//! is not the program the move named, where an instance of the agent runs
-//! another, or where its directory is one an agent may not be given; it then
-//! asks its own yes, with what the program is, what it is given and what it
-//! can read, and starts nothing on a no. A catalog agent's answer is kept, and a new
-//! instance is written under a name of its own only once it was admitted: a
-//! refusal, or a write that fails, keeps nothing and writes nothing.
+//! Antigravity's, finds it as a conversation's launch would, so it is refused
+//! where no conversation lent the steps that find it
+//! ([`AgentsError::Untried`]). The door finds the program as a launch of the
+//! instance that runs it, or of a new one where none of the agent is
+//! configured, would, as `/login` offers it, and refuses where that is not the
+//! program the move named, where an instance of the agent runs another, or
+//! where its directory is one an agent may not be given; it then asks its own
+//! yes, with what the program is, what it is given and what it can read. A try
+//! starts, probes and admits nothing: the program is used as found, a new
+//! instance is written under a name of its own only after the yes, and a
+//! launch of the instance is what first starts it. A refusal, a no, or a write
+//! that fails writes nothing.
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -514,9 +516,9 @@ pub enum Outcome {
         /// The method, by its id.
         method: Box<str>,
     },
-    /// The user's own program of the agent answered as one in a sandbox that
-    /// closed the network, and an instance runs it: one written for it, or
-    /// the one that already ran it.
+    /// The user's own program of the agent was taken as found, and an
+    /// instance runs it: the one written for it, or the one that already ran
+    /// it.
     Tried {
         /// The agent.
         agent: AgentKey,
@@ -801,11 +803,12 @@ pub enum AgentsError {
          nothing was started"
     )]
     Conversation(Box<str>),
-    /// Trying the user's own program of the agent starts it, and no
-    /// conversation lent the steps that start it.
+    /// Trying the user's own program of the agent finds it as a
+    /// conversation's launch would, and no conversation lent the steps that
+    /// find it.
     #[error(
-        "trying your own {0} starts it, which needs a conversation to start it in; \
-         nothing was started"
+        "trying your own {0} finds it as a conversation's launch would, and no \
+         conversation lent the steps that find it; nothing was written"
     )]
     Untried(AgentKey),
     /// The method's key has no name to be kept under.
@@ -1072,8 +1075,9 @@ pub fn refused_beside(agent: AgentKey, program: PathBuf, instance: &str) -> Agen
 ///
 /// # Errors
 ///
-/// [`AgentsError::Untried`] where `shelf` lent no steps to start a program
-/// with, and [`AgentsError::Config`] where the configuration cannot be read.
+/// [`AgentsError::Untried`] where `shelf` lent no steps to find the program
+/// with as a launch would, and [`AgentsError::Config`] where the configuration
+/// cannot be read.
 pub async fn own_program(shelf: &Shelf<'_>, agent: &str) -> Result<OwnProgram, AgentsError> {
     let Ok(key) = AgentKey::new(agent) else {
         return Ok(OwnProgram::Unlisted);
@@ -4457,8 +4461,8 @@ mod tests {
 
         assert_eq!(
             AgentsError::Untried(agent).to_string(),
-            "trying your own goose starts it, which needs a conversation to start it in; \
-             nothing was started"
+            "trying your own goose finds it as a conversation's launch would, and no \
+             conversation lent the steps that find it; nothing was written"
         );
     }
 }

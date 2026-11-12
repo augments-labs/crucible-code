@@ -307,22 +307,21 @@ persistence and snapshot requests still require an enforcing implementation.
 | `usage` | observed | observed | observed | observed |
 
 A capability being enforced says what a backend *can* apply, not what the
-default policy asks for. With confinement enabled,
-Linux's standard policy states `cpu_limit` at one hour per process and
-`open_file_limit` at 4096. Windows states one hour of aggregate Job processor
-time and no handle-count limit.
-macOS states only the open-file ceiling because its catchable CPU signal is not
-a hard boundary. `bash` adds
-`command_time_limit`, `output_limit` and `concurrency_limit` for the one command
-it is running. An installed coding agent that answers a conversation's turns
-lives as long as the conversation, so it is held to no processor-time, command
-time or output ceiling; its account steps are. `memory_limit` is enforced but not asked for: the knob is the
-address space a process may map rather than the memory it uses, and runtimes
-that reserve enormously and touch little would be refused by any ceiling low
-enough to catch a real runaway. `disk_limit` is unsupported above, and a policy
-may not ask for a ceiling its backend cannot apply, which is also why disabling
-confinement takes the two confining ceilings off with it, rather than carrying
-numbers the compatibility backend would have to refuse.
+default policy asks for. With confinement enabled, Linux's standard policy
+states `cpu_limit` at one hour per process and `open_file_limit` at 4096.
+Windows states one hour of aggregate Job processor time and no handle-count
+limit. macOS states only the open-file ceiling because its catchable CPU signal
+is not a hard boundary. `bash` adds `command_time_limit`, `output_limit` and
+`concurrency_limit` for the one command it is running. An installed coding agent
+that answers a conversation's turns lives as long as the conversation, so it is
+held to no processor-time, command time or output ceiling; its account steps
+are. `memory_limit` is enforced but not asked for: the knob is the address space
+a process may map rather than the memory it uses, and runtimes that reserve
+enormously and touch little would be refused by any ceiling low enough to catch
+a real runaway. `disk_limit` is unsupported above, and a policy may not ask for
+a ceiling its backend cannot apply, which is also why disabling confinement
+takes the two confining ceilings off with it, rather than carrying numbers the
+compatibility backend would have to refuse.
 
 `process_limit` is the one ceiling a policy does not have to ask for. The broker
 is PID 1 of the namespace, and it caps the processes beneath it at 1024 whether
@@ -466,15 +465,14 @@ and neither rule applies to it.
 A release read from the ACP Registry has no review, revocation list or
 anti-rollback. There is no catalog signature or trust state for it: the
 registry's SHA-256, recorded in its receipt, and the probe record taken at its
-install are what hold it. That probe runs under the sandbox setting: with it
-on, in the sandbox with the network closed, and refused where this machine's
-sandbox cannot close it; with it off, as a plain local process. A fresh install
-accepts a same-version archive the registry replaces; an installed version
-keeps the hash its receipt recorded and
-refuses a different same-version archive until it is removed. A receipt without
-that probe record for this machine is not started; `crucible agents probe`
-takes one. The revocation and trust-state rule above is a signed catalog
-release's.
+install are what hold it. That probe runs under the sandbox setting: with it on,
+in the sandbox with the network closed, and refused where this machine's sandbox
+cannot close it; with it off, as a plain local process. A fresh install accepts
+a same-version archive the registry replaces; an installed version keeps the
+hash its receipt recorded and refuses a different same-version archive until it
+is removed. A receipt without that probe record for this machine is not started;
+`crucible agents probe` takes one. The revocation and trust-state rule above is
+a signed catalog release's.
 
 Its consent and its network are the registry's relaxations. Its install is
 asked about under the generic warning that its vendor has not stated what it

@@ -788,9 +788,9 @@ pub fn adding(
 /// The text of a configuration file with the instance `agent` in it, under
 /// its own name: its driver, the catalog agent it runs where it is a catalog
 /// instance, and its program, and nothing else, so it takes new work as any
-/// instance does. It is the instance a probe of the user's own program was
-/// kept for by that name, so a name the file already holds is refused rather
-/// than written over or passed over. Every other byte is where it was, and
+/// instance does. It is the instance a try of the user's own program writes
+/// by that name, so a name the file already holds is refused rather than
+/// written over or passed over. Every other byte is where it was, and
 /// the text is read back as the user's file before it is returned.
 ///
 /// # Errors

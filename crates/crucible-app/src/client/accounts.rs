@@ -60,7 +60,7 @@
 //! | connect, of a client claiming install, the agent read signed out, its instance in the file | a sign-in method | [`LoginOutcome::AgentChosen`], that sign-in, after the route's yes where it was asked and the agent's status read, nothing more |
 //! | connect, no instance named, of a client claiming install, the user file not readable | a catalog agent | said so, no move offered, then [`LoginOutcome::Undecided`] |
 //! | connect, no instance named, of a client claiming install, the agent's own program found and not yet tried | a catalog agent or Antigravity, then try your own | [`LoginOutcome::AgentChosen`], that try, nothing started, asked of its route or written |
-//! | connect, no instance named, of a client claiming install, the agent's own program tried and admitted | a catalog agent, then connect | as connect |
+//! | connect, no instance named, of a client claiming install, the agent's own program tried, its instance written | a catalog agent, then connect | as connect |
 //!
 //! A removal whose write fails after the conversation's run on the instance
 //! was stopped is told that the instance is stopped for this run only: the
