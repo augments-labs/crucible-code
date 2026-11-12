@@ -1601,6 +1601,7 @@ fn ungranted_sibling_home_and_credential_paths_are_unreachable() {
             .expect("prepared sandbox");
     crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     let script = r#"
+import os
 import sys
 
 sibling, secret, home = sys.argv[1], sys.argv[2], sys.argv[3]
