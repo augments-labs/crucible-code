@@ -56,14 +56,17 @@
 //! since the agent was selected is the one the start is held to. What an agent
 //! built in is admitted as, and started with, is what those releases say; with
 //! the trust state unusable it is admitted as none.
-//! The catalog intake starts an agent's program too, with `probing`: from
-//! the directory its release was unpacked into and the entry that describes it,
-//! under a policy that requires the sandbox, closes the network and leaves that
-//! directory read-only. No route was asked about content use, since all the
-//! program is sent is one fixed `initialize` that carries nothing a user wrote.
-//! Confined, the sandbox closes the network, so nothing it is sent can be
-//! passed on. Where this machine's sandbox cannot close the network the start
-//! is refused, unless the caller says the run is on a disposable machine, which
+//! The catalog intake and a registry install start an agent's program too,
+//! with `probing`: from the directory its release was unpacked into and the
+//! entry that describes it, under the sandbox setting the user configured.
+//! With it on, the policy requires the sandbox, closes the network and leaves
+//! that directory read-only; with it off, the program is started as a plain
+//! local process and the output says the sandbox was off. No route was asked
+//! about content use, since all the program is sent is one fixed `initialize`
+//! that carries nothing a user wrote. Confined, the sandbox closes the network,
+//! so nothing it is sent can be passed on. With the sandbox on and this
+//! machine's sandbox unable to close the network the start is refused, unless
+//! the caller says the run is on a disposable machine, which
 //! [`crate::probing`] allows only to a process that says so, and then the
 //! program is started unconfined, with the network the machine has and nothing
 //! of a user's on it, and the output says so.
@@ -300,6 +303,7 @@ use crate::backends::{
 use crate::content_use::{self, Consent, Unheld, Unstated, Warned, agent_route};
 use crate::external::External;
 use crate::outside::Relaunch;
+use crate::probing::Confinement;
 use crate::providers;
 
 pub(crate) mod discovery;
@@ -3490,9 +3494,11 @@ impl<'a> Launcher<'a> {
 }
 
 /// The route the intake's probe is started under. No user is asked: what a
-/// probe sends the program is one fixed `initialize` that carries no content,
-/// the sandbox closes the network when it can, and when it cannot the probe is
-/// run only on a disposable runner with nothing of a user's on it.
+/// probe sends the program is one fixed `initialize` that carries no content.
+/// With the sandbox on, the sandbox closes the network when it can, and when
+/// it cannot the probe is run only on a disposable runner with nothing of a
+/// user's on it; with the sandbox setting off, the program runs as any
+/// process the user starts does.
 pub(crate) const PROBING: &str = "catalog-probe";
 
 /// How far the sandbox held a probe in.
@@ -3503,6 +3509,9 @@ pub(crate) enum Sandbox {
     /// The sandbox here could not close the network, for this reason, and the
     /// program was started unconfined at the caller's word.
     Unavailable(String),
+    /// The sandbox setting was off, and the program was started as a plain
+    /// local process.
+    Off,
 }
 
 /// A program started for the intake's probe, spoken to over `D`.
@@ -3562,9 +3571,12 @@ pub enum Unprobeable {
 /// Starts the program the `entry` lists for this platform, found under the
 /// unpacked directory `root`, so that `initialize` can be sent to it.
 ///
-/// The sandbox is required, the network closed and `root` read-only. Where
-/// `service` cannot enforce that, the start is refused, or with `unconfined`
-/// the program is started without the sandbox and the start says why.
+/// With the sandbox on, the sandbox is required, the network closed and
+/// `root` read-only. Where `service` cannot enforce that, the start is
+/// refused, or where `confinement` is the disposable one the program is
+/// started without the sandbox and the start says why. With the sandbox
+/// setting off, the program is started as a plain local process, `service`
+/// is not asked what it can enforce, and the start says the sandbox was off.
 ///
 /// # Errors
 ///
@@ -3574,7 +3586,7 @@ pub(crate) async fn probing(
     runtime: Handle,
     root: &Path,
     entry: &Entry,
-    unconfined: bool,
+    confinement: Confinement,
 ) -> Result<Probe, Unprobeable> {
     let target = entry.here().ok_or_else(|| {
         Unprobeable::Platform(format!(
@@ -3600,14 +3612,22 @@ pub(crate) async fn probing(
     };
     let leading = interpreting(target, &root.join(&*target.cmd), &root)?;
     let bin = binning(target, &root)?;
-    let unclosable = unclosable(service.as_ref()).await;
-    if let (Some(reason), false) = (&unclosable, unconfined) {
-        return Err(Unprobeable::Unclosable(reason.clone()));
-    }
+    let sandbox = match confinement {
+        Confinement::Off => Sandbox::Off,
+        Confinement::Required | Confinement::Disposable => {
+            match (unclosable(service.as_ref()).await, confinement) {
+                (None, _) => Sandbox::Closed,
+                (Some(reason), Confinement::Disposable) => Sandbox::Unavailable(reason),
+                (Some(reason), Confinement::Required | Confinement::Off) => {
+                    return Err(Unprobeable::Unclosable(reason));
+                }
+            }
+        }
+    };
     let policy = crate::probing::policy(
         &root,
         SandboxFilesystemProvenance::Workspace,
-        unclosable.is_none(),
+        sandbox == Sandbox::Closed,
     )?;
     let mut dialect = Acp::cataloged(profile, Allowing::Nothing);
     let request = binned(
@@ -3626,7 +3646,7 @@ pub(crate) async fn probing(
     Ok(Probe {
         host,
         dialect,
-        sandbox: unclosable.map_or(Sandbox::Closed, Sandbox::Unavailable),
+        sandbox,
     })
 }
 

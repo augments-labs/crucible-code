@@ -48,9 +48,10 @@
 //! standard error, written [`failing`].
 //!
 //! `crucible agents probe`, which the help leaves out as well, is the same
-//! intake starting the agent once in a sandbox with no network and asking it to
-//! initialize; what [`crucible_app::probing::probe`] records goes to standard
-//! output, and a refusal to standard error, written [`failing`].
+//! intake starting the agent once, in a sandbox with no network with the
+//! sandbox setting on and as a plain local process with it off, and asking it
+//! to initialize; what [`crucible_app::probing::probe`] records goes to
+//! standard output, and a refusal to standard error, written [`failing`].
 
 use std::fmt::Write as _;
 use std::future::Future;
@@ -74,7 +75,7 @@ use crucible_client_api::{
     Capabilities, Capability, Command, Correlation, Decision, ErrorCode, InstallProgress, Name,
     Pending, Refusal, Request, Said, Text,
 };
-use crucible_config::Home;
+use crucible_config::{Home, Settings};
 use crucible_runtime::{BoxFuture, Cancel};
 use crucible_sandbox::SandboxService;
 use crucible_tui::Held;
@@ -1179,16 +1180,31 @@ pub(super) fn unpack_check(entry: &Path, artifact: &Path, out: &Path) -> ExitCod
 }
 
 /// Runs `crucible agents probe` over the release unpacked into `root` and the
-/// entry at `entry`, and stops.
+/// entry at `entry`, under the sandbox setting of crucible's home as this
+/// process's environment names it, and stops.
 pub(super) fn probe(root: &Path, entry: &Path, unconfined: bool) -> ExitCode {
+    let lookup = |name: &str| std::env::var_os(name);
     written(
-        moded(unconfined, &|name| std::env::var_os(name))
+        configured(&lookup)
+            .and_then(|settings| {
+                Mode::under(&settings, unconfined, &lookup)
+                    .map_err(|refused| failing(&caused(&refused)))
+            })
             .and_then(|mode| probed(root, entry, mode, &probing::local, probing::BOUND)),
     )
 }
 
-/// The mode `--unconfined` asks for as `lookup` reads the environment, or the
+/// The settings of crucible's home as `lookup` reads the environment, or the
 /// refusal for standard error.
+fn configured(lookup: &dyn Fn(&str) -> Option<std::ffi::OsString>) -> Result<Settings, String> {
+    let home = Home::find(lookup).map_err(|homeless| failing(&caused(&homeless)))?;
+    Settings::read_home(&home).map_err(|unread| failing(&caused(&unread)))
+}
+
+/// The mode `--unconfined` asks for as `lookup` reads the environment, or the
+/// refusal for standard error: the rule `probe` applies through
+/// [`Mode::under`] with the sandbox setting on, kept for the tests that hold it.
+#[cfg(test)]
 fn moded(
     unconfined: bool,
     lookup: &dyn Fn(&str) -> Option<std::ffi::OsString>,

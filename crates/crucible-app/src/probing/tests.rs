@@ -99,3 +99,4 @@ fn an_agent_that_refuses_initialize_is_told_with_what_it_said() {
 }
 
 mod own;
+mod setting;

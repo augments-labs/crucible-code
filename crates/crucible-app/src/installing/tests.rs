@@ -390,7 +390,12 @@ fn a_provisional_entry_that_is_not_one_is_refused_before_the_program_starts() {
             .expect("a runnable program");
     }
 
-    let refused = probed(&root, b"not an entry", Duration::from_secs(5));
+    let refused = probed(
+        &root,
+        b"not an entry",
+        crate::probing::Mode::CONFINED,
+        Duration::from_secs(5),
+    );
 
     assert!(
         matches!(refused, Err(crate::probing::Unprobed::Entry { .. })),
@@ -443,7 +448,12 @@ fn a_provisional_entry_for_another_platform_is_refused_before_the_program_starts
     })
     .to_string();
 
-    let refused = probed(&root, entry.as_bytes(), Duration::from_secs(5));
+    let refused = probed(
+        &root,
+        entry.as_bytes(),
+        crate::probing::Mode::CONFINED,
+        Duration::from_secs(5),
+    );
 
     assert!(
         matches!(refused, Err(crate::probing::Unprobed::Unanswered(_))),
@@ -528,6 +538,38 @@ fn a_probe_answer_that_did_not_close_its_network_is_refused() {
                 Err(crate::probing::Unprobed::Unanswered(_))
             ),
             "{answer}"
+        );
+    }
+}
+
+/// An answer the probe took with the sandbox setting off is recorded, and an
+/// answer that names any other sandbox but a closed one, or none, is still
+/// refused.
+#[test]
+fn a_probe_answer_taken_with_the_sandbox_off_is_recorded_and_no_other_open_one_is() {
+    let answered = |sandbox: Option<&str>| {
+        let mut answer = serde_json::Map::new();
+        answer.insert(
+            "agentInfo".into(),
+            serde_json::json!({"name": "goose", "version": "1"}),
+        );
+        answer.insert("authMethods".into(), serde_json::json!([]));
+        if let Some(sandbox) = sandbox {
+            answer.insert("sandbox".into(), serde_json::json!(sandbox));
+        }
+        serde_json::Value::Object(answer).to_string()
+    };
+
+    let off = record(&answered(Some("off")), "linux-x86_64").expect("recorded");
+
+    assert_eq!(&*off.admits.name, "goose");
+    for refused in [Some("open"), Some("Off"), Some("off "), Some(""), None] {
+        assert!(
+            matches!(
+                record(&answered(refused), "linux-x86_64"),
+                Err(crate::probing::Unprobed::Unanswered(_))
+            ),
+            "{refused:?}"
         );
     }
 }

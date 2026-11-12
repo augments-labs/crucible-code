@@ -287,6 +287,7 @@ use crate::launching::{
     self, Agent, Launcher, Steps, Unlaunched, Unpiped, Unscripted, Unsmoked, quoted,
 };
 use crate::own_program::Unowned;
+use crate::probing::Confinement;
 use crate::providers::{Rows, Unnamed};
 use crate::remember::{self, RememberError};
 use crate::services::Services;
@@ -1022,6 +1023,10 @@ async fn opened<'a>(
         instances: settings.external_agents(),
         // The user's own file alone: a checkout cannot ask for this.
         standing: settings.agent_update() == AgentUpdate::Reviewed,
+        // No install asks to run unconfined, which is the one mode that can
+        // be refused; were it refused, the sandbox would be required.
+        probe: crate::probing::Mode::under(&settings, false, &|_| None)
+            .unwrap_or(crate::probing::Mode::CONFINED),
     };
     Ok((door, unrefreshed))
 }
@@ -1155,6 +1160,9 @@ struct Door<'a> {
     /// stands in for the yes to an update of a release the catalog offers.
     /// Every check that can refuse the release still runs.
     standing: bool,
+    /// How a registry release's install probe holds its program in, as the
+    /// sandbox setting in the user's own file says.
+    probe: crate::probing::Mode,
 }
 
 /// Refuses `method`'s command for the user's own program, which runs its
@@ -1739,6 +1747,7 @@ impl Door<'_> {
             adding: (how == How::Added).then(|| {
                 crucible_config::free_name(agent, self.instances.iter().map(ExternalAgent::name))
             }),
+            probe: self.probe,
         };
         // Only an update can stand on the user's file; any other move is asked.
         // A registry release has no review, so the policy that stands in for
@@ -1766,7 +1775,8 @@ impl Door<'_> {
         // A registry offer's file list is the survey, which is taken after the
         // yes: the one archive is downloaded within the registry's cap, its
         // file list is what the survey wrote, and the vendor's program is run
-        // once in the closed sandbox for the receipt's probe record. A failed
+        // once for the receipt's probe record, in the closed sandbox with the
+        // sandbox setting on and as a plain process with it off. A failed
         // probe installs nothing, so neither a provisional offer nor an
         // unprobed receipt is ever committed.
         if !kept && source == Released::Registry {
@@ -1811,8 +1821,9 @@ impl Door<'_> {
             // The probe starts its own services and runtime, so it runs on a
             // blocking thread of this one rather than inside the turn.
             let root = staging.directory().to_owned();
+            let mode = self.probe;
             let record = tokio::task::spawn_blocking(move || {
-                crate::installing::probed(&root, &entry, crate::probing::BOUND)
+                crate::installing::probed(&root, &entry, mode, crate::probing::BOUND)
             })
             .await
             .map_err(|_| AgentsError::Unsupported("a registry probe that did not finish"))?
@@ -1964,9 +1975,20 @@ impl Door<'_> {
         let entry = &offer.entry;
         let total = plan.total;
         let (key, version) = (entry.key.as_str(), quoted(&offer.pin.version));
+        // With the sandbox setting off the probe starts the program as a plain
+        // process, and the question says so rather than promise a sandbox.
+        let (probing, held) = match plan.probe.confinement() {
+            Confinement::Required | Confinement::Disposable => {
+                ("in the sandbox", "in the closed sandbox")
+            }
+            Confinement::Off => (
+                "as a plain process",
+                "as a plain process, with the sandbox off,",
+            ),
+        };
         let putting = if source == Released::Registry {
             format!(
-                "Download {version}, survey it, run it once in the sandbox to probe it, put it in \
+                "Download {version}, survey it, run it once {probing} to probe it, put it in \
                  place and move the instances named onto it"
             )
         } else {
@@ -2001,12 +2023,10 @@ impl Door<'_> {
             format!("{key} {version}, {total} bytes to download.")
         }];
         if source == Released::Registry {
-            facts.push(
+            facts.push(format!(
                 "Crucible will download the vendor's archive, survey it, and run the vendor's \
-                 program once in the closed sandbox for a probe after your yes; a failed probe \
-                 installs nothing."
-                    .to_owned(),
-            );
+                 program once {held} for a probe after your yes; a failed probe installs nothing."
+            ));
         }
         if let Some(fact) = registry.filter(|_| source == Released::Registry) {
             facts.push(match fact.unverified {
@@ -3907,8 +3927,9 @@ fn written(moving: &[(&ExternalAgent, Version)], left: Vec<String>) -> Written {
 
 /// What a switch found before it asked: whether the version is already in
 /// place, every host its download may contact, the launcher it is
-/// smoke-tested with, or why it is not, and for an add the name the instance
-/// would be written under.
+/// smoke-tested with, or why it is not, for an add the name the instance
+/// would be written under, and how a registry release's probe holds its
+/// program in.
 struct Plan<'a> {
     kept: bool,
     total: u64,
@@ -3916,6 +3937,7 @@ struct Plan<'a> {
     reached: Vec<String>,
     smoking: Result<&'a Launcher<'a>, String>,
     adding: Option<String>,
+    probe: crate::probing::Mode,
 }
 
 /// Each file list `offer` keeps as a catalog asset, fetched from the
@@ -4260,6 +4282,7 @@ mod tests {
             reached: vec!["github.com".to_owned()],
             smoking: Err("no conversation lent a launcher to start it with".to_owned()),
             adding: None,
+            probe: crate::probing::Mode::CONFINED,
         }
     }
 
@@ -4294,6 +4317,36 @@ mod tests {
                 .is_some_and(|(_, does)| does.contains("probe")),
             "{:?}",
             question.choices
+        );
+    }
+
+    #[test]
+    fn a_registry_install_question_with_the_sandbox_off_says_the_probe_runs_as_a_plain_process() {
+        let offer = offered();
+        let fact = registry_fact();
+        let sample = crate::sample::Sample::new("agents-question-sandbox-off");
+        let off = sample.user(r#"{"sandbox": {"enabled": false}}"#);
+        let plan = Plan {
+            probe: crate::probing::Mode::under(&off, false, &|_| None).expect("a mode"),
+            ..plan()
+        };
+
+        let question = Door::installing(
+            &offer,
+            How::Installed,
+            &plan,
+            &[],
+            Released::Registry,
+            Some(&fact),
+        );
+
+        let said = question.facts.join(" ");
+        assert!(said.contains("as a plain process"), "{said}");
+        assert!(!said.contains("sandbox for a probe"), "{said}");
+        let does = question.choices.first().map(|(_, does)| does.as_str());
+        assert!(
+            does.is_some_and(|does| does.contains("run it once as a plain process to probe it")),
+            "{does:?}"
         );
     }
 
