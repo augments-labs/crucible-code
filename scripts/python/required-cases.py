@@ -35,17 +35,20 @@ A case is rerun by exact name in the test binary the selection built, from its
 package's directory as cargo would run it, so the rerun is the code the suite
 ran and costs no build. Asking cargo for one package instead would resolve that
 package's features alone and build it again, different from what was tested.
-The binaries are rerun beside one another, no more binaries at once than there
-are processors, which stands in for the gate's nextest run, where the tests
-that keep a processor busy run at most one per processor, since each binary
-runs its own cases on threads of its own. Those holding a case of one of
+Apart from the cases the gate's profile runs alone, below, the binaries are
+rerun beside one another, no more binaries at once than there are processors,
+which stands in for the gate's nextest run, where the tests that keep a
+processor busy run at most one per processor, since each binary runs its own
+cases on threads of its own. Those holding a case of one of
 `.config/nextest.toml`'s test groups take turns.
 
 A test whose own text names `SOON_REFUSED` asserts a wall-clock bound, which a
 test beside it that keeps a processor busy can make it miss, so the gate's
 nextest profile runs each such test alone and picks them by name. Every binary
 the selection built is listed, and the gate fails when a test that names the
-bound is not run alone, or one run alone no longer names it.
+bound is not run alone, or one run alone no longer names it. A required case
+the profile runs alone is rerun in a run of its own, with no other rerun
+going.
 
     scripts/python/required-cases.py <artifacts> <doc-list> <doc-ignored-list> <selection>...
     scripts/python/required-cases.py --self-test  prove the source reader reads,
@@ -645,6 +648,7 @@ def self_test():
                 {key: key[2] for key in run},
                 run,
                 {"confined": lambda package, binary, test: binary in ("a", "b")},
+                lambda package, binary, test: False,
                 answered,
             )
     except threading.BrokenBarrierError:
@@ -677,7 +681,7 @@ def self_test():
 
     many = {(name, "lib", name): [(None, "one", None)] for name in "abcde"}
     with contextlib.redirect_stdout(io.StringIO()):
-        rerun({key: key[2] for key in many}, many, {}, counted, width=lambda: 2)
+        rerun({key: key[2] for key in many}, many, {}, lambda package, binary, test: False, counted, width=lambda: 2)
     if now[1] > 2:
         print(f"    FAIL {now[1]} binary reruns went at once where two processors allow two")
         return 1
@@ -692,6 +696,7 @@ def self_test():
             {key: key[2] for key in late},
             late,
             {"confined": lambda package, binary, test: package in ("a", "d")},
+            lambda package, binary, test: False,
             lambda binary, names: len(names) - (binary in ("a", "b")),
             width=lambda: 1,
         )
@@ -699,6 +704,87 @@ def self_test():
     if len(lines) != 2 or " in a lib a " not in lines[0] or " in b lib b " not in lines[1]:
         print(f"    FAIL reruns that did not all pass were not printed in name order: {lines}")
         return 1
+
+    # a holds two cases the gate's profile runs alone beside one it does not,
+    # and d holds only such a case, so a rerun that asked d for what is left of
+    # it would ask for no case, which a test binary reads as every test. b and
+    # c meet, so the rest still go at once. No package is named as its target,
+    # so a rerun that asked `lone` about anything but the package, the target
+    # and the case would run nothing alone. Each run answers wrongly for some
+    # reruns, or none; the last two put one rerun's surplus against another's
+    # shortfall, which still leaves a case that did not pass.
+    lonely = {
+        ("pa", "lib", "a"): [(None, "timed", None), (None, "plain", None), (None, "timed2", None)],
+        ("pb", "lib", "b"): [(None, "one", None)],
+        ("pc", "lib", "c"): [(None, "one", None)],
+        ("pd", "test", "d"): [(None, "timed", None)],
+    }
+    picked = {("pa", "a", "timed"), ("pa", "a", "timed2"), ("pd", "d", "timed")}
+    for wrong, named in (
+        ({}, []),
+        ({("a", ("timed",)): -1}, ["pa lib a"]),
+        ({("a", ("plain",)): -1}, ["pa lib a"]),
+        ({("d", ("timed",)): -1}, ["pd test d"]),
+        ({("b", ("one",)): -1}, ["pb lib b"]),
+        ({("a", ("timed",)): 0, ("a", ("plain",)): 2}, ["pa lib a"]),
+        ({("a", ("timed",)): 2, ("a", ("plain",)): 0}, ["pa lib a"]),
+    ):
+        calls = []
+        crowded = []
+        going = [0, False]
+        meeting = threading.Barrier(2, timeout=5)
+
+        def answered(binary, names):
+            alone_here = any(name.startswith("timed") for name in names)
+            with guarded:
+                if going[1] or (alone_here and going[0]):
+                    crowded.append((binary, names))
+                going[0] += 1
+                going[1] = going[1] or alone_here
+                calls.append((binary, list(names)))
+            try:
+                if binary in ("b", "c"):
+                    meeting.wait()
+                else:
+                    time.sleep(0.02)
+            finally:
+                with guarded:
+                    going[0] -= 1
+                    going[1] = going[1] and not alone_here
+            return wrong.get((binary, tuple(names)), len(names))
+
+        printed = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(printed):
+                failed = rerun(
+                    {key: key[2] for key in lonely},
+                    lonely,
+                    {},
+                    lambda package, binary, test: (package, binary, test) in picked,
+                    answered,
+                    width=lambda: 3,
+                )
+        except threading.BrokenBarrierError:
+            print("    FAIL reruns of cases not run alone did not run beside one another")
+            return 1
+        expected = [
+            ("a", ["plain"]),
+            ("a", ["timed"]),
+            ("a", ["timed2"]),
+            ("b", ["one"]),
+            ("c", ["one"]),
+            ("d", ["timed"]),
+        ]
+        if sorted(calls) != expected:
+            print(f"    FAIL the reruns asked {sorted(calls)}, not each case run alone by itself and the rest by binary")
+            return 1
+        if crowded:
+            print(f"    FAIL a case run alone was rerun beside another rerun: {crowded}")
+            return 1
+        lines = printed.getvalue().splitlines()
+        if failed != bool(named) or [line.split(" in ")[1].split(" did ")[0] for line in lines] != named:
+            print(f"    FAIL with {wrong} answered, the reruns were reported as {lines}, exit {failed}")
+            return 1
 
     with tempfile.TemporaryDirectory() as root:
         for where in ("tests", os.path.join(".worktrees", "other", "tests")):
@@ -1051,8 +1137,8 @@ def confining(path):
     after one that sets slots otherwise, which would decide first for the
     tests both pick, and so is one that names a platform, which would hold on
     that platform alone, or whose filter `selector()` cannot read, since
-    `alone()` reads it so. That puts no test in a group of its own either, and
-    the reruns here still run such a case beside its binary's other cases.
+    `alone()` reads it so. That puts no test in a group of its own either:
+    `rerun()` runs such a case in a run of its own, with no other rerun going.
     """
     try:
         source = open(path, "rb")
@@ -1270,25 +1356,39 @@ def schedule(reruns, groups):
     return [keys for _, keys in jobs]
 
 
-def rerun(built, run, groups, ran=ran, width=processors):
+def rerun(built, run, groups, lone, ran=ran, width=processors):
     """Rerun every binary's required cases as `schedule()` allows, and say which did not all pass.
 
-    No more binaries go at once than `width()` processors, which stands in for
-    the gate's nextest run rather than matching it, since each binary runs its
-    own cases on threads of its own. Every line is printed in one
-    order once all have answered, so the output does not depend on which
-    finished first.
+    `lone(package, target, case)` picks, as `alone()` does, the cases the
+    gate's profile runs with no other test beside them. Each is rerun in a run
+    of its own, since a binary runs every case it is asked for at once, and
+    with no other rerun going: a binary beside it that keeps a processor busy
+    can make it miss its bound as surely as a test beside it can under
+    nextest. The other cases are rerun with no more binaries at once than
+    `width()` processors, which stands in for the gate's nextest run rather
+    than matching it, since each binary runs its own cases on threads of its
+    own. A binary's cases all pass only when each run passed exactly the cases
+    it asked for. Every line is printed in one order once all have answered,
+    so the output does not depend on which finished first.
     """
     reruns = {key: [name for _, name, _ in cases] for key, cases in run.items() if key[1] != "doc"}
+    passed = dict.fromkeys(reruns, 0)
+    rest = {}
+    for key, names in sorted(reruns.items()):
+        package, _, target = key
+        for name in names:
+            if not lone(package, target, name):
+                rest.setdefault(key, []).append(name)
+            elif ran(built[key], [name]) == 1:
+                passed[key] += 1
     with ThreadPoolExecutor(max_workers=width()) as pool:
-        passed = dict(
-            pair
-            for job in pool.map(
-                lambda keys: [(key, ran(built[key], reruns[key])) for key in keys],
-                schedule(reruns, groups),
-            )
-            for pair in job
-        )
+        for job in pool.map(
+            lambda keys: [(key, ran(built[key], rest[key])) for key in keys],
+            schedule(rest, groups),
+        ):
+            for key, answer in job:
+                if answer == len(rest[key]):
+                    passed[key] += answer
     failed = 0
     for key, names in sorted(reruns.items()):
         package, kind, target = key
@@ -1451,7 +1551,7 @@ def check(stream, listing, silenced, selection):
             print("    FAIL the run of the required examples failed; rerun it and read the first failure")
             failed = 1
 
-    if rerun(built, run, groups):
+    if rerun(built, run, groups, alone(NEXTEST)):
         failed = 1
     return failed
 
