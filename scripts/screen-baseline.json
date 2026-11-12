@@ -2351,7 +2351,7 @@
         "Vendor::answering(transcript::said(\"math\"))",
         "Watched::in_default_colours( \"transcript-math-120-fullscreen\", (120, 77), Some(&vendor), None, )"
       ],
-      "sha256": "b1d283528d7022f6e56b2780e6f57bff84ae745d81a826de3d919d5328d0281a"
+      "sha256": "abc0ee7b31a7c52b8d5d636a292d8d38518c315f0789836b872f4729d4d130fb"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_math_120_native.snap",
@@ -2360,7 +2360,7 @@
         "Vendor::answering(transcript::said(\"math\"))",
         "Watched::drawn_in_colour( \"transcript-math-120-native\", (120, 77), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "33c9bf36967773d5be451c31a936cf83dc1731171a0f22f8097b552cf9a86e34"
+      "sha256": "dfb9240716c17712519c0d28a19a554a829c7e1413a914e535a8681d2c16d7ec"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_math_40_fullscreen.snap",
@@ -2369,7 +2369,7 @@
         "Vendor::answering(transcript::said(\"math\"))",
         "Watched::in_default_colours( \"transcript-math-40-fullscreen\", (40, 63), Some(&vendor), None, )"
       ],
-      "sha256": "37f792e921aee05c1e396e23e891cf4bfb4a72b27091d5a90189ba189486665f"
+      "sha256": "ba0383e292103bb4bd58f01cd1417ef9aa57fff7ab4368647b352ae7c46e9e45"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_math_40_native.snap",
@@ -2378,7 +2378,7 @@
         "Vendor::answering(transcript::said(\"math\"))",
         "Watched::drawn_in_colour( \"transcript-math-40-native\", (40, 63), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "43d78f69317c60587c7048a94ffb5a3db6b7e0942fec2e01a22248ef159b10ff"
+      "sha256": "a2c04170311286e3b1d5de30f3dcf39d551bb8587d47802fadc13e1a64c06749"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_math_80_fullscreen.snap",
@@ -2387,7 +2387,7 @@
         "Vendor::answering(transcript::said(\"math\"))",
         "Watched::in_default_colours( \"transcript-math-80-fullscreen\", (80, 72), Some(&vendor), None, )"
       ],
-      "sha256": "71aa5efc8735d8eb849bb72244141a8ae5c69366f74094f650ce70c77ffa4bfe"
+      "sha256": "b234ec7fb6c0c2e1a0d380ee7629b57da2a88cb79c48595ec317db1dab180229"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_math_80_native.snap",
@@ -2396,7 +2396,7 @@
         "Vendor::answering(transcript::said(\"math\"))",
         "Watched::drawn_in_colour( \"transcript-math-80-native\", (80, 72), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "4d27631e6846d3797af9190f6c4eac49cd27879d3aaff52e6d23b3d6d1847f6e"
+      "sha256": "fc3bc4fbe5af971d8e8bb1fc282a77bf6ff78ac06169bd33489be43459f4fd83"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_mermaid_graphs_120_fullscreen.snap",

@@ -1,9 +1,13 @@
 //! What a formula reads as, in a line and in a block, read back from the runs
 //! and the rows: the conversions the approved picture shows, the refusals,
-//! the caps, the ASCII pass, and the pictures checked in beside the drawer.
+//! the caps, the ASCII pass, and the pictures checked in beside the drawer:
+//! of blocks, and of math in a line of prose read through the reader.
+
+use std::sync::Arc;
 
 use crucible_tui::chrome::Undrawn;
-use crucible_tui::drawing::{Draws, Room};
+use crucible_tui::drawing::{Drawers, Draws, Mode, Room};
+use crucible_tui::markdown::{Markdown, Said};
 use crucible_tui::testing::dump;
 use crucible_tui::{Glyphs, Row, Slot};
 
@@ -263,6 +267,56 @@ fn pictures_of_formulas() {
         for (set, glyphs) in [("unicode", UNICODE), ("ascii", ASCII)] {
             let rows = block(source, 64, glyphs).unwrap_or_default();
             insta::assert_snapshot!(format!("{name}_64_{set}"), dump(&rows, 64));
+        }
+    }
+}
+
+/// Prose holding math in a line, the formulas of the first answer converting
+/// and those of the second not.
+const PROSE: &[(&str, &str)] = &[
+    (
+        "converted",
+        "The roots are $x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$ when\n\\(a \\neq 0\\), and $\\alpha_1 \\le \\beta^2$ holds for *every* $n$.\n",
+    ),
+    (
+        "unconverted",
+        "Here $\\unknown{x}*y*$ stays as written, and so does\n\\(\\foo_1 + b_2\\) beside *emphasis* and $5 of money.\n",
+    ),
+];
+
+/// The rows `answer` reads as in prose at `columns`, its math drawn by
+/// [`Formulas`] as text: each line its runs, as the reader says them.
+fn prose(answer: &str, columns: usize, glyphs: Glyphs) -> Vec<Row> {
+    let drawers = Drawers::default().with(Arc::new(Formulas));
+    let mut markdown = Markdown::new(glyphs).drawing(&drawers, Mode::Text);
+    let mut rows = vec![Row::new()];
+    let mut say = |said: Said<'_>| {
+        if let Said::Run { slot, text, .. } = said {
+            let mut lines = text.split('\n');
+            if let Some(line) = lines.next()
+                && let Some(row) = rows.last_mut()
+            {
+                *row = std::mem::take(row).then(slot, line);
+            }
+            for line in lines {
+                rows.push(Row::new().then(slot, line));
+            }
+        }
+    };
+    markdown.read(answer, columns, &mut say);
+    markdown.finish(columns, &mut say);
+    rows.retain(|row| !row.is_empty());
+    rows.into_iter().map(|row| row.clipped(columns)).collect()
+}
+
+#[test]
+fn pictures_of_math_in_prose() {
+    for (name, answer) in PROSE {
+        for (set, glyphs) in [("unicode", UNICODE), ("ascii", ASCII)] {
+            insta::assert_snapshot!(
+                format!("prose_{name}_64_{set}"),
+                dump(&prose(answer, 64, glyphs), 64)
+            );
         }
     }
 }

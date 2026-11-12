@@ -572,6 +572,7 @@ dependencies = [
  "crucible-tools",
  "crucible-tui",
  "crucible-tui-diff",
+ "crucible-tui-math",
  "crucible-types",
  "crucible-update",
  "crucible-workspace",

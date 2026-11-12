@@ -884,6 +884,8 @@ fi
 # `tui-math tui` the whole of what the formula drawer takes.
 # `code tui-diff` ships: the command line draws a tool's change through the
 # drawer that draws a diff in an answer, so the two cannot drift apart.
+# `code tui-math` ships: the command line hands every renderer of a session
+# the formula drawer, so math in an answer is drawn as text.
 allowed='code app
 code attachments
 code auth
@@ -910,6 +912,7 @@ code storage
 code tools
 code tui
 code tui-diff
+code tui-math
 code types
 code workspace
 app agents

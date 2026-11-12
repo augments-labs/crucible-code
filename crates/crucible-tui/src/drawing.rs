@@ -253,6 +253,14 @@ impl Drawers {
             .map(AsRef::as_ref)
     }
 
+    /// An inline span as the runs the first registered drawer that draws it
+    /// lays out, asked in order; `None` where none does, and the span is shown
+    /// as written.
+    #[must_use]
+    pub fn inline(&self, span: &str, room: &Room) -> Option<Vec<Run>> {
+        self.0.iter().find_map(|drawer| drawer.inline(span, room))
+    }
+
     /// Whether nothing is registered, so every block is shown as written.
     #[must_use]
     pub fn is_empty(&self) -> bool {

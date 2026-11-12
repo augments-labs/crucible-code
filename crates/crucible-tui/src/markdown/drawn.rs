@@ -14,7 +14,11 @@
 //! - The drawer is found by the first word of the fence's info string, the
 //!   word the reader holds the fence by, and is handed the lines between the
 //!   two fence lines and neither fence line, with the room the block is laid
-//!   out in. It is asked again at every room.
+//!   out in. It is asked again at every room. Display math written between
+//!   `$$`, `\[` or a named environment is no fence: the drawer that takes
+//!   `math` is handed the formula those markers hold, and where anything
+//!   follows the marker that closes it, nothing is handed and it is shown as
+//!   written.
 //! - A drawer that says the fence is not its to draw leaves it as written,
 //!   with nothing said of it. One that says it is past what it holds leaves
 //!   it as written in the frame, and with the words, the reader gives a fence
@@ -95,8 +99,9 @@ pub(crate) fn lay_unoffered(
 
 /// The drawer that takes `block`, and the lines between its two fence lines.
 ///
-/// `None` for anything but a fence the answer closed: the source of one is
-/// its opening line, its lines, and the line that closed it, each ended.
+/// `None` for anything but a fence or display math the answer closed: the
+/// source of a fence is its opening line, its lines, and the line that closed
+/// it, each ended.
 fn taken<'a>(block: &'a Block, drawers: &'a Drawers) -> Option<(&'a dyn Draws, &'a str)> {
     if !block.closed || drawers.is_empty() {
         return None;
@@ -105,8 +110,15 @@ fn taken<'a>(block: &'a Block, drawers: &'a Drawers) -> Option<(&'a dyn Draws, &
         Kind::DisplayMath | Kind::Mermaid | Kind::Diff => {}
         Kind::Table | Kind::Rule | Kind::Heading(_) | Kind::Image => return None,
     }
+    // Display math between markers of its own is the math drawer's, handed
+    // the formula they hold.
+    if matches!(block.kind, Kind::DisplayMath) && !super::math::fenced(&block.source) {
+        return Some((
+            drawers.for_name("math")?,
+            super::math::display(&block.source)?,
+        ));
+    }
     let (opening, rest) = block.source.split_once('\n')?;
-    // Display math between dollars is held too, and is no fence.
     let mark = opening
         .chars()
         .next()

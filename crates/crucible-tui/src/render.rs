@@ -39,7 +39,7 @@
 use crate::bands::{Bands, Wants};
 use crate::clipboard;
 use crate::color::{Palette, Slot, Theme};
-use crate::drawing::Drawers;
+use crate::drawing::{Drawers, Mode};
 use crate::escape::Escapes;
 use crate::files::Files;
 use crate::forge::Forge;
@@ -428,6 +428,10 @@ pub struct Renderer<T: Terminal> {
     /// about the terminal rather than about the answer. Unicode until
     /// [`Renderer::draws`] says otherwise.
     glyphs: Glyphs,
+    /// How math in an answer is drawn: [`Mode::Image`], the mode a setting
+    /// left alone gives, until the setting says otherwise. A renderer handed
+    /// no drawer shows every formula as written whatever it holds.
+    math: Mode,
     /// Whether the transcript gives up its rightmost column to the scroll
     /// rail, where the window can spare one.
     ///
@@ -531,6 +535,7 @@ impl<T: Terminal> Renderer<T> {
             arriving: Arriving::Nothing,
             palette: Palette::plain(),
             glyphs: Glyphs::default(),
+            math: Mode::Image,
             rails: false,
             grip: None,
             notch: NOTCH,
@@ -905,7 +910,9 @@ impl<T: Terminal> Renderer<T> {
     /// transcript band: while a block is held, for as long as the reader is at
     /// the foot to see it, in a band with a row to put it in.
     fn holds_row(&self, bands: &Bands) -> bool {
-        (self.markdown.holding().is_some() || self.markdown.holds_a_phrase())
+        (self.markdown.holding().is_some()
+            || self.markdown.holds_a_phrase()
+            || self.markdown.holds_a_span())
             && self.record.following()
             && !bands.transcript.is_empty()
     }
@@ -1266,7 +1273,9 @@ impl<T: Terminal> Renderer<T> {
     /// A reader for the next message, drawing, counting and opening the way
     /// this renderer was told to.
     fn reader(&self) -> Markdown {
-        Markdown::new(self.glyphs).linking(self.record.links())
+        Markdown::new(self.glyphs)
+            .linking(self.record.links())
+            .drawing(self.record.drawers(), self.math)
     }
 
     /// Marks the next record line as the start of a prompt.
@@ -1451,10 +1460,13 @@ impl<T: Terminal> Renderer<T> {
     }
 
     /// Reads a line that may still be the header of a table or the title of a
-    /// heading as the prose it was said to be, for a call that is about to end
-    /// the line it is on.
+    /// heading as the prose it was said to be, and settles a phrase or a span
+    /// of math it holds, for a call that is about to end the line it is on.
     fn undoubted(&mut self) -> Result<(), TerminalError> {
-        if !self.markdown.in_doubt() && !self.markdown.holds_a_phrase() {
+        if !self.markdown.in_doubt()
+            && !self.markdown.holds_a_phrase()
+            && !self.markdown.holds_a_span()
+        {
             return Ok(());
         }
 
@@ -2591,8 +2603,8 @@ impl<T: Terminal> Renderer<T> {
     }
 
     /// The row that tells of a block the reader is holding, or shows the
-    /// phrase it holds after a single tilde, drawn `columns` wide; `None`
-    /// while nothing is held.
+    /// phrase it holds after a single tilde or the span of math it holds,
+    /// drawn `columns` wide; `None` while nothing is held.
     ///
     /// Shown in place of what is held until it settles, in both screen modes:
     /// none of it is drawn until it can be drawn as it will stand.
@@ -2601,6 +2613,7 @@ impl<T: Terminal> Renderer<T> {
             .holding()
             .map(|holding| holding.row(columns, self.glyphs))
             .or_else(|| self.markdown.striking(columns))
+            .or_else(|| self.markdown.spanning(columns))
     }
 
     /// One frame.

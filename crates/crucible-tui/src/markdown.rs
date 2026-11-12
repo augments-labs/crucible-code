@@ -174,6 +174,7 @@ mod drawn;
 mod escapes;
 mod kind;
 mod links;
+mod math;
 mod strikes;
 mod table;
 
@@ -633,17 +634,24 @@ fn told_undrawn(
             }
         }
         Kind::DisplayMath | Kind::Mermaid | Kind::Diff | Kind::Image => {
+            let formula = matches!(block.kind, Kind::DisplayMath) && !math::fenced(&block.source);
+            // Between markers of its own a formula has no fence line to say
+            // why it is shown as written on, so one a drawer refused is shown
+            // as a math fence it refused would be.
+            let framed = (formula && refusal.is_some()).then(|| math::framed(&block.source));
+            let source = framed.as_deref().unwrap_or(&block.source);
             let mut markdown = Markdown::new(glyphs)
                 .linking(links)
                 .as_written()
                 .unescaped()
-                .refusing(refusal);
+                .refusing(refusal)
+                .formula(formula && framed.is_none());
             let mut said = |said: Said<'_>| {
                 if let Said::Run { slot, text, link } = said {
                     put(slot, text, link);
                 }
             };
-            markdown.read(&block.source, room, &mut said);
+            markdown.read(source, room, &mut said);
             markdown.finish(room, &mut said);
         }
     }
@@ -2063,6 +2071,8 @@ pub struct Markdown {
     /// Whether the scan about to run reads source as it arrives, rather than
     /// text read again, so it is what the hold of a phrase counts.
     fresh: bool,
+    /// The span of math held, and what draws one. See [`math`].
+    math: math::Math,
 }
 
 /// The most of one line of code that is held back to be read.
@@ -2432,8 +2442,11 @@ impl Markdown {
             // stays itself.
             let mut kept = false;
             if std::mem::take(&mut self.escaped) {
-                if Self::escapes(character) {
-                    self.say(delta.get(at..next).unwrap_or_default(), say);
+                // `\(` opens a span of math, which holds the parenthesis.
+                if self.opens_math(character, true) || Self::escapes(character) {
+                    if !self.holds_a_span() {
+                        self.say(delta.get(at..next).unwrap_or_default(), say);
+                    }
                     self.started = true;
                     self.previous = character;
                     run = next;
@@ -2515,9 +2528,11 @@ impl Markdown {
                 });
                 self.started = true;
                 run = next;
-            } else if self.escaping(character) {
+            } else if self.escaping(character) || self.opens_math(character, false) {
+                // A backslash stands for the next character; a dollar opened
+                // a span of math, held from here.
                 self.say(delta.get(run..at).unwrap_or_default(), say);
-                self.escaped = true;
+                self.escaped = character == '\\';
                 run = next;
             } else if self.marks(character) {
                 // Nothing has been written on the line yet, so what stands in
@@ -2898,6 +2913,8 @@ impl Markdown {
             // other.
             Inside::Opening | Inside::Closing | Inside::Indented => false,
             Inside::Prose => match character {
+                // In a formula shown as written every marker is a character.
+                _ if self.math.formula => false,
                 '`' => true,
                 // Inside a span the backtick above is the only marker left,
                 // for the reason a fence is: the words in there are code, and
@@ -2921,7 +2938,7 @@ impl Markdown {
     /// Prose only. In code a backslash is a character like any other, and a
     /// span is where a pattern goes to be written down exactly.
     fn escaping(&self, character: char) -> bool {
-        character == '\\' && self.inside == Inside::Prose && !self.line.code
+        character == '\\' && self.inside == Inside::Prose && !self.line.code && !self.math.formula
     }
 
     /// Whether a standing backslash was put in front of this to say it means
@@ -2935,7 +2952,7 @@ impl Markdown {
     fn escapes(character: char) -> bool {
         matches!(
             character,
-            '\\' | '*' | '_' | '`' | '~' | '#' | '-' | '+' | '>' | '|' | '['
+            '\\' | '*' | '_' | '`' | '~' | '#' | '-' | '+' | '>' | '|' | '[' | '$'
         )
     }
 
@@ -3767,8 +3784,10 @@ impl Markdown {
         link.first && !link.label.is_empty() && !footnote(&link.label) && self.notes()
     }
 
-    /// Reads `character` into the line held as a definition or the angle
-    /// address held, whichever is open. Answers whether it was taken.
+    /// Reads `character` into the line held as a definition, the angle
+    /// address held or the span of math held, whichever is open. Answers
+    /// whether it was taken. A span of math is held whole: nothing in it is
+    /// markdown.
     ///
     /// `false` says what was held is settled: drawn as what it was, or read as
     /// it would have been had it not been held, and `character` is the
@@ -3781,6 +3800,7 @@ impl Markdown {
     ) -> bool {
         (self.defining.is_some() && self.defines(character, room, say))
             || (self.angle.is_some() && self.angled(character, room, say))
+            || self.spans(character, room, say)
     }
 
     /// Reads `character` into the number, tag or reference held, whichever is
@@ -4536,6 +4556,7 @@ impl Markdown {
         while let Some(table) = self.table.take_if(|table| table.pending()) {
             self.release(&table, room, &mut tell);
         }
+        self.unspan(room, &mut tell);
         self.unstrike(&mut tell);
         self.hand_on(room, &mut kinds, say);
         kinds.flush(&mut |slot, text, link| say(links::said(slot, text, link)));
@@ -4549,6 +4570,7 @@ impl Markdown {
         if std::mem::take(&mut self.bang) {
             self.say("!", say);
         }
+        self.unspan(room, say);
         // The line the message ended in is as complete as a break would have
         // made it, and the `>` that would have ended an address never came.
         // First, since what they hand back is read again and may leave an
@@ -4799,6 +4821,8 @@ impl Markdown {
             definitions: std::mem::take(&mut self.definitions),
             folded: self.folded,
             strikes: self.strikes.take(),
+            // Nor what math is drawn with, and how.
+            math: std::mem::take(&mut self.math),
             ..Self::default()
         };
 
