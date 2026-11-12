@@ -30,10 +30,10 @@ nothing was sent; the model was not told the command ended
 ! this route needs an answer first; nothing was sent, so the model was not told the command ended
 ```
 
-Making room with `/compact`, or picking a session up as notes, sends the
-conversation for its recap, and is asked about the same way. There is no
-message to send or keep: **Go back** sends nothing and leaves the conversation
-as it was.
+Making room with `/compact`, or answering **Carry on from summary** when you
+pick up a large session, sends the conversation for its recap, and is asked
+about the same way. There is no message to send or keep: **Go back** sends
+nothing and leaves the conversation as it was.
 
 The same question is asked when you choose such a route in `/login`, or a
 model of one in `/model`, before the choice is taken. A yes given in `/login`

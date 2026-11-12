@@ -5918,6 +5918,12 @@ fn room_asked_for_on_a_warned_route_is_asked_about_and_going_back_says_nothing_w
         (&[], None),
     );
     window.types_until("/compact\r", "Use it anyway");
+    // There is no message to send: what a yes sends is the conversation.
+    let asked = window.picture();
+    assert!(
+        asked.contains("Sends the conversation for its recap"),
+        "{asked}"
+    );
     window.types_until("\x1b", "nothing was sent");
     let picture = window.picture();
     assert!(!picture.contains("your message is back"), "{picture}");

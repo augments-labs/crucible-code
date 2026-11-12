@@ -598,8 +598,9 @@ fn the_question_before_a_woken_note_does_not_promise_it_to_the_prompt_box() {
 #[test]
 fn the_question_before_room_is_made_offers_no_message_to_send_or_keep() {
     // Making room sends the conversation for its recap; there is no message
-    // in the box to send, or to keep there.
-    for why in [Compacting::Asked, Compacting::Full] {
+    // in the box to send, or to keep there. `/compact`, and "Carry on from
+    // summary" on picking a session up, are the two ways it reaches this panel.
+    for why in [Compacting::Asked, Compacting::Resumed] {
         let room = Work::Room(why);
         let offered = Put::before(&room).offered().expect("fixed answers");
         for offer in offered {
