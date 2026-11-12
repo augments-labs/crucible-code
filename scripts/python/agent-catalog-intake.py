@@ -101,7 +101,8 @@ every host, or when any target left lacks complete probe output: a probe that
 ran without a sandbox, which crucible says as `off` when its sandbox setting
 was off and as `unavailable: ...` when no sandbox could close, is accepted only
 on a runner the matrix lists as unconfined, and is marked for the reviewer, so
-a confined runner must run crucible with the sandbox setting on; a sign-in method whose `tty` is
+a confined runner must run crucible with the sandbox setting on; a sign-in
+method whose `tty` is
 not `true`, `false` or `unknown`, and any conformance result but `not run`, is
 refused; and probes on different targets must agree on `agentInfo` and the
 sign-in methods, the refusal naming the field that differs. Each drop is

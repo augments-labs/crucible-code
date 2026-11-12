@@ -876,13 +876,15 @@ home on, the program is started in the sandbox with the network closed and
 a plain local process. Either way it is sent `initialize` and nothing else, and
 stopped; it is given 30 seconds to answer. It is never signed
 in, and no credential is read. On standard output it writes JSON: `sandbox`
-(`closed`, or `off` with the sandbox setting off), `agentInfo`, `authMethods` (each with its `id`, `name` and `kind`,
+(`closed`, or `off` with the sandbox setting off), `agentInfo`, `authMethods`
+(each with its `id`, `name` and `kind`,
 and for a `terminal` method its `command`, `args`, `env` and `tty`, which is
 `unknown` unless the method says whether it needs a real terminal),
 `capabilities`, and `conformance`, which is `not run`: the conformance cases
 need a turn, and a turn needs an account. Every text and list is bounded, and
 `incomplete` is `true` where anything was cut. With the sandbox setting on and
-this machine's sandbox unable to close the network, as on FreeBSD or on Windows without its broker,
+this machine's sandbox unable to close the network, as on FreeBSD or on Windows
+without its broker,
 nothing is started and the run says so; with `--unconfined` the program is
 started without the sandbox, `sandbox` reads `unavailable: ` and why, and the
 run belongs on a machine to be thrown away: `--unconfined` is refused unless

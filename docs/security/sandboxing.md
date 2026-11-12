@@ -468,8 +468,9 @@ anti-rollback. There is no catalog signature or trust state for it: the
 registry's SHA-256, recorded in its receipt, and the probe record taken at its
 install are what hold it. That probe runs under the sandbox setting: with it
 on, in the sandbox with the network closed, and refused where this machine's
-sandbox cannot close it; with it off, as a plain local process. A fresh
-install accepts a same-version archive the registry replaces; an installed version keeps the hash its receipt recorded and
+sandbox cannot close it; with it off, as a plain local process. A fresh install
+accepts a same-version archive the registry replaces; an installed version
+keeps the hash its receipt recorded and
 refuses a different same-version archive until it is removed. A receipt without
 that probe record for this machine is not started; `crucible agents probe`
 takes one. The revocation and trust-state rule above is a signed catalog
