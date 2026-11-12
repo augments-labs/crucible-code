@@ -554,8 +554,14 @@ fn worn<T: Terminal>(
             .is_some(),
         // Each way is drawn at once, `image` as text until a picture of a
         // formula can be shown, and the math already drawn is laid out in it.
+        // The style carries it too, for a preview drawn on a renderer of its
+        // own.
         RowId::Math => crucible_config::MathDrawing::read(word)
-            .map(|math| renderer.math(crate::cli::math_drawn(math)))
+            .map(|math| {
+                let drawn = crate::cli::math_drawn(math);
+                renderer.math(drawn);
+                terms.style.set(terms.style().laying_out(drawn));
+            })
             .is_some(),
         RowId::Colour
         | RowId::ScreenMode

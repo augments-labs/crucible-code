@@ -1185,5 +1185,8 @@ fn the_math_row_shows_each_answer_bare_since_each_is_drawn_at_once() {
         let row = row_of(&rows, "Math");
         assert!(row.ends_with(word), "{word}: {rows:#?}");
         assert!(!row.contains(Glyphs::Unicode.dot()), "{word}: {rows:#?}");
+        // A preview draws on a renderer of its own, from the style: the two
+        // say the same.
+        assert_eq!(terms.style().math(), renderer.math_mode(), "{word}");
     }
 }

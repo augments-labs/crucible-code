@@ -227,8 +227,7 @@ markers included. A change in `/settings` takes effect at once: every display
 formula already drawn is laid out again in the new form, while a span already
 drawn in a line keeps the form it was drawn in and the next span is drawn in
 the new one. Output with no colour, including output that is not a terminal,
-keeps every formula as written, and the `/resume` preview of a session draws
-formulas as text whatever `output.math` says.
+keeps every formula as written.
 
 ## Lists and quotes that wrap
 

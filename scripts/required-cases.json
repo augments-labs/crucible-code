@@ -12613,7 +12613,7 @@
     {
       "id": "CASE-TRANSCRIPT-MATH-SETTING-BARE",
       "family": "transcript-blocks",
-      "obligation": "The Math row shows written, text and image bare, since each is in force at once.",
+      "obligation": "The Math row shows written, text and image bare, since each is in force at once, and the style a preview is drawn from holds the same way the renderer draws math.",
       "package": "crucible-code",
       "target": {
         "kind": "bin",
@@ -12621,7 +12621,7 @@
       },
       "case": "cli::converse::command::settings::tests::the_math_row_shows_each_answer_bare_since_each_is_drawn_at_once",
       "source": "src/cli/converse/command/settings/tests.rs",
-      "body_sha256": "a936aa92818e1dd2d7a3ff5021d95171250711fdedb63d8dd00aa0894d9dff6a",
+      "body_sha256": "1983a04dccb38390b5647dd481aa2e613951625bf734115351f149df9ff6b793",
       "platforms": [
         "linux",
         "macos",
@@ -12688,6 +12688,24 @@
       "case": "matrices_nested_to_the_byte_cap_are_answered_inside_the_deadline_and_drawn_only_within_the_depth",
       "source": "crates/crucible-tui-math/tests/hostile.rs",
       "body_sha256": "f35b1d580bb49af7066792d9d22a86c092014103ff9754e66e536c58ef575712",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-GLIMPSED",
+      "family": "transcript-blocks",
+      "obligation": "A session glimpsed in colour whose answer holds a display formula shows the TeX as written when math is drawn as written, and none of it when math is drawn as text.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::replaying::tests::a_formula_in_a_session_glimpsed_is_drawn_the_way_the_session_draws_math",
+      "source": "src/cli/converse/replaying/tests.rs",
+      "body_sha256": "b7ac7eccff8494d82f581b9d03b45d60e2f8e2cc4cc3373fec0826d919c104bf",
       "platforms": [
         "linux",
         "macos",
