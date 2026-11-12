@@ -203,8 +203,29 @@ fn a_decline_asks_its_second_press_in_a_room_too_short_for_the_row_of_keys() {
     let drawn: Vec<String> = rows.iter().map(Row::text).collect();
     assert!(rows.len() < whole, "{drawn:#?}");
     assert!(
-        drawn.iter().any(|row| row.contains(CONFIRMING)),
+        drawn.iter().any(|row| row.contains(CONFIRMING[0])),
         "the second press is asked for\n{drawn:#?}"
+    );
+}
+
+#[test]
+fn in_the_ascii_glyph_set_the_second_press_of_a_decline_is_asked_in_ascii() {
+    let mut docking = opened(single(1));
+    press(&mut docking, &[Pressed::Down, Pressed::Down, Pressed::Down]);
+    press(&mut docking, &[enter()]);
+
+    let drawn: Vec<String> = docking
+        .rows(80, 40, Glyphs::Ascii)
+        .0
+        .iter()
+        .map(Row::text)
+        .collect();
+    assert!(drawn.iter().all(|row| row.is_ascii()), "{drawn:#?}");
+    assert!(
+        drawn
+            .iter()
+            .any(|row| row.contains("enter to decline this question - esc keep it")),
+        "{drawn:#?}"
     );
 }
 

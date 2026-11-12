@@ -53,8 +53,8 @@ const CHOOSING_SEVERAL: &[&str] = &[
 /// While a line is being written.
 const WRITING: &[&str] = &["enter or esc done", "tab composer"];
 
-/// While a decline waits for its second press.
-const CONFIRMING: &str = "enter to decline this question · esc keep it";
+/// While a decline waits for its second press, parted by the glyph set's dot.
+const CONFIRMING: [&str; 2] = ["enter to decline this question", "esc keep it"];
 
 /// While the answers are read back, or what became of them is shown.
 const ACTING: &[&str] = &["enter select", "tab composer", "esc close"];
@@ -295,7 +295,7 @@ impl Docking {
             rows.push(
                 Row::new()
                     .then(Slot::Plain, "  ")
-                    .then(Slot::Quiet, CONFIRMING)
+                    .then(Slot::Quiet, CONFIRMING.join(&format!(" {} ", glyphs.dot())))
                     .clipped(columns),
             );
         }
