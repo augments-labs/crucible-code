@@ -15,7 +15,8 @@ mod resource;
 
 pub use attempt::{
     PromptCacheAttempt, PromptCacheIdentity, PromptCacheKey, PromptCachePlan,
-    PromptCachePreparationError, PromptCacheRequest, PromptCacheRoute, PromptCacheSelection,
+    PromptCachePreparationError, PromptCachePricedRetention, PromptCacheRequest, PromptCacheRoute,
+    PromptCacheSelection,
 };
 pub use capability::{
     MAX_PROMPT_CACHE_MECHANISMS, PromptCacheBoundary, PromptCacheCapabilities, PromptCacheContent,

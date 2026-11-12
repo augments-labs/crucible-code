@@ -403,6 +403,39 @@ fn mechanism_ineligibility(
     None
 }
 
+/// The retention class a request's cache cost is looked up under, and
+/// whether a mechanism was selected with it.
+///
+/// A request that selected nothing carried no cache field, so its policy's
+/// class says what was wanted, not what was asked: a price for a longer
+/// write must not follow it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptCachePricedRetention {
+    /// A mechanism was selected with this class for the request.
+    Selected(PromptCacheRetentionClass),
+    /// Nothing was selected; this is the policy's class.
+    NotSelected(PromptCacheRetentionClass),
+}
+
+impl PromptCachePricedRetention {
+    /// What `selection`, prepared under `policy`, asked for.
+    #[must_use]
+    pub const fn of(selection: PromptCacheSelection, policy: PromptCachePolicy) -> Self {
+        match selection.selected() {
+            Some(selected) => Self::Selected(selected.retention()),
+            None => Self::NotSelected(policy.retention().class()),
+        }
+    }
+
+    /// The class, selected or not.
+    #[must_use]
+    pub const fn class(self) -> PromptCacheRetentionClass {
+        match self {
+            Self::Selected(class) | Self::NotSelected(class) => class,
+        }
+    }
+}
+
 fn finish_selection(
     policy: PromptCachePolicy,
     reason: PromptCacheIneligibleReason,
@@ -765,6 +798,44 @@ mod tests {
             Err(PromptCachePreparationError::Required(
                 PromptCacheIneligibleReason::DisallowedRetention
             ))
+        );
+    }
+
+    #[test]
+    fn the_priced_retention_is_the_selected_class_or_the_policys_marked_not_selected() {
+        let caps = capabilities(&[kept_twelve_hours()]);
+        let asked = extended(43_200);
+        let refused = extended(43_199);
+
+        let selected = PromptCacheSelection::prepare(asked, &caps, &plan(20, &[]), false).unwrap();
+        let unselected =
+            PromptCacheSelection::prepare(refused, &caps, &plan(20, &[]), false).unwrap();
+
+        assert_eq!(
+            PromptCachePricedRetention::of(selected, asked),
+            PromptCachePricedRetention::Selected(PromptCacheRetentionClass::Extended)
+        );
+        assert_eq!(
+            PromptCachePricedRetention::of(unselected, refused),
+            PromptCachePricedRetention::NotSelected(PromptCacheRetentionClass::Extended)
+        );
+        assert_eq!(
+            PromptCachePricedRetention::of(unselected, refused).class(),
+            PromptCacheRetentionClass::Extended
+        );
+    }
+
+    #[test]
+    fn a_prohibited_request_is_priced_under_the_provider_default_it_selected() {
+        let caps = capabilities(&[kept_twelve_hours().with_opt_out()]);
+        let prohibited = extended(43_200).with_mode(PromptCacheMode::Prohibit);
+
+        let selection =
+            PromptCacheSelection::prepare(prohibited, &caps, &plan(20, &[]), false).unwrap();
+
+        assert_eq!(
+            PromptCachePricedRetention::of(selection, prohibited),
+            PromptCachePricedRetention::Selected(PromptCacheRetentionClass::ProviderDefault)
         );
     }
 

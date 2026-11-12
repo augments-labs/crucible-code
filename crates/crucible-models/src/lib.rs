@@ -83,11 +83,12 @@ pub use cache::{
     PromptCacheAttempt, PromptCacheBoundary, PromptCacheBoundaryPoint, PromptCacheCapabilities,
     PromptCacheContent, PromptCacheContentSet, PromptCacheIdentity, PromptCacheKey,
     PromptCacheMechanismCapability, PromptCachePlan, PromptCachePreparationError,
-    PromptCachePricing, PromptCacheProjection, PromptCacheProjectionError, PromptCacheProvenance,
-    PromptCacheRates, PromptCacheRequest, PromptCacheResourceCreate, PromptCacheResourceCreated,
-    PromptCacheResourceDeadline, PromptCacheResourceLifecycle, PromptCacheResourceReference,
-    PromptCacheResourceRemote, PromptCacheRoute, PromptCacheSelection, StatefulTransportCapability,
-    UsageRate, narrow_policy, select_pricing,
+    PromptCachePricedRetention, PromptCachePricing, PromptCacheProjection,
+    PromptCacheProjectionError, PromptCacheProvenance, PromptCacheRates, PromptCacheRequest,
+    PromptCacheResourceCreate, PromptCacheResourceCreated, PromptCacheResourceDeadline,
+    PromptCacheResourceLifecycle, PromptCacheResourceReference, PromptCacheResourceRemote,
+    PromptCacheRoute, PromptCacheSelection, StatefulTransportCapability, UsageRate, narrow_policy,
+    select_pricing,
 };
 pub use model::{MODEL_NAME_BYTES, ModelCapabilities, ModelError, ModelLimits};
 pub use provider::{
