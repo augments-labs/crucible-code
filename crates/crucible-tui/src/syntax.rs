@@ -7,9 +7,19 @@
 //! what something *means*. Everything else in a block is the reader's own
 //! foreground, which is what most of a block is anyway.
 //!
-//! **Nothing is loaded until a fence arrives.** The syntax definitions and the
-//! themes are about a megabyte and a millisecond between them, and the first
-//! frame is budgeted at twenty. A session that never shows code never pays.
+//! **Nothing is read before it is wanted, and what is kept is counted.** The
+//! figures are readings on Linux x86-64. The syntax definitions are read at the
+//! first fence, or at the first line of a change that did not move: about
+//! 1.1 MB and half a millisecond, kept from then on. A language's patterns are
+//! compiled when its first line is read and kept for the rest of the session:
+//! 5.0 to 5.5 MB and some twenty milliseconds for Rust, and as much as 16 MB
+//! for one language. No byte count bounds that. Its ceiling is a count, the 75
+//! definitions of the default set, and reading each of the 23 languages the
+//! tests here list held about 127 MB between them. A theme is not kept at all:
+//! the packed set and the one theme a call names, 0.4 to 0.7 MB between them,
+//! are built for that call and dropped when it answers. So a session that never
+//! shows code pays for six colours as its palette settles, and the first frame,
+//! budgeted at twenty milliseconds, meets none of the rest.
 //!
 //! **A language nothing knows is not read at all.** [`Syntax::of`] answers
 //! `None`, the caller leaves the block quiet, and that is the same block this
