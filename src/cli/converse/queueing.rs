@@ -476,6 +476,7 @@ pub(super) fn taken<T: Terminal>(
         attaching::Sent {
             prompt: &said,
             images: &held.images,
+            author: Author::Person,
         },
         style,
     )?;

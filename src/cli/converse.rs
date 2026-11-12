@@ -904,6 +904,7 @@ fn conversing<T: Terminal>(
             attaching::Sent {
                 prompt: &prompt,
                 images: &held.images,
+                author,
             },
             terms.style(),
         )?;
