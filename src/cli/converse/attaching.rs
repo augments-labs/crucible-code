@@ -1,10 +1,12 @@
 //! Turning a path somebody typed into a file the model can look at.
 //!
-//! A word in a prompt that names a workspace file of an attachable kind is
-//! attached without asking, because naming it *is* the choice — the user typed
-//! the path, and no tool went looking for it. What that leaves to decide is
-//! whether the file can be sent at all, and every answer of no is a sentence
-//! the user reads while they can still act on it.
+//! A word in a prompt that names a file of an attachable kind, in the
+//! workspace or by an absolute path outside it, is attached without asking,
+//! because naming it *is* the choice — the user typed the path, and no tool
+//! went looking for it. What that leaves to decide is whether the file can be
+//! sent at all, and, for a file outside the workspace, whether this session has
+//! somewhere durable to keep a copy of it. Every answer of no is a sentence the
+//! user reads while they can still act on it.
 //!
 //! Words the application wrote, such as the note that wakes the model when
 //! background work ends, attach nothing: a path a command printed was nobody's
