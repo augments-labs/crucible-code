@@ -27,7 +27,7 @@ fn asking<'a>(payload: &'a [&'a str]) -> Question<'a> {
         question: "Do you want to proceed?",
         answers: &ANSWERS,
         marked: 0,
-        footer: "esc to cancel · ctrl+e to explain",
+        footer: &["esc to cancel", "ctrl+e to explain"],
     }
 }
 
@@ -407,6 +407,28 @@ fn the_footer_offers_the_arrows_only_while_something_is_off_screen() {
 
     assert!(whole.contains(&plain), "{whole:?}");
     assert!(short.contains(&scrolling), "{short:?}");
+}
+
+#[test]
+fn the_footer_parts_its_keys_with_the_glyph_sets_own_dot() {
+    // The caller names the keys and the panel parts them, because the panel is
+    // the one handed the glyph set: a terminal drawn without Unicode is not sent
+    // a dot it was never meant to get.
+    let mut question = asking(&["cargo test --workspace --all-features"]);
+    question.explanation = &PARAGRAPHS;
+
+    let whole = inside(&question.within(WIDE, 40, Glyphs::Ascii));
+    let short = inside(&question.within(WIDE, 20, Glyphs::Ascii));
+
+    let plain = "  esc to cancel - ctrl+e to explain".to_owned();
+    // What follows is the caller's own item; the dot before it is the panel's.
+    let scrolling = "  esc to cancel - ctrl+e to explain - ";
+
+    assert!(whole.contains(&plain), "{whole:?}");
+    assert!(
+        short.iter().any(|row| row.starts_with(scrolling)),
+        "{short:?}"
+    );
 }
 
 #[test]

@@ -90,18 +90,17 @@ const QUESTION: &str = "Do you want to proceed?";
 /// One key, because escape is the only one this panel offers that is not on it.
 /// The arrows and enter are its own picture, and a footer naming them would be
 /// restating the thing above it.
-const CANCEL: &str = "esc to cancel";
+const CANCEL: &[&str] = &["esc to cancel"];
 
 /// The same row where there are paragraphs to open.
-const EXPLAIN: &str = "esc to cancel · ctrl+e to explain";
+const EXPLAIN: &[&str] = &["esc to cancel", "ctrl+e to explain"];
 
 /// And where they are open.
 ///
-/// Each of the three is written out whole rather than joined from parts, because
-/// what a footer costs is read off the row a person sees and not off the pieces
-/// it was assembled from — and there is no joining a `&'static str` without
-/// allocating on the layout path anyway.
-const HIDE: &str = "esc to cancel · ctrl+e to hide";
+/// Each of the three names every key it shows rather than adding to another,
+/// because what a footer costs is read off the row a person sees and not off the
+/// pieces it was assembled from. The panel parts them with the glyph set's dot.
+const HIDE: &[&str] = &["esc to cancel", "ctrl+e to hide"];
 
 /// The item the panel adds to whichever of those it was given, where the prose
 /// did not fit. Named here and drawn there, because the panel is the only party
@@ -363,7 +362,7 @@ impl Standing {
 /// A key is named only where it does something, which is the whole of why this
 /// is a function of the panel rather than a constant: ctrl+e on a call that
 /// explained nothing is a key that was offered and then ignored.
-fn footer(standing: &Standing) -> &'static str {
+fn footer(standing: &Standing) -> &'static [&'static str] {
     match (standing.explained, standing.open) {
         (false, _) => CANCEL,
         (true, false) => EXPLAIN,
