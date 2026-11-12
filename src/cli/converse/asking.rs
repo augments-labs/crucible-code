@@ -102,10 +102,17 @@ const EXPLAIN: &[&str] = &["esc to cancel", "ctrl+e to explain"];
 /// pieces it was assembled from. The panel parts them with the glyph set's dot.
 const HIDE: &[&str] = &["esc to cancel", "ctrl+e to hide"];
 
-/// The item the panel adds to whichever of those it was given, where the prose
+/// The words of the item [`more`] builds.
+const MORE: &str = "to see more";
+
+/// The item the panel adds to whichever footer it was given, where the prose
 /// did not fit. Named here and drawn there, because the panel is the only party
-/// that knows how tall the paragraphs folded to.
-const MORE: &str = "↑↓ to see more";
+/// that knows how tall the paragraphs folded to. The arrows are the glyph
+/// set's, so a terminal that cannot draw them is never sent them.
+fn more(glyphs: Glyphs) -> String {
+    let (up, down) = glyphs.walking();
+    format!("{up}{down} {MORE}")
+}
 
 /// Rows kept for the transcript above a panel that arrived on its own.
 ///
@@ -427,7 +434,7 @@ fn stand<T: Terminal>(
         from: 0,
         // Handed over whatever the paragraphs did, because whether they were cut
         // is the panel's to know and it draws this only where they were.
-        more: MORE,
+        more: &more(style.glyphs()),
         statement: words.statement,
         question: QUESTION,
         answers: &said,

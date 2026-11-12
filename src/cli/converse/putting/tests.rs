@@ -1,3 +1,4 @@
+use crucible_tui::Glyphs;
 use crucible_types::Answer;
 
 use super::*;
@@ -260,15 +261,70 @@ fn the_footer_names_a_key_only_where_it_does_something() {
     let questions = asked();
     let mut standing = Standing::new(&questions);
 
-    assert_eq!(footer(&standing, false), ONE);
-    assert_eq!(footer(&standing, true), MANY);
+    assert_eq!(
+        footer(&standing, false, Glyphs::Unicode),
+        "esc to cancel · ←→ between questions · n for a note"
+    );
+    assert_eq!(
+        footer(&standing, true, Glyphs::Unicode),
+        "esc to cancel · space to choose · ←→ between questions · n for a note"
+    );
 
     standing.writing = Some(Writer::Note);
-    assert_eq!(footer(&standing, true), WRITING);
+    assert_eq!(
+        footer(&standing, true, Glyphs::Unicode),
+        "esc to stop typing · enter to keep it"
+    );
 
     let alone = alone();
     let standing = Standing::new(&alone);
-    assert_eq!(footer(&standing, false), ONLY);
+    assert_eq!(
+        footer(&standing, false, Glyphs::Unicode),
+        "esc to cancel · n for a note"
+    );
+}
+
+#[test]
+fn the_last_stop_names_no_note() {
+    assert_eq!(
+        last(Glyphs::Unicode),
+        "esc to cancel · ←→ between questions"
+    );
+}
+
+#[test]
+fn the_footer_is_drawn_in_the_glyph_set_the_screen_uses() {
+    // A terminal that cannot draw the dot or the arrows shows boxes in their
+    // place, so under the ASCII set neither may reach the row.
+    let questions = asked();
+    let mut standing = Standing::new(&questions);
+    let ascii = Style::drawn(Glyphs::Ascii);
+
+    let (rows, _) = drawn(&mut standing, &questions, 80, 30, ascii);
+    let art: Vec<String> = rows.iter().map(crucible_tui::Row::text).collect();
+    assert!(
+        art.iter()
+            .any(|row| row.contains("esc to cancel - <> between questions - n for a note")),
+        "{art:#?}"
+    );
+
+    standing.at = 2;
+    let (rows, _) = drawn(&mut standing, &questions, 80, 30, ascii);
+    let art: Vec<String> = rows.iter().map(crucible_tui::Row::text).collect();
+    assert!(
+        art.iter().any(|row| row
+            .trim_end()
+            .ends_with("esc to cancel - <> between questions")),
+        "{art:#?}"
+    );
+    assert!(
+        !art.iter().any(|row| row.contains("n for a note")),
+        "{art:#?}"
+    );
+    assert!(
+        !art.iter().any(|row| row.contains('·') || row.contains('←')),
+        "{art:#?}"
+    );
 }
 
 #[test]
