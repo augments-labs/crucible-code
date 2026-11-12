@@ -221,8 +221,9 @@ fn signing_in(row: &AgentRow, started: Started, platform: Platform) -> Told {
         },
         AgentRow::Catalog(_) => {
             let mut more = vec![
-                "Your own program is given only the variables Crucible passes on and its \
-                 entry's own, so a sign-in kept in a variable you exported is not seen."
+                "Your own program is given only the variables Crucible passes on, its \
+                 entry's own and a key kept for it at /login, so a sign-in kept in a variable \
+                 you exported is not seen."
                     .to_owned(),
             ];
             if platform == Platform::Linux {

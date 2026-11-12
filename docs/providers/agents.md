@@ -144,10 +144,10 @@ its first launch, and the line says why.
 terminal (see [its reference](../reference/cli.md#agents-try-agent)), and
 `crucible agents search` marks each agent whose own program it found.
 
-Your own program is given only the variables crucible passes on and its
-entry's own, so a sign-in kept in a variable you exported is not seen; on Linux,
-neither is one kept in a desktop keyring or under a relocated
-`XDG_CONFIG_HOME` or `XDG_DATA_HOME`. On macOS and Windows the sandbox gives it
+Your own program is given only the variables crucible passes on, its entry's
+own and a key kept for it at `/login` (see below), so a sign-in kept in a
+variable you exported is not seen; on Linux, neither is one kept in a desktop
+keyring or under a relocated `XDG_CONFIG_HOME` or `XDG_DATA_HOME`. On macOS and Windows the sandbox gives it
 no home of its own.
 
 A launch of your own program follows the conversation's sandbox setting, as
@@ -226,7 +226,10 @@ capabilities fails with that cause. That it starts proves it speaks ACP, not
 that it is the program the entry describes. The agent's screen shows the name
 and version it gave at that start, or `did not say`, where it reads the
 program signed out. It signs in by the methods its catalog entry gives, a
-registry entry giving none, and crucible runs no sign-in command for it.
+registry entry giving none, and crucible runs no sign-in command for it. A key
+you keep at `/login` for one of its entry's key methods is given to it at every
+start, in the variable the entry names, and withheld from what it says, as it
+is to a release crucible installed.
 
 `/logout` lists each agent named under `externalAgents` after the stored
 credentials, as an external agent instance, and `/logout <name>` takes one
