@@ -71,7 +71,7 @@ the one [Git for Windows](https://git-scm.com/download/win) installs. See
 ```bash
 git clone https://github.com/augments-labs/crucible-code
 cd crucible-code
-cargo build -p crucible-code -p crucible-sandbox-broker
+cargo build
 cargo run -- --help
 ```
 
@@ -79,8 +79,9 @@ cargo run -- --help
 codegen unit, symbols stripped. It is several times slower to link and is the
 only build the performance budgets are measured against, so use the debug build
 while working and the release build to check a number.
-Build both packages when exercising confinement: the native sandbox helper must
-be beside the Crucible executable on Linux, macOS and Windows.
+Either build puts the native sandbox helper, `crucible-sandbox-broker`, beside
+the Crucible executable, where confinement looks for it on Linux, macOS and
+Windows.
 
 ## Run the gate
 
