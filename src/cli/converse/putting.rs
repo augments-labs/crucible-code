@@ -31,8 +31,8 @@
 use std::borrow::Cow;
 
 use crucible_tui::{
-    Asked, Caret, Choice, Editor, Given, Key, Pressed, Renderer, Row, Stop, Terminal, Typed,
-    Writing,
+    Asked, Caret, Choice, Editor, Given, Glyphs, Key, Pressed, Renderer, Row, Stop, Terminal,
+    Typed, Writing,
 };
 use crucible_types::{Answer, Answered, Question};
 
@@ -72,14 +72,17 @@ const NOTHING: &str = "nothing chosen";
 /// Rows kept for the transcript above a panel nobody asked for.
 const KEPT: usize = 4;
 
-/// The quiet row under the frame, in each state it means something different
-/// in. Written out whole rather than joined, because what a footer costs is
-/// read off the row somebody sees and not off the pieces it came from.
-const ONE: &str = "esc to cancel · ←→ between questions · n for a note";
-const MANY: &str = "esc to cancel · space to choose · ←→ between questions · n for a note";
-const ONLY: &str = "esc to cancel · n for a note";
-const WRITING: &str = "esc to stop typing · enter to keep it";
-const LAST: &str = "esc to cancel · ←→ between questions";
+/// The keys the quiet row under the frame names, each written out whole,
+/// because what a footer costs is read off the row somebody sees and not off
+/// smaller words. The arrows in front of [`BETWEEN`] and the dot that parts the
+/// keys are the glyph set's, so a terminal that cannot draw them is never sent
+/// them.
+const CANCEL: &str = "esc to cancel";
+const CHOOSE: &str = "space to choose";
+const BETWEEN: &str = "between questions";
+const NOTE: &str = "n for a note";
+const STOP: &str = "esc to stop typing";
+const KEEP: &str = "enter to keep it";
 
 /// How an ask ended.
 #[derive(Debug)]
@@ -394,7 +397,7 @@ fn drawn(
         writing,
         at_note: standing.writing == Some(Writer::Note),
         leaves: LEAVE,
-        footer: footer(standing, several),
+        footer: &footer(standing, several, style.glyphs()),
     };
 
     panel.within(columns, room, style.glyphs())
@@ -481,7 +484,7 @@ fn sending(
         writing: None,
         at_note: false,
         leaves: "",
-        footer: LAST,
+        footer: &last(style.glyphs()),
     };
 
     panel.within(columns, room, style.glyphs())
@@ -491,14 +494,36 @@ fn sending(
 ///
 /// A key is named only where it does something, which is why this is a function
 /// of the panel rather than a constant.
-fn footer(standing: &Standing, several: bool) -> &'static str {
-    if standing.writing.is_some() {
-        return WRITING;
-    }
-    if !standing.reviews() {
-        return ONLY;
-    }
-    if several { MANY } else { ONE }
+fn footer(standing: &Standing, several: bool, glyphs: Glyphs) -> String {
+    let between = between(glyphs);
+    let keys = if standing.writing.is_some() {
+        vec![STOP, KEEP]
+    } else if !standing.reviews() {
+        vec![CANCEL, NOTE]
+    } else if several {
+        vec![CANCEL, CHOOSE, &between, NOTE]
+    } else {
+        vec![CANCEL, &between, NOTE]
+    };
+
+    parted(&keys, glyphs)
+}
+
+/// The quiet row under the last stop, where there is nothing left to choose or
+/// write a note on.
+fn last(glyphs: Glyphs) -> String {
+    parted(&[CANCEL, &between(glyphs)], glyphs)
+}
+
+/// The key that steps from one question to the next.
+fn between(glyphs: Glyphs) -> String {
+    let (left, right) = glyphs.stepping();
+    format!("{left}{right} {BETWEEN}")
+}
+
+/// `keys` on one row, parted by the glyph set's dot.
+fn parted(keys: &[&str], glyphs: Glyphs) -> String {
+    keys.join(&format!(" {} ", glyphs.dot()))
 }
 
 /// What `arrived` does to a standing ask.
