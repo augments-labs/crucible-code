@@ -747,3 +747,24 @@ fn a_line_sent_alone_between_turns_holds_the_rest_back_from_its_turn() {
     assert!(matches!(queue.offer(&steer), Offer::Nowhere));
     assert_eq!(waiting(&queue), ["second"]);
 }
+
+#[test]
+fn lines_a_used_up_plan_let_go_are_on_offer_to_no_turn_the_reader_did_not_send() {
+    // A turn the application starts on its own, or room made for the window,
+    // is not the turn the lines wait for: nothing offers them to it, so the
+    // keys find them in the panel alone, and a line typed under it is not
+    // offered ahead of them.
+    let (mut queue, steer) = queued(&["first", "second"]);
+    drop(steer.take());
+    queue.let_go();
+
+    let offer = queue.offer(&steer);
+    assert!(matches!(offer, Offer::Nowhere), "{offer:?}");
+    assert!(queue.delete(offer), "the key found the line nowhere");
+    assert_eq!(waiting(&queue), ["second"]);
+    assert!(steer.take().is_empty());
+
+    // Still the reader's, offered whole to the next turn they send.
+    queue.offered(&steer);
+    assert_eq!(steer.take(), ["second"]);
+}

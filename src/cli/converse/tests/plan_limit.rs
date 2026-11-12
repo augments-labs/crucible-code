@@ -312,6 +312,8 @@ fn plan_limit_lets_go_of_a_queue_a_send_now_key_was_holding_back() {
             ..Besides::default()
         },
         |_, held, terms| {
+            // The reader's next turn starting, which the lines are offered to.
+            held.queued.offered(&terms.steer);
             let offered = matches!(held.queued.offer(&terms.steer), Offer::Turn(_));
             drop(terms.steer.take());
             let mut editor = typed("and the lint");

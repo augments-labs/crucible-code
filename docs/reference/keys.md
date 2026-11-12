@@ -518,8 +518,7 @@ whenever any are waiting: a title counting them, up to three of them a blank
 row apart with one highlighted, and a footer naming the keys. Between turns the
 same panel holds the prompts left queued behind a turn that stopped on a
 used-up plan, until you send a prompt, which takes them with it. You go on
-typing into the box under it;
-the panel only adds these keys:
+typing into the box under it; the panel only adds these keys:
 
 | Key | What it does |
 | --- | --- |

@@ -1147,7 +1147,11 @@ fn ran<T: Terminal>(
     }
     // Lines a used-up plan left to the reader go with the next turn the
     // reader sends, and with nothing the application starts on its own.
-    if matches!(work, Work::Turn(_, _, Author::Person) | Work::Answer(_)) {
+    let sent = match &work {
+        Work::Turn(_, _, Author::Person) | Work::Answer(_) => true,
+        Work::Turn(_, _, Author::Application) | Work::Room(_) => false,
+    };
+    if sent {
         held.queued.offered(&terms.steer);
     }
     let took = take(conversation, renderer, terms, work, held)?;
