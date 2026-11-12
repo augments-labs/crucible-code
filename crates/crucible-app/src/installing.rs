@@ -27,9 +27,10 @@
 //! A release the ACP Registry offers has no exact size and no catalog entry:
 //! its archive is downloaded within the registry's cap, surveyed from its
 //! file by [`Unpacker::survey_from`] as [`registry_artifact`] describes it,
-//! and its program started once in the closed sandbox by [`probed`], which
-//! records what it answered `initialize` with for the platform it runs on, so
-//! the receipt keeps the facts a later session rebuilds the row from.
+//! and its program started once by [`probed`], in the closed sandbox with the
+//! sandbox setting on and as a plain local process with it off, which records
+//! what it answered `initialize` with for the platform it runs on, so the
+//! receipt keeps the facts a later session rebuilds the row from.
 //!
 //! [`unpack_check`] is the catalog intake's way to the same unpacker an
 //! install of a catalog agent goes through: it reads an artifact as the
@@ -346,7 +347,7 @@ pub fn registry_artifact(url: &str, sha256: &str, size: u64, format: Format) -> 
 }
 
 /// Starts the program `root` holds, as the provisional `entry` describes it,
-/// in the closed sandbox, and gives what it answered as the record a receipt
+/// held in as `mode` says, and gives what it answered as the record a receipt
 /// keeps: the platform the entry installs for this machine, its `agentInfo`,
 /// and the sign-in methods it offered.
 ///
@@ -362,7 +363,12 @@ pub fn registry_artifact(url: &str, sha256: &str, size: u64, format: Format) -> 
 /// has no target for this machine, the program could not be started or did not
 /// answer, or its answer had to be cut and so is not one a row can be rebuilt
 /// from.
-pub fn probed(root: &Path, entry: &[u8], within: Duration) -> Result<Probe, Unprobed> {
+pub fn probed(
+    root: &Path,
+    entry: &[u8],
+    mode: crate::probing::Mode,
+    within: Duration,
+) -> Result<Probe, Unprobed> {
     let draft = Draft::new(entry)?;
     let described = Entry::unsigned(entry).map_err(|source| Unprobed::Entry {
         path: draft.0.clone(),
@@ -372,13 +378,7 @@ pub fn probed(root: &Path, entry: &[u8], within: Duration) -> Result<Probe, Unpr
         .here()
         .map(|target| target.platform.clone())
         .ok_or_else(|| Unprobed::Unanswered("the entry has no target for this platform".into()))?;
-    let answered = crate::probing::probe(
-        root,
-        &draft.0,
-        crate::probing::Mode::CONFINED,
-        &crate::probing::local,
-        within,
-    )?;
+    let answered = crate::probing::probe(root, &draft.0, mode, &crate::probing::local, within)?;
     record(&answered, &target)
 }
 
@@ -390,7 +390,13 @@ pub(crate) fn record(answered: &str, target: &str) -> Result<Probe, Unprobed> {
     if answered.get("incomplete") == Some(&Value::Bool(true)) {
         return Err(refused("the agent answered more than the probe keeps"));
     }
-    if answered.get("sandbox").and_then(Value::as_str) != Some("closed") {
+    // A probe the sandbox held in with its network closed, or one the
+    // sandbox setting off started as a plain local process; never one that
+    // ran unconfined where the sandbox was on.
+    if !matches!(
+        answered.get("sandbox").and_then(Value::as_str),
+        Some("closed" | "off")
+    ) {
         return Err(refused(
             "the probe did not run in a sandbox that closed its network",
         ));

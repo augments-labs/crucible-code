@@ -1493,6 +1493,29 @@ fn unconfined_is_allowed_only_where_the_runner_says_it_is_disposable() {
     }
 }
 
+/// The catalog's probe runs a release it has not yet admitted, so it keeps the
+/// sandbox whatever the sandbox setting of crucible's home says: with that home
+/// setting it off, the mode is still the sandbox, and starting without it still
+/// needs a disposable runner.
+#[test]
+fn the_probe_keeps_the_sandbox_where_the_home_turns_the_setting_off() {
+    let sample = super::super::sample::Sample::new("probe-setting-off");
+    let off = sample.user(r#"{"sandbox": {"enabled": false}}"#);
+    assert!(!off.sandbox_enabled(), "the home's file was read");
+    let home = sample
+        .user_file()
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .expect("the home holding the user file");
+    let lookup =
+        |name: &str| (name == crucible_config::HOME).then(|| home.clone().into_os_string());
+
+    assert_eq!(moded(false, &lookup), Ok(Mode::CONFINED));
+    let refused = moded(true, &lookup).expect_err("not a disposable runner");
+    assert!(refused.contains("CI is true"), "{refused}");
+    assert!(refused.contains("--unconfined"), "{refused}");
+}
+
 /// A method that needs a real terminal is a way the agent signs in, listed
 /// with the others rather than left out of the door's answer.
 #[test]

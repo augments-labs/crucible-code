@@ -205,8 +205,10 @@ do:
 A release read from the ACP Registry has no review, revocation list or
 anti-rollback. What holds it is the registry's SHA-256, recorded in its receipt,
 and the probe record taken at its install; there is no catalog signature or
-trust state to read. A fresh install accepts a same-version archive the
-registry replaces; an installed version keeps the hash its receipt recorded and
+trust state to read. With the sandbox setting off, that probe started the
+vendor's program as a plain local process rather than in the sandbox. A fresh
+install accepts a same-version archive the registry replaces; an installed
+version keeps the hash its receipt recorded and
 refuses a different same-version archive until it is removed. A registry release
 whose receipt has no probe record for this machine is not started, and
 `crucible agents probe` takes one.
@@ -393,8 +395,10 @@ recorded. The list stands again as the store now stands, with what you had
 typed still in the search.
 
 For a release read from the ACP Registry, your yes also covers running the
-vendor's program once in the closed sandbox after the download, as the probe
-whose answer the receipt records; a probe that fails installs nothing. The
+vendor's program once after the download, as the probe whose answer the
+receipt records: in the closed sandbox with the sandbox setting on, and as a
+plain local process with it off, as it is until you turn it on, which the
+install's question says. A probe that fails installs nothing. The
 receipt written when a version is installed records where it came from: for a
 signed catalog release the review that admitted it, or for a release read from
 the ACP Registry the registry document it was read from, with when the release

@@ -1,10 +1,13 @@
 //! What the agent catalog's intake records of an agent by starting it once.
 //!
 //! [`probe`] starts the program an entry lists, from the directory its release
-//! was unpacked into, through `launching::probing`: the sandbox
-//! required, the network closed and that directory read-only. It sends the one
-//! `initialize` a client sends and keeps what comes back as JSON the
-//! intake can compare from run to run: whether the sandbox closed the network,
+//! was unpacked into, through `launching::probing`: the sandbox required, the
+//! network closed and that directory read-only. The intake's own run takes its
+//! [`Mode`] from [`Mode::of`], whatever the sandbox setting says; a registry
+//! install takes it from [`Mode::under`], which with the sandbox setting off
+//! starts the program as a plain local process. It sends the one `initialize`
+//! a client sends and keeps what comes back as JSON the intake can compare
+//! from run to run: whether the sandbox closed the network or was off,
 //! the `agentInfo` the agent gave, each sign-in method with its kind and, for a
 //! terminal method, the command, arguments and environment it names and
 //! whether it says it needs a real terminal, the capabilities, and that the
@@ -22,6 +25,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crucible_config::Settings;
 use crucible_execution::{Failure, Text, TurnRequest};
 use crucible_external_harnesses::catalog::{CatalogError, Entry, INDEX_BYTES};
 use crucible_external_harnesses::{Account, Act, Dialect, Ran, Reading, Request, Shape, Told};
@@ -96,18 +100,33 @@ pub enum Unprobed {
     Unfinished(#[from] Unfinished),
 }
 
-/// How the program is held in: by the sandbox, or, on a runner to be thrown
-/// away, not at all.
+/// How the program is held in: by the sandbox, not at all on a runner to be
+/// thrown away, or not at all because the sandbox setting is off.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Mode {
-    /// Whether the program may be started where the sandbox cannot close the
-    /// network.
-    unconfined: bool,
+    /// Which of the three.
+    confinement: Confinement,
+}
+
+/// How a probe's program is held in, as a [`Mode`] says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Confinement {
+    /// The sandbox is on and required: where it cannot close the network
+    /// nothing is started.
+    Required,
+    /// The sandbox is on, and where it cannot close the network the program is
+    /// started without it, as a disposable runner may ask.
+    Disposable,
+    /// The sandbox setting is off: the program is started as a plain local
+    /// process.
+    Off,
 }
 
 impl Mode {
     /// The sandbox is required.
-    pub const CONFINED: Self = Self { unconfined: false };
+    pub const CONFINED: Self = Self {
+        confinement: Confinement::Required,
+    };
 
     /// The mode `unconfined` asks for, as the environment `lookup` reads
     /// allows: starting the program without the sandbox is allowed only where
@@ -121,10 +140,42 @@ impl Mode {
         unconfined: bool,
         lookup: &dyn Fn(&str) -> Option<OsString>,
     ) -> Result<Self, Unprobed> {
-        if unconfined && lookup("CI").as_deref() != Some(std::ffi::OsStr::new("true")) {
+        if !unconfined {
+            return Ok(Self::CONFINED);
+        }
+        if lookup("CI").as_deref() != Some(std::ffi::OsStr::new("true")) {
             return Err(Unprobed::NotDisposable);
         }
-        Ok(Self { unconfined })
+        Ok(Self {
+            confinement: Confinement::Disposable,
+        })
+    }
+
+    /// The mode the sandbox setting in `settings` gives a probe: with the
+    /// sandbox off, a plain local process, which needs neither `unconfined`
+    /// nor `CI`; with it on, the mode [`Self::of`] gives `unconfined` and
+    /// `lookup`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::of`], with the sandbox on.
+    pub fn under(
+        settings: &Settings,
+        unconfined: bool,
+        lookup: &dyn Fn(&str) -> Option<OsString>,
+    ) -> Result<Self, Unprobed> {
+        if settings.sandbox_enabled() {
+            Self::of(unconfined, lookup)
+        } else {
+            Ok(Self {
+                confinement: Confinement::Off,
+            })
+        }
+    }
+
+    /// How this mode holds the program in.
+    pub(crate) const fn confinement(self) -> Confinement {
+        self.confinement
     }
 }
 
@@ -142,7 +193,10 @@ pub fn local(runtime: Handle) -> Arc<dyn SandboxService> {
 ///
 /// Where that sandbox cannot close the network nothing is started, unless
 /// `mode` is the unconfined one, which only a disposable runner is given, and
-/// then the output says the sandbox was unavailable and why.
+/// then the output says the sandbox was unavailable and why. Where `mode` is
+/// the one the sandbox setting off gives, the program is started as a plain
+/// local process whatever that sandbox can do, and the output says the
+/// sandbox was off.
 ///
 /// # Errors
 ///
@@ -167,7 +221,7 @@ pub fn probe(
             runtime.clone(),
             root,
             &described,
-            mode.unconfined,
+            mode.confinement,
             within,
         ))
     });
@@ -218,14 +272,14 @@ async fn initialized(
     runtime: Handle,
     root: &Path,
     entry: &Entry,
-    unconfined: bool,
+    confinement: Confinement,
     within: Duration,
 ) -> Result<String, Unprobed> {
     let Probe {
         host,
         dialect,
         sandbox,
-    } = launching::probing(service, runtime, root, entry, unconfined).await?;
+    } = launching::probing(service, runtime, root, entry, confinement).await?;
     let mut hearing = Hearing::new(dialect);
     let frames = hearing
         .spoken(Account::Version)
@@ -411,6 +465,7 @@ pub(crate) fn recorded(sandbox: &Sandbox, said: &Map<String, Value>) -> Result<V
         "sandbox".into(),
         match sandbox {
             Sandbox::Closed => json!("closed"),
+            Sandbox::Off => json!("off"),
             Sandbox::Unavailable(why) => json!(format!("unavailable: {}", kept.clipped(why))),
         },
     );
