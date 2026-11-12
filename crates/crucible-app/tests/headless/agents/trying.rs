@@ -305,7 +305,13 @@ fn your_own_program_is_refused_with_the_sandbox_on_where_no_sandbox_can_close() 
         (&program.to_string_lossy(), (Unconfining::here()?, true)),
     )?;
 
-    assert!(turned.is_err(), "the program answered: {turned:?}");
+    let Err(refused) = &turned else {
+        return Err(format!("the program answered: {turned:?}").into());
+    };
+    assert!(
+        refused.contains("a sandbox is required") && refused.contains("no confinement at all"),
+        "the refusal does not name the missing sandbox: {refused}"
+    );
     assert_eq!(
         super::fake_peer::played(&tools(&tree)),
         0,
