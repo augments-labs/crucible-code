@@ -44,6 +44,9 @@ pub(super) enum Put {
     Note,
     /// The dock's answers about to be sent.
     Answer,
+    /// Room about to be made, which sends the conversation for its recap.
+    /// There is no message to send or to keep.
+    Room,
     /// A row or a model about to be chosen.
     Choice,
     /// An installed agent about to be started for the first time.
@@ -56,7 +59,8 @@ impl Put {
         match work {
             Work::Answer(_) => Self::Answer,
             Work::Turn(_, _, Author::Application) => Self::Note,
-            Work::Turn(_, _, Author::Person) | Work::Room(_) => Self::Send,
+            Work::Turn(_, _, Author::Person) => Self::Send,
+            Work::Room(_) => Self::Room,
         }
     }
 
@@ -67,6 +71,7 @@ impl Put {
             Self::Send => Some(&SENDING),
             Self::Note => Some(&NOTING),
             Self::Answer => Some(&ANSWERING),
+            Self::Room => Some(&MAKING_ROOM),
             Self::Choice => Some(&CHOOSING),
             Self::Launch => None,
         }
@@ -106,6 +111,18 @@ const ANSWERING: [Offered<'static>; 2] = [
     Offered {
         name: "Go back",
         says: "Keeps your answers in the dock; nothing is sent",
+    },
+];
+
+/// The answers offered before room is made.
+const MAKING_ROOM: [Offered<'static>; 2] = [
+    Offered {
+        name: "Use it anyway",
+        says: "Sends the conversation for its recap; this route is not asked about again",
+    },
+    Offered {
+        name: "Go back",
+        says: "Leaves the conversation as it is; nothing is sent",
     },
 ];
 
@@ -217,7 +234,8 @@ pub(super) fn ask_while<T: Terminal>(
         // the agent says what starting it runs, as a launch does.
         Put::Send | Put::Note | Put::Answer if content_use::launches(&warned.route) => launched,
         Put::Launch => launched,
-        Put::Send | Put::Note | Put::Answer | Put::Choice => &[],
+        // Room is not made on an agent's route, so making it starts nothing.
+        Put::Send | Put::Note | Put::Answer | Put::Room | Put::Choice => &[],
     };
     let cited = warned.warning.cited();
     let footer = format!("enter to choose {} esc to go back", style.glyphs().dot());
