@@ -357,3 +357,20 @@ fn a_span_being_read_is_shown_at_the_foot_as_written() {
     assert!(!markdown.holds_a_span());
     assert!(markdown.spanning(ROOM).is_none());
 }
+
+#[test]
+fn a_change_of_mode_draws_the_next_span_in_it() {
+    let drawers = formulas();
+    let mut markdown = reader(&drawers, Mode::Text);
+    let mut said = Vec::new();
+    let mut say = |said_now: Said<'_>| {
+        if let Said::Run { text, .. } = said_now {
+            said.push(text.to_owned());
+        }
+    };
+    markdown.read("one $a_1$ ", ROOM, &mut say);
+    markdown.maths(Mode::Written);
+    markdown.read("two $b_2$\n", ROOM, &mut say);
+    markdown.finish(ROOM, &mut say);
+    assert_eq!(said.concat(), "one a_1 two $b_2$\n");
+}

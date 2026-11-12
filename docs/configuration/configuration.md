@@ -58,7 +58,8 @@ next start anyway, so it says nothing. The Images row changes at once when it
 names a protocol or `off`, and says `applies at next start` at `auto`, since
 only a start asks the terminal; a protocol not drawn where the session runs
 says `not available`, as [Where pictures are drawn](#where-pictures-are-drawn)
-has it. A row a project file or the environment sets is shown with who set it
+has it. The Math row changes at once at every answer: math already drawn as a
+block is laid out again in the new form. A row a project file or the environment sets is shown with who set it
 and cannot be changed there, since the user file would not win. A project file
 that says anything about `promptCaching` sets all four of its rows, because
 that block is checked as a whole. Providers,
@@ -734,6 +735,7 @@ you with no way to send at all.
 | `screen` | `fullscreen`, `native` | Where crucible draws; `fullscreen` by default, and read only at start. `fullscreen` takes a screen of its own, with its own scrollback, scroll rail and selection. `native` draws in your terminal's own buffer: what is finished is written once into the terminal's scrollback, only the part still changing at the foot is drawn again, and scrolling, selection, search and copy are your terminal's. The scroll rail, the mouse scroll speed and crucible's own selection are off there. The rest of what it changes, and what you do instead, is under [What native mode cannot do](#what-native-mode-cannot-do). |
 | `pinAfterSeconds` | `0` to `60` | How many seconds a running tool call waits before it is drawn above the row that says a turn is running, with the end of its output and `(ctrl+b to background)`; `3` by default. A call that finishes sooner is only written to the transcript, so the rows over the box do not appear and vanish on every quick command, and Ctrl+B still leaves a running command in the background before its row is shown. `0` draws every call the moment it is asked for. |
 | `images` | `auto`, `kitty`, `iterm2`, `sixel`, `off` | What pictures are drawn with; `auto` by default. `auto` asks the terminal at start, and only where its environment names a terminal pictures were seen to draw right on, in the screen mode in force, with no multiplexer in between. A protocol named here is used without asking the terminal where it was seen to draw right, and is text everywhere else; `sixel` was seen to draw right nowhere. `off` draws every picture as text. Under [Where pictures are drawn](#where-pictures-are-drawn). |
+| `math` | `written`, `text`, `image` | How math in an answer is drawn; `image` by default. `image` draws a formula as a picture where one can be shown and as text everywhere else, which is everywhere for now; `text` draws it as text; `written` shows every formula exactly as the model wrote it. Each takes effect at once. Under [Math](../sessions/transcript.md#math). |
 
 `theme` is a table of what each colour on screen means, tuned to one background.
 `auto` asks the terminal what its background is and picks the dark or the light

@@ -45,7 +45,7 @@ use crate::files::Files;
 use crate::forge::Forge;
 use crate::glyphs::Glyphs;
 use crate::markdown::{self, Block, Markdown, Offers, Said};
-use crate::record::{Record, Source};
+use crate::record::{Modes, Record, Source};
 use crate::row::Row;
 use crate::scroll_rail::{self, ScrollRail};
 use crate::select::{self, Place, Taken, View};
@@ -1229,6 +1229,30 @@ impl<T: Terminal> Renderer<T> {
         self.record
             .relay(self.folds(), glyphs, self.palette.theme());
         self.painted.forget();
+    }
+
+    /// Tells this renderer how math in an answer is drawn.
+    ///
+    /// Said at startup, and again whenever the reader changes the setting, as
+    /// [`Self::draws`] is and for its reasons: the reader is told rather than
+    /// replaced, so the next span of math is drawn in `mode`, and display math
+    /// already written is laid out again in it now, since the record keeps the
+    /// source it was written as. A span already said keeps what it was drawn
+    /// as, as every other run of prose does. Until a picture can be shown in
+    /// its place, [`Mode::Image`] draws math as [`Mode::Text`] does.
+    pub fn math(&mut self, mode: Mode) {
+        self.math = mode;
+        self.markdown.maths(mode);
+        self.record.draws_in(Modes { math: mode });
+        self.record
+            .relay(self.folds(), self.glyphs, self.palette.theme());
+        self.painted.forget();
+    }
+
+    /// How math in an answer is drawn.
+    #[must_use]
+    pub const fn math_mode(&self) -> Mode {
+        self.math
     }
 
     /// Tells this renderer which repository the answer's bare numbers count
@@ -2829,7 +2853,11 @@ impl<T: Terminal> Taking<'_, T> {
         if let Some(out) = &mut self.out {
             out.write(self.unwritten)?;
             self.unwritten.clear();
-            let (links, drawers) = (self.record.links(), self.record.drawers());
+            // As the record would lay it out: a kind shown as written is
+            // handed to no drawer.
+            let none = Drawers::default();
+            let drawers = self.record.drawers_for(&block).unwrap_or(&none);
+            let links = self.record.links();
             let rows = markdown::lay_unoffered(&block, self.columns, self.glyphs, links, drawers);
             for row in rows {
                 out.write(&row.text())?;

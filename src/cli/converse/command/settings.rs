@@ -17,8 +17,9 @@
 //! splice `/theme` writes with. What a running session can take is put in
 //! force the moment it is written: the theme, the syntax theme, the
 //! transcript's colours, the glyphs, the tool detail, the scroll rail, the
-//! wheel's speed, the key that sends, and a protocol `output.images` names or
-//! `off`. What only a start reads says so on its row, changed or not — `auto`
+//! wheel's speed, the key that sends, a protocol `output.images` names or
+//! `off`, and how math is drawn, which lays the math already drawn out again.
+//! What only a start reads says so on its row, changed or not — `auto`
 //! among them, since only a start asks the terminal — and [`takes`] is where
 //! each row is given one answer or the other. A file that cannot be
 //! written leaves a live change in force for this session and says so on the
@@ -448,7 +449,9 @@ enum Takes {
 /// colours are only read where colour is on, so turning it on or off is a
 /// palette resolved again rather than a value set on the one in force.
 /// Pictures turn on the word: `auto` is a question only a start asks the
-/// terminal, and a protocol or `off` is used without asking.
+/// terminal, and a protocol or `off` is used without asking. Math turns on
+/// every word: `image` asks the terminal nothing, and is drawn as text where
+/// no picture of a formula can be shown.
 fn takes(id: RowId, word: &str) -> Takes {
     match id {
         RowId::Theme
@@ -459,7 +462,8 @@ fn takes(id: RowId, word: &str) -> Takes {
         | RowId::ScrollRail
         | RowId::ScrollSpeed
         | RowId::PinAfter
-        | RowId::Send => Takes::Now,
+        | RowId::Send
+        | RowId::Math => Takes::Now,
         RowId::Colour
         | RowId::Tone
         | RowId::Compaction
@@ -548,6 +552,11 @@ fn worn<T: Terminal>(
                 renderer.images(graphics::unasked(candidate, renderer.terminal().cell()));
             })
             .is_some(),
+        // Each way is drawn at once, `image` as text until a picture of a
+        // formula can be shown, and the math already drawn is laid out in it.
+        RowId::Math => crucible_config::MathDrawing::read(word)
+            .map(|math| renderer.math(crate::cli::math_drawn(math)))
+            .is_some(),
         RowId::Colour
         | RowId::ScreenMode
         | RowId::Tone
@@ -634,7 +643,8 @@ const fn fullscreen_only(id: RowId) -> bool {
         | RowId::CacheIsolation
         | RowId::CacheRetention
         | RowId::CachePersistent
-        | RowId::Images => false,
+        | RowId::Images
+        | RowId::Math => false,
     }
 }
 
@@ -664,7 +674,8 @@ impl Line {
             | RowId::CacheIsolation
             | RowId::CacheRetention
             | RowId::CachePersistent
-            | RowId::Images => None,
+            | RowId::Images
+            | RowId::Math => None,
         };
         let settled = terms
             .settled

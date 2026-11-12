@@ -118,6 +118,17 @@ impl Settings {
             .unwrap_or_default()
     }
 
+    /// How math in an answer is drawn.
+    ///
+    /// A value rather than an `Option`, as the pictures are: what the files
+    /// fall back to is the answer.
+    #[must_use]
+    pub fn math(&self) -> MathDrawing {
+        self.output("math")
+            .and_then(MathDrawing::read)
+            .unwrap_or_default()
+    }
+
     /// One string out of the `output` block.
     fn output(&self, key: &str) -> Option<&str> {
         self.value.get("output")?.get(key)?.as_str()
@@ -316,6 +327,36 @@ impl ImageOutput {
     }
 }
 
+/// How math in an answer is drawn.
+///
+/// What the drawing calls each of these is the terminal's to say; this is only
+/// which one the reader chose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MathDrawing {
+    /// Every formula exactly as the model wrote it, markers and all.
+    Written,
+    /// Each formula drawn as characters.
+    Text,
+    /// Each formula drawn as a picture where one can be shown, and as text
+    /// everywhere else.
+    #[default]
+    Image,
+}
+
+impl MathDrawing {
+    /// Reads one of the words `output.math` accepts, spelled as a document
+    /// spells it, as a settings menu hands one over.
+    #[must_use]
+    pub fn read(found: &str) -> Option<Self> {
+        match found {
+            "written" => Some(Self::Written),
+            "text" => Some(Self::Text),
+            "image" => Some(Self::Image),
+            _ => None,
+        }
+    }
+}
+
 /// How many of the theme's colours the transcript spends, and on what.
 ///
 /// Which kind of thing gets which colour is the drawing's to say; this is only
@@ -417,6 +458,24 @@ mod tests {
         for name in shape::IMAGES {
             assert!(ImageOutput::read(name).is_some(), "images: {name}");
         }
+        for name in shape::MATH {
+            assert!(MathDrawing::read(name).is_some(), "math: {name}");
+        }
+    }
+
+    #[test]
+    fn math_is_an_image_unless_a_layer_names_written_or_text() {
+        let read =
+            |text: &str| Settings::resolve(vec![Document::sample(text, Origin::User)]).math();
+
+        assert_eq!(Settings::resolve(Vec::new()).math(), MathDrawing::Image);
+        assert_eq!(
+            read(r#"{"output": {"math": "written"}}"#),
+            MathDrawing::Written
+        );
+        assert_eq!(read(r#"{"output": {"math": "text"}}"#), MathDrawing::Text);
+        assert_eq!(read(r#"{"output": {"math": "image"}}"#), MathDrawing::Image);
+        assert_eq!(MathDrawing::read("latex"), None);
     }
 
     #[test]
@@ -601,6 +660,10 @@ mod tests {
         assert_eq!(
             ImageOutput::read(shape::usual(&["output", "images"])),
             Some(Settings::resolve(Vec::new()).images())
+        );
+        assert_eq!(
+            MathDrawing::read(shape::usual(&["output", "math"])),
+            Some(Settings::resolve(Vec::new()).math())
         );
     }
 }

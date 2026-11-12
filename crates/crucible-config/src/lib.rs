@@ -81,8 +81,8 @@ pub use settings::access::{
 };
 pub use settings::{
     Access, AgentUpdate, Color, Compaction, Driver, ExternalAgent, Forced, Glyphs, ImageOutput,
-    McpServer, Routes, SandboxSettings, ScreenMode, ScrollSpeed, Sending, Settings, ThemeChoice,
-    ToolDetail, TranscriptColours, Updates, When, local, user,
+    MathDrawing, McpServer, Routes, SandboxSettings, ScreenMode, ScrollSpeed, Sending, Settings,
+    ThemeChoice, ToolDetail, TranscriptColours, Updates, When, local, user,
 };
 pub use shape::THEME;
 pub use shape::rows::{Row, RowId, Values, row, rows};

@@ -33,8 +33,9 @@
 //! set, such as a tool's change, in a new glyph set too. A block of an
 //! answer is *drawn*: a table, a rule or the rule under a heading arrives as
 //! the source it was written as, which is kept beside what it was laid out as,
-//! and laid out again for a new width or a new glyph set; a new theme only
-//! paints the same rows in other colours. Both forms count against the
+//! and laid out again for a new width or a new glyph set, and for a new way
+//! of drawing its kind where a setting chooses one ([`Modes`]); a new theme
+//! only paints the same rows in other colours. Both forms count against the
 //! ceiling, and a drawn block that falls off the top takes its source with it.
 //! The source is lent, not copied: [`Record::source_of`] answers for a row and
 //! [`Record::sources`] walks the blocks, so what copies a block and what lists
@@ -54,9 +55,9 @@ use std::collections::VecDeque;
 use std::ops::Range;
 
 use crate::color::{Slot, Theme};
-use crate::drawing::{Drawers, Room};
+use crate::drawing::{Drawers, Mode, Room};
 use crate::glyphs::Glyphs;
-use crate::markdown::{self, Block, Links, Offers};
+use crate::markdown::{self, Block, Kind, Links, Offers};
 use crate::row::Row;
 use crate::scroll_rail::Place;
 
@@ -122,7 +123,7 @@ enum Line {
 /// laid out as.
 ///
 /// Laid out for one width, glyph set and theme at a time, and laid out again
-/// when the first two change; the theme is part of what it was laid for only
+/// when the first two change or the mode its kind is drawn in does; the theme is part of what it was laid for only
 /// so that what is on screen can be told from what is wanted, since rows carry
 /// slots and a theme is the colours a slot is painted in.
 pub(crate) struct Drawn {
@@ -135,18 +136,66 @@ pub(crate) struct Drawn {
     weight: usize,
     /// The width, glyph set and theme the rows were laid out for.
     laid: (usize, Glyphs, Theme),
+    /// The modes the rows were drawn in.
+    modes: Modes,
     /// Edits made to the rows since, applied again at every layout.
     edits: Vec<fn(&mut [Row])>,
 }
 
 /// What a block of an answer is laid out by: the links its addresses fold by,
-/// the drawers its closed fences are drawn by, and what becomes of a key
-/// their rows offer.
+/// the drawers its closed fences are drawn by, the mode each kind a setting
+/// chooses for is drawn in, and what becomes of a key their rows offer.
 #[derive(Clone, Copy)]
 struct By<'a> {
     links: &'a Links,
     drawers: &'a Drawers,
+    modes: Modes,
     offers: Offers,
+}
+
+/// The mode each kind of block a setting chooses the drawing of is drawn in.
+///
+/// One field a kind, read through [`Modes::of`], whose match says which kinds
+/// a setting chooses for, so a kind a later setting draws is one field and one
+/// arm here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Modes {
+    /// Display math: between `$$`, `\[` or a named environment, or a math
+    /// fence.
+    pub(crate) math: Mode,
+}
+
+impl Default for Modes {
+    /// The mode a setting left alone gives.
+    fn default() -> Self {
+        Self { math: Mode::Image }
+    }
+}
+
+impl Modes {
+    /// The mode a block of `kind` is drawn in; none for a kind no setting
+    /// chooses the drawing of.
+    const fn of(self, kind: Kind) -> Option<Mode> {
+        match kind {
+            Kind::DisplayMath => Some(self.math),
+            Kind::Table
+            | Kind::Rule
+            | Kind::Heading(_)
+            | Kind::Mermaid
+            | Kind::Diff
+            | Kind::Image => None,
+        }
+    }
+
+    /// Whether a block of `kind` is handed to its drawer at all: never in
+    /// [`Mode::Written`], which shows it as it was written. Until a picture
+    /// can be shown in its place, [`Mode::Image`] is drawn as text.
+    pub(crate) const fn draws(self, kind: Kind) -> bool {
+        match self.of(kind) {
+            Some(Mode::Written) => false,
+            Some(Mode::Text | Mode::Image) | None => true,
+        }
+    }
 }
 
 impl Drawn {
@@ -159,6 +208,7 @@ impl Drawn {
             prefix: None,
             weight: 0,
             laid: (columns, glyphs, theme),
+            modes: by.modes,
             edits: Vec::new(),
         };
         drawn.lay(columns, glyphs, by);
@@ -172,7 +222,15 @@ impl Drawn {
             Offers::Stand => markdown::lay,
             Offers::Withdrawn => markdown::lay_unoffered,
         };
-        let laid = lay(&self.block, columns, glyphs, by.links, by.drawers);
+        // A kind shown as written is handed to no drawer, which is how a
+        // block no drawer takes is laid out.
+        let none = Drawers::default();
+        let drawers = if by.modes.draws(self.block.kind) {
+            by.drawers
+        } else {
+            &none
+        };
+        let laid = lay(&self.block, columns, glyphs, by.links, drawers);
         let mut rows = responsive_rows(
             laid.iter()
                 .flat_map(|row| markdown::framed(row, columns).unwrap_or_else(|| row.fold(columns)))
@@ -189,6 +247,7 @@ impl Drawn {
         self.rows = rows;
         self.laid.0 = columns;
         self.laid.1 = glyphs;
+        self.modes = by.modes;
     }
 
     /// The block's source as line `line`, where its kind has one to read.
@@ -435,6 +494,9 @@ pub(crate) struct Record {
     /// written: kept here for the reason the links are, since a drawn block
     /// asks its drawer again at every width and glyph set it is laid out for.
     drawers: Drawers,
+    /// The mode each kind a setting chooses for is drawn in, for the reason
+    /// the drawers are kept.
+    modes: Modes,
     /// What becomes of a key a drawer offers in the rows kept here: it
     /// stands, unless what draws this record said no key is read there.
     offers: Offers,
@@ -483,6 +545,7 @@ impl Record {
             began: 0,
             links: Links::default(),
             drawers: Drawers::default(),
+            modes: Modes::default(),
             offers: Offers::Stand,
         }
     }
@@ -515,6 +578,20 @@ impl Record {
     pub(crate) fn draws_with(&mut self, drawers: Drawers, offers: Offers) {
         self.drawers = drawers;
         self.offers = offers;
+    }
+
+    /// What draws a closed `block` of an answer as it would be laid out here:
+    /// the drawers, or none where its kind is shown as written.
+    pub(crate) fn drawers_for(&self, block: &Block) -> Option<&Drawers> {
+        self.modes.draws(block.kind).then_some(&self.drawers)
+    }
+
+    /// Draws each kind a setting chooses for in the mode `modes` gives it.
+    ///
+    /// Said at startup and whenever the setting changes; a block already
+    /// drawn is laid out in it again by the next [`Self::relay`].
+    pub(crate) fn draws_in(&mut self, modes: Modes) {
+        self.modes = modes;
     }
 
     /// Append streamed text, which flows.
@@ -664,6 +741,7 @@ impl Record {
         let by = By {
             links: &self.links,
             drawers: &self.drawers,
+            modes: self.modes,
             offers: self.offers,
         };
         let drawn = Drawn::new(block, room, theme, by);
@@ -676,7 +754,8 @@ impl Record {
     ///
     /// A block of an answer, and a responsive block drawn in a glyph set, is
     /// laid out again where the width or the glyph set it was laid for has
-    /// changed; the theme changes only the colours its rows are painted in,
+    /// changed, and a block of an answer where the mode its kind is drawn in
+    /// has; the theme changes only the colours its rows are painted in,
     /// which is the drawing's business. A new width is everything
     /// [`Self::resized`] does as well.
     pub(crate) fn relay(&mut self, columns: usize, glyphs: Glyphs, theme: Theme) {
@@ -697,20 +776,24 @@ impl Record {
         }
     }
 
-    /// Lays out again each drawn block not laid for `columns` in `glyphs`, and
-    /// answers whether any was.
+    /// Lays out again each drawn block not laid for `columns` in `glyphs`, or
+    /// in the mode its kind is drawn in now, and answers whether any was.
     fn relay_drawn(&mut self, columns: usize, glyphs: Glyphs) -> bool {
         let mut any = false;
         let by = By {
             links: &self.links,
             drawers: &self.drawers,
+            modes: self.modes,
             offers: self.offers,
         };
         for line in &mut self.lines {
             let Line::Drawn(drawn) = line else {
                 continue;
             };
-            if (drawn.laid.0, drawn.laid.1) == (columns, glyphs) {
+            let kind = drawn.block.kind;
+            if (drawn.laid.0, drawn.laid.1) == (columns, glyphs)
+                && drawn.modes.of(kind) == self.modes.of(kind)
+            {
                 continue;
             }
             let was = drawn.weight;

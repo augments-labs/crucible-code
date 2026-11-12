@@ -130,6 +130,12 @@ impl Markdown {
         self
     }
 
+    /// Draws the next span of math in `mode`; one already said stays as it
+    /// was drawn.
+    pub(crate) fn maths(&mut self, mode: Mode) {
+        self.math.mode = mode;
+    }
+
     /// The same reader, reading a formula no drawer drew where `formula`.
     #[must_use]
     pub(super) fn formula(mut self, formula: bool) -> Self {

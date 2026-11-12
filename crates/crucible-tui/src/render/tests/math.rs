@@ -1,12 +1,13 @@
 //! Math in an answer: what reaches the screen of a dollar that is no math, a
 //! formula nothing can draw, the markers inside a formula, a span told of at
-//! the foot while it streams, and a formula laid out again in new glyphs.
+//! the foot while it streams, and a formula laid out again in new glyphs and
+//! in each way a setting draws it.
 
 use std::sync::Arc;
 
 use super::*;
 use crate::chrome::Undrawn;
-use crate::drawing::{Drawers, Draws, Laid, Room, Run};
+use crate::drawing::{Drawers, Draws, Laid, Mode, Room, Run};
 
 #[test]
 fn dollar_signs_that_are_not_math_stay_as_written() {
@@ -143,4 +144,27 @@ fn a_formula_drawn_is_laid_out_again_when_the_glyphs_change() {
 
     drawn.answer("\nThen $z$.\n");
     assert_eq!(drawn.rows().last().map(String::as_str), Some("Then >z."));
+}
+
+#[test]
+fn a_formula_drawn_is_laid_out_again_in_each_mode_chosen() {
+    let mut drawn = marking();
+    // As a setting left alone has it.
+    assert_eq!(drawn.render.math_mode(), Mode::Image);
+    drawn.answer("Span $x$ here.\n\n$$\ny\n$$\n");
+    assert_eq!(drawn.rows(), ["Span »x here.", "» y"]);
+
+    drawn.render.math(Mode::Written);
+    drawn.render.draw().unwrap();
+    assert_eq!(drawn.render.math_mode(), Mode::Written);
+    // The block is shown as written; the span, said as the line streamed,
+    // keeps what it was drawn as, as every other run of prose does.
+    assert_eq!(drawn.rows(), ["Span »x here.", "$$", "y", "$$"]);
+    drawn.answer("\nThen $z$.\n");
+    assert_eq!(drawn.rows().last().map(String::as_str), Some("Then $z$."));
+
+    // An image cannot be shown yet, so it is text.
+    drawn.render.math(Mode::Image);
+    drawn.render.draw().unwrap();
+    assert_eq!(drawn.rows(), ["Span »x here.", "» y", "Then $z$."]);
 }

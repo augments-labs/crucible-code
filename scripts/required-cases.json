@@ -11615,15 +11615,15 @@
     {
       "id": "CASE-TRANSCRIPT-PICTURES-ROW-LAST",
       "family": "transcript-pictures",
-      "obligation": "The last settings row is Images, for output.images, usually auto.",
+      "obligation": "The last settings row is Math, for output.math, usually image, and Images, for output.images, usually auto, is just before it.",
       "package": "crucible-config",
       "target": {
         "kind": "lib",
         "name": "crucible_config"
       },
-      "case": "shape::rows::tests::the_images_row_is_the_last_so_no_row_before_it_moves",
+      "case": "shape::rows::tests::the_math_row_is_the_last_so_no_row_before_it_moves",
       "source": "crates/crucible-config/src/shape/rows/tests.rs",
-      "body_sha256": "b83e591b6e83da1f1f4137cf4b524014ece26deaf79344786bc8db7e2a846e3b",
+      "body_sha256": "4ebe31b45e49244784e313b1cc6b65df1d6c7e8e3efea81cb6ffb2303ac5f845",
       "platforms": [
         "linux",
         "macos",

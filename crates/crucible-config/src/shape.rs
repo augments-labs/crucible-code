@@ -491,6 +491,14 @@ pub(crate) const TRANSCRIPT_COLOURS: &[&str] = &["calm", "balanced", "rich"];
 /// draw right, and is text elsewhere; `off` draws every picture as text.
 pub(crate) const IMAGES: &[&str] = &["auto", "kitty", "iterm2", "sixel", "off"];
 
+/// Every answer `output.math` accepts.
+///
+/// `written` shows every formula exactly as the model wrote it; `text` draws
+/// it as characters; `image` draws it as a picture where one can be shown, and
+/// as text everywhere else, which is everywhere until a picture of a formula
+/// can be drawn. Each is read again by a running session.
+pub(crate) const MATH: &[&str] = &["written", "text", "image"];
+
 /// What the model is asked under, where the reader wants something else.
 ///
 /// Two hooks that look alike and are not. `append` adds to what crucible says;
@@ -630,6 +638,15 @@ const OUTPUT: &[Field] = &[
         shape: Shape::Choice(IMAGES),
         examples: &[],
         usual: Some("auto"),
+        needed: false,
+        widens: false,
+    },
+    Field {
+        name: "math",
+        about: "How math in an answer is drawn: written shows each formula exactly as the model wrote it; text draws it as characters; image draws it as a picture where one can be shown and as text everywhere else",
+        shape: Shape::Choice(MATH),
+        examples: &[],
+        usual: Some("image"),
         needed: false,
         widens: false,
     },
