@@ -795,3 +795,23 @@ fn a_line_sent_or_typed_under_a_turn_the_reader_did_not_send_keeps_its_place() {
         "the rest are offered to the turn they wait behind"
     );
 }
+
+#[test]
+fn a_queue_kept_after_its_turn_was_held_back_is_whole_and_goes_with_the_next_prompt() {
+    // The turn taken from the queue was held back unsent. Its prompt goes back
+    // to the front, the rest behind it in the order they were typed, and none
+    // of them is left on offer to whatever runs first. The reader's next
+    // prompt is offered every one, oldest first, as it would have been
+    // offered the lines had they never been taken.
+    let (mut queue, steer) = queued(&["first", "second", "third"]);
+    let before = queue.bytes;
+    let prompt = batched(&mut queue, &steer).expect("the oldest line as the prompt");
+
+    queue.kept(&prompt, &steer);
+
+    assert_eq!(waiting(&queue), ["first", "second", "third"]);
+    assert_eq!(queue.bytes, before, "a kept line is not counted");
+    assert_eq!(steer.take(), Vec::<String>::new());
+    queue.offered(&steer);
+    assert_eq!(steer.take(), ["first", "second", "third"]);
+}

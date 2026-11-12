@@ -37,7 +37,8 @@ nothing was sent; the model was not told the command ended
 ```
 
 The prompts you queued behind a turn are asked about the same way when they
-are about to go as the next turn. Going back keeps every one of them in the
+are about to go as the next turn, and so is one sent alone with Ctrl+S between
+turns. Going back keeps every one of them in the
 queue and leaves the prompt box as you left it; they go with the next prompt
 you send. A yes that could not be written down keeps them the same way, after
 a line saying why, and so does a window too short to ask in:

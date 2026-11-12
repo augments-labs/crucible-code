@@ -670,7 +670,11 @@ fn a_queue_held_back_keeps_every_line_and_the_box_as_the_reader_left_it() {
     )
     .expect("the queue to be taken");
 
-    assert_eq!(taken, Some(false), "the session left");
+    assert_eq!(
+        taken,
+        Some(false),
+        "the queue was not taken, or the session left"
+    );
     assert_eq!(asked.load(Ordering::SeqCst), 0, "the queue was sent");
     assert_eq!(held.editor.text(), "half a thought");
     let waiting = held.queued.waiting_all().collect::<Vec<_>>();
@@ -699,4 +703,62 @@ fn a_queue_held_back_keeps_every_line_and_the_box_as_the_reader_left_it() {
         cramped.terminal().written().matches(CRAMPED_QUEUE).count(),
         1
     );
+}
+
+#[test]
+fn a_line_sent_alone_from_the_queue_and_held_back_goes_back_to_the_queue() {
+    // Ctrl+S between turns sent the highlighted line alone, and the route it
+    // would go on has no yes. Held back, it is the queue's line still: it goes
+    // back to the front of the queue, the box keeps what the reader had typed,
+    // and the lines wait for the reader as the whole queue does.
+    let script = Script::new(vec![saying("answered")]);
+    let asked = script.asked();
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(script, Tools::new(), session)
+    });
+    let warned = Terms {
+        consent: serving_google(),
+        ..plain()
+    };
+    let opening = opening();
+    let mut input = Cursor::new(Vec::new());
+    let mut held = Held::new(
+        warned.plan.clone(),
+        warned.sending.get(),
+        Answers {
+            input: &mut input,
+            keys: true,
+        },
+        &opening,
+    );
+    for line in ["first", "second", "third"] {
+        assert_eq!(held.queued.accept(&mut typed(line)), Retained::Accepted);
+    }
+    held.editor.put("half a thought");
+    let alone = held.queued.sent_alone().expect("the highlighted line");
+    let mut cramped = Renderer::new(Recording::redirected(80, 3));
+
+    let (conversation, leaving) = ran(
+        conversation,
+        &mut cramped,
+        &warned,
+        Work::Queued(alone, Box::default()),
+        &mut held,
+    )
+    .expect("the line to be held back");
+
+    assert!(!leaving, "the session left");
+    assert_eq!(asked.load(Ordering::SeqCst), 0, "the line was sent");
+    assert_eq!(held.editor.text(), "half a thought");
+    let waiting = held.queued.waiting_all().collect::<Vec<_>>();
+    assert_eq!(waiting, ["first", "second", "third"]);
+    let (_, again) = queueing::taken(
+        conversation,
+        &mut cramped,
+        &warned,
+        &mut held,
+        Style::plain(),
+    )
+    .expect("the queue to be asked");
+    assert_eq!(again, None, "the queue was taken before the reader sent");
 }

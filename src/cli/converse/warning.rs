@@ -111,11 +111,11 @@ const SENDING: [Offered<'static>; 2] = [
 const QUEUING: [Offered<'static>; 2] = [
     Offered {
         name: "Use it anyway",
-        says: "Sends your queued messages; this route is not asked about again",
+        says: "Sends what you queued; this route is not asked about again",
     },
     Offered {
         name: "Go back",
-        says: "Keeps them in the queue for your next prompt; nothing is sent",
+        says: "Keeps it all in the queue for your next prompt; nothing is sent",
     },
 ];
 
@@ -255,8 +255,9 @@ pub(super) fn ask_while<T: Terminal>(
     };
     let shown: &[Offered<'_>] = put.offered().unwrap_or(&launching);
     let told: &[&str] = match put {
-        // A message, a note or an answer on an installed agent's route that starts
-        // the agent says what starting it runs, as a launch does.
+        // A message, a note, the queue or an answer on an installed agent's
+        // route that starts the agent says what starting it runs, as a launch
+        // does.
         Put::Send | Put::Note | Put::Queue | Put::Answer
             if content_use::launches(&warned.route) =>
         {
@@ -315,7 +316,9 @@ pub(super) fn recorded(terms: &Terms, warned: &Warned) -> Result<(), String> {
 /// route it would go on has no yes, and handed back whole where the answer
 /// was anything but yes, or a yes that could not be written down. The
 /// application's note about a command that ended is not handed back: it is
-/// dropped, and the prompt box keeps what it held. A turn
+/// dropped, and the prompt box keeps what it held. The queue's turn is handed
+/// back to the queue, which waits for the reader (see
+/// [`super::queueing::taken`]), and the box keeps what it held. A turn
 /// [`Conversation::unlaunchable`] refuses is not held: it goes on to that
 /// refusal unasked.
 ///
@@ -371,6 +374,7 @@ pub(super) fn held<T: Terminal>(
     }
     if let Work::Queued(prompt, _) = work {
         held.queued.kept(prompt, &terms.steer);
+        held.left_to_reader = true;
     }
     renderer.commit(&said)?;
     Ok(true)

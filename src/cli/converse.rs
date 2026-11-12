@@ -772,7 +772,8 @@ fn conversing<T: Terminal>(
 
         // The lines queued during the last turn are the next turn, before the
         // box is asked for another — unless that turn stopped on a used-up
-        // plan, when they wait for the reader instead.
+        // plan, or was the queue held back, when they wait for the reader
+        // instead.
         let (back, taken) = queueing::taken(conversation, renderer, terms, &mut held, style)?;
         conversation = back;
 
@@ -814,18 +815,18 @@ fn conversing<T: Terminal>(
             continue;
         }
 
-        let (prompt, local, author) = match asked {
+        let (prompt, local, author, origin) = match asked {
             // Through the same door as a typed one, on purpose: a woken turn
             // still needs a model to be asked of, and the guards below are
             // where that is answered. Its words are the application's, so it
             // is sent as theirs and never kept as the person's task.
             Asked::Said(said) => {
-                let (prompt, local) = said.into_parts();
-                (prompt, local, Author::Person)
+                let (prompt, local, origin) = said.into_parts();
+                (prompt, local, Author::Person, origin)
             }
             Asked::Woke(woke) => {
                 let (note, author) = woke.into_parts();
-                (note, false, author)
+                (note, false, author, typing::Origin::Box)
             }
             Asked::Ended => break,
 
@@ -850,7 +851,7 @@ fn conversing<T: Terminal>(
 
             Asked::Untyped => {
                 match unboxed(renderer, conversation.settled(), style, held.answers.input)? {
-                    Some(said) => (said, true, Author::Person),
+                    Some(said) => (said, true, Author::Person, typing::Origin::Box),
                     None => break,
                 }
             }
@@ -908,7 +909,12 @@ fn conversing<T: Terminal>(
             },
             terms.style(),
         )?;
-        let work = Work::Turn(prompt, attached, author);
+        // A line Ctrl+S sent from the queue is still one of the queue's: held
+        // back, it goes back there rather than over what the box holds.
+        let work = match origin {
+            typing::Origin::Box => Work::Turn(prompt, attached, author),
+            typing::Origin::Queue => Work::Queued(prompt, attached),
+        };
         let (back, leaving) = ran(conversation, renderer, terms, work, &mut held)?;
         conversation = back;
 
@@ -1145,8 +1151,9 @@ fn ran<T: Terminal>(
         replied(renderer, command, style)?;
         return Ok((conversation, false));
     }
-    // Lines a used-up plan left to the reader go with the next turn the
-    // reader sends, and with nothing the application starts on its own.
+    // Lines left to the reader, by a used-up plan or a queue the question
+    // above held back, go with the next turn the reader sends, and with
+    // nothing the application starts on its own.
     let sent = match &work {
         Work::Turn(_, _, Author::Person) | Work::Queued(..) | Work::Answer(_) => true,
         Work::Turn(_, _, Author::Application) | Work::Room(_) => false,
@@ -1203,7 +1210,7 @@ fn ran<T: Terminal>(
 
     // Asked of every piece of work that ran, so the first one to end any other
     // way lets the queue go again.
-    held.used_up = matches!(took.did, Did::UsedUp);
+    held.left_to_reader = matches!(took.did, Did::UsedUp);
 
     let leaving = matches!(took.meanwhile, typing::Meanwhile::Leaving);
     let mut conversation = took.conversation;
@@ -2214,10 +2221,12 @@ struct Held<'a> {
     /// were typed: the whole of the queue goes to one turn rather than a turn
     /// each, which is what [`queueing::batched`] does with it.
     queued: Prompts,
-    /// Whether the last work stopped on a used-up plan, which holds the queue
-    /// until the reader sends something: [`queueing::taken`] runs nothing
-    /// while it is set.
-    used_up: bool,
+    /// Whether the last work left the queue to the reader: it stopped on a
+    /// used-up plan, or it was the queue and the content-use question held it
+    /// back. Either holds the queue until the reader sends something, or other
+    /// work ends some other way: [`queueing::taken`] runs nothing while it is
+    /// set.
+    left_to_reader: bool,
     /// What the transcript had no room to say, waiting for Ctrl+O. Held for the
     /// whole session rather than for a turn: the row offering the key is read
     /// after the turn that drew it has ended, which is when there is time to
@@ -2303,7 +2312,7 @@ impl<'a> Held<'a> {
             // also the one that has a second press to give away.
             editor: Editor::new().multiline().sends(sending),
             queued: Prompts::default(),
-            used_up: false,
+            left_to_reader: false,
             kept: Kept::default(),
             gathering: Gathering::default(),
             opened: Standing::default(),
