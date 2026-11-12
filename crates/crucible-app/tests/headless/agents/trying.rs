@@ -235,8 +235,16 @@ fn an_instance_naming_a_program_through_a_link_is_launched_under_the_sandbox() -
 
 /// The instance a try of the user's own goose writes, with the directory its
 /// programs lie in written `<tools>`: one that runs it by the path its links
-/// lead to.
-const GOOSE_WRITTEN: &str = r#"{"agent":"goose","driver":"catalog","executable":"<tools>/goose"}"#;
+/// lead to, spelled as this platform spells that program and escaped as the
+/// written instance escapes it (`<tools>/goose` on Unix).
+fn goose_written() -> Result<String, Failed> {
+    let program =
+        std::path::Path::new("<tools>").join(format!("goose{}", std::env::consts::EXE_SUFFIX));
+    Ok(format!(
+        r#"{{"agent":"goose","driver":"catalog","executable":{}}}"#,
+        serde_json::to_string(&program.to_string_lossy())?
+    ))
+}
 
 /// `crucible agents try goose`, with the user's own goose on the steps'
 /// `PATH`, asks, starts nothing and writes an instance that runs the program
@@ -256,7 +264,7 @@ fn trying_your_own_program_starts_nothing_and_writes_the_instance() -> Result<()
         0,
         "the program was started"
     );
-    assert_eq!(tried, GOOSE_WRITTEN);
+    assert_eq!(tried, goose_written()?);
     Ok(())
 }
 
@@ -273,7 +281,7 @@ fn your_own_program_is_launched_with_the_sandbox_off_where_no_sandbox_can_close(
         |tree| counted_goose_of_your_own(tree, (Unconfining::here()?, false)),
         "goose",
     )?;
-    assert_eq!(tried, GOOSE_WRITTEN);
+    assert_eq!(tried, goose_written()?);
     let program = std::fs::canonicalize(tools(&tree).join("goose"))?;
 
     let turned = goose_turned(
@@ -329,7 +337,7 @@ fn your_own_program_is_refused_with_the_sandbox_on_where_no_sandbox_can_close() 
 fn a_changed_own_program_is_launched_without_a_probe() -> Result<(), Failed> {
     let tree = Tree::new("agents-own-changed")?;
     let tried = tried_from_the_command_line(&tree, turning_goose_of_your_own, "goose")?;
-    assert_eq!(tried, GOOSE_WRITTEN);
+    assert_eq!(tried, goose_written()?);
     let program = counted_goose(&tools(&tree))?;
 
     let turned = goose_turned(

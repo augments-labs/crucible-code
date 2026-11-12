@@ -1412,8 +1412,9 @@ fn a_refused_root_is_tried_with_the_sandbox_off() -> Result<(), Failed> {
 
     let (_, facts, _) = question(&put, 1).ok_or("the agent's question")?;
     assert!(!facts.contains(&why.as_str()), "{facts:?}");
-    let parent = portable(&program.parent().ok_or("a directory")?.to_string_lossy());
-    assert!(facts.contains(&unjudged(&parent).as_str()), "{facts:?}");
+    let directory = program.parent().ok_or("the program's directory")?;
+    let said = unjudged(&directory.display().to_string());
+    assert!(facts.contains(&said.as_str()), "{facts:?}");
     let mut door = Picking::of([Some("Try it")]);
     let tried = carried(&tree, &conversation, &action, &mut door)?;
     let Ok(Door::Tried { instance, .. }) = tried else {
