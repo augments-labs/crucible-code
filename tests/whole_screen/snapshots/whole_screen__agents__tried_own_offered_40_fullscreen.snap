@@ -65,8 +65,8 @@ expression: picture
 |----------------------------------------|
 |/a-directory-to-be-working-in/and-someth|
 |ing-below-that-again/workspace/agents is|
-|readable to it, read-only, during its   |
-|probe and at every launch, where the    |
+|readable to it, read-only, at every     |
+|launch under the sandbox, where the     |
 |network is open to its vendor.          |
 |Under the sandbox on Linux it starts    |
 |with a private home of its own, and a   |

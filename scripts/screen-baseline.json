@@ -937,7 +937,7 @@
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, host, )",
         "Watched::capturing_agents(&case, size, native, &vendor, (None, \"\"))"
       ],
-      "sha256": "7daf667d9a03244a9e9db4d1788f1831ad5d518939c429f5766cdbd8e495b586"
+      "sha256": "5c2093c18ea5019c4da328e6205e2cf397f84d216d781a362cc621250edf1de7"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__tried_own_agy-asked_40_native.snap",
@@ -947,7 +947,7 @@
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, host, )",
         "Watched::capturing_agents(&case, size, native, &vendor, (None, \"\"))"
       ],
-      "sha256": "dec07ba32fcd9a06311172632e9d262171c842b7ff84e125b4f38886939f6585"
+      "sha256": "d6f5b9768a5e30c64844d0b07652f26994beddf3e42c72880837ad8d7fa0a488"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__tried_own_agy-asked_80_fullscreen.snap",
@@ -957,7 +957,7 @@
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, host, )",
         "Watched::capturing_agents(&case, size, native, &vendor, (None, \"\"))"
       ],
-      "sha256": "524026e8c3b3b01e3ef5c3023518c186044aaee1551fe758f16966611bb29d59"
+      "sha256": "ddf2e1fc2e23f6477b883a6408834722301f189c46c9ac7e2d3b5bf80737e1a8"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__tried_own_agy-asked_80_native.snap",
@@ -967,7 +967,7 @@
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, host, )",
         "Watched::capturing_agents(&case, size, native, &vendor, (None, \"\"))"
       ],
-      "sha256": "c6be493e1fc86c48719e22ed142294741168655956f7e609b88b98c9bdfff4e6"
+      "sha256": "bde595102bc6b2fa3a2bcc58e9b9ddb7e92a6cef484ad4228ebe2b6aed52c672"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__tried_own_asked_40_fullscreen.snap",
@@ -977,7 +977,7 @@
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, host, )",
         "Watched::capturing_agents(&case, size, native, &vendor, (None, \"\"))"
       ],
-      "sha256": "b9bb0f9565433f499baf160dc58118a818af4b03fbc8d1640b97a39337b7c3ee"
+      "sha256": "d866db76f59ccae124f9206a88f734c3857ac3888525552d75cd4301e195cce7"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__tried_own_asked_40_native.snap",
@@ -987,7 +987,7 @@
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, host, )",
         "Watched::capturing_agents(&case, size, native, &vendor, (None, \"\"))"
       ],
-      "sha256": "02a970b34ec86c74d20b0f79ed167f3e1c42c94c93183b9ab8133eda92b68183"
+      "sha256": "13522c59d137519f320dc451d18042e0430cbd125df2bba98c6dff95d3ed05d2"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__tried_own_asked_80_fullscreen.snap",
@@ -997,7 +997,7 @@
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, host, )",
         "Watched::capturing_agents(&case, size, native, &vendor, (None, \"\"))"
       ],
-      "sha256": "fb4372852572fac9ca3052a4dd18f90cb7315ed17c66d21e1bf619e1ac77340b"
+      "sha256": "1994d0269e34ee6d471329ac56dec132689a6bf476f831f70164bde4cb2d0b24"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__tried_own_asked_80_native.snap",
@@ -1007,7 +1007,7 @@
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, host, )",
         "Watched::capturing_agents(&case, size, native, &vendor, (None, \"\"))"
       ],
-      "sha256": "8d1d95285c898a472c1489937514e2f4362776a0278579d8328f8b6969dcbfa7"
+      "sha256": "60c696c77ce7f375fed9cb3d8b6dca9c9b7ca6a5df5319fd28a8a9d6abe2b7da"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__tried_own_offered_40_fullscreen.snap",
@@ -1017,7 +1017,7 @@
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, host, )",
         "Watched::capturing_agents(&case, size, native, &vendor, (None, \"\"))"
       ],
-      "sha256": "b2c363a968322661a7c42061d67a71f432d85ed46c14ee50645cffd76bd269c1"
+      "sha256": "a14347bce038f5686b9a40002249a73b0d8e752436613c7ca99fccc2798011d5"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__tried_own_offered_40_native.snap",
@@ -1027,7 +1027,7 @@
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, host, )",
         "Watched::capturing_agents(&case, size, native, &vendor, (None, \"\"))"
       ],
-      "sha256": "2a4a36c3e41dea94d86316988b1ed4af708f884ff71a519bdb8f71c71ceca7aa"
+      "sha256": "1af57ceaeb5469749ed75b31082269129ed9b063e577806b407a030557c554a2"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__tried_own_offered_80_fullscreen.snap",
@@ -1037,7 +1037,7 @@
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, host, )",
         "Watched::capturing_agents(&case, size, native, &vendor, (None, \"\"))"
       ],
-      "sha256": "607e3980612801a95b2954658c6ac657d2c76791118b4ab01e63f12e670534c8"
+      "sha256": "4c029b7dd5723e4a5ae7216d3224ae9b2233ed33b6a19d60d16c65ab2903fe56"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__tried_own_offered_80_native.snap",
@@ -1047,7 +1047,7 @@
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, host, )",
         "Watched::capturing_agents(&case, size, native, &vendor, (None, \"\"))"
       ],
-      "sha256": "e6db55a0456b14d54145e5ca5c6aed74d980a2399b1a1909752d2ad443ca2c7b"
+      "sha256": "04f9df035b42603fe3c62fb6290672cd00a2fc9695a1ca455f3f11682baf9a3c"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__an_answer_is_committed_above_a_box_that_is_still_where_it_was.snap",

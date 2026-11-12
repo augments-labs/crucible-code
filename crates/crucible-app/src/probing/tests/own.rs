@@ -1,23 +1,21 @@
-//! The directory a program the user installed lies in is decided once for its
-//! probe and its launch, and nothing it may not read or write is given.
+//! The directory a program the user installed lies in is decided once for
+//! its launch under the sandbox, and nothing it may not read or write is
+//! given.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crucible_config::Driver;
-use crucible_external_harnesses::catalog::Variable;
 use crucible_external_harnesses::{Dialect as _, Shape};
 use crucible_sandbox::{
     SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxNetworkPolicy, SandboxPolicy,
     SandboxPrivateLoopback,
 };
-use serde_json::{Map, Value, json};
 
 use crate::backends::REGISTRY;
-use crate::launching::{Sandbox, guarded};
+use crate::launching::guarded;
 use crate::own_program::{
-    DID_NOT_SAY, EMPTY_PROVENANCE, Empty, HOME_SEARCH, Instance, Places, Platform, RECORDS, Root,
-    Unowned, admit, decided, dialect, forget, launch_policy, probe_policy, read, root, told,
+    HOME_SEARCH, Places, Platform, Root, Unowned, decided, dialect, launch_policy, root, told,
 };
 use crate::sample::Sample;
 
@@ -345,36 +343,6 @@ fn a_root_the_platform_has_not_been_recorded_for_is_refused() {
     );
 }
 
-/// What a program answers to `initialize` with `result`.
-fn said(result: &Value) -> Map<String, Value> {
-    match json!({"jsonrpc": "2.0", "id": 0, "result": result}) {
-        Value::Object(said) => said,
-        _ => Map::new(),
-    }
-}
-
-/// An answer that admits: protocol 1, capabilities, a name and a version.
-fn speaking() -> Map<String, Value> {
-    said(&json!({
-        "protocolVersion": 1,
-        "agentCapabilities": {"loadSession": true},
-        "agentInfo": {"name": "gemini-cli", "version": "0.9.0"},
-        "authMethods": [{"id": "login", "name": "Log in", "description": "Sign in \u{1b}[31mhere"}],
-    }))
-}
-
-/// A catalog instance named `name` of the entry `agent`, declared to start
-/// with `args`.
-fn instance<'a>(name: &'a str, agent: &'a str, args: &'a [Box<str>]) -> Instance<'a> {
-    Instance {
-        name,
-        driver: "catalog",
-        agent: Some(agent),
-        args,
-        env: &[],
-    }
-}
-
 /// A program file in `sample`'s tree, outside its home, and its canonical
 /// path.
 #[allow(clippy::panic)]
@@ -399,7 +367,7 @@ fn rule_at(
 }
 
 #[test]
-fn the_own_root_rules_are_the_same_for_the_probe_and_the_launch() {
+fn the_own_root_rules_of_a_launch_under_the_sandbox() {
     let sample = Sample::new("own-root-rules");
     let program = program_in(&sample);
     let home = sample.home();
@@ -411,23 +379,12 @@ fn the_own_root_rules_are_the_same_for_the_probe_and_the_launch() {
         sessions: &sessions,
     };
     let conversation = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
-    let empty = Empty::made().expect("an empty directory");
 
-    // A granted root is read-only on both sides, each with its provenance.
+    // A granted root is read-only, with the provenance of a release's own.
     let granted = program.parent().expect("a directory").to_path_buf();
     let root = places.root(&program);
     assert_eq!(root, Root::Grant(granted.clone()));
-    let probing = probe_policy(&root, empty.path(), true).expect("a probe policy");
     let launching = launch_policy(&conversation, &root).expect("a launch policy");
-    assert_eq!(
-        rule_at(&probing, &granted),
-        Some((
-            SandboxFilesystemAccess::ReadOnly,
-            SandboxFilesystemProvenance::Workspace
-        ))
-    );
-    assert_eq!(probing.working_directory(), granted);
-    assert_eq!(probing.filesystem().len(), 1);
     assert_eq!(
         rule_at(&launching, &granted),
         Some((
@@ -435,86 +392,50 @@ fn the_own_root_rules_are_the_same_for_the_probe_and_the_launch() {
             SandboxFilesystemProvenance::Runtime
         ))
     );
-    assert!(probing.enabled());
 
-    // No rule is the empty directory alone on the probe, and nothing added
-    // on the launch.
-    let probing = probe_policy(&Root::NoRule, empty.path(), true).expect("a probe policy");
-    assert_eq!(
-        probing
-            .filesystem()
-            .iter()
-            .map(|rule| (rule.path(), rule.access(), rule.provenance()))
-            .collect::<Vec<_>>(),
-        [(
-            empty.path(),
-            SandboxFilesystemAccess::ReadOnly,
-            EMPTY_PROVENANCE
-        )]
-    );
-    assert_eq!(EMPTY_PROVENANCE, SandboxFilesystemProvenance::Workspace);
-    assert_eq!(probing.working_directory(), empty.path());
+    // No rule adds nothing.
     assert_eq!(
         launch_policy(&conversation, &Root::NoRule).expect("a launch policy"),
         conversation
     );
-    assert_eq!(fs::read_dir(empty.path()).expect("a directory").count(), 0);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        let mode = fs::metadata(empty.path())
-            .expect("a directory")
-            .permissions()
-            .mode();
-        assert_eq!(mode & 0o777, 0o700);
-    }
-    let made = empty.path().to_path_buf();
-    drop(empty);
-    assert!(!made.exists(), "{} was left behind", made.display());
 
-    // A refused root is refused by both sides alike.
+    // A refused root is refused with its reason.
     let refused = places.root(&home.join("agent"));
     let Root::Refused(why) = &refused else {
         panic!("{refused:?}");
     };
-    let empty = Empty::made().expect("an empty directory");
-    for refusal in [
-        probe_policy(&refused, empty.path(), true).err(),
-        launch_policy(&conversation, &refused).err(),
-    ] {
-        assert!(
-            matches!(&refusal, Some(Unowned::Root(said)) if said == why),
-            "{refusal:?}"
-        );
-    }
+    let refusal = launch_policy(&conversation, &refused).err();
+    assert!(
+        matches!(&refusal, Some(Unowned::Root(said)) if said == why),
+        "{refusal:?}"
+    );
 }
 
 #[test]
-fn only_the_own_probe_policy_asks_for_private_loopback() {
+fn no_own_launch_policy_asks_for_private_loopback() {
     let sample = Sample::new("own-private-loopback");
     let program = program_in(&sample);
     let granted = program.parent().expect("a directory").to_path_buf();
-    let empty = Empty::made().expect("an empty directory");
+    let conversation = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
 
-    // The own probe asks, granted a directory or not, and its network is
-    // still closed: the loopback is the sandbox's own, not the host's.
+    // A launch of the user's own program, granted a directory or not, keeps
+    // the conversation's loopback: nothing is started before it that asks
+    // for one of its own.
     for root in [Root::Grant(granted.clone()), Root::NoRule] {
-        let probing = probe_policy(&root, empty.path(), true).expect("a probe policy");
+        let launching = launch_policy(&conversation, &root).expect("a launch policy");
         assert_eq!(
-            probing.private_loopback(),
-            SandboxPrivateLoopback::Granted,
+            launching.private_loopback(),
+            conversation.private_loopback(),
             "{root:?}"
         );
-        assert_eq!(probing.network(), &SandboxNetworkPolicy::Closed);
-        // Nothing it may write is the host's, so a socket it binds by path
-        // cannot be one a host process finds.
-        assert!(!probing.filesystem().is_empty(), "{root:?}");
-        for rule in probing.filesystem() {
-            assert_eq!(rule.access(), SandboxFilesystemAccess::ReadOnly, "{root:?}");
-        }
+        assert_eq!(
+            launching.private_loopback(),
+            SandboxPrivateLoopback::Refused,
+            "{root:?}"
+        );
     }
 
-    // The store intake probe's policy does not.
+    // Nor does the store intake probe's policy.
     let intake = crate::probing::policy(&granted, SandboxFilesystemProvenance::Workspace, true)
         .expect("an intake probe policy");
     assert_eq!(intake.private_loopback(), SandboxPrivateLoopback::Refused);
@@ -545,302 +466,6 @@ fn the_own_agy_probe_carries_the_drivers_environment() {
     assert_eq!(variable("AGY_ACP_FORCE_FILE_STORAGE"), Some("1"));
     assert_eq!(variable("GEMINI_HOME"), None);
     assert_eq!(request.arguments, ["acp"]);
-}
-
-#[test]
-fn an_own_probe_record_whose_sandbox_was_not_closed_does_not_admit() {
-    let sample = Sample::new("own-unclosed");
-    let program = program_in(&sample);
-    let crucible = sample.home();
-    let gemini = instance("gemini", "gemini", &[]);
-
-    let unconfined = admit(
-        &crucible,
-        &gemini,
-        &["gemini"],
-        &program,
-        &Sandbox::Unavailable("no user namespaces".into()),
-        &speaking(),
-    );
-    assert!(
-        matches!(unconfined, Err(Unowned::Unconfined)),
-        "{unconfined:?}"
-    );
-    assert!(read(&crucible, &gemini).is_none());
-
-    // A record written whole that says its sandbox was not closed is read as
-    // none.
-    admit(
-        &crucible,
-        &gemini,
-        &["gemini"],
-        &program,
-        &Sandbox::Closed,
-        &speaking(),
-    )
-    .expect("admitted");
-    assert!(read(&crucible, &gemini).is_some());
-    let kept = fs::read_dir(crucible.join("own-programs"))
-        .expect("the records")
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .find(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "json")
-        })
-        .expect("a record");
-    let text = fs::read_to_string(&kept).expect("the record");
-    fs::write(
-        &kept,
-        text.replace("\"closed\"", "\"unavailable: no user namespaces\""),
-    )
-    .expect("rewritten");
-    assert!(read(&crucible, &gemini).is_none());
-}
-
-#[test]
-fn an_answer_with_no_agent_info_admits_and_records_did_not_say() {
-    let sample = Sample::new("own-no-info");
-    let program = program_in(&sample);
-    let crucible = sample.home();
-    let gemini = instance("gemini", "gemini", &[]);
-
-    let record = admit(
-        &crucible,
-        &gemini,
-        &["gemini"],
-        &program,
-        &Sandbox::Closed,
-        &said(&json!({"protocolVersion": 1, "agentCapabilities": {}})),
-    )
-    .expect("admitted by its capabilities");
-
-    assert_eq!(record.name(), DID_NOT_SAY);
-    assert_eq!(record.version(), DID_NOT_SAY);
-    assert_eq!(read(&crucible, &gemini).as_ref(), Some(&record));
-    assert!(record.current(&program));
-
-    // What it said of itself is kept, and its sign-in's description clipped,
-    // never compared with anything.
-    let record = admit(
-        &crucible,
-        &gemini,
-        &["gemini"],
-        &program,
-        &Sandbox::Closed,
-        &speaking(),
-    )
-    .expect("admitted");
-    assert_eq!((record.name(), record.version()), ("gemini-cli", "0.9.0"));
-    assert_eq!(record.methods().len(), 1);
-
-    // Protocol 1 and a capabilities object are what admits it.
-    for refused in [
-        json!({"protocolVersion": 2, "agentCapabilities": {}}),
-        json!({"protocolVersion": 1}),
-        json!({"protocolVersion": 1, "agentCapabilities": []}),
-    ] {
-        let fresh = Sample::new("own-refused");
-        let answer = admit(
-            &fresh.home(),
-            &gemini,
-            &["gemini"],
-            &program,
-            &Sandbox::Closed,
-            &said(&refused),
-        );
-        assert!(
-            matches!(answer, Err(Unowned::Unadmitted(_))),
-            "{refused}: {answer:?}"
-        );
-        assert!(read(&fresh.home(), &gemini).is_none(), "{refused}");
-    }
-}
-
-#[test]
-fn a_changed_agent_key_or_launch_shape_reads_as_no_record() {
-    let sample = Sample::new("own-shape");
-    let program = program_in(&sample);
-    let crucible = sample.home();
-    let args: [Box<str>; 1] = ["--acp".into()];
-    let env = [Variable {
-        name: "MODE".into(),
-        value: "acp".into(),
-    }];
-    let probed = Instance {
-        env: &env,
-        ..instance("Gemini", "gemini", &args)
-    };
-    admit(
-        &crucible,
-        &probed,
-        &["Gemini", "gemini"],
-        &program,
-        &Sandbox::Closed,
-        &speaking(),
-    )
-    .expect("admitted");
-    assert!(read(&crucible, &probed).is_some());
-
-    let other_args: [Box<str>; 1] = ["--experimental-acp".into()];
-    let other_env = [Variable {
-        name: "MODE".into(),
-        value: "other".into(),
-    }];
-    let changed = [
-        Instance {
-            agent: Some("qwen"),
-            ..probed
-        },
-        Instance {
-            driver: "antigravity",
-            agent: None,
-            ..probed
-        },
-        Instance {
-            args: &other_args,
-            ..probed
-        },
-        Instance {
-            env: &other_env,
-            ..probed
-        },
-        Instance { env: &[], ..probed },
-        Instance {
-            name: "gemini",
-            ..probed
-        },
-    ];
-    for instance in &changed {
-        assert!(read(&crucible, instance).is_none(), "{instance:?}");
-    }
-
-    // A program that changed is still the instance's record, which a launch
-    // tells is stale by its path, size and modification time.
-    fs::write(&program, "#!/bin/sh\necho updated\n").expect("updated");
-    let record = read(&crucible, &probed).expect("the record");
-    assert!(!record.current(&program));
-
-    // Two names differing only in case keep two records.
-    let lower = Instance {
-        name: "gemini",
-        ..probed
-    };
-    admit(
-        &crucible,
-        &lower,
-        &["Gemini", "gemini"],
-        &program,
-        &Sandbox::Closed,
-        &speaking(),
-    )
-    .expect("admitted");
-    assert!(read(&crucible, &probed).is_some());
-    assert!(read(&crucible, &lower).is_some());
-    assert_eq!(
-        fs::read_dir(crucible.join("own-programs"))
-            .expect("the records")
-            .count(),
-        2
-    );
-}
-
-/// A program dated before 1970 has a time a record cannot keep, so it never
-/// reads as the program probed, even when it was not changed, and a launch
-/// probes it again.
-#[test]
-fn a_program_dated_before_1970_is_never_current() {
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-    let sample = Sample::new("own-pre-epoch");
-    let program = program_in(&sample);
-    let crucible = sample.home();
-    let dated = |to: SystemTime| {
-        fs::File::options()
-            .write(true)
-            .open(&program)
-            .and_then(|file| file.set_modified(to))
-            .expect("the program's time");
-        let kept = fs::metadata(&program)
-            .and_then(|meta| meta.modified())
-            .expect("the program's time");
-        assert!(kept < UNIX_EPOCH, "the file system kept {kept:?}");
-    };
-    dated(UNIX_EPOCH - Duration::from_hours(24));
-    let gemini = instance("gemini", "gemini", &[]);
-
-    let record = admit(
-        &crucible,
-        &gemini,
-        &["gemini"],
-        &program,
-        &Sandbox::Closed,
-        &speaking(),
-    )
-    .expect("admitted");
-
-    assert!(!record.current(&program), "an unchanged program");
-    dated(UNIX_EPOCH - Duration::from_hours(48));
-    assert!(!record.current(&program), "a program retimed before 1970");
-}
-
-#[test]
-fn the_own_program_records_are_kept_to_64_and_go_with_their_instance() {
-    let sample = Sample::new("own-bound");
-    let program = program_in(&sample);
-    let crucible = sample.home();
-    let names: Vec<String> = (0..=RECORDS).map(|n| format!("agent-{n}")).collect();
-    let all: Vec<&str> = names.iter().map(String::as_str).collect();
-    let (last, kept) = all.split_last().expect("names");
-
-    assert_eq!(RECORDS, 64);
-    for name in kept {
-        admit(
-            &crucible,
-            &instance(name, "gemini", &[]),
-            &all,
-            &program,
-            &Sandbox::Closed,
-            &speaking(),
-        )
-        .expect("admitted");
-    }
-    let full = admit(
-        &crucible,
-        &instance(last, "gemini", &[]),
-        &all,
-        &program,
-        &Sandbox::Closed,
-        &speaking(),
-    );
-    assert!(matches!(full, Err(Unowned::Full)), "{full:?}");
-    assert!(read(&crucible, &instance(last, "gemini", &[])).is_none());
-
-    // A record whose instance is gone is dropped to make room.
-    let (gone, live) = kept.split_first().expect("names");
-    let mut remaining: Vec<&str> = live.to_vec();
-    remaining.push(last);
-    admit(
-        &crucible,
-        &instance(last, "gemini", &[]),
-        &remaining,
-        &program,
-        &Sandbox::Closed,
-        &speaking(),
-    )
-    .expect("admitted once one is gone");
-    assert!(read(&crucible, &instance(gone, "gemini", &[])).is_none());
-    assert_eq!(
-        fs::read_dir(crucible.join("own-programs"))
-            .expect("the records")
-            .count(),
-        RECORDS
-    );
-
-    // Removing an instance removes its record.
-    forget(&crucible, last).expect("forgotten");
-    assert!(read(&crucible, &instance(last, "gemini", &[])).is_none());
-    forget(&crucible, last).expect("forgetting twice is nothing");
 }
 
 /// The user's own Antigravity started under the sandbox with no profile is
@@ -908,63 +533,6 @@ fn the_lost_sign_in_sentence_is_shown_on_linux_only() {
     }
 }
 
-/// A sandbox that holds a program in with its network closed and its
-/// filesystem enforced, and counts each start it is asked to prepare,
-/// preparing none.
-#[cfg(unix)]
-#[derive(Default)]
-struct Counting(std::sync::atomic::AtomicUsize);
-
-#[cfg(unix)]
-impl crucible_sandbox::SandboxService for Counting {
-    fn probe(
-        &self,
-    ) -> crucible_runtime::BoxFuture<
-        '_,
-        Result<
-            (
-                crucible_sandbox::SandboxBackendIdentity,
-                crucible_sandbox::SandboxCapabilities,
-            ),
-            crucible_sandbox::SandboxError,
-        >,
-    > {
-        use crucible_sandbox::{
-            SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
-            SandboxCapabilities, SandboxCapability, SandboxFeature,
-        };
-
-        Box::pin(async move {
-            let identity = SandboxBackendIdentity::new(
-                SandboxBackendId::new("counting").expect("a backend name"),
-                "1",
-                SandboxBackendProvenance::Compatibility,
-                None,
-            )
-            .expect("a backend identity");
-            let holding = SandboxCapabilities::none()
-                .with(SandboxFeature::NetworkDeny, SandboxCapability::Enforced)
-                .with(SandboxFeature::Filesystem, SandboxCapability::Enforced);
-            Ok((identity, holding))
-        })
-    }
-
-    fn prepare(
-        &self,
-        _request: crucible_sandbox::SandboxRequest,
-    ) -> crucible_runtime::BoxFuture<
-        '_,
-        Result<Box<dyn crucible_sandbox::SandboxSession>, crucible_sandbox::SandboxError>,
-    > {
-        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Box::pin(async move {
-            Err(crucible_sandbox::SandboxError::Lifecycle(
-                std::io::Error::other("this sandbox starts nothing"),
-            ))
-        })
-    }
-}
-
 /// An executable file `name` in `directory` that says `says`.
 #[cfg(unix)]
 fn executable_in(directory: &Path, name: &str, says: &str) -> PathBuf {
@@ -978,18 +546,16 @@ fn executable_in(directory: &Path, name: &str, says: &str) -> PathBuf {
 }
 
 /// A program found through a link that is pointed at another program before
-/// the probe starts it is refused as changed, and nothing is asked to start:
-/// the program started is the one that was found, never one the link leads
-/// to afterwards.
+/// its launch starts it is refused as changed: the program started is the one
+/// that was found, never one the link leads to afterwards.
 #[cfg(unix)]
 #[test]
 fn a_link_retargeted_after_it_was_found_is_refused_and_not_started() {
     use std::os::unix::fs::symlink;
-    use std::sync::Arc;
 
     use crucible_external_harnesses::{Discovery, Refusal};
 
-    use crate::own_program::probe;
+    use crate::own_program::started_at;
 
     let sample = Sample::new("own-link-retargeted");
     let found = executable_in(&sample.root().join("found"), "agent", "found");
@@ -1005,41 +571,13 @@ fn a_link_retargeted_after_it_was_found_is_refused_and_not_started() {
     fs::remove_file(&link).expect("the link removed");
     symlink(&other, &link).expect("the link pointed elsewhere");
 
-    let home = sample.home();
-    let crucible = home.join(".crucible");
-    let sessions = crucible.join("sessions");
-    let places = Places {
-        home: &home,
-        crucible: &crucible,
-        sessions: &sessions,
-    };
     let row = REGISTRY
         .row(Driver::Antigravity, None)
         .expect("Antigravity's row");
-    let service = Arc::new(Counting::default());
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("a runtime");
-    let probed = runtime.block_on(probe(
-        service.clone(),
-        runtime.handle().clone(),
-        &places,
-        &instance("agent", "agent", &[]),
-        &["agent"],
-        program,
-        dialect(&row, &link).expect("a wire"),
-        crate::probing::BOUND,
-    ));
+    let started = started_at(&row, &program);
 
     assert!(
-        matches!(probed, Err(Unowned::Refused(Refusal::Changed(_)))),
-        "{probed:?}"
+        matches!(started, Err(Unowned::Refused(Refusal::Changed(_)))),
+        "{started:?}"
     );
-    assert_eq!(
-        service.0.load(std::sync::atomic::Ordering::SeqCst),
-        0,
-        "a start was prepared"
-    );
-    assert!(read(&crucible, &instance("agent", "agent", &[])).is_none());
 }

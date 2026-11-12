@@ -1,5 +1,5 @@
-//! Trying the user's own program of an agent: probed once, confined, after
-//! the door's own yes, and written as the instance that runs it.
+//! Trying the user's own program of an agent: after the door's own yes, it
+//! is written as the instance that runs it, and nothing is started.
 
 use std::path::{Path, PathBuf};
 
@@ -26,21 +26,6 @@ const ANTIGRAVITY_KEY: &str = "antigravity";
 pub(super) fn own_refusal(agent: &AgentKey, program: &Path, why: &Unowned) -> String {
     let program = escaped(&program.display().to_string());
     match why {
-        Unowned::Probe(_) => format!(
-            "Your own {agent} at {program} did not answer as an agent ({why}), so nothing was \
-             written."
-        ),
-        Unowned::Unadmitted(_) => format!(
-            "Your own {agent} at {program} answered, but not as an agent Crucible can run \
-             ({why}), so nothing was written."
-        ),
-        Unowned::Unclosable(_) if agent.as_str() == ANTIGRAVITY_KEY => format!(
-            "Your own {agent} at {program} could not be checked: {why}. Crucible's own release \
-             of Antigravity works on this machine: run `crucible agents install antigravity`."
-        ),
-        Unowned::Unclosable(_) => {
-            format!("Your own {agent} at {program} could not be checked: {why}.")
-        }
         Unowned::Root(_) => format!("{why} Nothing was run or written."),
         _ => format!(
             "Your own {agent} at {program} could not be tried ({why}), so nothing was written."
@@ -174,19 +159,18 @@ impl Door<'_> {
     /// Antigravity's, as the instance that already runs it or, where none of
     /// the agent is configured, a new one: the program must be the one a
     /// launch of that instance would find, its directory one an agent may be
-    /// given, and `front` must say yes to the door's own question before it
-    /// is started, confined, with the network closed, and asked `initialize`
-    /// alone. What it answers is kept for a catalog agent's instance, and a
-    /// new instance is written only once it is admitted; a refusal writes
-    /// nothing and keeps nothing.
+    /// given where the sandbox is on, and `front` must say yes to the door's
+    /// own question before a new instance is written. Nothing is started: the
+    /// program is used as found, and a launch of the instance is what first
+    /// starts it. A refusal writes nothing.
     ///
     /// # Errors
     ///
     /// [`AgentsError::Untried`] where no conversation lent the steps that
-    /// start it, [`AgentsError::Own`] where it is not the program a launch
-    /// would find, an instance of the agent runs another, its directory is
-    /// refused or it is not admitted, and [`AgentsError::Remember`] where a
-    /// new instance cannot be written.
+    /// find it, [`AgentsError::Own`] where it is not the program a launch
+    /// would find, an instance of the agent runs another or, with the sandbox
+    /// on, its directory is refused, and [`AgentsError::Remember`] where a new
+    /// instance cannot be written.
     pub(super) async fn try_own(
         &self,
         agent: &str,
@@ -252,9 +236,7 @@ impl Door<'_> {
             choices: vec![
                 (
                     "Try it".to_owned(),
-                    "Start it once, confined with the network closed, ask it only `initialize`, \
-                     and keep what it answers."
-                        .to_owned(),
+                    "Write the instance that runs it; nothing is started.".to_owned(),
                 ),
                 ("Cancel".to_owned(), "Change nothing.".to_owned()),
             ],
@@ -262,25 +244,11 @@ impl Door<'_> {
         if confirmed(self.request, front, &confirmation).await != Some(0) {
             return Ok(Outcome::Undecided);
         }
-        let mut instances: Vec<&str> = self.instances.iter().map(ExternalAgent::name).collect();
         if new {
-            instances.push(&name);
-        }
-        trial
-            .probe(&trying, &name, &instances)
-            .await
-            .map_err(refused)?;
-        if new {
-            let written = trial
+            let instance = trial
                 .agent(&name)
-                .ok_or_else(|| refused(Unowned::Unnamed(asked.clone())))
-                .and_then(|instance| Ok(remember::adding_own(&self.user, &instance)?));
-            if let Err(why) = written {
-                // A record kept for an instance never written would hold
-                // for an instance the user later names so.
-                let _ = trying.forget(&name);
-                return Err(why);
-            }
+                .ok_or_else(|| refused(Unowned::Unnamed(asked.clone())))?;
+            remember::adding_own(&self.user, &instance)?;
         }
         Ok(Outcome::Tried {
             agent: key,

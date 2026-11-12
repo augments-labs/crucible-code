@@ -72,6 +72,8 @@ mod login_row;
 #[cfg(feature = "proof")]
 #[path = "agents/npm.rs"]
 mod npm;
+#[path = "agents/own_sign_in.rs"]
+mod own_sign_in;
 #[path = "agents/piped.rs"]
 mod piped;
 #[path = "agents/registry.rs"]

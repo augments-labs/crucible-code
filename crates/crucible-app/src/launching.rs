@@ -347,18 +347,6 @@ pub enum Unlaunched {
     /// The directory the user's own program lies in is not given to an agent.
     #[error("{0}.")]
     Unowned(#[from] crate::own_program::Unowned),
-    /// The user's own program changed since it was probed, and probed again
-    /// it is no longer admitted; its record is gone with it.
-    #[error(
-        "{agent} runs your own program, which changed since it was probed; probed again, it \
-         is not started: {why}"
-    )]
-    Changed {
-        /// The instance.
-        agent: String,
-        /// Why it is not admitted now.
-        why: Box<crate::own_program::Unowned>,
-    },
     /// Its route is not one this build warns about.
     #[error("{0} is not an agent route this build knows, so nothing is started on it.")]
     Unknown(String),
@@ -1025,7 +1013,8 @@ impl Agent {
                 // A catalog row's program is held to the catalog wherever it
                 // lies: one outside the store is no release of the catalog's,
                 // and is refused as one not believed, unless its row is that
-                // of the user's own program, held to its probe record.
+                // of the user's own program, used as found under the
+                // conversation's sandbox setting.
                 if let (Some(programs), AgentRow::Catalog(catalog)) = (&self.believed, row)
                     && !(catalog.is_own() && Origin::of(programs, program.path()) == Origin::Own)
                 {
@@ -1241,9 +1230,7 @@ impl Agent {
     /// Its wire, fresh for a run in `mode`, admitting the agent as the
     /// releases `trust` offers: a release in the install store `programs` as
     /// its row speaks to one, and the user's own program, named by where its
-    /// path leads, as its row speaks to that under `sandbox`. A catalog
-    /// agent's own program is admitted at every start as its probe admitted
-    /// it, and an answer that differs from its record replaces the record.
+    /// path leads, as its row speaks to that under `sandbox`.
     ///
     /// # Errors
     ///
@@ -1260,7 +1247,7 @@ impl Agent {
         };
         match Origin::of(programs, installed) {
             Origin::Stored => self.row.dialect(mode, Some(trust), Some(installed)),
-            Origin::Own => self.own_wire(mode, trust, programs, installed, sandbox),
+            Origin::Own => self.own_wire(mode, trust, installed, sandbox),
         }
     }
 
@@ -3447,9 +3434,8 @@ impl<'a> Launcher<'a> {
             let held = Own {
                 program: &program,
                 crucible,
-                started: signing_in.is_none(),
             };
-            (policy, program) = self.own_held(agent, &held, &policy).await?;
+            (policy, program) = self.own_held(agent, &held, &policy)?;
         }
         for root in &kept {
             // Made only where the child may write it, as the profile is, and

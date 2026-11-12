@@ -36,10 +36,9 @@
 //! search that cannot be lent them lists as before, naming none. `try` asks
 //! the door for its agent's own program alone, as a listing would name it
 //! wherever its row would fall, and sends the door that move, which asks on
-//! this terminal, as an install does, before the program is started once,
-//! confined with the network closed, and writes the instance that runs it
-//! once it answers as an agent; where the door finds none, it is refused and
-//! nothing is started.
+//! this terminal, as an install does, before it writes the instance that
+//! runs it, starting nothing; where the door finds none, it is refused and
+//! nothing is written.
 //!
 //! `crucible agents unpack-check`, which the help leaves out, is the agent
 //! catalog's intake asking how a download, or a package tree from its lock
@@ -427,8 +426,9 @@ impl Desk<'_> {
     }
 
     /// Tries the user's own program of `agent`, the one the door finds for
-    /// that agent here, with a launcher and its steps lent to start it: the
-    /// door asks on this terminal before it is started.
+    /// that agent here, with a launcher and its steps lent to find it: the
+    /// door asks on this terminal before the instance that runs it is
+    /// written, and nothing is started.
     fn tried(&self, agent: &str) -> Answer {
         let Ok(name) = Name::new(agent) else {
             return Answer::Refused(format!("{} is not an agent's name", escaped(agent)));
@@ -673,9 +673,9 @@ impl Desk<'_> {
                 instance,
                 program,
             } => Answer::Done(format!(
-                "Your own {agent} at {} answered as an agent, and the instance {} runs it.\n",
-                escaped(&program.display().to_string()),
-                escaped(&instance)
+                "The instance {} runs your own {agent} at {}; nothing was started.\n",
+                escaped(&instance),
+                escaped(&program.display().to_string())
             )),
             Outcome::Kept { instance, method } => Answer::Done(format!(
                 "Kept the key for {} to sign in by {}; its agent is given it the next time it \

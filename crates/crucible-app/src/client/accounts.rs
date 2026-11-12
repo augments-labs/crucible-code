@@ -1455,9 +1455,9 @@ fn catalog_rows<'a>(
 }
 
 /// What a choice says of the instance `one` of the catalog agent `key`, as
-/// [`Releases::note`] says it, but of one that runs the user's own program
-/// whose probe record holds for it as it is configured, found as `trying`
-/// finds it: that its admission proves only that it speaks ACP.
+/// [`Releases::note`] says it, but of one that runs the user's own program,
+/// found as `trying` finds it: that crucible did not review it and uses it
+/// as found.
 fn catalog_note(
     releases: &Releases,
     trying: Option<&Trying>,
@@ -1469,13 +1469,8 @@ fn catalog_note(
         .store
         .version_of(key, Path::new(one.executable()))
         .is_none();
-    let fresh = own
-        && trying.is_some_and(|trying| {
-            trying
-                .catalog(key, Some(one.executable()))
-                .and_then(|trial| trial.fresh(trying, one.name()))
-                .is_some()
-        });
+    let fresh =
+        own && trying.is_some_and(|trying| trying.catalog(key, Some(one.executable())).is_some());
     if fresh {
         Some(FRESH_NOTE.to_owned())
     } else {
@@ -1483,11 +1478,10 @@ fn catalog_note(
     }
 }
 
-/// What is said of an instance that runs the user's own program once a probe
-/// of it is kept: crucible did not review it, and its admission proves only
-/// that it speaks ACP.
-const FRESH_NOTE: &str = "Runs your own program, which Crucible did not review: its admission \
-                          proves it speaks ACP, not which program it is.";
+/// What is said of an instance that runs the user's own program: crucible
+/// did not review it, and uses it as found.
+const FRESH_NOTE: &str = "Runs your own program, which Crucible did not review: it is used as \
+                          found, with nothing checked before it starts.";
 
 /// The choice that tries the user's own program of an agent.
 const TRY_OWN: &str = "Try your own";
@@ -1528,11 +1522,11 @@ fn catalog_instances(releases: &Releases) -> Result<Vec<ExternalAgent>, ConfigEr
 /// Where the user's own program of the agent is found as `trying` finds it,
 /// as the instance runs it or, with none, by the entry's guessed name, trying
 /// it is offered first, with what a person is told of it before it is tried;
-/// once a probe of it is kept that holds for the instance as it is
-/// configured, the instance is offered Connect first instead, signed in by
-/// the methods its program answered. Where the user file cannot
-/// be read it says so, in what the door says of it, and offers going back alone,
-/// since the door refuses every move on that same read. Answers the move chosen,
+/// once an instance that runs it is configured, the instance is offered
+/// Connect first instead, signed in by the methods its entry gives. Where the
+/// user file cannot be read it says so, in what the door says of it, and
+/// offers going back alone, since the door refuses every move on that same
+/// read. Answers the move chosen,
 /// `Some(None)` where the client went back to the list of agents, and nothing
 /// where it cancelled or answered nothing.
 async fn manage(
@@ -1574,13 +1568,12 @@ async fn manage(
             let trial = trying.catalog(key, instance.as_ref().map(ExternalAgent::executable))?;
             Some((trying, trial))
         });
-    let fresh = instance
-        .as_ref()
-        .zip(trial.as_ref())
-        .and_then(|(one, (trying, trial))| trial.fresh(trying, one.name()));
+    // A configured instance that runs the user's own program is used as
+    // found, so it is connected with nothing tried first.
+    let fresh = instance.is_some() && trial.is_some();
     let mut facts = Vec::new();
-    match (&trial, &fresh) {
-        (Some((_, trial)), Some(_)) => facts.push(trial.program()),
+    match &trial {
+        Some((_, trial)) if fresh => facts.push(trial.program()),
         _ => facts.push(held(&installed)),
     }
     facts.push(match (&instance, &unread) {
@@ -1593,7 +1586,7 @@ async fn manage(
     facts.extend(instance.as_ref().and_then(noted));
     let mut choices: Vec<(String, String)> = Vec::new();
     let mut actions: Vec<Managed> = Vec::new();
-    if let (Some(one), Some(_)) = (&instance, &fresh) {
+    if let (Some(one), true) = (&instance, fresh) {
         choices.push((
             CONNECT.to_owned(),
             "Move this conversation onto it.".to_owned(),
@@ -1618,11 +1611,7 @@ async fn manage(
         let named: Vec<String> = offered.iter().map(|(name, ..)| name.clone()).collect();
         let mut taken: Vec<&str> = named.iter().map(String::as_str).collect();
         taken.extend([CONNECT, TRY_OWN, "Go back"]);
-        let methods = match &fresh {
-            Some(record) => record.methods(),
-            None => methods_of(releases, key, running.as_ref()),
-        };
-        let (signing, more) = sign_ins(one, methods, &taken);
+        let (signing, more) = sign_ins(one, methods_of(releases, key, running.as_ref()), &taken);
         if more {
             facts.push(MORE_METHODS.to_owned());
         }
@@ -1633,8 +1622,7 @@ async fn manage(
         actions.push(Managed::Moving(action));
     }
     // A row is made only for a release the store holds, or for the user's own
-    // program whose probe record holds, so an instance run as anything else
-    // has nothing to connect.
+    // program, so an instance run as anything else has nothing to connect.
     if let Some(one) = instance.filter(|_| running.is_some()) {
         choices.push((
             CONNECT.to_owned(),

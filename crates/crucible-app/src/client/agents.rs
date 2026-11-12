@@ -2945,15 +2945,14 @@ fn signing_row(
     instance: &ExternalAgent,
     here: &Here<'_>,
 ) -> Result<(AgentRow, AgentKey, Started), AgentsError> {
-    // The user's own program of a catalog agent signs in by what its probe
-    // record answered, as a launch of it is believed. One with no record yet
-    // signs in as any program outside the store does, below: belief never
-    // probes, and its launch is refused until it is tried.
+    // The user's own program of a catalog agent signs in as a launch of it is
+    // believed: by the methods its entry gives, with nothing asked of the
+    // program first.
     if let (Driver::Catalog, Some(key)) = (instance.driver(), instance.agent()) {
         let state = catalog_fetch::state_in(here.home.path());
         match crate::own_program::believed(instance, key, &state, |name| std::env::var_os(name)) {
             Some(Ok((row, _))) => return here.named(AgentRow::Catalog(row), instance),
-            Some(Err(Unbelieved::OwnUnprobed { .. })) | None => {}
+            None => {}
             Some(Err(why)) => return Err(Unlaunched::from(why).into()),
         }
     }

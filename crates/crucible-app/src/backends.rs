@@ -201,11 +201,11 @@ impl CatalogRow {
     }
 
     /// The row of the program the user installed for `key`, started with what
-    /// `own` proposes and signed in by `methods`, the ones its probe record
-    /// answered. `entry` is the entry it stands for, where one can be read,
-    /// whose statement of content use it is held under; a registry row, read on `read`, holds the
-    /// registry's generic warning where its entry states none, as
-    /// [`CatalogRow::registry`] does.
+    /// `own` proposes and signed in by `methods`, the ones its catalog entry
+    /// gives, a registry entry giving none. `entry` is the entry it stands
+    /// for, where one can be read, whose statement of content use it is held
+    /// under; a registry row, read on `read`, holds the registry's generic
+    /// warning where its entry states none, as [`CatalogRow::registry`] does.
     ///
     /// # Errors
     ///
@@ -436,17 +436,6 @@ pub enum Unbelieved {
     /// The install store could not be read.
     #[error(transparent)]
     Store(#[from] StoreError),
-    /// The program the user installed for it has no probe record that holds
-    /// for this instance as it is now configured, and belief never probes.
-    #[error(
-        "{key} runs as your own program, which has not been tried as this instance starts it; \
-         run `crucible agents try {key}`, or `crucible agents install {key}` to run a release \
-         crucible keeps instead"
-    )]
-    OwnUnprobed {
-        /// The key, as the instance names it.
-        key: AgentKey,
-    },
 }
 
 /// Whether a catalog key spells a word a built-in driver or the native runner

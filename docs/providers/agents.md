@@ -127,52 +127,50 @@ directory. Where it finds one, the screen offers *Try your own* ahead of
 the agent's key, the arguments and environment it would be started with, and
 what it could read: that its directory is already readable inside the sandbox,
 so nothing is added, or that everything in its directory is readable to it,
-read-only, during its probe and at every launch, where the network is open to
-its vendor. On Linux it also says the program starts under the sandbox with a
+read-only, at every launch under the sandbox, where the network is open to its
+vendor. On Linux it also says the program starts under the sandbox with a
 private home of its own, so a sign-in made there is gone when that start ends.
 Choosing it asks once more, *Try your own `<agent>` at `<path>`?*, with *Try
-it* and *Cancel*, and that yes is for one probe and nothing more: crucible
-starts the program once, confined with the network closed except for
-listening on its own private loopback on Linux, asks it only to
-`initialize`, and keeps what it answers. Where it answers as an agent, an
-instance that runs it is written under
-[`externalAgents`](../configuration/configuration.md#externalagents), named by
-the agent's name, or by the name and the next free number where that one is
-taken; an instance already configured to run it is kept as it is. The screen
-then offers *Connect* first, with the sign-ins the program answered that it
-handles, and says that crucible did not review it: its admission proves it
-speaks ACP, not which program it is. Where it does not answer, or answers as no
-agent crucible can run, the line says why, and nothing is written or kept.
+it* and *Cancel*, and the yes writes an instance that runs it under
+[`externalAgents`](../configuration/configuration.md#externalagents), its
+`executable` the path the program's links lead to, named by the agent's name,
+or by the name and the next free number where that one is taken; an instance
+already configured to run it is kept as it is. Nothing is started: crucible
+asks the program nothing first and uses it as found. The screen then offers
+*Connect* first, with the sign-ins its entry gives, and says that crucible did
+not review it and uses it as found. A program that does not speak ACP fails
+its first launch, and the line says why.
 `crucible agents try <agent>` does the same with no conversation, asking on the
 terminal (see [its reference](../reference/cli.md#agents-try-agent)), and
 `crucible agents search` marks each agent whose own program it found.
 
-Your own program is given only the variables crucible passes on and its
-entry's own, so a sign-in kept in a variable you exported is not seen; on Linux,
-neither is one kept in a desktop keyring or under a relocated
-`XDG_CONFIG_HOME` or `XDG_DATA_HOME`. On macOS and Windows the sandbox gives it
+Your own program is given only the variables crucible passes on, its entry's
+own and a key kept for it at `/login` (see below), so a sign-in kept in a
+variable you exported is not seen; on Linux, neither is one kept in a desktop
+keyring or under a relocated `XDG_CONFIG_HOME` or `XDG_DATA_HOME`. On macOS and Windows the sandbox gives it
 no home of its own.
 
-Where the sandbox cannot close the network, as where its backend is missing or
-unavailable, the try is refused before anything starts: the line says so, and
-says to give the machine what the sandbox needs, as step 1 of
-[Turning it on](../security/sandboxing.md#turning-it-on) says. Nothing is
-started, written or kept. For Antigravity it adds that crucible's own release
-works on that machine, through `crucible agents install antigravity`.
+A launch of your own program follows the conversation's sandbox setting, as
+every agent's does: with the sandbox off it starts as a plain local process,
+with nothing about the sandbox consulted, and with it on it starts confined,
+its directory given as below. Where the sandbox is on and cannot run, it is
+refused as any conversation start is.
 
-The directory the program lies in is readable to it whenever it runs, with the
-network open to its vendor, so some directories are never given. It is refused
-where it is your home or contains it, where it is `/`, and where it is, lies
-within or contains a place no agent is made able to write, such as `~/.ssh`,
-crucible's own home or its session logs; `bin`, `.local/bin` and `.cargo/bin`
-in your home may be given, unless crucible's home or its session logs are kept
-in one. On macOS a program under `/opt/homebrew/bin`, and on Windows one under
-a `WindowsApps` directory, is not given yet, since whether the sandbox there can
-read and start what is linked into it has not been checked. Your home is judged
-as written and where its links lead; where it is not a full path, or a link in
-it leads nowhere, no directory is given. A refused directory is shown on the
-screen in place of what the program could read, and a try of it says why and
-runs and writes nothing.
+The directory the program lies in is readable to it whenever it runs under the
+sandbox, with the network open to its vendor, so some directories are never
+given. It is refused where it is your home or contains it, where it is `/`, and
+where it is, lies within or contains a place no agent is made able to write,
+such as `~/.ssh`, crucible's own home or its session logs; `bin`, `.local/bin`
+and `.cargo/bin` in your home may be given, unless crucible's home or its
+session logs are kept in one. On macOS a program under `/opt/homebrew/bin`, and
+on Windows one under a `WindowsApps` directory, is not given yet, since whether
+the sandbox there can read and start what is linked into it has not been
+checked. Your home is judged as written and where its links lead; where it is
+not a full path, or a link in it leads nowhere, no directory is given. A refused
+directory is shown on the screen in place of what the program could read, and a
+try of it says why and runs and writes nothing. With the sandbox off nothing is
+judged of the directory, as no launch then judges it: the screen says so, and a
+try writes the instance.
 
 What crucible runs is the release the catalog crucible most lately believed
 offers at the version the instance's `executable` names. It is read from the
@@ -219,25 +217,19 @@ your own program. An instance whose `executable` is found outside crucible's
 `programs` directory, as written or on `PATH` under the name its entry's
 command goes by, is your own program for that agent: nothing in it is pinned
 or reviewed, and no hash, receipt or revocation holds it. It is started with
-the arguments and environment the entry gives, and is held instead by a probe
-record. Until a record holds for the instance as it is configured now, it is
-not started, and the refusal names `crucible agents try <agent>`, which tries
-it as *Try your own* on its `/login` screen does (see above). The probe
-starts it once in the sandbox with the network closed except for listening on
-its own private loopback on Linux, sends `initialize` alone, and admits it
-where it answers with protocol version 1 and its capabilities; it then keeps
-the name and version it gave, or `did not say`, and the agent's screen shows
-them where it reads the program signed out.
-That proves it speaks ACP, not that it is the program the entry describes. A
-change to the instance's driver, its `agent:` key or the arguments and
-environment its entry gives makes the record stale, and it is refused until it
-is tried again. A program that changed since its probe, its path leading
-elsewhere or its size or modification time different, is probed again before
-it starts; refused there, it is not started and its record is removed. Every
-start is admitted as the probe was, and an answer that differs from the record
-replaces it. It signs in by the methods its probe answered that it handles
-itself; a method that needs a key it would be given is not offered, and
-crucible runs no sign-in command for it.
+the arguments and environment the entry gives, at the path its links lead to,
+and is used as found: nothing is asked of it before it starts, even after it
+changed. A program whose path now leads somewhere other than where it was
+found is not started. Every start reads its answer to `initialize` as any
+start does, and one that does not answer with protocol version 1 and its
+capabilities fails with that cause. That it starts proves it speaks ACP, not
+that it is the program the entry describes. The agent's screen shows the name
+and version it gave at that start, or `did not say`, where it reads the
+program signed out. It signs in by the methods its catalog entry gives, a
+registry entry giving none, and crucible runs no sign-in command for it. A key
+you keep at `/login` for one of its entry's key methods is given to it at every
+start, in the variable the entry names, and withheld from what it says, as it
+is to a release crucible installed.
 
 `/logout` lists each agent named under `externalAgents` after the stored
 credentials, as an external agent instance, and `/logout <name>` takes one
@@ -659,12 +651,9 @@ program is on your `PATH` as `agy` or `antigravity`. Then, where that release is
 not installed, it asks what to do with your own program, showing what it shows
 of [an agent you installed yourself](#installed-coding-agents) and the note on
 whose sign-in it uses (see below), and offers *Try your own*, *Install* where a
-release is on offer, and *Go back*. *Try your own* asks once more, starts it
-once confined with the network closed except for listening on its own private
-loopback on Linux, asks it only to `initialize`, and writes an entry that runs
-it where it answers as Antigravity is admitted below; nothing of its answer is
-kept, since every start of it is admitted the same
-way. `crucible agents try antigravity` does the same with no conversation. A
+release is on offer, and *Go back*. *Try your own* asks once more and writes
+an entry that runs it, starting nothing; every start of it is admitted as
+below. `crucible agents try antigravity` does the same with no conversation. A
 client that does not offer installs sets the entry up run as your own program
 without asking. Where both that release is installed and your own program is on your
 `PATH`, `/login` asks which to run, showing each one's path, and chooses

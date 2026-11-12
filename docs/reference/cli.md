@@ -577,7 +577,7 @@ is installed, and the name GitHub gave is not printed.
 These commands read and change the coding agents the catalog and the ACP
 Registry offer, the way [`/catalog`](../providers/agents.md#catalog) and
 `/login`'s agent screen do, before any conversation exists, and start no agent
-but the one `try` probes and the sign-in `sign-in` runs.
+but the sign-in `sign-in` runs.
 `AGENT` is the agent as the catalog or the registry names it, such as `goose` or
 `antigravity`; a name neither offers for your platform is refused, and so is
 `claude`: Claude Code installs and updates itself, and neither offers it. Each
@@ -739,21 +739,20 @@ by finds on your `PATH`, outside crucible's install store; `crucible agents try
 antigravity` takes your own `agy`, else `antigravity`. It asks on this terminal, as an install does,
 first showing the path the program's links lead to, the agent's key, the
 arguments and environment it is started with, and what it can read, then `1.
-Try it` and `2. Cancel`. On `1` it starts the program once, confined with the
-network closed, asks it only to `initialize`, and keeps what it answers; where
-it answers as an agent, it writes an instance that runs it under
-[`externalAgents`](../configuration/configuration.md#externalagents), named as
-`add` names one, unless an instance already runs it. It ends 0 once the
-program answered, with `Your own goose at /usr/local/bin/goose answered as an
-agent, and the instance goose runs it.` It ends 1, having written and kept
+Try it` and `2. Cancel`. On `1` it writes an instance that runs it under
+[`externalAgents`](../configuration/configuration.md#externalagents), its
+`executable` the path the program's links lead to, named as `add` names one,
+unless an instance already runs it, and starts nothing: the program is used as
+found, and one that does not speak ACP fails its first launch with why. It ends
+0 once the instance is written or found, with `The instance goose runs your own
+goose at /usr/local/bin/goose; nothing was started.` It ends 1, having written
 nothing, where the catalog and the registry list no such agent, where no
 program of your own is found, where an instance of the agent is configured and
-runs another program, since `/login` writes no second one beside it, where its
-directory is one no agent is given or
-the sandbox here cannot close the network, both as
-[the agent's page](../providers/agents.md#installed-coding-agents) says, where
-it does not answer as an agent crucible can run, and where it is answered
-with anything but `1` or asked with no terminal to answer on.
+runs another program, since `/login` writes no second one beside it, where the
+sandbox is on and its directory is one no agent is given, as
+[the agent's page](../providers/agents.md#installed-coding-agents) says, and
+where it is answered with anything but `1` or asked with no terminal to answer
+on.
 
 ### `agents sign-in INSTANCE [--method NAME]`
 
@@ -1098,8 +1097,8 @@ the warning is drawn there instead and the run goes on to the next line.
 
 | Status | Meaning |
 | --- | --- |
-| 0 | The run ended as asked: a session that ended, or a report that was written. `config check` on a configuration that holds, `sandbox inspect` or `--sandbox` whatever the backend answered, an `mcp list`, `mcp get`, `extensions list` or `--extensions` that was written, a `sessions list` that was written whether `complete` or `incomplete`, a `completion` script that was written, an `update` that installed a release, found none later, or said what it would install, an `update --check` that found none later, an `agents search` that was written, an `agents install` or `agents add` that put a release in place or found it there, an `agents update` that moved its instances or found them current, an `agents rollback` or `agents remove` that was carried out, an `agents verify` that found every file and record as recorded, an `agents try` whose program answered as an agent, an `agents sign-in` that signed the instance in or kept its key, an `agents unpack-check` that wrote a file list, an `agents probe` that wrote what the agent said, a `doctor` with nothing to warn about, an `auth status` that settled every provider, an `auth login` that stored a credential, and an `auth logout` that took the provider's credentials out or found none to take end here. |
-| 1 | crucible could not run, or could not carry on. One line beginning `crucible: ` on standard error says why; a control character, line break, line or paragraph separator or Unicode format character other than the zero-width joiner and non-joiner in a value it quotes, such as a configuration key or a directory's name, is written as its escape, so the line stays one, and a reason longer than 16 KiB is cut there and ends `… (cut)`. `config check` on a configuration that does not hold, a `sandbox inspect` or `sessions list` that could not be made, and an `mcp get` naming a server nothing is written down under, and an `update` that was refused or rolled back, and an `agents install`, `add`, `update`, `rollback`, `remove` or `sign-in` that was refused, answered with anything but its first choice, or asked with no terminal to answer on, and so changed nothing, and an `agents verify` that found a file or record that differs or nothing installed, and an `agents try` that found no program of your own, refused it, was answered with anything but its first choice or asked with no terminal to answer on, or whose program did not answer as an agent, and an `agents unpack-check` or `agents probe` that refused, end here. A `doctor` that found warnings and no failure ends here too, with its report on standard output and nothing on standard error. So does an `auth status` that could not settle a provider, found nothing for the one named, or held a name too long to show whole, with its report on standard output, and an `auth` command given a provider nobody serves. |
+| 0 | The run ended as asked: a session that ended, or a report that was written. `config check` on a configuration that holds, `sandbox inspect` or `--sandbox` whatever the backend answered, an `mcp list`, `mcp get`, `extensions list` or `--extensions` that was written, a `sessions list` that was written whether `complete` or `incomplete`, a `completion` script that was written, an `update` that installed a release, found none later, or said what it would install, an `update --check` that found none later, an `agents search` that was written, an `agents install` or `agents add` that put a release in place or found it there, an `agents update` that moved its instances or found them current, an `agents rollback` or `agents remove` that was carried out, an `agents verify` that found every file and record as recorded, an `agents try` that wrote or found the instance that runs your own program, an `agents sign-in` that signed the instance in or kept its key, an `agents unpack-check` that wrote a file list, an `agents probe` that wrote what the agent said, a `doctor` with nothing to warn about, an `auth status` that settled every provider, an `auth login` that stored a credential, and an `auth logout` that took the provider's credentials out or found none to take end here. |
+| 1 | crucible could not run, or could not carry on. One line beginning `crucible: ` on standard error says why; a control character, line break, line or paragraph separator or Unicode format character other than the zero-width joiner and non-joiner in a value it quotes, such as a configuration key or a directory's name, is written as its escape, so the line stays one, and a reason longer than 16 KiB is cut there and ends `… (cut)`. `config check` on a configuration that does not hold, a `sandbox inspect` or `sessions list` that could not be made, and an `mcp get` naming a server nothing is written down under, and an `update` that was refused or rolled back, and an `agents install`, `add`, `update`, `rollback`, `remove` or `sign-in` that was refused, answered with anything but its first choice, or asked with no terminal to answer on, and so changed nothing, and an `agents verify` that found a file or record that differs or nothing installed, and an `agents try` that found no program of your own, refused it, was answered with anything but its first choice or asked with no terminal to answer on, and an `agents unpack-check` or `agents probe` that refused, end here. A `doctor` that found warnings and no failure ends here too, with its report on standard output and nothing on standard error. So does an `auth status` that could not settle a provider, found nothing for the one named, or held a name too long to show whole, with its report on standard output, and an `auth` command given a provider nobody serves. |
 | 2 | A `doctor` that found a failure, with its report on standard output and nothing on standard error. Otherwise, the command line itself was refused by the parser: a flag it does not know, a value it cannot take, a subcommand missing its action, or flags that exclude each other. It says which, with the usage or the subcommand's help, on standard error; on an `auth` command line it says so without repeating the word it refused. `--help` and `--version` are the parser's too, and end 0. |
 | 3 | An `update --check` that found a later release, with what it found on standard output. |
 | 128 + signal | On Linux, macOS and FreeBSD, the process was told to stop from outside: a termination (`SIGTERM`, status 143) at any time, or a hang-up (`SIGHUP`, status 129) when it had a terminal to lose. A running turn is ended and written down first, and the prompt `auth login` hides a key at, or a wait for a key between turns at the prompt or in a panel, is put away with the terminal handed back as it was found, then the process ends by that signal, the way a shell expects. What the next `--continue` finds is under [Continuing](../sessions/sessions.md#continuing). On Windows neither is caught. |
