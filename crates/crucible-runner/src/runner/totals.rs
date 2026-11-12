@@ -182,6 +182,7 @@ struct Heard {
     output: u64,
     cache_read: u64,
     cache_write: u64,
+    cache_write_extended: u64,
     /// Whether anything was reported at all: a response that reported tokens
     /// and no usage to price them by is a response nothing priced.
     reported: bool,
@@ -193,6 +194,7 @@ impl Heard {
         output: 0,
         cache_read: 0,
         cache_write: 0,
+        cache_write_extended: 0,
         reported: false,
     };
 
@@ -203,6 +205,9 @@ impl Heard {
             output: self.output.saturating_add(other.output),
             cache_read: self.cache_read.saturating_add(other.cache_read),
             cache_write: self.cache_write.saturating_add(other.cache_write),
+            cache_write_extended: self
+                .cache_write_extended
+                .saturating_add(other.cache_write_extended),
             reported: self.reported || other.reported,
         }
     }
@@ -271,6 +276,7 @@ impl Totals {
                 output: tokens.output,
                 cache_read: tokens.cache_read,
                 cache_write: tokens.cache_write,
+                cache_write_extended: 0,
                 reported: true,
             },
             cost,
@@ -310,6 +316,13 @@ impl Totals {
     #[must_use]
     pub fn cache_write(&self) -> u64 {
         self.all().cache_write
+    }
+
+    /// The part of [`Self::cache_write`] a provider said it kept for its
+    /// longer retention class; inside that count, never added to it.
+    #[must_use]
+    pub fn cache_write_extended(&self) -> u64 {
+        self.all().cache_write_extended
     }
 
     /// What the responses that have ended cost.
@@ -382,6 +395,9 @@ impl Totals {
         }
         if let Some(written) = input.cache_write_or_creation {
             reading.cache_write = written;
+        }
+        if let Some(kept) = input.cache_write_extended {
+            reading.cache_write_extended = kept;
         }
         reading.reported = true;
         self.pending = self.pending.reported(price);

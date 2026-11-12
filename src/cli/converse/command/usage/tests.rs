@@ -56,6 +56,7 @@ fn weekly() -> api::Usage {
             output: 38_100,
             cache_read: 1_210_000,
             cache_write: 0,
+            cache_write_extended: 0,
         },
         context: api::Context {
             model: Model::new("gpt-6-sol"),
@@ -1163,6 +1164,70 @@ fn usage_printed_with_plan_windows_is_one_screen_at_each_width() {
             .join("\n");
         insta::with_settings!({snapshot_suffix => columns.to_string()}, {
             insta::assert_snapshot!("usage_plan_windows", picture.trim_end());
+        });
+    }
+}
+
+/// The weekly session where 70 of the 100 tokens written to the cache were
+/// kept for the longer retention class.
+fn kept_longer() -> api::Usage {
+    let mut usage = weekly();
+    usage.used.cache_write = 100;
+    usage.used.cache_write_extended = 70;
+    usage
+}
+
+#[test]
+fn usage_with_a_part_of_its_cache_writes_kept_longer_fits_every_width() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        for columns in 1..=120 {
+            for row in panel(
+                "openai · ChatGPT sign-in",
+                &kept_longer(),
+                Some("openai"),
+                columns,
+                glyphs,
+                &clock(),
+            ) {
+                assert!(
+                    row.columns() <= columns,
+                    "{:?} is wider than {columns} columns",
+                    row.text()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn usage_names_the_part_of_the_cache_writes_kept_longer_at_each_width() {
+    let usage = kept_longer();
+    for columns in [80, 40] {
+        let rows = panel(
+            "openai · ChatGPT sign-in",
+            &usage,
+            None,
+            columns,
+            Glyphs::Unicode,
+            &clock(),
+        );
+        let picture = art(&rows);
+
+        assert!(
+            picture.iter().any(|row| row.ends_with("70 kept longer")),
+            "{columns} columns: {picture:#?}"
+        );
+        assert!(
+            picture.iter().all(|row| row.chars().count() <= columns),
+            "{columns} columns: {picture:#?}"
+        );
+        let picture = picture
+            .iter()
+            .map(|row| row.trim_end())
+            .collect::<Vec<_>>()
+            .join("\n");
+        insta::with_settings!({snapshot_suffix => columns.to_string()}, {
+            insta::assert_snapshot!("usage_longer_cache_write", picture.trim_end());
         });
     }
 }

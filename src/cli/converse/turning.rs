@@ -536,9 +536,9 @@ impl Turning {
 
     /// The same turn, from what the session had used when it left and the
     /// plan windows last reported.
-    pub(super) fn using(self, totals: Totals, limits: Option<PlanWindows>) -> Self {
+    pub(super) fn using(self, totals: &Totals, limits: Option<PlanWindows>) -> Self {
         Self {
-            totals,
+            totals: *totals,
             limits,
             ..self
         }

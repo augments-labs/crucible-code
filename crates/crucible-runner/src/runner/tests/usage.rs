@@ -453,3 +453,42 @@ fn a_session_another_agent_ran_reads_as_it_reported_it() {
     );
     assert_eq!((totals.added(), totals.removed()), (0, 0));
 }
+
+/// One response that writes 80 of its 100 input tokens to a cache, `kept` of
+/// them for the provider's longer retention class where it says, and stops.
+fn writing(kept: Option<u64>) -> Vec<Delta> {
+    let mut input = InputTokenUsage::inclusive_read_write(Some(100), Some(0), Some(80)).unwrap();
+    if let Some(kept) = kept {
+        input = input.with_cache_write_extended(kept).unwrap();
+    }
+    let usage = ProviderUsage::new(input, Some(10), None, None, &[]).unwrap();
+    vec![Delta::Usage(usage), Delta::Stopped(StopReason::Yielded)]
+}
+
+#[test]
+fn usage_the_part_of_a_cache_write_kept_longer_is_added_up_inside_the_write() {
+    let script = Script::new(vec![writing(Some(70)), writing(Some(5))]);
+    let mut scripted = Scripted::new(script, tools([]), Verdict::Allow);
+
+    scripted.turn("first").expect("the first turn to finish");
+    scripted.turn("second").expect("the second turn to finish");
+
+    let totals = scripted.runner.totals();
+    assert_eq!(totals.cache_write(), 160);
+    assert_eq!(totals.cache_write_extended(), 75);
+    assert_eq!(totals.input(), 200);
+    assert_eq!(posted(&scripted), Some(totals));
+}
+
+#[test]
+fn usage_a_provider_that_keeps_no_write_longer_adds_up_to_none() {
+    let script = Script::new(vec![writing(None), writing(None)]);
+    let mut scripted = Scripted::new(script, tools([]), Verdict::Allow);
+
+    scripted.turn("first").expect("the first turn to finish");
+    scripted.turn("second").expect("the second turn to finish");
+
+    let totals = scripted.runner.totals();
+    assert_eq!(totals.cache_write(), 160);
+    assert_eq!(totals.cache_write_extended(), 0);
+}

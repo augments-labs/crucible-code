@@ -105,13 +105,14 @@ const KEYS: [&str; 79] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 61] = [
+const MORE_KEYS: [&str; 62] = [
     "added",
     "done",
     "install",
     "api_ms",
     "cache_read",
     "cache_write",
+    "cache_write_extended",
     "context",
     "cost",
     "currency",
@@ -789,6 +790,7 @@ fn usages() -> [Usage; 4] {
         output: 38_100,
         cache_read: 1_210_000,
         cache_write: 92_400,
+        cache_write_extended: 70,
     };
     let counted = Usage {
         used: used.clone(),
@@ -2643,7 +2645,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // alone moves that number and this digest, and leaves the revision.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (6, 16_156_933_372_501_072_789),
+        (6, 2_699_361_939_317_174_296),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );
@@ -2902,6 +2904,47 @@ fn limit_a_usage_that_left_limits_out_reads_back_saying_so() {
         "{value}"
     );
     assert_eq!(Response::decode(&frame).unwrap(), response);
+}
+
+#[test]
+fn used_carries_the_part_of_its_cache_writes_kept_longer() {
+    let [counted, ..] = usages();
+    assert_eq!(counted.used.cache_write_extended, 70);
+    let response = Response {
+        correlation: Some(Correlation::new(5)),
+        outcome: Outcome::Usage(counted.clone()),
+    };
+    let frame = response.encode().unwrap();
+    let value: Value = serde_json::from_slice(&frame).unwrap();
+    assert_eq!(
+        value.pointer("/outcome/usage/used/cache_write_extended"),
+        Some(&json!(70)),
+        "{value}"
+    );
+    assert_eq!(Response::decode(&frame).unwrap(), response);
+
+    let progress = Progress::Used(counted.used);
+    assert_eq!(
+        Progress::decode(&progress.encode().unwrap()).unwrap(),
+        progress
+    );
+}
+
+#[test]
+fn used_without_the_part_of_its_cache_writes_kept_longer_is_refused() {
+    let [counted, ..] = usages();
+    let frame = Progress::Used(counted.used).encode().unwrap();
+    let mut value: Value = serde_json::from_slice(&frame).unwrap();
+    let used = value
+        .pointer_mut("/used")
+        .and_then(Value::as_object_mut)
+        .unwrap();
+    assert!(used.remove("cache_write_extended").is_some(), "{value}");
+
+    assert_eq!(
+        Progress::decode(&framed(&value)).unwrap_err().code(),
+        ErrorCode::Malformed
+    );
 }
 
 /// A progress frame carrying `limits` as they were written.

@@ -1,0 +1,24 @@
+---
+source: src/cli/converse/command/usage/tests.rs
+expression: picture.trim_end()
+---
+────────────────────────────────────────────────────────────────────────────────
+
+Usage · openai · ChatGPT sign-in
+
+Session
+  Total cost       not priced
+  API time         4m 12s
+  Wall time        38m 05s
+  Lines changed    +212 −87
+  Tokens           1.42M in · 38.1k out · 1.21M cache read · 100 cache write
+                   70 kept longer
+
+Context
+  █████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  38% used
+
+Plan limits
+  Weekly window    ███████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  31% used
+                   resets 26 Oct 09:00
+
+esc to close

@@ -15,7 +15,9 @@
 //! readable to the agent while it runs.
 //!
 //! [`probe`] is what admits one: started confined, with the network closed and
-//! never without the sandbox, it is sent `initialize` alone, and it is taken
+//! never without the sandbox, though free to listen on a loopback of its own
+//! where the sandbox gives it one, since some agents serve themselves locally
+//! before they answer; it is sent `initialize` alone, and it is taken
 //! for an agent only where it answers with the protocol version this client
 //! speaks and its capabilities; its name and version are kept and never
 //! compared. Where the sandbox cannot close the network it is not started.
@@ -56,7 +58,8 @@ use crucible_external_harnesses::{
     Account, Control, Dialect, Discovery, Held, Host, Launch, Program, Reading, Refusal, Shape,
 };
 use crucible_sandbox::{
-    SandboxFilesystemProvenance, SandboxPolicy, SandboxPolicyError, SandboxService,
+    SandboxFilesystemProvenance, SandboxPolicy, SandboxPolicyError, SandboxPrivateLoopback,
+    SandboxService,
 };
 use crucible_types::AgentKey;
 use serde_json::{Map, Value, json};
@@ -910,7 +913,9 @@ impl Drop for Empty {
 /// The policy a probe of a program whose directory is `root` starts under,
 /// with the sandbox on where `enabled`: a granted directory read-only as the
 /// probe's workspace, or, where it gets no rule, `empty` alone, under
-/// [`EMPTY_PROVENANCE`].
+/// [`EMPTY_PROVENANCE`]. It alone of the policies a program is started under
+/// grants a private loopback; a backend that cannot keep one private does not
+/// apply it.
 ///
 /// # Errors
 ///
@@ -920,15 +925,12 @@ pub(crate) fn probe_policy(
     empty: &Path,
     enabled: bool,
 ) -> Result<SandboxPolicy, Unowned> {
-    match root {
-        Root::Refused(why) => Err(Unowned::Root(why.clone())),
-        Root::Grant(granted) => Ok(policy(
-            granted,
-            SandboxFilesystemProvenance::Workspace,
-            enabled,
-        )?),
-        Root::NoRule => Ok(policy(empty, EMPTY_PROVENANCE, enabled)?),
-    }
+    let probing = match root {
+        Root::Refused(why) => return Err(Unowned::Root(why.clone())),
+        Root::Grant(granted) => policy(granted, SandboxFilesystemProvenance::Workspace, enabled)?,
+        Root::NoRule => policy(empty, EMPTY_PROVENANCE, enabled)?,
+    };
+    Ok(probing.with_private_loopback(SandboxPrivateLoopback::Granted))
 }
 
 /// `conversation`'s policy as a launch of a program whose directory is `root`

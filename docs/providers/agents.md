@@ -132,7 +132,8 @@ its vendor. On Linux it also says the program starts under the sandbox with a
 private home of its own, so a sign-in made there is gone when that start ends.
 Choosing it asks once more, *Try your own `<agent>` at `<path>`?*, with *Try
 it* and *Cancel*, and that yes is for one probe and nothing more: crucible
-starts the program once, confined with the network closed, asks it only to
+starts the program once, confined with the network closed except for
+listening on its own private loopback on Linux, asks it only to
 `initialize`, and keeps what it answers. Where it answers as an agent, an
 instance that runs it is written under
 [`externalAgents`](../configuration/configuration.md#externalagents), named by
@@ -222,10 +223,11 @@ the arguments and environment the entry gives, and is held instead by a probe
 record. Until a record holds for the instance as it is configured now, it is
 not started, and the refusal names `crucible agents try <agent>`, which tries
 it as *Try your own* on its `/login` screen does (see above). The probe
-starts it once in the sandbox with the network closed, sends `initialize`
-alone, and admits it where it answers with protocol version 1 and its
-capabilities; it then keeps the name and version it gave, or `did not say`,
-and the agent's screen shows them where it reads the program signed out.
+starts it once in the sandbox with the network closed except for listening on
+its own private loopback on Linux, sends `initialize` alone, and admits it
+where it answers with protocol version 1 and its capabilities; it then keeps
+the name and version it gave, or `did not say`, and the agent's screen shows
+them where it reads the program signed out.
 That proves it speaks ACP, not that it is the program the entry describes. A
 change to the instance's driver, its `agent:` key or the arguments and
 environment its entry gives makes the record stale, and it is refused until it
@@ -650,9 +652,10 @@ not installed, it asks what to do with your own program, showing what it shows
 of [an agent you installed yourself](#installed-coding-agents) and the note on
 whose sign-in it uses (see below), and offers *Try your own*, *Install* where a
 release is on offer, and *Go back*. *Try your own* asks once more, starts it
-once confined with the network closed, asks it only to `initialize`, and writes
-an entry that runs it where it answers as Antigravity is admitted below;
-nothing of its answer is kept, since every start of it is admitted the same
+once confined with the network closed except for listening on its own private
+loopback on Linux, asks it only to `initialize`, and writes an entry that runs
+it where it answers as Antigravity is admitted below; nothing of its answer is
+kept, since every start of it is admitted the same
 way. `crucible agents try antigravity` does the same with no conversation. A
 client that does not offer installs sets the entry up run as your own program
 without asking. Where both that release is installed and your own program is on your
