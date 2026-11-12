@@ -9383,7 +9383,7 @@
     {
       "id": "CASE-QUESTIONS-MOVED-ERA-DROPS",
       "family": "questions",
-      "obligation": "Moving to another era drops every batch the dock held, and staying in the same era keeps them.",
+      "obligation": "Moving to another era drops the batch the dock held, and staying in the same era keeps it.",
       "package": "crucible-code",
       "target": {
         "kind": "bin",
