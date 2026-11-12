@@ -2822,6 +2822,32 @@ fn more_unhashed_entries_on_path_than_a_listing_names_are_cut_and_login_still_as
     Ok(())
 }
 
+/// The same listing, past its ceiling only by entries crucible installs no
+/// version of, gives a list of only the agents crucible installs no more to
+/// say: none it would show was left out.
+#[test]
+fn more_unhashed_entries_on_path_than_a_listing_names_give_catalog_no_more() -> Result<(), Failed> {
+    use crate::external::choosing::{listed_with_the_registry, many_unhashed};
+    use crucible_client_api::bounds::ITEMS;
+
+    let tree = crate::Tree::new("registry-unhashed-many-catalog")?;
+    let conversation = many_unhashed(&tree, ITEMS + 1)?;
+
+    let listed = listed_with_the_registry(&tree, &conversation)?;
+    let Ok(Outcome::Catalog {
+        more, installable, ..
+    }) = listed
+    else {
+        return Err(format!("the listing answered {listed:?}").into());
+    };
+    assert!(more, "the door did not say more were listed");
+    assert!(
+        !installable.more,
+        "a list of what crucible installs was told more were offered"
+    );
+    Ok(())
+}
+
 /// The agents door's listing whose only ACP Registry row is an entry with no
 /// SHA-256, listed as the user's own program, says where that row comes from:
 /// the day the index was read, and that it is not reviewed by Crucible.
