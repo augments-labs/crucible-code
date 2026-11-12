@@ -1462,7 +1462,7 @@
         "Vendor::answering(&crate::a_long_answer())",
         "Watched::native(case, 80, 24, vendor)"
       ],
-      "sha256": "1a269185e70c2e5c78a393f7facccf0cbf40a3a8ae5d5ba205a71314d9b14171"
+      "sha256": "d54735d7f93d73722ebf7131c5879f3fb5d6130603779c67169a78421d40d1ca"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__a_resize_with_a_panel_open_80x16.snap",
@@ -1471,7 +1471,7 @@
         "Vendor::answering(&crate::a_long_answer())",
         "Watched::native(case, 80, 24, vendor)"
       ],
-      "sha256": "47f0df98d39a5e0eda1eb7d60e696d5882562465e09bae6e50d42cc1f92452d5"
+      "sha256": "fb9985ba21f075c9fe098c570fc3935ec2e87c381635b5a61f1c2133257e296e"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__a_row_sealed_after_narrowing_is_folded_not_clipped_in_native_mode.snap",
@@ -1666,7 +1666,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::native(\"native-settings-tabs\", 80, 30, &vendor)"
       ],
-      "sha256": "697fc1e98d95580de6bacc8280e2a07c3682f321f12774292428c2f77b2b6ecc"
+      "sha256": "9bfded25382a9f2390604a5424d4ea25c40c4896bb197d5396682b67c02d37d5"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__settings_scrolls_inside_its_room_in_native_mode.snap",
@@ -1675,7 +1675,7 @@
         "Vendor::answering(&crate::a_long_answer())",
         "Watched::native(case, 80, 24, vendor)"
       ],
-      "sha256": "9e6481d2f69f35d61ff071d0cf9b82a9023f61789c3880793a846674e2072461"
+      "sha256": "c1b0b23129f6c77c77c8d716c782bfdbafa3642ecc540cb2310c26a81bd68a67"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__settings_takes_at_most_half_the_window_in_native_mode.snap",
@@ -1684,7 +1684,7 @@
         "Vendor::answering(&crate::a_long_answer())",
         "Watched::native(case, 80, 24, vendor)"
       ],
-      "sha256": "1a3e612b122edf45e0c6965a2f7b398a6a20efe79439c954e693831fee7ebe84"
+      "sha256": "a17d7c1ba8da1ebf19108c3974db1027ff4ae714838902615277ee085254cbb8"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__slash_list_takes_at_most_half_the_window_in_native_mode.snap",
@@ -1988,7 +1988,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(&case, columns, 30, &vendor)"
       ],
-      "sha256": "6abeaff28c3bc0348d8aa3e74e4d7de15b8391c97206f8d562d3b201e8fb6cfd"
+      "sha256": "f372929596fe85fdf8fad16b26951b58fa2f4610c36181333839f42c6daf9d04"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__settings_config_80.snap",
@@ -1997,7 +1997,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(&case, columns, 30, &vendor)"
       ],
-      "sha256": "4fe8fed5c42f01d064243ff2b932d3272995f5b6b86b509e5123fc00b994978e"
+      "sha256": "3fa413b774627fb3430e755a80777f9c46f63e62eace1e0226f501c7b60695fa"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__settings_search_40.snap",
@@ -2351,7 +2351,7 @@
         "Vendor::answering(transcript::said(\"math\"))",
         "Watched::in_default_colours( \"transcript-math-120-fullscreen\", (120, 77), Some(&vendor), None, )"
       ],
-      "sha256": "b1d283528d7022f6e56b2780e6f57bff84ae745d81a826de3d919d5328d0281a"
+      "sha256": "abc0ee7b31a7c52b8d5d636a292d8d38518c315f0789836b872f4729d4d130fb"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_math_120_native.snap",
@@ -2360,7 +2360,7 @@
         "Vendor::answering(transcript::said(\"math\"))",
         "Watched::drawn_in_colour( \"transcript-math-120-native\", (120, 77), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "33c9bf36967773d5be451c31a936cf83dc1731171a0f22f8097b552cf9a86e34"
+      "sha256": "dfb9240716c17712519c0d28a19a554a829c7e1413a914e535a8681d2c16d7ec"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_math_40_fullscreen.snap",
@@ -2369,7 +2369,7 @@
         "Vendor::answering(transcript::said(\"math\"))",
         "Watched::in_default_colours( \"transcript-math-40-fullscreen\", (40, 63), Some(&vendor), None, )"
       ],
-      "sha256": "37f792e921aee05c1e396e23e891cf4bfb4a72b27091d5a90189ba189486665f"
+      "sha256": "ba0383e292103bb4bd58f01cd1417ef9aa57fff7ab4368647b352ae7c46e9e45"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_math_40_native.snap",
@@ -2378,7 +2378,7 @@
         "Vendor::answering(transcript::said(\"math\"))",
         "Watched::drawn_in_colour( \"transcript-math-40-native\", (40, 63), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "43d78f69317c60587c7048a94ffb5a3db6b7e0942fec2e01a22248ef159b10ff"
+      "sha256": "a2c04170311286e3b1d5de30f3dcf39d551bb8587d47802fadc13e1a64c06749"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_math_80_fullscreen.snap",
@@ -2387,7 +2387,7 @@
         "Vendor::answering(transcript::said(\"math\"))",
         "Watched::in_default_colours( \"transcript-math-80-fullscreen\", (80, 72), Some(&vendor), None, )"
       ],
-      "sha256": "71aa5efc8735d8eb849bb72244141a8ae5c69366f74094f650ce70c77ffa4bfe"
+      "sha256": "b234ec7fb6c0c2e1a0d380ee7629b57da2a88cb79c48595ec317db1dab180229"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_math_80_native.snap",
@@ -2396,7 +2396,7 @@
         "Vendor::answering(transcript::said(\"math\"))",
         "Watched::drawn_in_colour( \"transcript-math-80-native\", (80, 72), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "4d27631e6846d3797af9190f6c4eac49cd27879d3aaff52e6d23b3d6d1847f6e"
+      "sha256": "fc3bc4fbe5af971d8e8bb1fc282a77bf6ff78ac06169bd33489be43459f4fd83"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_mermaid_graphs_120_fullscreen.snap",

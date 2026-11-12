@@ -96,8 +96,8 @@ first, after any cut results, and then every
 
 ## Drawn again at every width
 
-A table, a diff, a rule and the rule under a heading are kept as the text the
-model wrote, beside the rows they were drawn as. When the window changes width,
+A table, a diff, a formula drawn as a block, a rule and the rule under a
+heading are kept as the text the model wrote, beside the rows they were drawn as. When the window changes width,
 or you change the glyph set, each is laid out again from that text for the
 window it is in now, so a table drawn in a narrow window and then widened is
 the table a window that wide would have drawn, and a diff's grounds reach the
@@ -179,6 +179,62 @@ holds, one that names more than 8 files or runs to 2048 lines or more, and its
 top edge says why: `┌─ diff · longer than this can hold · shown as written`.
 A fence is [held](#what-is-shown-as-written) for 16 KiB at most, so a diff
 longer than that is shown the same way.
+
+## Math
+
+TeX math in an answer is drawn as text, the way it reads on paper as nearly as
+a terminal's characters allow. A span in a line, between `$` and `$` or `\(`
+and `\)`, is drawn in its line: `$\alpha_i$` reads `αᵢ`, `$E = mc^2$` reads
+`E = mc²` and `$\frac{a}{b}$` reads `a/b`. Display math is
+[held until it closes](#blocks-held-until-they-close) and drawn in a frame
+named `math`, a fraction stacked over its rule, scripts raised where a script
+character exists, Greek letters and operators as their characters, and
+matrices and cases between their bracket pieces:
+
+```text
+┌─ math
+│            n(n+1)
+│ ∑ᵢ₌₁ⁿ i = ────────
+│              2
+└─
+```
+
+With the ASCII glyph set the frame, the rules, the bracket pieces and the minus
+sign are ASCII: `‖` is drawn as `||`, and `⟨` and `⟩` as `<` and `>`. The
+letters, the operators, the root sign and the raised scripts of the formula
+stay as they are. A formula holding a ceiling or a floor, which no ASCII
+character draws, is shown as written.
+
+A dollar is math only where it reads as one, so `$5 and $10`, `$HOME/$USER`,
+`$n$th` and `set $a,$b` stay as written. A dollar followed by a space, a tab, a
+comma or the end of its line opens nothing, two together in a line open
+nothing, and one with a space just inside it, or a letter, a digit or `_` just
+after it, closes nothing; `\$` is a dollar. A span not closed by the end of its
+line, a backtick, a `://` or 4 KiB is shown as written. In code, a key, a
+link's words and an address, a dollar is never math.
+
+A formula is drawn whole or not at all. One holding a command, an environment
+or a character crucible does not know, a whole document, a control or an
+invisible character, or more than crucible draws, is shown exactly as written.
+A display formula shown that way keeps its frame, and the frame's top edge says
+why where there is a reason to give, as in
+`┌─ math · not drawn as text · shown as written`. One wider than the window is
+`too wide to draw at this width`, and is drawn again once the window is wide
+enough: see [Drawn again at every width](#drawn-again-at-every-width).
+
+[`output.math`](../configuration/configuration.md#output) says how math is
+drawn. `image`, the default, draws a formula as a picture where one can be
+shown and as text everywhere else, which is everywhere for now; `text` draws
+it as text; `written` shows every formula exactly as the model wrote it, its
+markers included. A change in `/settings` takes effect at once: every display
+formula already drawn is laid out again in the new form, while a span already
+drawn in a line keeps the form it was drawn in and the next span is drawn in
+the new one. In native mode a display formula already written to the
+terminal's scrollback changes only when the scrollback is written again, once
+the window has been resized; see
+[What native mode cannot do](../configuration/configuration.md#what-native-mode-cannot-do).
+Output with no colour, including output that is not a terminal, keeps every
+formula as written.
 
 ## Lists and quotes that wrap
 
@@ -462,8 +518,10 @@ Some text is drawn exactly as the model wrote it, rather than as a block:
 - **A fence or display math the answer never closes.** It is drawn as
   written when the answer ends. A table the answer ends in is still drawn as
   a table: its last row is where it stops.
-- **Display math and mermaid diagrams.** They are held so they arrive whole,
-  and are then shown as written.
+- **Mermaid diagrams.** They are held so they arrive whole, and are then
+  shown as written.
+- **A formula crucible will not draw, and every formula under `written`.**
+  See [Math](#math).
 - **A diff crucible will not draw as a change.** A fence named `diff` or
   `patch` that is not a unified diff, and one past what a change holds: see
   [Diffs](#diffs).

@@ -3716,6 +3716,7 @@ pub(super) mod drawers;
 mod escapes;
 mod headings;
 mod links;
+mod math;
 mod notes;
 mod strikes;
 

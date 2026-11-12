@@ -94,6 +94,7 @@ crucible-tools = { path = "crates/crucible-tools" }
 crucible-transport = { path = "crates/crucible-transport" }
 crucible-tui = { path = "crates/crucible-tui" }
 crucible-tui-diff = { path = "crates/crucible-tui-diff" }
+crucible-tui-math = { path = "crates/crucible-tui-math" }
 crucible-types = { path = "crates/crucible-types" }
 crucible-update = { path = "crates/crucible-update" }
 crucible-workspace = { path = "crates/crucible-workspace" }
@@ -637,6 +638,8 @@ crucible-tui.workspace = true
 # What draws a tool's edit: the same box a `diff` fence in an answer is drawn
 # in, so the two cannot drift apart.
 crucible-tui-diff.workspace = true
+# What draws math in an answer as text, in every renderer of a session.
+crucible-tui-math.workspace = true
 image.workspace = true
 # The hash an attachment is recorded under, taken here because this is where a
 # file is attached and the runner compares it on every request afterwards. Both

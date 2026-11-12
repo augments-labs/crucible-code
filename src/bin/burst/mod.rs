@@ -149,12 +149,15 @@ const LIBERTY: usize = 3;
 const ADDED: usize = 40;
 
 /// The answers a burst's transcript holds: two changes, each written as the
-/// unified diff a model writes one as, in a fence a drawer takes by its name.
+/// unified diff a model writes one as, in a fence a drawer takes by its name,
+/// and a formula in a line of prose beside one set apart between `$$`.
 ///
 /// The first is made to two files and the second is long enough to fold, so
 /// the rows a drawer lays them out as are the kinds a session's are: a file's
 /// line, a second file's, a hunk, changed lines and context, and a fold. Each
 /// ends after its fence has closed, since only a closed fence is a drawer's.
+/// The third is drawn as math is: its span as the line is read, and its block
+/// once its closing marker has come.
 ///
 /// Which drawer draws them is each probe's to say in its own file, where what
 /// a probe names is read and held against the list of what it may name.
@@ -191,7 +194,12 @@ pub(crate) fn answers() -> Vec<String> {
     }
     long.push_str("```\n\n");
 
-    vec![two.to_owned(), long]
+    let formulas = "The pace holds while $\\frac{s}{o} \\geq \\frac{1}{2}$, over every frame:\n\n\
+        $$\n\
+        r = \\frac{1}{n} \\sum_{i=1}^{n} \\frac{f_i}{t_i}\n\
+        $$\n\n";
+
+    vec![two.to_owned(), long, formulas.to_owned()]
 }
 
 /// The best of [`LIBERTY`] readings, by how much of the opening pace is left.

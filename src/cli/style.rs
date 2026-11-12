@@ -2,12 +2,16 @@
 //!
 //! Settled at startup, and again only when a command says so, into plain
 //! answers the drawing can read without asking anything: whether to write
-//! colour and how much of it, which characters to draw with, and how much of a
-//! line to show. None of those may be asked per event — two are syscalls and
-//! the third is a file. What the start learned of where pictures can be drawn
-//! is kept beside them for the same reason: tmux's answer is a process run.
+//! colour and how much of it, which characters to draw with, how much of a
+//! line to show and how math is drawn. None of those may be asked per event —
+//! two are syscalls, the third is a file and the fourth is read from
+//! configuration. What the start learned of where pictures can be drawn is
+//! kept beside them for the same reason: tmux's answer is a process run.
 
-use crucible_config::{Color, Glyphs as Wanted, ThemeChoice, ToolDetail, TranscriptColours};
+use crucible_config::{
+    Color, Glyphs as Wanted, MathDrawing, ThemeChoice, ToolDetail, TranscriptColours,
+};
+use crucible_tui::drawing::Mode;
 use crucible_tui::graphics::{Passthrough, Platform};
 use crucible_tui::{Design, Glyphs, Ground, Palette, Theme};
 
@@ -35,6 +39,8 @@ pub(crate) struct Output {
     pub(crate) syntax: Option<String>,
     /// How many of the theme's colours the transcript spends.
     pub(crate) colours: Option<TranscriptColours>,
+    /// How math in an answer is drawn.
+    pub(crate) math: MathDrawing,
 }
 
 /// The maximum columns shown in a compact tool heading.
@@ -91,6 +97,9 @@ pub(crate) struct Style {
     glyphs: Glyphs,
     /// How much of a tool call and its result one line shows.
     detail: ToolDetail,
+    /// How math in an answer is drawn, for a renderer of its own, as a
+    /// preview's is, to draw it the way the session's screen does.
+    math: Mode,
     /// Which way the terminal said its ground goes, where it has said.
     ground: Option<Ground>,
     /// The system the session runs on, which the terminal support table is
@@ -132,6 +141,7 @@ impl Style {
             theme: chosen,
             syntax,
             colours,
+            math,
         } = output;
 
         let color = match wanted.unwrap_or_default() {
@@ -198,6 +208,7 @@ impl Style {
             ground,
             glyphs: glyph_set(glyphs),
             detail: detail.unwrap_or_default(),
+            math: super::math_drawn(math),
             platform: Platform::current(),
             passthrough: Passthrough::Unknown,
             // Taken to be as the output is until the start has looked.
@@ -315,6 +326,16 @@ impl Style {
     /// The same style, showing a tool call in a different detail.
     pub(crate) fn detailing(self, detail: ToolDetail) -> Self {
         Self { detail, ..self }
+    }
+
+    /// The same style, drawing math a different way.
+    pub(crate) fn laying_out(self, math: Mode) -> Self {
+        Self { math, ..self }
+    }
+
+    /// How math in an answer is drawn.
+    pub(crate) fn math(self) -> Mode {
+        self.math
     }
 
     /// What a component's slots are worth here.

@@ -4922,4 +4922,5 @@ fn a_link_or_a_footnote_reference_after_brackets_reads_as_it_does_with_no_defini
 mod drawers;
 mod escapes;
 mod links;
+mod math;
 mod strikes;

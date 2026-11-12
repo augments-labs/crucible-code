@@ -275,15 +275,25 @@ fn a_settings_row_takes_only_the_words_its_declaration_reads() {
     for word in ["Kitty", "iterm", "png", ""] {
         assert!(!take("output.images", word), "{word}");
     }
+    for word in ["written", "text", "image"] {
+        assert!(take("output.math", word), "{word}");
+    }
+    for word in ["Text", "latex", "off", ""] {
+        assert!(!take("output.math", word), "{word}");
+    }
 }
 
 #[test]
-fn the_images_row_is_the_last_so_no_row_before_it_moves() {
-    let last = rows().last().expect("there are rows");
-    assert_eq!(last.id(), RowId::Images);
-    assert_eq!(last.key(), "output.images");
-    assert_eq!(last.label(), "Images");
-    assert_eq!(last.usual(), Some("auto"));
+fn the_math_row_is_the_last_so_no_row_before_it_moves() {
+    let mut from_the_end = rows().iter().rev();
+    let last = from_the_end.next().expect("there are rows");
+    assert_eq!(last.id(), RowId::Math);
+    assert_eq!(last.key(), "output.math");
+    assert_eq!(last.label(), "Math");
+    assert_eq!(last.usual(), Some("image"));
+    let images = from_the_end.next().expect("there is a row before it");
+    assert_eq!(images.id(), RowId::Images);
+    assert_eq!(images.usual(), Some("auto"));
 }
 
 #[test]
@@ -310,6 +320,7 @@ fn every_row_has_its_own_identity() {
         RowId::CacheRetention,
         RowId::CachePersistent,
         RowId::Images,
+        RowId::Math,
     ];
     for id in every {
         let carrying = rows().iter().filter(|row| row.id() == id).count();

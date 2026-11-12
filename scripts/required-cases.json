@@ -2789,7 +2789,7 @@
       },
       "case": "every_file_of_the_corpus_in_a_fence_of_an_answer_is_drawn_or_shown_as_written_safely",
       "source": "crates/crucible-tui-diff/tests/hostile.rs",
-      "body_sha256": "3f5cc29ae3d750cb7e2b81ea1c95c1ad27d9a8ed7d2b4cbeeb484406ac080366",
+      "body_sha256": "dcd5257ab8eb959deb598abf8fb30ffa98ad815afbb15819740fb7024f36f927",
       "platforms": [
         "linux",
         "macos",
@@ -11615,15 +11615,15 @@
     {
       "id": "CASE-TRANSCRIPT-PICTURES-ROW-LAST",
       "family": "transcript-pictures",
-      "obligation": "The last settings row is Images, for output.images, usually auto.",
+      "obligation": "The last settings row is Math, for output.math, usually image, and Images, for output.images, usually auto, is just before it.",
       "package": "crucible-config",
       "target": {
         "kind": "lib",
         "name": "crucible_config"
       },
-      "case": "shape::rows::tests::the_images_row_is_the_last_so_no_row_before_it_moves",
+      "case": "shape::rows::tests::the_math_row_is_the_last_so_no_row_before_it_moves",
       "source": "crates/crucible-config/src/shape/rows/tests.rs",
-      "body_sha256": "b83e591b6e83da1f1f4137cf4b524014ece26deaf79344786bc8db7e2a846e3b",
+      "body_sha256": "4ebe31b45e49244784e313b1cc6b65df1d6c7e8e3efea81cb6ffb2303ac5f845",
       "platforms": [
         "linux",
         "macos",
@@ -12208,6 +12208,540 @@
       "case": "syntax::tests::every_part_another_definition_reads_comes_back_as_what_it_is",
       "source": "crates/crucible-tui/src/syntax/tests.rs",
       "body_sha256": "d08b953cad1d826ee5ff4beb8a9ea3f91d5007c3ffe49296e2cb5983b8fc4a98",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-DOLLARS-AS-WRITTEN",
+      "family": "transcript-blocks",
+      "obligation": "Dollar signs in prices and shell variables open no span, and each line is drawn exactly as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::math::dollar_signs_that_are_not_math_stay_as_written",
+      "source": "crates/crucible-tui/src/render/tests/math.rs",
+      "body_sha256": "93635fe2da1b76d51b04b675ee69c3c8cc3af87631399e7cb020b6456b66da21",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-UNDRAWN-BLOCK-KEPT",
+      "family": "transcript-blocks",
+      "obligation": "Display math no drawer can draw keeps every character it was written with.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::math::display_math_nothing_can_draw_keeps_every_character",
+      "source": "crates/crucible-tui/src/render/tests/math.rs",
+      "body_sha256": "d5354c338bca3d0a162a0f168b23f4ce907f2a36e6aba9cb3c040142122cb325",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-NO-EMPHASIS",
+      "family": "transcript-blocks",
+      "obligation": "Underscores and stars inside an inline span are math, never emphasis.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::math::inline_math_markers_are_not_read_as_emphasis",
+      "source": "crates/crucible-tui/src/render/tests/math.rs",
+      "body_sha256": "0cd3b6bac1f5dc2514cca014b3dd656b36717884f979d8ab2ecffe636774f389",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-STREAMED-SPAN",
+      "family": "transcript-blocks",
+      "obligation": "A span still arriving is told of in the live foot and drawn once its closer arrives.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::math::a_span_being_streamed_is_told_of_in_the_live_foot_and_drawn_once_it_closes",
+      "source": "crates/crucible-tui/src/render/tests/math.rs",
+      "body_sha256": "c26ae3f76dcb0399857d55b87024013e9d663a7ae78d37975f9c2783767af177",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-GLYPHS-RELAY",
+      "family": "transcript-blocks",
+      "obligation": "A formula already drawn is laid out again in the new glyphs when the glyph set changes.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::math::a_formula_drawn_is_laid_out_again_when_the_glyphs_change",
+      "source": "crates/crucible-tui/src/render/tests/math.rs",
+      "body_sha256": "459849c663f9e91f4ebbb7e4ef3bfd38fd68c8023403ea2a6c4b8e3f4a487e8e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-MODE-RELAY",
+      "family": "transcript-blocks",
+      "obligation": "A formula already drawn is laid out again in written, text and image as each is chosen.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::math::a_formula_drawn_is_laid_out_again_in_each_mode_chosen",
+      "source": "crates/crucible-tui/src/render/tests/math.rs",
+      "body_sha256": "5890912ffc7c5089f005124bb9b396ca4170abe63acf7c3e87f2ec3a78f15b2c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-UNCLOSED",
+      "family": "transcript-blocks",
+      "obligation": "A span or block that never closes stays exactly as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::math::an_unclosed_span_or_block_stays_as_written",
+      "source": "crates/crucible-tui/src/markdown/tests/math.rs",
+      "body_sha256": "a8650db2285ef538dcb77035228397ff0597acfd9b66675a3726a76cf1a05583",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-CUT",
+      "family": "transcript-blocks",
+      "obligation": "A span and a display block cut at every byte read as they do when they arrive whole.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::math::a_span_or_a_block_cut_at_any_byte_reads_as_it_does_whole",
+      "source": "crates/crucible-tui/src/markdown/tests/math.rs",
+      "body_sha256": "c1f5565cf72c77674060254096e1c7412bc88951b4fff7aafac1995ade301826",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-WRITTEN",
+      "family": "transcript-blocks",
+      "obligation": "Under written every inline span, between dollars or \\( and \\), is shown exactly as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::math::written_shows_every_span_as_written",
+      "source": "crates/crucible-tui/src/markdown/tests/math.rs",
+      "body_sha256": "a9ee670cd16ffe402ed30df327a8fa135a7948572310156c6ae94aadc897dfb3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-REFUSED-FRAMED",
+      "family": "transcript-blocks",
+      "obligation": "Display math a drawer refuses is drawn as a math fence holding it whole, framed with the reason.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::math::display_math_a_drawer_refuses_is_framed_with_why_and_kept_whole",
+      "source": "crates/crucible-tui/src/markdown/tests/math.rs",
+      "body_sha256": "d0a63960a67749bd0ea36ce6197e22b5456e570e6ac521d36b297e80fb4d9256",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-IMAGE-AS-TEXT",
+      "family": "transcript-blocks",
+      "obligation": "Under image a span is drawn as text, since no picture can yet be shown.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::math::image_draws_a_span_as_text_until_a_picture_can_be_shown",
+      "source": "crates/crucible-tui/src/markdown/tests/math.rs",
+      "body_sha256": "9eee2348057dccce8b3079d68bb382ba434671eeca19f62a833bdbb6f058e03f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-SPAN-NOT-MARKDOWN",
+      "family": "transcript-blocks",
+      "obligation": "A span is handed to the drawers and nothing inside it is read as markdown.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::math::a_span_is_drawn_by_the_drawers_and_nothing_in_it_is_read_as_markdown",
+      "source": "crates/crucible-tui/src/markdown/tests/math.rs",
+      "body_sha256": "f68e2bec6e5112009f9a9e207bd08b832312108af6fec4df22002b8e842a3c2d",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-DOCUMENT-REFUSED",
+      "family": "transcript-blocks",
+      "obligation": "A whole TeX document is refused as not drawn as text and shown as written.",
+      "package": "crucible-tui-math",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_math"
+      },
+      "case": "tests::a_whole_document_is_shown_as_written_with_its_reason",
+      "source": "crates/crucible-tui-math/src/tests.rs",
+      "body_sha256": "a274c1e813a09fc36dd4205e886cae29507f76a8fcbf719febdc1f46b6f1f9c1",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-PROSE-PICTURES",
+      "family": "transcript-blocks",
+      "obligation": "The accepted pictures of math in prose at each width and glyph set hold.",
+      "package": "crucible-tui-math",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_math"
+      },
+      "case": "tests::pictures_of_math_in_prose",
+      "source": "crates/crucible-tui-math/src/tests.rs",
+      "body_sha256": "c1d6206e704b4a4f1510e3081e169a3d9435e35ef8c99c67d4e983bf7b48641d",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-PART-REFUSED-WHOLE",
+      "family": "transcript-blocks",
+      "obligation": "A formula with one part that does not convert is refused whole, never drawn in part.",
+      "package": "crucible-tui-math",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_math"
+      },
+      "case": "tests::a_formula_with_a_part_that_does_not_convert_is_refused_whole",
+      "source": "crates/crucible-tui-math/src/tests.rs",
+      "body_sha256": "8195455d6b6515989e28e34600e2f82b06eab309175da456f73c68b570694eb5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-ASCII",
+      "family": "transcript-blocks",
+      "obligation": "Under ascii glyphs every structure a formula draws is ascii.",
+      "package": "crucible-tui-math",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_math"
+      },
+      "case": "tests::under_ascii_every_structure_is_ascii",
+      "source": "crates/crucible-tui-math/src/tests.rs",
+      "body_sha256": "007ae8102b49ce697d7c47dc518fe1de08c71271699f574e76879a9e8e4ea899",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-BLOCK-FITS",
+      "family": "transcript-blocks",
+      "obligation": "Every row of a drawn block fits the room it was given.",
+      "package": "crucible-tui-math",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_math"
+      },
+      "case": "tests::every_row_of_a_block_fits_its_room",
+      "source": "crates/crucible-tui-math/src/tests.rs",
+      "body_sha256": "741986b6c5bc1242b4ad867c0a85687b6d9645cd4b0726a8e04a56a40d981b93",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-HOSTILE-CORPUS",
+      "family": "transcript-blocks",
+      "obligation": "Every entry of the hostile TeX corpus is drawn or shown as written, as its record says.",
+      "package": "crucible-tui-math",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "every_entry_of_the_corpus_is_drawn_or_shown_as_written_as_recorded",
+      "source": "crates/crucible-tui-math/tests/hostile.rs",
+      "body_sha256": "97db83997828aed21ca4ad2d0fc634db5e476b74a251ea321310f0ac0502d4d4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-REFERENCES-INERT",
+      "family": "transcript-blocks",
+      "obligation": "A formula naming a file, a pipe or an address is refused or drawn as if the name were not there, and what it names records nothing.",
+      "package": "crucible-tui-math",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "every_reference_is_refused_or_drawn_as_if_it_were_not_there_and_what_it_names_records_nothing",
+      "source": "crates/crucible-tui-math/tests/hostile.rs",
+      "body_sha256": "dbc2c24e926da684b5646ff1c8c989d5df301b1acd0de7bd90272f2cc2b5ec4a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-CHILD-SILENT",
+      "family": "transcript-blocks",
+      "obligation": "The whole corpus drawn in a child process prints nothing to stdout or stderr.",
+      "package": "crucible-tui-math",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "the_whole_corpus_drawn_in_a_child_process_prints_nothing",
+      "source": "crates/crucible-tui-math/tests/hostile.rs",
+      "body_sha256": "2c071777c15f59812d9980fd66bfbd661ef3f009b162d799012206717de043e4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-GENERATED",
+      "family": "transcript-blocks",
+      "obligation": "Generated formulas are drawn within their room or shown as written.",
+      "package": "crucible-tui-math",
+      "target": {
+        "kind": "test",
+        "name": "generated"
+      },
+      "case": "generated_formulas_are_drawn_or_shown_as_written_within_their_room",
+      "source": "crates/crucible-tui-math/tests/generated.rs",
+      "body_sha256": "66c93aa91f1f7f7656a420528d2fb984a4a7bc4d5fdc918da5dbc585708df5b1",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-SETTING-AT-ONCE",
+      "family": "transcript-blocks",
+      "obligation": "A math drawing chosen in settings lays math already drawn out again at once.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::command::settings::tests::a_math_drawing_chosen_in_settings_lays_math_already_drawn_out_again_at_once",
+      "source": "src/cli/converse/command/settings/tests.rs",
+      "body_sha256": "ebe92b9271588efbdb1e3e0fc0315789448a9b0c4f144c04105c7b6402fb48f3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-SETTING-BARE",
+      "family": "transcript-blocks",
+      "obligation": "The Math row shows written, text and image bare, since each is in force at once, and the style a preview is drawn from holds the same way the renderer draws math.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::command::settings::tests::the_math_row_shows_each_answer_bare_since_each_is_drawn_at_once",
+      "source": "src/cli/converse/command/settings/tests.rs",
+      "body_sha256": "1983a04dccb38390b5647dd481aa2e613951625bf734115351f149df9ff6b793",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-BURST-PROBE",
+      "family": "transcript-blocks",
+      "obligation": "Every formula of the render burst is drawn as the text a session draws.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-render-burst"
+      },
+      "case": "tests::every_formula_of_the_burst_is_drawn_as_the_text_a_session_draws",
+      "source": "src/bin/bench-render-burst.rs",
+      "body_sha256": "cb1e6e702a56cdad8621a165acb892985ff5261745af1c5cff7a40c672860852",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-LIVE-PROBE",
+      "family": "transcript-blocks",
+      "obligation": "The live burst's band stands over an answer whose formulas are drawn as text.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-live-burst"
+      },
+      "case": "tests::the_band_stands_over_an_answer_whose_formulas_are_drawn_as_text",
+      "source": "src/bin/bench-live-burst.rs",
+      "body_sha256": "10f74d4cc0618c0f5908e554578abf7db71ced13d11ca0113a8da0ad58338d2f",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-RSS-PROBE",
+      "family": "transcript-blocks",
+      "obligation": "A measured colour-session answer writes a formula in a line and one in a block before its table.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-session-rss-colour"
+      },
+      "case": "tests::a_measured_answer_writes_a_formula_in_a_line_and_one_in_a_block_before_its_table",
+      "source": "src/bin/bench-session-rss-colour.rs",
+      "body_sha256": "76bce7a32f4e909b1bab777a91dd65f31c44af28845bd492b29d4030be3b59eb",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-NESTED-MATRICES",
+      "family": "transcript-blocks",
+      "obligation": "Matrices nested as deep as a formula is read, and nested past that to the byte cap, are answered inside the deadline in both glyph sets; the first is drawn and the second is refused as past the cap.",
+      "package": "crucible-tui-math",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "matrices_nested_to_the_byte_cap_are_answered_inside_the_deadline_and_drawn_only_within_the_depth",
+      "source": "crates/crucible-tui-math/tests/hostile.rs",
+      "body_sha256": "f35b1d580bb49af7066792d9d22a86c092014103ff9754e66e536c58ef575712",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-GLIMPSED",
+      "family": "transcript-blocks",
+      "obligation": "A session glimpsed in colour whose answer holds a display formula shows the TeX as written when math is drawn as written, and none of it when math is drawn as text.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::replaying::tests::a_formula_in_a_session_glimpsed_is_drawn_the_way_the_session_draws_math",
+      "source": "src/cli/converse/replaying/tests.rs",
+      "body_sha256": "b7ac7eccff8494d82f581b9d03b45d60e2f8e2cc4cc3373fec0826d919c104bf",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-ASCII-BARS-ANGLES",
+      "family": "transcript-blocks",
+      "obligation": "Under ascii glyphs a double bar is drawn as two bars and an angle bracket as the less-than or greater-than sign, written plainly or after left and right, and the rest as in unicode.",
+      "package": "crucible-tui-math",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_math"
+      },
+      "case": "tests::under_ascii_double_bars_and_angle_brackets_are_drawn_in_ascii",
+      "source": "crates/crucible-tui-math/src/tests.rs",
+      "body_sha256": "8a58d5765a5c1e15b659e0ebf0b4b7489d53c146f1b92ef464e3555da45980ae",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-ASCII-CEILING-FLOOR",
+      "family": "transcript-blocks",
+      "obligation": "A formula holding a ceiling or a floor is drawn in unicode glyphs and, under ascii glyphs, is refused as not text in a block and in a line.",
+      "package": "crucible-tui-math",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_math"
+      },
+      "case": "tests::under_ascii_a_ceiling_or_a_floor_is_shown_as_written",
+      "source": "crates/crucible-tui-math/src/tests.rs",
+      "body_sha256": "c5a36830dcfdc453dd4d552be0e7de2581f8e9773cc5f1fa89ebff04557699d8",
       "platforms": [
         "linux",
         "macos",

@@ -37,9 +37,9 @@
 //!
 //! The transcript the band stands over is not empty, since a command runs after
 //! an answer and not before one. It holds the answers `burst` gives both
-//! probes, whose diff fences the renderer draws as changes with the drawer it
-//! is handed here, as a session's is: a frame is timed over a record that keeps
-//! a drawer's rows.
+//! probes, whose diff fences and formulas the renderer draws as changes and as
+//! text with the drawers it is handed here, as a session's is: a frame is timed
+//! over a record that keeps a drawer's rows.
 
 // A binary may not reach into another's tree, so the driver the two burst probes
 // share is a module beside them. Where the bounded pipe below is unavailable this
@@ -70,6 +70,8 @@ use crucible_tui::drawing::Drawers;
 use crucible_tui::{Glyphs, Palette, Renderer, Row, Size, Slot, Terminal, Theme, Working};
 #[cfg(target_os = "linux")]
 use crucible_tui_diff::Changes;
+#[cfg(target_os = "linux")]
+use crucible_tui_math::Formulas;
 #[cfg(target_os = "linux")]
 use rustix::pipe::{PipeFlags, pipe_with};
 
@@ -250,10 +252,13 @@ fn footing(lines: &[String], from: usize, running: Duration) -> Vec<Row> {
 }
 
 /// The drawers the renderer is handed, as a session's is: the one that draws a
-/// change, for the diff fences of the answers the transcript holds.
+/// change, for the diff fences of the answers the transcript holds, and the
+/// one that draws math, for the formulas of the last of them.
 #[cfg(target_os = "linux")]
 fn drawers() -> Drawers {
-    Drawers::default().with(Arc::new(Changes))
+    Drawers::default()
+        .with(Arc::new(Changes))
+        .with(Arc::new(Formulas))
 }
 
 /// The palette the band is drawn in.
@@ -427,5 +432,33 @@ mod tests {
             !undrawn.iter().any(|row| row.contains("╭─ ")),
             "{undrawn:#?}"
         );
+    }
+
+    #[test]
+    fn the_band_stands_over_an_answer_whose_formulas_are_drawn_as_text() {
+        let rows = transcript(drawers());
+        assert!(
+            rows.iter().any(|row| row.contains("┌─ math")),
+            "the display formula was not framed as math: {rows:#?}"
+        );
+        assert!(
+            rows.iter().any(|row| row.contains("s/o ≥ 1/2")),
+            "the formula in a line was not drawn: {rows:#?}"
+        );
+        for written in ["$$", r"\frac", r"\sum"] {
+            assert!(
+                !rows.iter().any(|row| row.contains(written)),
+                "a formula was shown as written, with {written:?}: {rows:#?}"
+            );
+        }
+
+        // Handed no drawer, the same answers show each formula as written.
+        let undrawn = transcript(Drawers::default());
+        for written in [r"\sum_{i=1}^{n}", r"$\frac{s}{o}"] {
+            assert!(
+                undrawn.iter().any(|row| row.contains(written)),
+                "{written:?} in {undrawn:#?}"
+            );
+        }
     }
 }

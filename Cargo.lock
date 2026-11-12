@@ -572,6 +572,7 @@ dependencies = [
  "crucible-tools",
  "crucible-tui",
  "crucible-tui-diff",
+ "crucible-tui-math",
  "crucible-types",
  "crucible-update",
  "crucible-workspace",
@@ -918,6 +919,15 @@ dependencies = [
  "insta",
  "similar",
  "thiserror",
+]
+
+[[package]]
+name = "crucible-tui-math"
+version = "0.50.0"
+dependencies = [
+ "crucible-tui",
+ "insta",
+ "tokio",
 ]
 
 [[package]]

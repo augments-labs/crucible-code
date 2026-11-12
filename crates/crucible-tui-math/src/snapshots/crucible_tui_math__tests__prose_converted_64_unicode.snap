@@ -1,0 +1,6 @@
+---
+source: crates/crucible-tui-math/src/tests.rs
+expression: "dump(&prose(answer, 64, glyphs), 64)"
+---
+The roots are <Emphasis>x = (−b ± √(b² − 4ac))/(2a)</> when                  
+<Emphasis>a ≠ 0</>, and <Emphasis>α₁ ≤ β²</> holds for <Emphasis>every</> <Emphasis>n</>.

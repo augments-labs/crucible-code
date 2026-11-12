@@ -32,9 +32,10 @@
 //! where that shows. The reported number is the *sustained* rate, since a
 //! session is long and the opening frames are not the ones a user is waiting on.
 //!
-//! The renderer is handed the drawer a session's is, so the diff fences in the
-//! burst are read and drawn as the changes a session draws them as, and not
-//! shown as the text they were written as, which costs less than a user pays.
+//! The renderer is handed the drawers a session's is, so the diff fences in the
+//! burst are read and drawn as the changes a session draws them as, and its
+//! formulas as the text a session draws them as, and not shown as the text
+//! they were written as, which costs less than a user pays.
 
 // A binary may not reach into another's tree, so the driver the two burst probes
 // share is a module beside them. Where the bounded pipe below is unavailable this
@@ -51,6 +52,8 @@ use crucible_tui::drawing::Drawers;
 use crucible_tui::{Palette, Renderer, Size, Terminal, Theme};
 #[cfg(target_os = "linux")]
 use crucible_tui_diff::Changes;
+#[cfg(target_os = "linux")]
+use crucible_tui_math::Formulas;
 #[cfg(target_os = "linux")]
 use rustix::pipe::{PipeFlags, pipe_with};
 use std::fmt::Write as _;
@@ -231,7 +234,7 @@ fn streamed() -> Vec<String> {
     //
     // Last come the answers both burst probes hold, two changes more: one to
     // two files and one long enough to fold, so the burst draws every kind of
-    // row a change has.
+    // row a change has; and a formula in a line beside one in a block.
     for text in std::iter::once(HELD).chain(answers.iter().map(String::as_str)) {
         let held: Vec<char> = text.chars().collect();
         deltas.extend(held.chunks(5).map(|chunk| chunk.iter().collect::<String>()));
@@ -278,10 +281,13 @@ const HELD: &str = "\n```\n\n\
     \n";
 
 /// The drawers the renderer is handed, as a session's is: the one that draws a
-/// change, for the diff fences of the burst.
+/// change, for the diff fences of the burst, and the one that draws math, for
+/// its formulas.
 #[cfg(target_os = "linux")]
 fn drawers() -> Drawers {
-    Drawers::default().with(Arc::new(Changes))
+    Drawers::default()
+        .with(Arc::new(Changes))
+        .with(Arc::new(Formulas))
 }
 
 /// A palette that writes every hue it has.
@@ -489,5 +495,33 @@ mod tests {
             !undrawn.iter().any(|row| row.contains("╭─ ")),
             "{undrawn:#?}"
         );
+    }
+
+    #[test]
+    fn every_formula_of_the_burst_is_drawn_as_the_text_a_session_draws() {
+        let rows = cycle(drawers());
+        assert!(
+            rows.iter().filter(|row| row.contains("┌─ math")).count() >= 2,
+            "the display formulas were not framed as math: {rows:#?}"
+        );
+        assert!(
+            rows.iter().any(|row| row.contains("s/o ≥ 1/2")),
+            "the formula in a line was not drawn: {rows:#?}"
+        );
+        for written in ["$$", r"\frac", r"\sum"] {
+            assert!(
+                !rows.iter().any(|row| row.contains(written)),
+                "a formula was shown as written, with {written:?}: {rows:#?}"
+            );
+        }
+
+        // Handed no drawer, the same burst shows each formula as written.
+        let undrawn = cycle(Drawers::default());
+        for written in [r"\sum_{i=1}^{n} \frac{x_i}{2}", r"$\frac{s}{o}"] {
+            assert!(
+                undrawn.iter().any(|row| row.contains(written)),
+                "{written:?} in {undrawn:#?}"
+            );
+        }
     }
 }

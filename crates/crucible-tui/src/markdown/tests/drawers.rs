@@ -264,18 +264,25 @@ fn a_fence_is_handed_to_the_drawer_its_first_word_names_in_any_case() {
 }
 
 #[test]
-fn display_math_between_dollars_is_no_fence_and_is_handed_to_no_drawer() {
-    let stub = Arc::new(Stub {
-        names: &["math", "$$", ""],
+fn display_math_between_dollars_is_no_fence_and_only_the_math_drawer_is_handed_its_formula() {
+    let answer = "$$\nx + y\n$$\n";
+    let unnamed = Arc::new(Stub {
+        names: &["$$", ""],
         answer: Answer::Marked,
         asked: Mutex::new(Vec::new()),
     });
-    let answer = "$$\nx + y\n$$\n";
-
-    let rows = laid(&[answer], ROOM, Glyphs::Unicode, &holding(&stub));
-
+    let rows = laid(&[answer], ROOM, Glyphs::Unicode, &holding(&unnamed));
     assert_eq!(texts(&rows), ["$$", "x + y", "$$"]);
-    assert!(stub.asked().is_empty());
+    assert!(unnamed.asked().is_empty());
+
+    let math = Arc::new(Stub {
+        names: &["math"],
+        answer: Answer::Marked,
+        asked: Mutex::new(Vec::new()),
+    });
+    laid(&[answer], ROOM, Glyphs::Unicode, &holding(&math));
+    let asked: Vec<String> = math.asked().into_iter().map(|(source, _)| source).collect();
+    assert_eq!(asked, ["x + y"]);
 }
 
 #[test]

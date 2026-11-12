@@ -991,7 +991,7 @@ fn asked(
 /// What the `output` block said, gathered out of the settled layers.
 ///
 /// Its own function because it is the one value in `run` that is only a list:
-/// six answers read out of one block, none of them decided here.
+/// seven answers read out of one block, none of them decided here.
 fn drawn(settings: &crucible_config::Settings) -> style::Output {
     style::Output {
         color: settings.color(),
@@ -1000,6 +1000,7 @@ fn drawn(settings: &crucible_config::Settings) -> style::Output {
         theme: settings.theme(),
         syntax: settings.syntax_theme().map(str::to_owned),
         colours: settings.transcript_colours(),
+        math: settings.math(),
     }
 }
 
@@ -1169,7 +1170,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // Where it draws is read here, once: a session cannot move between a
     // screen of its own and the terminal's buffer without leaving half of
     // itself in a scrollback the other does not keep.
-    let mut renderer = screen(settings.screen());
+    let mut renderer = screen(&settings);
     watch_size(&mut renderer);
 
     // The mode the files named, or the one that asks. `None` is "no layer
@@ -1581,13 +1582,15 @@ fn watch_size<T: crucible_tui::Terminal>(renderer: &mut Renderer<T>) {
 #[cfg(not(unix))]
 fn watch_size<T: crucible_tui::Terminal>(_renderer: &mut Renderer<T>) {}
 
-/// The renderer a session is read on, drawing where `screen` names.
+/// The renderer a session is read on, drawing where `output.screen` names.
 ///
 /// It is handed the drawers a fence of an answer is drawn by, since a renderer
-/// names none of them.
-fn screen(screen: crucible_config::ScreenMode) -> Renderer<SystemTerminal> {
-    let mut renderer = Renderer::drawing(SystemTerminal::stdout(), drawn_on(screen));
+/// names none of them, and how `output.math` asks math to be drawn, which
+/// `/settings` changes at once.
+fn screen(settings: &Settings) -> Renderer<SystemTerminal> {
+    let mut renderer = Renderer::drawing(SystemTerminal::stdout(), drawn_on(settings.screen()));
     renderer.drawers(draw::drawers());
+    renderer.math(math_drawn(settings.math()));
     renderer
 }
 
@@ -1599,6 +1602,19 @@ pub(crate) fn drawn_on(screen: crucible_config::ScreenMode) -> crucible_tui::Scr
     match screen {
         crucible_config::ScreenMode::Fullscreen => crucible_tui::ScreenMode::Fullscreen,
         crucible_config::ScreenMode::Native => crucible_tui::ScreenMode::Native,
+    }
+}
+
+/// What `output.math` asks math in an answer to be drawn as, written out case
+/// by case so a way added to the configuration is a decision here. An image
+/// is asked for as one; the renderer draws text until one can be shown.
+pub(crate) const fn math_drawn(math: crucible_config::MathDrawing) -> crucible_tui::drawing::Mode {
+    use crucible_config::MathDrawing;
+    use crucible_tui::drawing::Mode;
+    match math {
+        MathDrawing::Written => Mode::Written,
+        MathDrawing::Text => Mode::Text,
+        MathDrawing::Image => Mode::Image,
     }
 }
 
