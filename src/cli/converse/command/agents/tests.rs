@@ -12,6 +12,7 @@ fn listed(key: &str, offered: &[&str], license: &str, installed: &[&str]) -> doo
     door::Listed {
         agent: AgentKey::new(key).expect("an agent key"),
         offered: offered.iter().map(|&version| version.into()).collect(),
+        unoffered: None,
         license: license.into(),
         terms: None,
         caution: None,
@@ -296,6 +297,114 @@ fn with_no_list_to_stand_each_agent_is_printed_on_a_line_of_its_own_escaped_and_
             format!("aider 2.1\\u{{1b}}[2J · {cut} · not installed"),
             MORE.to_owned(),
         ]
+    );
+}
+
+/// `/catalog` lists what crucible installs: an agent the door listed only
+/// as the user's own program, since crucible installs no version of it, is
+/// left out, neither counted among those offered nor said to be one more.
+#[test]
+fn catalog_leaves_out_an_entry_crucible_does_not_install() {
+    let cursor = door::Listed {
+        unoffered: Some("the ACP Registry gives cursor no SHA-256".into()),
+        own: Some(std::path::PathBuf::from("/opt/tools/cursor-agent")),
+        registry: true,
+        ..listed("cursor", &[], "Proprietary", &[])
+    };
+    let mut listing = Listing::new(
+        vec![listed("goose", &["1.0.0"], "Apache-2.0", &[]), cursor],
+        false,
+        None,
+        None,
+    );
+
+    let rows = drawn(&mut listing, 100, 30).join("\n");
+
+    assert!(rows.contains("ACP Registry · 1 of 1 offered"), "{rows}");
+    assert!(!rows.contains("cursor"), "{rows}");
+    assert!(!rows.contains(MORE), "{rows}");
+    assert_eq!(kept(&listing), ["goose"]);
+    assert_eq!(
+        said(&listing, 400),
+        ["goose 1.0.0 · Apache-2.0 · not installed"]
+    );
+}
+
+/// `/catalog` says more are offered only where an agent crucible installs
+/// was past the most the door names, whatever the door says of the rest: one
+/// past it that the door would list only as the user's own program is not one
+/// more to a list of what crucible installs.
+#[test]
+fn catalog_says_no_more_for_an_entry_crucible_does_not_install() {
+    let goose = || vec![listed("goose", &["1.0.0"], "Apache-2.0", &[])];
+
+    let own_past = Listing::catalog(
+        goose(),
+        door::Installable {
+            more: false,
+            ..door::Installable::default()
+        },
+        None,
+        None,
+    );
+    let offered_past = Listing::catalog(
+        goose(),
+        door::Installable {
+            more: true,
+            ..door::Installable::default()
+        },
+        None,
+        None,
+    );
+
+    assert_eq!(
+        said(&own_past, 400),
+        ["goose 1.0.0 · Apache-2.0 · not installed"]
+    );
+    assert_eq!(
+        said(&offered_past, 400),
+        ["goose 1.0.0 · Apache-2.0 · not installed", MORE]
+    );
+}
+
+/// `/catalog` says where its rows come from only where that line stands
+/// beside the rows it keeps: the registry line the door gave for an agent it
+/// listed only as the user's own program is not shown, and one beside a
+/// registry row crucible installs is.
+#[test]
+fn catalog_says_the_registry_source_only_beside_what_it_keeps() {
+    let line = "Source: ACP Registry, read 2026-11-11; not reviewed by Crucible.";
+    let cursor = door::Listed {
+        unoffered: Some("the ACP Registry gives cursor no SHA-256".into()),
+        own: Some(std::path::PathBuf::from("/opt/tools/cursor-agent")),
+        registry: true,
+        ..listed("cursor", &[], "Proprietary", &[])
+    };
+    let goose = door::Listed {
+        registry: true,
+        ..listed("goose", &["1.0.0"], "Apache-2.0", &[])
+    };
+
+    let own_only = Listing::catalog(
+        vec![listed("aider", &["2.1.0"], "MIT", &[]), cursor],
+        door::Installable::default(),
+        None,
+        Some(line),
+    );
+    let offered = Listing::catalog(
+        vec![goose],
+        door::Installable {
+            registry: true,
+            ..door::Installable::default()
+        },
+        None,
+        Some(line),
+    );
+
+    assert_eq!(said(&own_only, 400), ["aider 2.1.0 · MIT · not installed"]);
+    assert_eq!(
+        said(&offered, 400),
+        ["goose 1.0.0 · Apache-2.0 · not installed", line]
     );
 }
 

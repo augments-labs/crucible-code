@@ -354,7 +354,9 @@ The agents are the binary releases the official ACP Registry publishes for this
 platform, read from its one address within 1 MiB and thirty seconds, and cached
 in crucible's home where the next five minutes reuse it. Only an entry whose
 target for this machine carries a SHA-256 and an archive crucible unpacks is
-offered: one without a hash, or whose archive is another format, is absent. The
+offered. One without a hash, or whose archive is another format, is never
+installed and is left out of this list; `/login` and `crucible agents search`
+list it only as your own program, where its command is found on `PATH`. The
 registry is not reviewed by Crucible: it has no signature, serial, expiry,
 revocation list or anti-rollback, so an offered version can be withdrawn or
 replaced only by the registry's own change. The list says so beside its agents,

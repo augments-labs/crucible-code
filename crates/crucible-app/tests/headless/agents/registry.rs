@@ -2721,3 +2721,348 @@ fn an_own_agy_turn_without_a_sign_in_names_the_two_ways() -> Result<(), Failed> 
     assert!(failed.contains("store release"), "{failed}");
     Ok(())
 }
+
+/// The rows the agents door lists in `tree` for `conversation`, the ACP
+/// Registry read from the index cached there.
+fn rows_listed(
+    tree: &crate::Tree,
+    conversation: &crucible_app::Conversation,
+) -> Result<Vec<crucible_app::client::agents::Listed>, Failed> {
+    let listed = crate::external::choosing::listed_with_the_registry(tree, conversation)?;
+    let Ok(Outcome::Catalog { agents, .. }) = listed else {
+        return Err(format!("the listing answered {listed:?}").into());
+    };
+    Ok(agents)
+}
+
+/// An ACP Registry entry with no SHA-256 for this machine is listed, by the
+/// agents door and by `/login`, where its guessed name is on `PATH`: as the
+/// user's own program at the path it leads to, offering no version and
+/// saying why. Where that name is on no `PATH`, neither lists it.
+#[test]
+fn an_unhashed_entry_is_listed_as_your_own_when_its_command_is_on_path_and_not_otherwise()
+-> Result<(), Failed> {
+    use crate::external::choosing::{first_choices, goose_unhashed, unhashed_with_nothing_on_path};
+
+    let found = crate::Tree::new("registry-unhashed-found")?;
+    let (mut conversation, program) = goose_unhashed(&found)?;
+    let agents = rows_listed(&found, &conversation)?;
+    let goose = agents
+        .iter()
+        .find(|listed| listed.agent.as_str() == "goose")
+        .ok_or("the unhashed goose was not listed")?;
+    assert_eq!(
+        goose.own.as_ref(),
+        Some(&program),
+        "the listing's own goose"
+    );
+    assert!(goose.registry, "goose was listed as no registry entry");
+    let why = format!(
+        "the ACP Registry gives goose no SHA-256 for {}, so its program cannot be pinned and it \
+         is not offered",
+        platform()
+    );
+    assert_eq!(goose.unoffered.as_deref(), Some(why.as_str()));
+    let choices = first_choices(&found, &mut conversation)?;
+    assert!(
+        choices.iter().any(|choice| choice == "goose"),
+        "{choices:?}"
+    );
+
+    let unfound = crate::Tree::new("registry-unhashed-unfound")?;
+    let mut conversation = unhashed_with_nothing_on_path(&unfound)?;
+    let agents = rows_listed(&unfound, &conversation)?;
+    assert!(
+        agents.iter().all(|listed| listed.agent.as_str() != "goose"),
+        "an unhashed goose on no PATH was listed"
+    );
+    let choices = first_choices(&unfound, &mut conversation)?;
+    assert!(
+        choices.iter().all(|choice| choice != "goose"),
+        "{choices:?}"
+    );
+    Ok(())
+}
+
+/// More ACP Registry entries with no SHA-256 than a listing names, each
+/// whose guessed name is on `PATH`, are listed by the agents door at most
+/// [`LISTED`] in all, the rest said to be more; and `/login` still asks, its
+/// choices within the client contract's bound and the shipping agents among
+/// them.
+#[test]
+fn more_unhashed_entries_on_path_than_a_listing_names_are_cut_and_login_still_asks()
+-> Result<(), Failed> {
+    use crate::external::choosing::{first_choices, listed_with_the_registry, many_unhashed};
+    use crucible_app::client::agents::LISTED;
+    use crucible_client_api::bounds::ITEMS;
+
+    let tree = crate::Tree::new("registry-unhashed-many")?;
+    let mut conversation = many_unhashed(&tree, ITEMS + 1)?;
+
+    let listed = listed_with_the_registry(&tree, &conversation)?;
+    let Ok(Outcome::Catalog { agents, more, .. }) = listed else {
+        return Err(format!("the listing answered {listed:?}").into());
+    };
+    assert!(
+        agents.len() <= LISTED,
+        "the door listed {} agents",
+        agents.len()
+    );
+    assert!(more, "the door did not say more were offered");
+    let choices = first_choices(&tree, &mut conversation)?;
+    assert!(
+        choices.len() <= ITEMS,
+        "/login put {} choices",
+        choices.len()
+    );
+    assert!(
+        choices.iter().any(|choice| choice == "Claude Code"),
+        "{choices:?}"
+    );
+    Ok(())
+}
+
+/// The same listing, past its ceiling only by entries crucible installs no
+/// version of, gives a list of only the agents crucible installs no more to
+/// say: none it would show was left out.
+#[test]
+fn more_unhashed_entries_on_path_than_a_listing_names_give_catalog_no_more() -> Result<(), Failed> {
+    use crate::external::choosing::{listed_with_the_registry, many_unhashed};
+    use crucible_client_api::bounds::ITEMS;
+
+    let tree = crate::Tree::new("registry-unhashed-many-catalog")?;
+    let conversation = many_unhashed(&tree, ITEMS + 1)?;
+
+    let listed = listed_with_the_registry(&tree, &conversation)?;
+    let Ok(Outcome::Catalog {
+        more, installable, ..
+    }) = listed
+    else {
+        return Err(format!("the listing answered {listed:?}").into());
+    };
+    assert!(more, "the door did not say more were listed");
+    assert!(
+        !installable.more,
+        "a list of what crucible installs was told more were offered"
+    );
+    Ok(())
+}
+
+/// An ACP Registry agent crucible installs a version of, past the most a
+/// listing shows, is one more to a list of only the agents crucible installs.
+#[test]
+fn an_offered_registry_agent_past_the_listing_gives_catalog_more() -> Result<(), Failed> {
+    use crate::external::choosing::{goose_past_the_listing, listed_with_the_registry};
+
+    let tree = crate::Tree::new("registry-offered-past-catalog")?;
+    let (conversation, _) = goose_past_the_listing(&tree)?;
+
+    let listed = listed_with_the_registry(&tree, &conversation)?;
+    let Ok(Outcome::Catalog {
+        agents,
+        more,
+        installable,
+        ..
+    }) = listed
+    else {
+        return Err(format!("the listing answered {listed:?}").into());
+    };
+    assert!(
+        agents.iter().all(|listed| listed.agent.as_str() != "goose"),
+        "goose was within the listing"
+    );
+    assert!(more, "the door did not say more were listed");
+    assert!(
+        installable.more,
+        "a list of what crucible installs was not told more were offered"
+    );
+    Ok(())
+}
+
+/// A signed catalog offering more agents than a listing shows gives a list of
+/// only the agents crucible installs more to say.
+#[test]
+fn a_signed_catalog_past_the_listing_gives_catalog_more() -> Result<(), Failed> {
+    use crate::external::choosing::{listed_with_the_registry, signed_past_the_listing};
+    use crucible_app::client::agents::LISTED;
+
+    let tree = crate::Tree::new("signed-past-catalog")?;
+    let conversation = signed_past_the_listing(&tree)?;
+
+    let listed = listed_with_the_registry(&tree, &conversation)?;
+    let Ok(Outcome::Catalog {
+        agents,
+        more,
+        installable,
+        ..
+    }) = listed
+    else {
+        return Err(format!("the listing answered {listed:?}").into());
+    };
+    assert_eq!(
+        agents.len(),
+        LISTED,
+        "the door listed {} agents",
+        agents.len()
+    );
+    assert!(more, "the door did not say more were listed");
+    assert!(
+        installable.more,
+        "a list of what crucible installs was not told more were offered"
+    );
+    Ok(())
+}
+
+/// The agents door's listing whose only ACP Registry row is an entry with no
+/// SHA-256, listed as the user's own program, says where that row comes from:
+/// the day the index was read, and that it is not reviewed by Crucible.
+#[test]
+fn a_listing_whose_only_registry_row_is_your_own_says_its_source() -> Result<(), Failed> {
+    use crate::external::choosing::{goose_unhashed, listed_with_the_registry};
+
+    let tree = crate::Tree::new("registry-unhashed-source")?;
+    let (conversation, _) = goose_unhashed(&tree)?;
+
+    let listed = listed_with_the_registry(&tree, &conversation)?;
+    let Ok(Outcome::Catalog {
+        agents, registry, ..
+    }) = listed
+    else {
+        return Err(format!("the listing answered {listed:?}").into());
+    };
+    assert!(
+        agents.iter().any(|listed| listed.agent.as_str() == "goose"),
+        "the unhashed goose was not listed"
+    );
+    let line = registry.ok_or("the listing said no source")?;
+    assert!(
+        line.starts_with("Source: ACP Registry, read ")
+            && line.ends_with("not reviewed by Crucible."),
+        "{line}"
+    );
+    Ok(())
+}
+
+/// The same listing gives a list of only the agents crucible installs no
+/// source line to show: the one registry row it names is the user's own
+/// program, which that list leaves out.
+#[test]
+fn a_listing_whose_only_registry_row_is_your_own_gives_catalog_no_source() -> Result<(), Failed> {
+    use crate::external::choosing::{goose_unhashed, listed_with_the_registry};
+
+    let tree = crate::Tree::new("registry-unhashed-catalog-source")?;
+    let (conversation, _) = goose_unhashed(&tree)?;
+
+    let listed = listed_with_the_registry(&tree, &conversation)?;
+    let Ok(Outcome::Catalog { installable, .. }) = listed else {
+        return Err(format!("the listing answered {listed:?}").into());
+    };
+    assert!(
+        !installable.registry,
+        "a list of what crucible installs was given the registry line"
+    );
+    Ok(())
+}
+
+/// An ACP Registry entry with no SHA-256 for this machine, listed as the
+/// user's own program, offers no version, and `/login` offers nothing for it
+/// but trying that program: no install, update or roll back. Crucible's store
+/// is left as it was.
+#[test]
+fn an_unhashed_entry_is_never_offered_an_install() -> Result<(), Failed> {
+    use crate::external::choosing::{chose_own, every_choice, goose_unhashed};
+    use crucible_client_api::AgentAction;
+
+    let tree = crate::Tree::new("registry-unhashed-uninstalled")?;
+    let (mut conversation, _) = goose_unhashed(&tree)?;
+    let agents = rows_listed(&tree, &conversation)?;
+    let goose = agents
+        .iter()
+        .find(|listed| listed.agent.as_str() == "goose")
+        .ok_or("the unhashed goose was not listed")?;
+    assert!(goose.offered.is_empty(), "{:?}", goose.offered);
+
+    let (action, put) = chose_own(&tree, &mut conversation, "{}", "goose")?;
+
+    assert!(matches!(action, AgentAction::TryOwn { .. }), "{action:?}");
+    let choices = every_choice(&put);
+    assert!(
+        choices.iter().any(|choice| choice == "Try your own"),
+        "{choices:?}"
+    );
+    for move_ in ["Install", "Update", "Roll back"] {
+        assert!(
+            choices.iter().all(|choice| choice != move_),
+            "{move_} was offered: {choices:?}"
+        );
+    }
+    let programs = tree.home()?.path().join("programs");
+    let untouched = match fs::read_dir(&programs) {
+        Ok(mut held) => held.next().is_none(),
+        Err(why) => why.kind() == std::io::ErrorKind::NotFound,
+    };
+    assert!(
+        untouched,
+        "crucible's store at {} changed",
+        programs.display()
+    );
+    Ok(())
+}
+
+/// Two ACP Registry entries with no SHA-256 whose commands guess the same
+/// name are each listed as the user's own program at the path that name leads
+/// to, each found by a try of its own key, and each tried and written under
+/// its own key.
+#[test]
+fn two_unhashed_entries_guessing_the_same_command_are_each_listed_under_their_own_key()
+-> Result<(), Failed> {
+    use crate::external::choosing::{
+        found_at_door, instance_written, tried_at_door, two_guessing_goose,
+    };
+    use crucible_app::client::agents::OwnProgram;
+    use crucible_client_api::{Name, Text};
+
+    let tree = crate::Tree::new("registry-unhashed-two")?;
+    let (conversation, program) = two_guessing_goose(&tree)?;
+    let agents = rows_listed(&tree, &conversation)?;
+    let keys = ["goose", "goose-next"];
+
+    for key in keys {
+        let row = agents
+            .iter()
+            .find(|listed| listed.agent.as_str() == key)
+            .ok_or_else(|| format!("{key} was not listed"))?;
+        assert_eq!(row.own.as_ref(), Some(&program), "{key}'s own program");
+        assert!(row.unoffered.is_some(), "{key} was listed as offered");
+        let found = found_at_door(&tree, &conversation, key)?;
+        assert_eq!(
+            found.ok(),
+            Some(OwnProgram::Found(program.clone())),
+            "{key}"
+        );
+    }
+    for key in keys {
+        let tried = tried_at_door(
+            &tree,
+            &conversation,
+            Command::TryOwnAgent {
+                agent: Name::new(key)?,
+                program: Text::cut(&program.to_string_lossy()),
+            },
+        )?;
+        let Ok(Outcome::Tried {
+            agent, instance, ..
+        }) = tried
+        else {
+            return Err(format!("the door answered {tried:?} for {key}").into());
+        };
+        assert_eq!(agent.as_str(), key);
+        let written: Value = serde_json::from_str(&instance_written(&tree, &instance)?)?;
+        assert_eq!(
+            (written.get("driver"), written.get("agent")),
+            (Some(&json!("catalog")), Some(&json!(key))),
+            "the instance {instance} written for {key}"
+        );
+    }
+    Ok(())
+}

@@ -1143,7 +1143,7 @@ fn registry_cached(tree: &Tree, agents: &[Value]) -> Result<(), Failed> {
 /// The move a connect of `conversation` naming no instance ends on, the user
 /// file holding `file`, where the client picks `agent` and then "Try your
 /// own"; and every question it was put.
-fn chose_own(
+pub(crate) fn chose_own(
     tree: &Tree,
     conversation: &mut Conversation,
     file: &str,
@@ -1608,7 +1608,7 @@ fn trying_your_own_agy_where_the_sandbox_cannot_close_points_at_the_store() -> R
 }
 
 /// Every choice's name among the account questions `put`.
-fn every_choice(put: &[Pending]) -> Vec<String> {
+pub(crate) fn every_choice(put: &[Pending]) -> Vec<String> {
     (0..)
         .map_while(|at| question(put, at))
         .flat_map(|(_, _, choices)| choices.into_iter().map(|(name, _)| name.to_owned()))
@@ -1868,6 +1868,20 @@ pub(crate) fn goose_past_the_listing(tree: &Tree) -> Result<(Conversation, PathB
     Ok((own_sandboxed(tree)?, program))
 }
 
+/// A tree whose signed catalog offers one more agent than a listing shows,
+/// `signed-00` on, and whose ACP Registry index is cached with none; a
+/// conversation there.
+pub(crate) fn signed_past_the_listing(tree: &Tree) -> Result<Conversation, Failed> {
+    use crucible_app::client::agents::LISTED;
+
+    let entries: Vec<Value> = (0..=LISTED)
+        .map(|at| entry(&format!("signed-{at:02}"), "1.0.0", ONE))
+        .collect();
+    trusting(tree, &entries)?;
+    registry_cached(tree, &[])?;
+    own_sandboxed(tree)
+}
+
 /// A tree whose user installed their own Antigravity on the `PATH` a
 /// conversation's steps look on, which answers as the reviewed release does;
 /// that conversation, and the path the program's links lead to.
@@ -1924,4 +1938,153 @@ pub(crate) fn instance_written(tree: &Tree, name: &str) -> Result<String, Failed
     Ok(instance
         .to_string()
         .replace(&tools.to_string_lossy().replace('\\', "\\\\"), "<tools>"))
+}
+
+/// The ACP Registry agent `id`, released at 1.0.0 for this machine with no
+/// SHA-256, whose program is started as `./cmd acp`: an entry crucible never
+/// installs.
+pub(crate) fn unhashed(id: &str, cmd: &str) -> Value {
+    json!({
+        "id": id,
+        "name": id,
+        "version": "1.0.0",
+        "license": "Apache-2.0",
+        "distribution": {"binary": {platform(): {
+            "archive": "https://downloads.example.com/goose-1.0.0.tar.gz",
+            "cmd": format!("./{cmd}"),
+            "args": ["acp"],
+        }}},
+    })
+}
+
+/// A tree whose catalog offers nothing and whose cached ACP Registry index
+/// lists goose with no SHA-256 for this machine, and whose user installed
+/// their own goose on the `PATH` a conversation's steps look on, which
+/// answers as an agent; that conversation, and the path the program's links
+/// lead to.
+pub(crate) fn goose_unhashed(tree: &Tree) -> Result<(Conversation, PathBuf), Failed> {
+    registry_cached(tree, &[unhashed("goose", "goose")])?;
+    let program = own_goose(&tools(tree), true)?;
+    Ok((own_sandboxed(tree)?, program))
+}
+
+/// As [`goose_unhashed`], but with no program of goose on that `PATH`.
+pub(crate) fn unhashed_with_nothing_on_path(tree: &Tree) -> Result<Conversation, Failed> {
+    registry_cached(tree, &[unhashed("goose", "goose")])?;
+    own_sandboxed(tree)
+}
+
+/// As [`goose_unhashed`], but the index lists a second agent, `goose-next`,
+/// also with no SHA-256, whose command guesses the same name.
+pub(crate) fn two_guessing_goose(tree: &Tree) -> Result<(Conversation, PathBuf), Failed> {
+    registry_cached(
+        tree,
+        &[unhashed("goose", "goose"), unhashed("goose-next", "goose")],
+    )?;
+    let program = own_goose(&tools(tree), true)?;
+    Ok((own_sandboxed(tree)?, program))
+}
+
+/// As [`goose_unhashed`], but the index lists `count` agents, `own-0` on,
+/// each with no SHA-256 and each guessing goose's name, and no goose itself.
+pub(crate) fn many_unhashed(tree: &Tree, count: usize) -> Result<Conversation, Failed> {
+    let entries: Vec<Value> = (0..count)
+        .map(|at| unhashed(&format!("own-{at}"), "goose"))
+        .collect();
+    registry_cached(tree, &entries)?;
+    own_goose(&tools(tree), true)?;
+    own_sandboxed(tree)
+}
+
+/// The name of each choice the first question of a connect of `conversation`
+/// naming no instance offers, asked of a client that claims every capability
+/// and declines it.
+pub(crate) fn first_choices(
+    tree: &Tree,
+    conversation: &mut Conversation,
+) -> Result<Vec<String>, Failed> {
+    let mut picking = Picking::of([None]);
+    connecting_on(
+        tree,
+        conversation,
+        ("{}", None),
+        Asking::every(),
+        &mut picking,
+    )?;
+    Ok(every_choice(&picking.put))
+}
+
+/// `crucible agents try goose`, for a registry entry with no SHA-256 whose
+/// guessed name is on `PATH`, finds that program and writes the instance
+/// `/login`'s "Try your own" writes for it.
+#[test]
+fn a_command_line_try_of_an_unhashed_registry_key_writes_what_login_writes() -> Result<(), Failed> {
+    let chosen = tried_through_login(
+        &Tree::new("external-choosing-unhashed-login")?,
+        goose_unhashed,
+        "goose",
+    )?;
+
+    let tree = Tree::new("external-choosing-unhashed-command")?;
+    let (conversation, program) = goose_unhashed(&tree)?;
+    let found = found_at_door(&tree, &conversation, "goose")?;
+    assert_eq!(found.ok(), Some(OwnProgram::Found(program.clone())));
+    let tried = tried_at_door(
+        &tree,
+        &conversation,
+        Command::TryOwnAgent {
+            agent: Name::new("goose")?,
+            program: Text::cut(&program.to_string_lossy()),
+        },
+    )?;
+    let Ok(Door::Tried { instance, .. }) = tried else {
+        return Err(format!("the door answered {tried:?}").into());
+    };
+
+    assert_eq!(instance_written(&tree, &instance)?, chosen);
+    Ok(())
+}
+
+/// `crucible agents try goose`, for a registry entry with no SHA-256 whose
+/// guessed name is on no `PATH`, finds no program of the user's own rather
+/// than no agent listed, and writes nothing.
+#[test]
+fn a_command_line_try_of_an_unhashed_key_with_nothing_on_path_says_path() -> Result<(), Failed> {
+    let tree = Tree::new("external-choosing-unhashed-unfound")?;
+    let conversation = unhashed_with_nothing_on_path(&tree)?;
+
+    let found = found_at_door(&tree, &conversation, "goose")?;
+
+    assert_eq!(found.ok(), Some(OwnProgram::Unfound));
+    let file = std::fs::read_to_string(crate::Desk::new(&tree, &[])?.choosing).unwrap_or_default();
+    assert!(!file.contains("goose"), "an instance was written: {file}");
+    Ok(())
+}
+
+/// A connect naming no instance does not list an ACP Registry entry with no
+/// SHA-256 when the user file can no longer be read, though its guessed name
+/// is on `PATH`: which program the user configured for it is unknown, so it
+/// is not looked for under that name, as the agents door then lists nothing.
+#[test]
+fn an_unhashed_entry_is_not_listed_by_login_once_the_user_file_cannot_be_read() -> Result<(), Failed>
+{
+    let tree = Tree::new("external-choosing-unhashed-unreadable")?;
+    let (mut conversation, _program) = goose_unhashed(&tree)?;
+    let mut picking = Picking::of([None]);
+    let asked = Asked {
+        installed: ("{}", "work"),
+        command: &|_| Command::Connect { instance: None },
+        asking: Asking::every(),
+        after: Some("{ not json"),
+    };
+
+    accounting_on(&tree, &mut conversation, &asked, &mut picking)?;
+
+    let choices = every_choice(&picking.put);
+    assert!(!choices.is_empty(), "nothing was asked: {:?}", picking.put);
+    assert!(
+        choices.iter().all(|choice| choice != "goose"),
+        "{choices:?}"
+    );
+    Ok(())
 }

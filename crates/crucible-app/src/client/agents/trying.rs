@@ -82,6 +82,27 @@ pub(super) fn own_antigravity(
     })
 }
 
+/// The path the user's own program of the catalog agent `key` leads to, as
+/// `trying` finds it among the configured `instances`: the one an instance of
+/// it runs, or, where none of it is configured, the one its entry's guessed
+/// name finds. The agents door and `/login` both list by it.
+pub(crate) fn own_of(
+    trying: &Trying,
+    key: &AgentKey,
+    instances: &[ExternalAgent],
+) -> Option<PathBuf> {
+    let mut configured = instances
+        .iter()
+        .filter(|instance| instance.driver() == Driver::Catalog && instance.agent() == Some(key))
+        .peekable();
+    let trial = if configured.peek().is_none() {
+        trying.catalog(key, None)
+    } else {
+        configured.find_map(|instance| trying.catalog(key, Some(instance.executable())))
+    };
+    trial.map(|trial| trial.canonical().to_owned())
+}
+
 impl Door<'_> {
     /// The path the user's own program of the catalog agent `key` leads to,
     /// as `trying` finds it and a try of it would take it: the one a
@@ -89,26 +110,15 @@ impl Door<'_> {
     /// the one its entry's guessed name finds. As `/login`, it never offers
     /// a second instance beside one configured.
     pub(super) fn own(&self, trying: &Trying, key: &AgentKey) -> Option<PathBuf> {
-        let mut configured = self
-            .instances
-            .iter()
-            .filter(|instance| {
-                instance.driver() == Driver::Catalog && instance.agent() == Some(key)
-            })
-            .peekable();
-        let trial = if configured.peek().is_none() {
-            trying.catalog(key, None)
-        } else {
-            configured.find_map(|instance| trying.catalog(key, Some(instance.executable())))
-        };
-        trial.map(|trial| trial.canonical().to_owned())
+        own_of(trying, key, &self.instances)
     }
 
     /// What the door finds of the user's own program of `key` alone, as
     /// `trying` finds it: Antigravity's as a listing names it, and a catalog
     /// or registry agent's as [`Door::own`] finds it for the row a listing
-    /// would give it, wherever that row would fall. Where neither finds one,
-    /// it is [`Door::unrun`]'s answer.
+    /// would give it, wherever that row would fall, a registry entry with a
+    /// target here that crucible does not install among them. Where neither
+    /// finds one, it is [`Door::unrun`]'s answer.
     pub(super) fn own_program(&self, trying: &Trying, key: &AgentKey) -> OwnProgram {
         if key.as_str() == ANTIGRAVITY_KEY {
             return own_antigravity(trying, &self.instances).map_or_else(
@@ -123,9 +133,9 @@ impl Door<'_> {
             .any(|offer| offer.entry.key == *key)
             || self.registry.as_ref().is_some_and(|view| {
                 view.index
-                    .offers()
+                    .listed()
                     .into_iter()
-                    .any(|offer| offer.entry().id == *key)
+                    .any(|(entry, _)| entry.id == *key)
             });
         if kept_word(key.as_str()) || !offered {
             return OwnProgram::Unlisted;
