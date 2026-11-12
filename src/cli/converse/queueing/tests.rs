@@ -842,4 +842,9 @@ fn a_line_sent_alone_and_held_back_waits_next_as_ctrl_s_under_a_turn_leaves_it()
     running.kept(&alone, &steer);
 
     assert_eq!(waiting(&running), waiting(&idle), "the two keys disagree");
+    assert_eq!(
+        running.highlighted(),
+        idle.highlighted(),
+        "the two keys leave the highlight apart"
+    );
 }

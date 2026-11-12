@@ -43,8 +43,8 @@ pub(super) enum Put {
     /// where it would read as the person's message.
     Note,
     /// The lines queued behind a turn about to be sent as the next one, or
-    /// the one Ctrl+S sent alone. Held back, they stay in the queue, and the
-    /// box is left as it is.
+    /// the one Ctrl+S sent alone. Held back, they stay in the queue, or the one
+    /// line goes back to it, and the box is left as it is.
     Queue,
     /// The dock's answers about to be sent.
     Answer,

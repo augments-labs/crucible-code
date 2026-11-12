@@ -2131,9 +2131,10 @@ enum Work {
     Turn(String, Box<[Attachment]>, Author),
     /// The lines the reader queued behind a turn, as the turn they are taken
     /// as: the oldest is its prompt, with the files it named, and the rest are
-    /// offered to it, or the one line Ctrl+S sent alone. The person's words, run as any prompt of theirs is; told
-    /// apart from one sent from the box because, held back, they go back to
-    /// the queue rather than into the box.
+    /// offered to it; or the one line Ctrl+S sent alone, which has no rest. The
+    /// person's words, run as any prompt of theirs is; told apart from one sent
+    /// from the box because, held back, they go back to the queue rather than
+    /// into the box.
     Queued(String, Box<[Attachment]>),
     /// Room, made for the reason it names.
     Room(Compacting),
