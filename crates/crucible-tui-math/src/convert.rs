@@ -321,9 +321,13 @@ impl Expr {
 }
 
 /// `expr` as compact text, in parentheses unless it is one thing already.
+///
+/// Its text is made once: made again to ask whether to group it, every level
+/// of a nested fraction would make the levels under it twice, and a span the
+/// cap holds would take seconds.
 fn compact_group(expr: &Expr, glyphs: Glyphs) -> String {
     let rendered = expr.compact(glyphs);
-    if grouped(expr, glyphs) {
+    if stands_apart(expr, &rendered) {
         format!("({rendered})")
     } else {
         rendered
@@ -333,10 +337,15 @@ fn compact_group(expr: &Expr, glyphs: Glyphs) -> String {
 /// Whether `expr` is more than one thing, and is put in parentheses where it
 /// stands as one.
 fn grouped(expr: &Expr, glyphs: Glyphs) -> bool {
+    stands_apart(expr, &expr.compact(glyphs))
+}
+
+/// Whether `expr`, whose compact text is `rendered`, is more than one thing.
+fn stands_apart(expr: &Expr, rendered: &str) -> bool {
     !matches!(
         expr,
         Expr::Text(_) | Expr::Scripts { .. } | Expr::Root(_, _)
-    ) && expr.compact(glyphs).chars().count() != 1
+    ) && rendered.chars().count() != 1
 }
 
 /// `text` raised or lowered: in the script characters where every character

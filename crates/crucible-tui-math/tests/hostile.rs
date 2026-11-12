@@ -319,6 +319,27 @@ fn a_formula_at_the_byte_cap_is_drawn_inside_the_deadline_and_the_planted_quadra
 }
 
 #[test]
+fn a_continued_fraction_nested_thirty_deep_is_drawn_in_a_line_and_answered_as_a_block_inside_the_deadline()
+ {
+    const DEEP: usize = 30;
+    let mut text = String::from("x = ");
+    text.push_str(&r"1 + \frac{1}{".repeat(DEEP));
+    text.push('y');
+    text.push_str(&"}".repeat(DEEP));
+    let ended = guarded(DEADLINE, move || {
+        let mut in_a_line = Vec::new();
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let room = room(WIDEST, glyphs);
+            in_a_line.push(Formulas.inline(&text, &room).is_some());
+            // Too tall to lay out at its depth: what is asked is an answer.
+            drop(Formulas.block(&text, &room));
+        }
+        in_a_line
+    });
+    assert_eq!(ended, Ended::Returned(vec![true, true]));
+}
+
+#[test]
 fn a_formula_in_a_fence_of_an_answer_is_drawn_and_its_refusal_shown_as_written() {
     let drawers = Drawers::default().with(Arc::new(Formulas));
     let rows = answered(
