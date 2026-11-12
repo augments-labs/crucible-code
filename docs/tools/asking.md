@@ -188,7 +188,7 @@ where several may be chosen:
 
 The row under the dock names the keys that work there. Where the window is
 short, the dock gives up its blank rows before that row; where it is narrow,
-that row folds between two keys rather than cutting one off.
+that row folds between two keys before it cuts any key short.
 
 Nothing in the dock moves by itself. New questions arriving add to the count
 and change neither what you are on nor what you have written, and the turn
