@@ -16,8 +16,12 @@
 //! path segment without a trailing `@<version>`, or the Python package without
 //! a trailing `==<version>`, and the package's arguments and environment are
 //! kept. Any other version specifier, extras, an address or a path gives no
-//! guess, nor does a name a package runner goes by ([`RUNNERS`]): the guess is
-//! a program crucible may start, and crucible never starts a package runner.
+//! guess.
+//!
+//! Whatever it is read from, a guess that is a name a package runner goes by
+//! ([`RUNNERS`]), in any case and with any extension, is no guess, and the row
+//! proposes nothing: the guess is a program crucible may start, and crucible
+//! never starts a package runner.
 //!
 //! The row is read through the catalog's own field reader, so `cmd` is
 //! refused unless it is relative and stays inside its directory, and every
@@ -41,8 +45,8 @@ pub struct OwnEntry {
 
 impl OwnEntry {
     /// What the signed catalog's `entry` proposes for the platform this build
-    /// runs on, or nothing where it is an npm or uvx entry or has no target
-    /// here.
+    /// runs on, or nothing where it is an npm or uvx entry, has no target
+    /// here, or its `cmd` is a package runner's.
     ///
     /// # Errors
     ///
@@ -58,13 +62,13 @@ impl OwnEntry {
             .env
             .iter()
             .map(|variable| (variable.name.as_ref(), variable.value.as_ref()));
-        Self::read(&target.cmd, &target.args, env).map(Some)
+        Self::read(&target.cmd, &target.args, env)
     }
 
     /// What the registry's `entry` proposes for `platform`: from its binary
     /// there where it publishes one, else from the package it publishes, or
-    /// nothing where it publishes neither or its package's name gives no
-    /// guess. A target with no SHA-256, or with an archive this crucible
+    /// nothing where it publishes neither or what it publishes gives no
+    /// guess, a package runner's name among them. A target with no SHA-256, or with an archive this crucible
     /// cannot unpack, is read all the same.
     ///
     /// # Errors
@@ -78,7 +82,7 @@ impl OwnEntry {
                 .env
                 .iter()
                 .map(|(name, value)| (name.as_ref(), value.as_ref()));
-            return Self::read(&target.program(), &target.args, env).map(Some);
+            return Self::read(&target.program(), &target.args, env);
         }
         let Some(package) = entry.package() else {
             return Ok(None);
@@ -90,7 +94,7 @@ impl OwnEntry {
             .env
             .iter()
             .map(|(name, value)| (name.as_ref(), value.as_ref()));
-        Self::read(guess, &package.args, env).map(Some)
+        Self::read(guess, &package.args, env)
     }
 
     /// The name the program is guessed to go by on `PATH`.
@@ -112,12 +116,13 @@ impl OwnEntry {
     }
 
     /// The row `cmd`, `args` and `env` are, read back through the catalog's
-    /// field reader.
+    /// field reader, or nothing where the file name of `cmd` is a package
+    /// runner's.
     fn read<'a>(
         cmd: &str,
         args: &[Box<str>],
         env: impl Iterator<Item = (&'a str, &'a str)>,
-    ) -> Result<Self, CatalogError> {
+    ) -> Result<Option<Self>, CatalogError> {
         let mut row = Map::new();
         row.insert("cmd".into(), Value::from(cmd));
         row.insert(
@@ -143,11 +148,15 @@ impl OwnEntry {
                 name: variable.name.clone(),
             });
         }
-        Ok(Self {
-            guess: cmd.rsplit('/').next().unwrap_or(&cmd).into(),
+        let guess = cmd.rsplit('/').next().unwrap_or(&cmd);
+        if runs(guess) {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            guess: guess.into(),
             args: fields.arguments("args")?,
             env,
-        })
+        }))
     }
 }
 
@@ -161,8 +170,7 @@ pub(super) const RUNNERS: &[&str] = &[
 /// The name the program `package`, published for `runner`, is guessed to go
 /// by on `PATH`: an npm package's last path segment without a trailing
 /// `@<version>`, a Python package without a trailing `==<version>`. Any other
-/// version specifier, extras, an address, a path, or a name a package runner
-/// goes by gives none.
+/// version specifier, extras, an address or a path gives none.
 fn guessed(runner: Runner, package: &str) -> Option<&str> {
     let (name, version) = match runner {
         Runner::Npx => {
@@ -189,12 +197,16 @@ fn guessed(runner: Runner, package: &str) -> Option<&str> {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '+' | '!'))
     });
-    let runs = RUNNERS.iter().any(|runner| {
-        name.split('.')
-            .next()
-            .is_some_and(|stem| stem.eq_ignore_ascii_case(runner))
-    });
-    (versioned && named(name) && !runs).then_some(name)
+    (versioned && named(name)).then_some(name)
+}
+
+/// Whether `name`, before its first `.`, is a name a package runner goes by,
+/// in any case.
+fn runs(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name);
+    RUNNERS
+        .iter()
+        .any(|runner| stem.eq_ignore_ascii_case(runner))
 }
 
 /// Whether `name` is a package's own name: ASCII letters, digits, `.`, `-` and

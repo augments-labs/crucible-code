@@ -3403,7 +3403,7 @@ fn an_unread_archive_is_listed_with_its_reason_and_never_offered() {
 /// entry is shown only where the name it guesses is found on `PATH`, and the
 /// fixture's guesses none, being a package runner's own name.
 #[test]
-fn an_entry_with_no_target_for_this_platform_is_not_listed() {
+fn only_another_platforms_binary_is_not_listed() {
     let platform = super::trust::here();
     let index = registry_of(&platform);
 
@@ -3870,6 +3870,79 @@ fn an_own_entry_setting_bash_env_or_env_is_refused() {
     assert!(
         OwnEntry::registry(index.entry(&agent("own")).expect("listed"), &platform).is_ok(),
         "a name that only begins like one is not refused"
+    );
+}
+
+/// No row's guess is a package runner, whatever it is read from: a signed
+/// catalog binary's `cmd`, a registry binary's `cmd` or a registry package's
+/// name, each naming every runner in any case and with or without `.exe` or
+/// `.cmd`, proposes nothing on `PATH`. A name that only begins like a runner's
+/// is still guessed.
+#[test]
+fn a_guess_naming_a_package_runner_is_refused_on_every_path() {
+    let platform = here();
+    let registry_binary = |cmd: &str| {
+        let index = registry_with(&json!({
+            "archive": "https://downloads.example.com/agent.tar.gz",
+            "cmd": cmd,
+        }));
+        OwnEntry::registry(index.entry(&agent("own")).expect("listed"), &platform)
+            .expect("read")
+            .map(|own| own.guess().to_owned())
+    };
+    let catalog_binary = |cmd: &str| {
+        let mut signed = binary();
+        set(&mut signed, "/targets/0/cmd", json!(cmd));
+        OwnEntry::catalog(&entry_here(signed))
+            .expect("read")
+            .map(|own| own.guess().to_owned())
+    };
+    let package = |runner: &str, name: &str| {
+        own_packaged(&json!({runner: {"package": name}})).map(|own| own.guess().to_owned())
+    };
+
+    for runner in super::own::RUNNERS {
+        for name in [
+            (*runner).to_owned(),
+            runner.to_ascii_uppercase(),
+            format!("{runner}.exe"),
+            format!("{}.CMD", runner.to_ascii_uppercase()),
+        ] {
+            assert_eq!(
+                registry_binary(&format!("./{name}")),
+                None,
+                "registry ./{name}"
+            );
+            assert_eq!(
+                registry_binary(&format!("bin/{name}")),
+                None,
+                "registry bin/{name}"
+            );
+            assert_eq!(
+                catalog_binary(&format!("bin/{name}")),
+                None,
+                "catalog bin/{name}"
+            );
+            assert_eq!(package("npx", &format!("{name}@1.0.0")), None, "npx {name}");
+            assert_eq!(
+                package("npx", &format!("@example/{name}@1.0.0")),
+                None,
+                "npx @example/{name}"
+            );
+            assert_eq!(package("uvx", &format!("{name}==1.0")), None, "uvx {name}");
+        }
+    }
+
+    assert_eq!(registry_binary("./npx-agent").as_deref(), Some("npx-agent"));
+    assert_eq!(registry_binary("bin/uvxagent").as_deref(), Some("uvxagent"));
+    assert_eq!(catalog_binary("bin/bunny").as_deref(), Some("bunny"));
+    assert_eq!(
+        package("npx", "npx-agent@1.0.0").as_deref(),
+        Some("npx-agent")
+    );
+    assert_eq!(
+        package("uvx", "uvx-agent==1.0").as_deref(),
+        Some("uvx-agent")
     );
 }
 

@@ -809,7 +809,8 @@ pub enum Unoffered {
     /// fetches and starts.
     #[error(
         "the ACP Registry gives {id} no binary for {platform}, only a package for {runner}, which \
-         crucible never runs, so it is not offered"
+         crucible never runs, so it is not offered",
+        runner = .runner.key()
     )]
     Package {
         /// The agent.
@@ -833,19 +834,13 @@ pub enum Runner {
 
 impl Runner {
     /// The key the registry's `distribution` names it by, which is also the
-    /// runner's program name.
-    #[must_use]
-    pub const fn key(self) -> &'static str {
+    /// runner's program name; kept to this module, so no other code is handed
+    /// a runner's program name to start.
+    const fn key(self) -> &'static str {
         match self {
             Self::Npx => "npx",
             Self::Uvx => "uvx",
         }
-    }
-}
-
-impl std::fmt::Display for Runner {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.key())
     }
 }
 
