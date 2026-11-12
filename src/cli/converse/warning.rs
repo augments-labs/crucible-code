@@ -153,6 +153,14 @@ pub(super) const UNSENT: &str = "nothing was sent";
 /// Said once the message is back in the box.
 pub(super) const KEPT: &str = "nothing was sent; your message is back in the prompt box";
 
+/// Said once the note about a command that ended was going to start a turn,
+/// and nothing was sent.
+pub(super) const DROPPED: &str = "nothing was sent; the model was not told the command ended";
+
+/// Said where no panel fits before the note about a command that ended starts
+/// a turn. There is no sending it again: the note is dropped.
+pub(super) const CRAMPED_NOTE: &str = "! this route needs an answer first; nothing was sent, so the model was not told the command ended";
+
 /// Said after the words under a run with no terminal.
 pub(super) const ELSEWHERE: &str = "Nothing was sent; answer it once in a terminal.";
 
@@ -205,7 +213,7 @@ pub(super) fn ask_while<T: Terminal>(
     };
     let shown: &[Offered<'_>] = put.offered().unwrap_or(&launching);
     let told: &[&str] = match put {
-        // A message or an answer on an installed agent's route that starts
+        // A message, a note or an answer on an installed agent's route that starts
         // the agent says what starting it runs, as a launch does.
         Put::Send | Put::Note | Put::Answer if content_use::launches(&warned.route) => launched,
         Put::Launch => launched,
@@ -259,8 +267,9 @@ pub(super) fn recorded(terms: &Terms, warned: &Warned) -> Result<(), String> {
 /// Whether `work` is held back rather than sent: asked about first where the
 /// route it would go on has no yes, and handed back whole where the answer
 /// was anything but yes. The application's note about a command that ended is
-/// not handed back: it is dropped, and the prompt box keeps what it held. A turn [`Conversation::unlaunchable`] refuses is not
-/// held: it goes on to that refusal unasked.
+/// not handed back: it is dropped, and the prompt box keeps what it held. A
+/// turn [`Conversation::unlaunchable`] refuses is not held: it goes on to
+/// that refusal unasked.
 ///
 /// # Errors
 ///
@@ -299,13 +308,8 @@ pub(super) fn held<T: Terminal>(
                 Ok(()) => continue,
                 Err(said) => said,
             },
-            // Room to be made has no message to give back, the dock's
-            // answers stay in the dock, and the application's note is not
-            // the person's to have back.
-            Answer::Back if returned(work).is_none() => UNSENT.to_owned(),
-            Answer::Cramped if returned(work).is_none() => CRAMPED_ROOM.to_owned(),
-            Answer::Back => KEPT.to_owned(),
-            Answer::Cramped => CRAMPED_SEND.to_owned(),
+            Answer::Back => left(work, false).to_owned(),
+            Answer::Cramped => left(work, true).to_owned(),
         };
     };
     if let Some(prompt) = returned(work) {
@@ -313,6 +317,21 @@ pub(super) fn held<T: Terminal>(
     }
     renderer.commit(&said)?;
     Ok(true)
+}
+
+/// What is said once `work` was held back unsent, where the panel was answered
+/// with no, or did not fit where `cramped`. Room to be made has no message to
+/// give back and the dock's answers stay in the dock; the application's note
+/// is not the person's to have back, and is dropped.
+pub(super) fn left(work: &Work, cramped: bool) -> &'static str {
+    match (work, cramped) {
+        (Work::Turn(_, _, Author::Person), false) => KEPT,
+        (Work::Turn(_, _, Author::Person), true) => CRAMPED_SEND,
+        (Work::Turn(_, _, Author::Application), false) => DROPPED,
+        (Work::Turn(_, _, Author::Application), true) => CRAMPED_NOTE,
+        (Work::Room(_) | Work::Answer(_), false) => UNSENT,
+        (Work::Room(_) | Work::Answer(_), true) => CRAMPED_ROOM,
+    }
 }
 
 /// The message held back that goes back in the prompt box: only one the

@@ -21,8 +21,14 @@ of a token.
 The note that starts a turn when a command left running
 [ends on its own](../tools/commands.md#when-one-ends-on-its-own) is asked about
 the same way. It is not your message, so going back drops it rather than
-putting it in the box, and whatever you had typed there stays. The model is
-not told of that ending.
+putting it in the box, and whatever you had typed there stays. A window too
+short to ask in drops it too. Either way the model is not told of that ending,
+and the line says so:
+
+```text
+nothing was sent; the model was not told the command ended
+! this route needs an answer first; nothing was sent, so the model was not told the command ended
+```
 
 The same question is asked when you choose such a route in `/login`, or a
 model of one in `/model`, before the choice is taken. A yes given in `/login`

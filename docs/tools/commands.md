@@ -231,7 +231,11 @@ waiting on your keyboard. Whatever you had half-written in the box is still
 there afterwards.
 
 Whichever route gets there first is the only one that says it. An ending is told
-exactly once however long the turn it landed in was.
+at most once however long the turn it landed in was. The one time it is not told
+is when the turn it would start is held back on a route that [asks before
+sending](../providers/content-use.md#what-is-asked-and-when): going back, or a
+window too short to ask in, drops the note, and the model never hears of that
+ending.
 
 Nothing starts a turn where you have already begun one: a prompt you typed or
 queued takes the ending with it instead, so it is said once either way.

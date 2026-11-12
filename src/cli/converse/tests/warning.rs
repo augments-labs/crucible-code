@@ -11,6 +11,7 @@ use crucible_client_api::Author;
 use crucible_runner::Tools;
 use crucible_session::Session;
 use crucible_tui::{Recording, Renderer};
+use crucible_types::Compacting;
 
 use crate::cli::Fatal;
 use crate::cli::converse::{First, Terms, converse};
@@ -18,7 +19,9 @@ use crate::cli::fake::Script;
 
 use crate::cli::converse::answering::Answers;
 use crate::cli::converse::docking::Submission;
-use crate::cli::converse::warning::{CRAMPED_ROOM, CRAMPED_SEND, Put, UNSENT, unanswered};
+use crate::cli::converse::warning::{
+    CRAMPED_NOTE, CRAMPED_ROOM, CRAMPED_SEND, DROPPED, KEPT, Put, UNSENT, left, unanswered,
+};
 use crate::cli::converse::{Held, Work, ran, refreshed};
 
 use super::{opening, paired, plain, saying, scripted};
@@ -536,8 +539,33 @@ fn a_woken_note_held_back_leaves_the_box_as_the_person_left_it() {
     assert_eq!(asked.load(Ordering::SeqCst), 0, "the note was sent");
     assert_eq!(held.editor.text(), "half a thought");
     let written = cramped.terminal().written().to_string();
-    assert!(written.contains(CRAMPED_ROOM), "{written}");
+    assert!(written.contains(CRAMPED_NOTE), "{written}");
     assert!(!written.contains(CRAMPED_SEND), "{written}");
+}
+
+#[test]
+fn what_is_said_after_holding_back_names_what_became_of_it() {
+    // The person's message is back in the box; the note is dropped, and says
+    // the model was not told; room and the dock's answers had nothing to give
+    // back. Neither of the note's lines promises a send to try again.
+    let message = Work::Turn("hello".to_owned(), Box::default(), Author::Person);
+    let note = Work::Turn(
+        "Background command finished: exit status 0".to_owned(),
+        Box::default(),
+        Author::Application,
+    );
+    let room = Work::Room(Compacting::Full);
+
+    assert_eq!(left(&message, false), KEPT);
+    assert_eq!(left(&message, true), CRAMPED_SEND);
+    assert_eq!(left(&note, false), DROPPED);
+    assert_eq!(left(&note, true), CRAMPED_NOTE);
+    assert_eq!(left(&room, false), UNSENT);
+    assert_eq!(left(&room, true), CRAMPED_ROOM);
+    for said in [DROPPED, CRAMPED_NOTE] {
+        assert!(said.contains("not told the command ended"), "{said}");
+        assert!(!said.contains("again"), "{said}");
+    }
 }
 
 #[test]
