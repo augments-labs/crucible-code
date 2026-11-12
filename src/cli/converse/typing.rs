@@ -1022,7 +1022,7 @@ fn working<T: Terminal>(
     // turn is what is being watched until somebody opens the dock, and the
     // closed dock is one row. Open, it may reach past the share, as it does at
     // the prompt.
-    let docked = drawing::docked(
+    let (docked, writing) = drawing::docked(
         footing.docking,
         columns,
         (left + drawing::reach(renderer, footing.docking)).saturating_sub(listed.len()),
@@ -1045,12 +1045,17 @@ fn working<T: Terminal>(
             (turn, over) = stood;
         }
     }
+    let writing = writing.map(|caret| Caret {
+        row: over.len() + caret.row,
+        column: caret.column,
+    });
     over.extend(docked);
     over.extend(listed);
 
     Footed {
         turn,
         over,
+        writing,
         boxed: boxed.rows,
         pointed: boxed.pointed,
         caret: boxed.caret,
@@ -1071,6 +1076,10 @@ struct Footed {
     /// panel, with the working row and plan above it where it stands, and the
     /// list a `/`-started line has open.
     over: Vec<Row>,
+    /// Where a line of the dock is being written in `over`, counted from its
+    /// first row: the cursor stands there instead of in the box, where the
+    /// window draws that row.
+    writing: Option<Caret>,
     /// The box.
     boxed: Vec<Row>,
     /// The pointable prompt row in its pointed palette state.
@@ -2057,7 +2066,8 @@ pub(super) struct During<'a> {
     pub(super) docking: &'a mut Docking,
 }
 
-/// Puts the box under the turn, with the cursor in it.
+/// Puts the box under the turn, with the cursor in it, or in the line of
+/// the dock being written.
 ///
 /// The renderer receives the box and footing together so their replacement is
 /// one frame.
@@ -2071,7 +2081,7 @@ pub(super) fn stand<T: Terminal>(
     let footed = working(renderer, editor, footing, says, style);
 
     let pointed = footed.pointed.as_ref().map(|(at, row)| (*at, row));
-    let prompt = replacement(&footed.boxed, footed.caret, pointed)?;
+    let prompt = replacement(&footed.boxed, footed.caret, pointed)?.writing_over(footed.writing);
     renderer.replace_running(prompt, &footed.turn, &footed.over, style.palette())?;
     Ok(())
 }

@@ -2315,6 +2315,7 @@ fn between_turns_the_queue_stands_over_the_plan_as_it_does_under_a_turn() {
         0,
         Style::plain(),
     )
+    .0
     .iter()
     .map(Row::text)
     .collect();
@@ -2355,7 +2356,7 @@ fn the_queue_held_over_the_idle_box_fits_every_width_and_every_room() {
                 for columns in 1..=120 {
                     for room in [0, 1, 2, 3, 4, 5, 6, 8, 12, 24, 40] {
                         let says = settled(Mode::Ask);
-                        let rows = over(
+                        let (rows, _) = over(
                             around(
                                 Above {
                                     planning: &plan,

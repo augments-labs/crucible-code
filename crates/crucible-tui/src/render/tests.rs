@@ -175,6 +175,7 @@ fn replacing_the_foot_flushes_turn_prompt_and_status_once() {
                 rows: &old,
                 caret: Caret::default(),
                 pointed: None,
+                over: None,
             },
             &[Row::plain("old turn")],
             Palette::plain(),
@@ -189,6 +190,7 @@ fn replacing_the_foot_flushes_turn_prompt_and_status_once() {
                 rows: &new,
                 caret: Caret::default(),
                 pointed: None,
+                over: None,
             },
             &[Row::plain("new turn")],
             Palette::plain(),
@@ -229,6 +231,7 @@ fn a_pointable_prompt_defers_one_frame_until_its_target_is_replaced() {
                 rows: &prompt,
                 caret: Caret::default(),
                 pointed: Some((1, &pointed)),
+                over: None,
             },
             &[],
             colourful(),
@@ -251,6 +254,7 @@ fn a_pointable_prompt_defers_one_frame_until_its_target_is_replaced() {
                 rows: &prompt,
                 caret: Caret::default(),
                 pointed: Some((1, &pointed)),
+                over: None,
             },
             &[],
             colourful(),
@@ -285,6 +289,7 @@ fn a_pointable_prompt_defers_one_frame_until_its_target_is_replaced() {
                 rows: &prompt,
                 caret: Caret::default(),
                 pointed: Some((1, &pointed)),
+                over: None,
             },
             &[],
             colourful(),
@@ -707,6 +712,7 @@ fn a_resize_drops_a_stale_prompt_hover_target_until_replacement_reflows_it() {
                 rows: &prompt,
                 caret: Caret::default(),
                 pointed: Some((1, &pointed)),
+                over: None,
             },
             &[],
             colourful(),
@@ -736,6 +742,7 @@ fn a_resize_drops_a_stale_prompt_hover_target_until_replacement_reflows_it() {
                 rows: &prompt,
                 caret: Caret::default(),
                 pointed: Some((1, &pointed)),
+                over: None,
             },
             &[],
             colourful(),
@@ -1914,6 +1921,7 @@ fn counting() -> (Drawn, usize) {
                 rows: &prompt,
                 caret: Caret::default(),
                 pointed: Some((1, &pointed)),
+                over: None,
             },
             &[],
             colourful(),
@@ -2338,6 +2346,7 @@ fn a_pointer_on_the_rail_asks_for_a_frame_only_when_the_row_under_it_changes() {
                 rows: &prompt,
                 caret: Caret::default(),
                 pointed: Some((1, &pointed)),
+                over: None,
             },
             &[],
             Palette::plain(),
@@ -2885,6 +2894,7 @@ fn running(drawn: &mut Drawn, turn: &[Row], over: &[Row]) {
                 rows: &rows,
                 caret,
                 pointed: None,
+                over: None,
             },
             turn,
             over,
@@ -3714,6 +3724,7 @@ fn a_rule_narrowed_is_still_one_row() {
 
 mod headings;
 mod notes;
+mod writing;
 
 /// The words of an item that wraps at thirty columns, three rows or more.
 const LONG: &str = "long enough that it has to wrap onto another row, and then one more";

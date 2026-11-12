@@ -120,6 +120,9 @@ pub struct PromptRows<'a> {
     caret: Caret,
     /// A relative row and that row in its pointed palette state.
     pointed: Option<(usize, &'a Row)>,
+    /// Where a line is being written in what stands over the box, which the
+    /// cursor stands at instead where the window draws it.
+    over: Option<Caret>,
 }
 
 impl<'a> PromptRows<'a> {
@@ -147,7 +150,18 @@ impl<'a> PromptRows<'a> {
             rows,
             caret,
             pointed,
+            over: None,
         })
+    }
+
+    /// The same, with the cursor where a line is being written in the rows
+    /// standing over the box, its row counted from the first of them, since
+    /// that line is what the keys are typing into. A caret that does not fall
+    /// on one of those rows as the window draws them is not one, and the
+    /// cursor stays in the box.
+    #[must_use]
+    pub fn writing_over(self, over: Option<Caret>) -> Self {
+        Self { over, ..self }
     }
 }
 
@@ -226,6 +240,10 @@ struct Standing {
     boxed_in: Option<Palette>,
     /// Where the cursor belongs in the box.
     prompted: Option<Caret>,
+    /// Where a line is being written in `turn`, under a running turn's own
+    /// rows: the cursor stands there rather than in the box, where that row
+    /// is drawn.
+    written: Option<Caret>,
 }
 
 impl Standing {
@@ -241,6 +259,7 @@ impl Standing {
         self.boxed.clear();
         self.boxed_in = None;
         self.prompted = None;
+        self.written = None;
     }
 
     /// Holds `turn` and `over` as the first slot, `turn` no wider than the
@@ -1735,6 +1754,7 @@ impl<T: Terminal> Renderer<T> {
 
         self.standing.boxes(rows, palette, self.size.columns);
         self.standing.prompted = Some(caret);
+        self.standing.written = None;
         self.prompt_target = None;
         self.pointed_changed = false;
         self.draw()
@@ -1745,6 +1765,9 @@ impl<T: Terminal> Renderer<T> {
     /// `prompt.pointed` names one prompt row and the same row in its pointed
     /// palette state. The renderer chooses it from the pointer's absolute
     /// window row; the caller remains the owner of the component and its words.
+    ///
+    /// [`PromptRows::writing_over`] stands the cursor in `over` instead, where
+    /// the window draws that row.
     ///
     /// # Errors
     ///
@@ -1791,6 +1814,21 @@ impl<T: Terminal> Renderer<T> {
             .stands(turn, over, palette, self.folds(), columns);
         self.standing.prompted = Some(prompt.caret);
         self.standing.turned = None;
+        // A line written over the box has the cursor, on one of the rows as
+        // they stand, clipped to the window: the turn's own rows come first.
+        // Whether the window draws that row is the frame's to say.
+        self.standing.written = prompt
+            .over
+            .filter(|caret| {
+                self.standing
+                    .over
+                    .get(caret.row)
+                    .is_some_and(|row| caret.column <= row.columns())
+            })
+            .map(|caret| Caret {
+                row: self.standing.running.len() + caret.row,
+                column: caret.column,
+            });
         self.prompt_target = prompt.pointed.map(|(at, row)| (at, door(row, columns)));
 
         if self.prompt_pointed()
@@ -1857,6 +1895,7 @@ impl<T: Terminal> Renderer<T> {
         self.standing
             .stands(turn, rows, palette, self.folds(), self.size.columns);
         self.standing.turned = caret;
+        self.standing.written = None;
         self.draw()
     }
 
@@ -2697,19 +2736,26 @@ impl<T: Terminal> Renderer<T> {
 
     /// Where the cursor goes, in window rows and columns.
     ///
-    /// The box first, because between turns it is the only thing anybody is
-    /// typing into. Then whatever a turn is holding, which is where a question
-    /// asked mid-turn puts it. With neither, the top of the prompt band — the
-    /// row the box would be on, which is where the next thing to be typed will
-    /// appear.
+    /// A line being written over the box first, where the turn band draws
+    /// it, because that line is what the keys are typing into. Then the box,
+    /// because between turns it is mostly what anybody is typing into. Then
+    /// whatever stands over the box, which is where a question asked mid-turn
+    /// puts it. With none, the top of the prompt band — the row the box would
+    /// be on, which is where the next thing to be typed will appear.
     fn parked(&self, bands: &Bands) -> (usize, usize) {
         let foot = self.size.rows.saturating_sub(1);
 
         let at = self
             .standing
-            .prompted
-            .filter(|_| !self.standing.prompt.is_empty())
-            .map(|caret| (bands.prompt.start + caret.row, caret.column))
+            .written
+            .filter(|caret| caret.row < bands.turn.len())
+            .map(|caret| (bands.turn.start + caret.row, caret.column))
+            .or_else(|| {
+                self.standing
+                    .prompted
+                    .filter(|_| !self.standing.prompt.is_empty())
+                    .map(|caret| (bands.prompt.start + caret.row, caret.column))
+            })
             .or_else(|| {
                 self.standing
                     .turned
