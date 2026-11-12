@@ -16,12 +16,13 @@
 //!
 //! Each turn asks the real read tool to read a planted file and the real edit
 //! tool to rewrite the twenty lines of a second one, all but its first and its
-//! last, then receives a streamed answer that ends in a table, the two lines
-//! that stayed in a fence of Rust, and the diff of that rewrite in a fence. A
-//! table is kept as the source it was written as beside the rows it was laid
-//! out as, and so is a diff, which is drawn as a change; the edit's own change
-//! is drawn too, and being folded is kept written out for the key that shows it
-//! whole.
+//! last, then receives a streamed answer that ends in a formula in a line, one
+//! between `$$` lines, a table, the two lines that stayed in a fence of Rust,
+//! and the diff of that rewrite in a fence. A table is kept as the source it
+//! was written as beside the rows it was laid out as, and so is a diff, which
+//! is drawn as a change, and a formula, which is drawn as text; the edit's own
+//! change is drawn too, and being folded is kept written out for the key that
+//! shows it whole.
 //! So a session of them holds more than a session of prose the same length, and
 //! the fill below rolls every one of them out past the ceiling with its source.
 //! The measurement is refused if the second file does not end as the last edit
@@ -724,7 +725,8 @@ fn edit(turn: usize) -> String {
 /// takes; a fill turn ends every delta, so every delta is a line. Lines are what
 /// the record bounds, so filling it is a question of how many endings arrive
 /// rather than of how much text does. A measured turn's prose is followed by a
-/// table, streamed a row at a time, which the blank line after it closes, then
+/// paragraph with a formula in a line, then a formula between `$$` lines, then
+/// a table, streamed a row at a time, which the blank line after it closes, then
 /// by the lines the turn's edit left where they were in a fence that names
 /// Rust, and then by the change that edit made, written as the unified diff of
 /// it in a fence with those lines as the rows it keeps. Both fences are
@@ -737,7 +739,7 @@ fn answer(turn: usize, deltas: usize, lines: bool) -> String {
     let ending = if lines { "\\n" } else { "" };
     let mut body = String::with_capacity(
         deltas
-            .saturating_add(TABLE_ROWS + 2 + EDITED * 2 + 4)
+            .saturating_add(2 + TABLE_ROWS + 2 + EDITED * 2 + 4)
             .saturating_mul(112)
             .saturating_add(512),
     );
@@ -752,6 +754,21 @@ fn answer(turn: usize, deltas: usize, lines: bool) -> String {
         );
     }
     if !lines {
+        let formulas = [
+            format!(
+                "\n\nThe pace of turn {turn} holds while $\\frac{{s}}{{o}} \\geq \\frac{{1}}{{2}}$, over every frame."
+            ),
+            format!(
+                "\n\n$$\nr_{{{turn}}} = \\frac{{1}}{{n}} \\sum_{{i=1}}^{{n}} \\frac{{f_i}}{{t_i}}\n$$"
+            ),
+        ];
+        for formula in formulas {
+            let _ = write!(
+                body,
+                "event: content_block_delta\ndata: {{\"index\":0,\"delta\":{{\"type\":\"text_delta\",\"text\":\"{}\"}}}}\n\n",
+                quoted(&formula),
+            );
+        }
         let _ = write!(
             body,
             "event: content_block_delta\ndata: {{\"index\":0,\"delta\":{{\"type\":\"text_delta\",\"text\":\"\\n\\n| turn | field | read |\\n| --- | --- | ---: |\\n\"}}}}\n\n"
@@ -1361,5 +1378,27 @@ mod tests {
 
         let fill = said(&answer(TURNS + 1, 8, true)).text;
         assert!(!fill.contains("```"), "{fill}");
+    }
+
+    #[test]
+    fn a_measured_answer_writes_a_formula_in_a_line_and_one_in_a_block_before_its_table() {
+        let text = said(&answer(3, DELTAS, false)).text;
+        // The prose closes on a paragraph whose formula is in a line, and the
+        // block after it stands between `$$` lines of its own, so the table
+        // that follows it is read as a table and the formula as a block.
+        assert!(
+            text.contains(concat!(
+                "field 399 \n\n",
+                "The pace of turn 3 holds while $\\frac{s}{o} \\geq \\frac{1}{2}$, over every frame.\n\n",
+                "$$\n",
+                "r_{3} = \\frac{1}{n} \\sum_{i=1}^{n} \\frac{f_i}{t_i}\n",
+                "$$\n\n",
+                "| turn | field | read |\n",
+            )),
+            "{text}"
+        );
+
+        let fill = said(&answer(TURNS + 1, 8, true)).text;
+        assert!(!fill.contains('$'), "{fill}");
     }
 }
