@@ -233,9 +233,9 @@ there afterwards.
 Whichever route gets there first is the only one that says it. An ending is told
 at most once however long the turn it landed in was. The one time it is not told
 is when the turn it would start is held back on a route that [asks before
-sending](../providers/content-use.md#what-is-asked-and-when): going back, or a
-window too short to ask in, drops the note, and the model never hears of that
-ending.
+sending](../providers/content-use.md#what-is-asked-and-when) and does not go:
+going back, a window too short to ask in, or a yes that could not be written
+down drops the note, and the model never hears of that ending.
 
 Nothing starts a turn where you have already begun one: a prompt you typed or
 queued takes the ending with it instead, so it is said once either way.

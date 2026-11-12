@@ -338,7 +338,7 @@ pub(super) fn left(work: &Work, cramped: bool) -> &'static str {
 /// person wrote. Putting it back replaces what the box holds, so the
 /// application's note would overwrite a half-typed line and then be sent as
 /// the person's own.
-fn returned(work: &Work) -> Option<&str> {
+pub(super) fn returned(work: &Work) -> Option<&str> {
     match work {
         Work::Turn(prompt, _, Author::Person) => Some(prompt),
         Work::Turn(_, _, Author::Application) | Work::Room(_) | Work::Answer(_) => None,

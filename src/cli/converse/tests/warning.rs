@@ -20,7 +20,8 @@ use crate::cli::fake::Script;
 use crate::cli::converse::answering::Answers;
 use crate::cli::converse::docking::Submission;
 use crate::cli::converse::warning::{
-    CRAMPED_NOTE, CRAMPED_ROOM, CRAMPED_SEND, DROPPED, KEPT, Put, UNSENT, left, unanswered,
+    CRAMPED_NOTE, CRAMPED_ROOM, CRAMPED_SEND, DROPPED, KEPT, Put, UNSENT, left, returned,
+    unanswered,
 };
 use crate::cli::converse::{Held, Work, ran, refreshed};
 
@@ -555,6 +556,11 @@ fn what_is_said_after_holding_back_names_what_became_of_it() {
         Author::Application,
     );
     let room = Work::Room(Compacting::Full);
+    let answers = Work::Answer(Submission {
+        era: crucible_client_api::Era::Stint(1),
+        id: crucible_types::QuestionId::numbered(1),
+        replies: Vec::new(),
+    });
 
     assert_eq!(left(&message, false), KEPT);
     assert_eq!(left(&message, true), CRAMPED_SEND);
@@ -562,6 +568,14 @@ fn what_is_said_after_holding_back_names_what_became_of_it() {
     assert_eq!(left(&note, true), CRAMPED_NOTE);
     assert_eq!(left(&room, false), UNSENT);
     assert_eq!(left(&room, true), CRAMPED_ROOM);
+    assert_eq!(left(&answers, false), UNSENT);
+    assert_eq!(left(&answers, true), CRAMPED_ROOM);
+    // The line says the message is back in the box exactly where it is put
+    // back, and only the person's own message is.
+    for work in [&message, &note, &room, &answers] {
+        assert_eq!(left(work, false) == KEPT, returned(work).is_some());
+    }
+    assert_eq!(returned(&message), Some("hello"));
     for said in [DROPPED, CRAMPED_NOTE] {
         assert!(said.contains("not told the command ended"), "{said}");
         assert!(!said.contains("again"), "{said}");

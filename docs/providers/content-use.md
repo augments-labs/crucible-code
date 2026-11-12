@@ -22,8 +22,8 @@ The note that starts a turn when a command left running
 [ends on its own](../tools/commands.md#when-one-ends-on-its-own) is asked about
 the same way. It is not your message, so going back drops it rather than
 putting it in the box, and whatever you had typed there stays. A window too
-short to ask in drops it too. Either way the model is not told of that ending,
-and the line says so:
+short to ask in drops it too, and so does a yes that could not be written down.
+In each case the model is not told of that ending; the first two lines say so:
 
 ```text
 nothing was sent; the model was not told the command ended
