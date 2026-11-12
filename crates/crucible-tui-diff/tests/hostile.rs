@@ -469,6 +469,11 @@ fn every_file_of_the_corpus_in_a_fence_of_an_answer_is_drawn_or_shown_as_written
                     Drawn | Shown(Undrawn::PastCap) => assert_eq!(first, PAST, "{name}"),
                     // Never a change: code as written, with nothing said of it.
                     Shown(Undrawn::NotHere) => assert_eq!(first, "┌─ diff", "{name}"),
+                    // A change has no text it cannot draw and is never too
+                    // wide: it is cut to its room, so no row expects either.
+                    Shown(refusal @ (Undrawn::NotText | Undrawn::TooWide)) => {
+                        panic!("{name}: no diff is refused as {refusal:?}")
+                    }
                 }
             }
         }
