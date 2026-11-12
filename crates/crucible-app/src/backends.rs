@@ -436,17 +436,6 @@ pub enum Unbelieved {
     /// The install store could not be read.
     #[error(transparent)]
     Store(#[from] StoreError),
-    /// The program the user installed for it has no probe record that holds
-    /// for this instance as it is now configured, and belief never probes.
-    #[error(
-        "{key} runs as your own program, which has not been tried as this instance starts it; \
-         run `crucible agents try {key}`, or `crucible agents install {key}` to run a release \
-         crucible keeps instead"
-    )]
-    OwnUnprobed {
-        /// The key, as the instance names it.
-        key: AgentKey,
-    },
 }
 
 /// Whether a catalog key spells a word a built-in driver or the native runner

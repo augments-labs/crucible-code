@@ -2952,7 +2952,7 @@ fn signing_row(
         let state = catalog_fetch::state_in(here.home.path());
         match crate::own_program::believed(instance, key, &state, |name| std::env::var_os(name)) {
             Some(Ok((row, _))) => return here.named(AgentRow::Catalog(row), instance),
-            Some(Err(Unbelieved::OwnUnprobed { .. })) | None => {}
+            None => {}
             Some(Err(why)) => return Err(Unlaunched::from(why).into()),
         }
     }

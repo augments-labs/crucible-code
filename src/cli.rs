@@ -376,9 +376,8 @@ enum AgentsAction {
         #[arg(long)]
         method: Option<String>,
     },
-    /// Start your own program of an agent once, confined with the network
-    /// closed, ask it only to initialize, write an instance that runs it once
-    /// it answers as an agent, and stop.
+    /// Find your own program of an agent, say what it is run with, and on a
+    /// yes write an instance that runs it as found; nothing is started.
     Try {
         /// The agent, as the agent catalog names it, or antigravity.
         agent: String,

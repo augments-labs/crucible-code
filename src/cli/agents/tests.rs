@@ -1681,39 +1681,6 @@ fn a_commands_line_is_marked_whatever_it_holds() {
     }
 }
 
-/// The command a launch's refusal of an unprobed own program names, and the
-/// install it names beside it, are each a `crucible agents` verb that parses
-/// to what the sentence says it does.
-#[test]
-fn the_command_own_unprobed_names_exists() {
-    let key = AgentKey::new("goose").expect("an agent key");
-    let said = crucible_app::backends::Unbelieved::OwnUnprobed { key }.to_string();
-    let named: Vec<&str> = said.split('`').skip(1).step_by(2).collect();
-    assert_eq!(
-        named,
-        ["crucible agents try goose", "crucible agents install goose"]
-    );
-    let parsed: Vec<Option<AgentsAction>> = named
-        .iter()
-        .map(
-            |command| match Cli::try_parse_from(command.split(' ')).ok()?.command {
-                Some(Command::Agents { action }) => Some(action),
-                _ => None,
-            },
-        )
-        .collect();
-    assert!(
-        matches!(
-            parsed.as_slice(),
-            [
-                Some(AgentsAction::Try { agent: tried }),
-                Some(AgentsAction::Install { agent: installed, version: None }),
-            ] if tried == "goose" && installed == "goose"
-        ),
-        "{said} names {parsed:?}"
-    );
-}
-
 /// `search` marks an agent whose own program was found on `PATH` with the
 /// path its links lead to and the command that tries it, and writes the
 /// user's own Antigravity after the catalog's agents with its note, each

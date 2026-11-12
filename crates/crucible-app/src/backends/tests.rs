@@ -701,12 +701,9 @@ fn a_program_inside_the_store_is_still_held_by_its_receipt_and_hash() {
         crate::own_program::believed(&instance(&stored), &key, &state, lookup).is_none(),
         "a program in the store was taken for the user's own"
     );
-    let refused = Agent::believing(&instance(&stored), &REGISTRY, &state, lookup)
-        .err()
-        .unwrap_or_else(|| panic!("a stored program with no receipt was believed"));
     assert!(
-        !matches!(refused, Unbelieved::OwnUnprobed { .. }),
-        "a stored program was refused as the user's own: {refused}"
+        Agent::believing(&instance(&stored), &REGISTRY, &state, lookup).is_err(),
+        "a stored program with no receipt was believed"
     );
 
     let own = placed(&sample.root().join("tools"));

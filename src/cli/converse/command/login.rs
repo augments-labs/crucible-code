@@ -1347,9 +1347,9 @@ fn carried_out(outcome: &door::Outcome) -> Option<String> {
             instance,
             program,
         } => format!(
-            "your own {agent} at {} answered as an agent, and {} runs it",
-            shown(&program.display().to_string()),
-            named(instance)
+            "{} runs your own {agent} at {} as found; nothing was started",
+            named(instance),
+            shown(&program.display().to_string())
         ),
         door::Outcome::Catalog { agents, .. } => {
             format!("the catalog offers {} agents", agents.len())
