@@ -315,6 +315,124 @@ fn a_session_picked_up_never_restates_the_words_of_the_session_left() {
     );
 }
 
+/// A session cut short between its first telling's words and the state they
+/// establish: the person's request is in its log, and no task is beside it.
+fn cut_before_its_task() -> Arc<Recording> {
+    let store = Recording::started("a session cut short");
+    let mut first = Scripted::recording(
+        Script::new(vec![saying("first")]),
+        Tools::new(),
+        Verdict::Allow,
+        Arc::clone(&store),
+    );
+    first
+        .turn("make the parser streaming")
+        .expect("a first turn");
+    drop(first);
+    let lost = store
+        .kept()
+        .iter()
+        .position(|one| matches!(one, Kept::Contextual(_)))
+        .expect("the first telling's state was recorded");
+    store.cut_short(lost)
+}
+
+/// Fails the test unless the last request sent restated the task with its
+/// request missing and `later` after it, never as the request.
+///
+/// The log's own task fragment is replayed ahead of the one the pass adds, so
+/// the restatement is the last of them.
+fn says_the_request_was_not_kept(sent: &Sent, later: &str) {
+    let told = sent
+        .lock()
+        .unwrap()
+        .last()
+        .expect("a request was sent")
+        .context
+        .iter()
+        .rev()
+        .find(|fragment| fragment.section() == TASK)
+        .map(|fragment| fragment.text().to_owned())
+        .expect("the task was restated");
+    assert!(
+        told.starts_with("This task context supersedes"),
+        "the task was not restated defensively: {told:?}"
+    );
+    assert!(
+        told.contains("Their request:\n(Their request was not kept.)\n"),
+        "what was said after the log ended was restated as the request: {told:?}"
+    );
+    in_order(&told, &["What they said after it", &format!("> {later}\n")]);
+}
+
+#[test]
+fn a_session_picked_up_from_a_log_that_lost_its_task_says_the_request_was_not_kept() {
+    // The session cannot tell the lost request from the notes and answers
+    // around it in the log, so it says the request is missing, and the prompt
+    // it goes on with is a later instruction.
+    let (picked, replayed) = cut_before_its_task().reopened();
+    let mut later = Scripted::new(
+        Script::new(vec![saying("continued")]),
+        Tools::new(),
+        Verdict::Allow,
+    );
+    later.runner.pick_up(picked, replayed);
+    later.turn("go on").expect("the turn after the pick-up");
+
+    says_the_request_was_not_kept(&later.sent, "go on");
+}
+
+#[test]
+fn a_session_continued_from_a_log_that_lost_its_task_says_the_request_was_not_kept() {
+    let (picked, replayed) = cut_before_its_task().reopened();
+    let started = Scripted::recording(
+        Script::new(vec![saying("continued")]),
+        Tools::new(),
+        Verdict::Allow,
+        picked,
+    );
+    let mut later = Scripted {
+        runner: started.runner.resuming(replayed),
+        ..started
+    };
+    later.turn("go on").expect("the first continued turn");
+
+    says_the_request_was_not_kept(&later.sent, "go on");
+}
+
+#[test]
+fn a_new_session_after_one_whose_log_lost_its_task_keeps_its_own_request() {
+    let (picked, replayed) = cut_before_its_task().reopened();
+    let mut later = compacting(
+        vec![
+            saying("continued"),
+            saying("started"),
+            saying("measured"),
+            recap("kept context"),
+            saying("finished"),
+        ],
+        Tools::new(),
+    );
+    later.runner.pick_up(picked, replayed);
+    later.turn("go on").expect("the turn after the pick-up");
+
+    later
+        .runner
+        .pick_up(Recording::started("a new session"), Transcript::new());
+    later
+        .turn("add a benchmark")
+        .expect("the new session's turn");
+    later.turn("and run it").expect("a second turn");
+    compacted(&mut later);
+    later.turn("finish").expect("the turn after compaction");
+
+    let told = restated(&later.sent).expect("the person's words were restated");
+    assert!(
+        told.contains("Their request:\n> add a benchmark\n"),
+        "the new session took the lost request of the one before for its own: {told:?}"
+    );
+}
+
 #[test]
 fn an_answer_delivered_just_before_the_log_ends_is_restated_after_a_resume() {
     let held = Deferred::default();

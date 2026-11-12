@@ -28,7 +28,10 @@
 //! keeps them, which is recorded with the next assembly's state. A log that
 //! ends between the two holds the words in the transcript but not in the task,
 //! and a session picked up from it restates the task without them once a
-//! compaction has taken them. A turn over a note the application wrote never
+//! compaction has taken them. A log that ends before any task was recorded
+//! beside the words it holds, as the first telling's can, lost the request: a
+//! session picked up from it says the request was not kept, and takes nothing
+//! said afterwards for it. A turn over a note the application wrote never
 //! amends it, whatever the note quotes.
 //!
 //! An answer is the person's words, and this agent's input checks judge each
@@ -197,6 +200,9 @@ impl Runner {
 
     /// The root run's task, read back from what the session's log recorded
     /// the first time this process needs it.
+    ///
+    /// A log that recorded no task beside words it holds lost the request, so
+    /// what the person says next is not taken for it.
     fn task(&mut self) -> &mut Task {
         let task = match self.task.take() {
             Some(task) => task,
@@ -204,7 +210,13 @@ impl Runner {
                 .store
                 .context_snapshot()
                 .and_then(|recorded| recorded.get(TaskSection::ID).map(Task::restored))
-                .unwrap_or_default(),
+                .unwrap_or_else(|| {
+                    if self.inherited_words {
+                        Task::unkept()
+                    } else {
+                        Task::default()
+                    }
+                }),
         };
         self.task.insert(task)
     }

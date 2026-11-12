@@ -20,7 +20,11 @@
 //!
 //! The section's recorded state is the task itself, so a session picked up
 //! from its log has the person's words back without the messages that said
-//! them.
+//! them. A log that holds what was said but no task, because it ended before
+//! the task was recorded or was written before tasks were kept, gives back a
+//! task whose request was not kept ([`Task::unkept`]): what is said next is a
+//! later instruction, never taken for the request, and the request is said to
+//! be missing.
 //!
 //! The task belongs to the conversation the person is in. A run beneath it,
 //! such as a subagent's, neither reads it nor adds to it: what a parent tells
@@ -59,6 +63,9 @@ answers it offered are the model's words, and only the reply is theirs:";
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct Task {
     request: Option<Kept>,
+    /// Whether a request was said that this task does not hold, so the next
+    /// words are never taken for it.
+    lost: bool,
     amendments: VecDeque<Amendment>,
     dropped: u64,
 }
@@ -184,10 +191,21 @@ impl Task {
         }
     }
 
+    /// A task whose request was said but not kept: for a session whose log
+    /// holds the person's words and no task. Nothing said after it becomes
+    /// the request, and its restatement says the request is missing.
+    #[must_use]
+    pub fn unkept() -> Self {
+        Self {
+            lost: true,
+            ..Self::default()
+        }
+    }
+
     /// Whether the person has said anything yet.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.request.is_none() && self.amendments.is_empty() && self.dropped == 0
+        self.request.is_none() && !self.lost && self.amendments.is_empty() && self.dropped == 0
     }
 
     /// The task a recorded state holds, with every bound applied again.
@@ -204,6 +222,7 @@ impl Task {
                 .get("request")
                 .and_then(|request| Kept::restored(request, REQUEST_BYTES))
                 .filter(|request| !request.text.is_empty()),
+            lost: state.get("lost").and_then(Value::as_bool).unwrap_or(false),
             ..Self::default()
         };
         let entries = state
@@ -227,6 +246,9 @@ impl Task {
         let mut state = Map::new();
         if let Some(request) = &self.request {
             state.insert("request".into(), request.state());
+        }
+        if self.lost {
+            state.insert("lost".into(), Value::Bool(true));
         }
         state.insert(
             "amendments".into(),
@@ -566,6 +588,24 @@ mod tests {
         let earlier = told.find("> b").expect("the recorded instruction");
         let later = told.find("> c").expect("the instruction after it");
         assert!(earlier < later, "{told:?}");
+    }
+
+    #[test]
+    fn a_request_said_but_not_kept_stays_missing_once_read_back() {
+        let unkept = Task::unkept();
+        assert!(!unkept.is_empty());
+
+        let mut task = Task::restored(&TaskSection::new(Some(&unkept), None).snapshot());
+        assert_eq!(task, unkept);
+        task.said("go on");
+
+        let told = restated(&task);
+        assert!(
+            told.contains("Their request:\n(Their request was not kept.)\n"),
+            "{told:?}"
+        );
+        assert!(told.contains("What they said after it"), "{told:?}");
+        assert!(told.contains("> go on\n"), "{told:?}");
     }
 
     #[test]
