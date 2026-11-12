@@ -9283,7 +9283,7 @@
     {
       "id": "CASE-QUESTIONS-OTHER-ERA-DROPS",
       "family": "questions",
-      "obligation": "A listing from another era drops every draft, so no answer made for an earlier one is carried into it.",
+      "obligation": "A listing from another era clears the answer chosen in the one before, so it is not carried into the new listing.",
       "package": "crucible-code",
       "target": {
         "kind": "bin",
@@ -9301,7 +9301,7 @@
     {
       "id": "CASE-QUESTIONS-ESCAPE-NEVER-DECLINES",
       "family": "questions",
-      "obligation": "Escape leaves the editor, then closes the dock; neither declines, and the answer and note are sent as drafted.",
+      "obligation": "Escape leaves the editor, then closes the dock; neither declines, and the note survives both and is sent with the answer.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -9333,7 +9333,7 @@
     {
       "id": "CASE-QUESTIONS-DELIVERED-UNDER-TURN",
       "family": "questions",
-      "obligation": "Answers submitted under a running turn are accepted on screen and reach the model when the turn ends.",
+      "obligation": "Answers submitted under a running turn are accepted on screen and reach the model.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -9360,6 +9360,42 @@
       "body_sha256": "4dce0d72b81a5777620214dd5430390513a1912857d0aa95a1f164d657cf676f",
       "platforms": [
         "linux"
+      ]
+    },
+    {
+      "id": "CASE-QUESTIONS-ESCAPE-KEEPS-DRAFT",
+      "family": "questions",
+      "obligation": "Escape closes the dock without answering, and an answer chosen before it is sent when the batch is submitted after reopening.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::docking::tests::escape_closes_the_dock_with_the_draft_kept_and_reopening_shows_it",
+      "source": "src/cli/converse/docking/tests.rs",
+      "body_sha256": "5f486bb1fcadb25a8c7c76071c12e6973b30276386578e4e6c6783f7c51bac4f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-QUESTIONS-MOVED-ERA-DROPS",
+      "family": "questions",
+      "obligation": "Moving to another era drops every batch the dock held, and staying in the same era keeps them.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::docking::tests::moving_to_another_era_drops_every_batch_and_the_same_era_keeps_them",
+      "source": "src/cli/converse/docking/tests.rs",
+      "body_sha256": "5535f95ae3ad0500f47497e5cc4ac730f1f3aa8b0078528d5d6a1747d6a51965",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
       ]
     }
   ]
