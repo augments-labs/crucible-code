@@ -925,6 +925,10 @@ fn words_the_application_wrote_attach_nothing_they_name_or_mark() {
 
     let woken = attaching(&workspace, asking, sent(Author::Application));
     assert!(
+        !imported.exists(),
+        "the application's note copied a picture into the session's store"
+    );
+    assert!(
         woken.attachments.is_empty(),
         "the application's note attached {:?}",
         woken
@@ -950,6 +954,10 @@ fn words_the_application_wrote_attach_nothing_they_name_or_mark() {
         typed.attachments.len(),
         3,
         "the named, the outside and the marked picture"
+    );
+    assert!(
+        imported.exists(),
+        "the person's outside picture was copied into the session's store"
     );
 }
 
