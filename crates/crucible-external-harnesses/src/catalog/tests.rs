@@ -3397,11 +3397,15 @@ fn an_unread_archive_is_listed_with_its_reason_and_never_offered() {
     assert!(index.offer(&agent("zipped")).is_err());
 }
 
-/// The listing holds every entry with a target here, offered or not, in
-/// registry order, and none with no binary or only another platform's.
+/// The listing holds every entry with a target here, offered or not, and
+/// every entry published here only as a package, with why it is not offered,
+/// in registry order; none with only another platform's binary. A package
+/// entry is shown only where the name it guesses is found on `PATH`, and the
+/// fixture's guesses none, being a package runner's own name.
 #[test]
 fn an_entry_with_no_target_for_this_platform_is_not_listed() {
-    let index = registry_of(&super::trust::here());
+    let platform = super::trust::here();
+    let index = registry_of(&platform);
 
     let listed = listed_here(&index);
     let ids: Vec<&str> = listed.iter().map(|(id, _)| *id).collect();
@@ -3414,8 +3418,25 @@ fn an_entry_with_no_target_for_this_platform_is_not_listed() {
     assert_eq!(
         ids,
         [
-            "hashed", "unhashed", "bzipped", "one", "two", "three", "four", "zipped"
+            "hashed", "unhashed", "bzipped", "one", "two", "three", "four", "npx", "zipped"
         ]
+    );
+    assert!(
+        listed.contains(&(
+            "npx",
+            Some(Unoffered::Package {
+                id: agent("npx"),
+                platform: platform.as_str().into(),
+                runner: super::registry::Runner::Npx,
+            })
+        )),
+        "{listed:?}"
+    );
+    let npx = index.entry(&agent("npx")).expect("listed");
+    assert_eq!(
+        OwnEntry::registry(npx, &platform).expect("read"),
+        None,
+        "a package runner's own name is no guess"
     );
     assert_eq!(
         offered,
@@ -3850,6 +3871,270 @@ fn an_own_entry_setting_bash_env_or_env_is_refused() {
         OwnEntry::registry(index.entry(&agent("own")).expect("listed"), &platform).is_ok(),
         "a name that only begins like one is not refused"
     );
+}
+
+/// A registry index of one agent, `own`, whose `distribution` is
+/// `distribution`.
+#[allow(clippy::panic)]
+fn registry_packaged(distribution: &Value) -> RegistryIndex {
+    let index = json!({
+        "version": "1.0.0",
+        "agents": [{
+            "id": "own", "name": "own", "version": "1.0.0", "license": "MIT",
+            "distribution": distribution,
+        }],
+    });
+    RegistryIndex::parse(index.to_string().as_bytes(), at(0))
+        .unwrap_or_else(|why| panic!("a registry index: {why}"))
+}
+
+/// What the registry's one agent, published as `distribution`, proposes for
+/// the platform this build runs on.
+#[allow(clippy::panic)]
+fn own_packaged(distribution: &Value) -> Option<OwnEntry> {
+    let index = registry_packaged(distribution);
+    let entry = index
+        .entry(&agent("own"))
+        .unwrap_or_else(|| panic!("{distribution}: not listed"));
+    OwnEntry::registry(entry, &here()).unwrap_or_else(|why| panic!("{distribution}: {why}"))
+}
+
+/// A registry entry published only as a package proposes the name its package
+/// is guessed to go by on `PATH`: an npx package's last path segment without a
+/// trailing `@<version>`, a uvx package without a trailing `==<version>`. Any
+/// other version specifier, extras, an address, a path or a package runner's
+/// own name gives none. A binary for this platform is guessed from first, then
+/// npx, then uvx; the package's arguments and environment are kept.
+#[test]
+fn a_package_name_gives_its_last_segment_without_the_version() {
+    for (runner, package, guess) in [
+        ("npx", "@xai-official/grok@1.0.80", Some("grok")),
+        ("uvx", "fast-agent-acp==0.10.1", Some("fast-agent-acp")),
+        ("npx", "@google/gemini-cli", Some("gemini-cli")),
+        ("npx", "cline@3.0.74", Some("cline")),
+        ("uvx", "fast-agent-acp", Some("fast-agent-acp")),
+        ("uvx", "fast-agent-acp>=0.10", None),
+        ("uvx", "fast-agent-acp~=0.10", None),
+        ("uvx", "fast-agent-acp[extra]==0.10.1", None),
+        ("uvx", "fast-agent-acp==0.10.1; python_version>'3'", None),
+        ("uvx", "minion-code@0.1.44", None),
+        ("uvx", "git+https://example.com/agent.git", None),
+        ("uvx", "./agent", None),
+        ("npx", "agent@>=1.0", None),
+        ("npx", "agent@^1.0", None),
+        ("npx", "https://example.com/agent.tgz", None),
+        ("npx", "github:example/agent", None),
+        ("npx", "example/agent", None),
+        ("npx", "@example/agent/more@1.0", None),
+        ("npx", "./agent", None),
+        ("npx", "../agent", None),
+        ("npx", "/usr/lib/agent", None),
+        ("npx", "..", None),
+        ("npx", "-agent", None),
+        ("npx", "npx@1.0.0", None),
+        ("npx", "@example/UVX.cmd@1.0.0", None),
+        ("uvx", "uvx==1.0", None),
+    ] {
+        let own = own_packaged(&json!({runner: {"package": package}}));
+        assert_eq!(
+            own.as_ref().map(OwnEntry::guess),
+            guess,
+            "{runner} {package}"
+        );
+    }
+
+    let grok = own_packaged(&json!({"npx": {
+        "package": "@xai-official/grok@1.0.80",
+        "args": ["agent", "stdio"],
+        "env": {"GROK_MODE": "acp"},
+    }}))
+    .expect("a guess");
+    assert_eq!(grok.args(), [Box::from("agent"), Box::from("stdio")]);
+    assert_eq!(
+        grok.env(),
+        [Variable {
+            name: "GROK_MODE".into(),
+            value: "acp".into(),
+        }]
+    );
+
+    let both = own_packaged(&json!({
+        "uvx": {"package": "second==1.0"},
+        "npx": {"package": "first@1.0"},
+    }))
+    .expect("a guess");
+    assert_eq!(both.guess(), "first", "npx before uvx");
+    let binary = own_packaged(&json!({
+        "binary": {here(): {
+            "archive": "https://downloads.example.com/agent.tar.gz",
+            "cmd": "./bin/binary",
+        }},
+        "npx": {"package": "first@1.0"},
+    }))
+    .expect("a guess");
+    assert_eq!(binary.guess(), "binary", "a binary here before a package");
+}
+
+/// A registry entry published only as a package that sets a variable a loader
+/// or a shell reads to choose what code runs is refused, as a binary target
+/// that sets one is; a name that only begins like one is not.
+#[test]
+fn a_package_entry_setting_a_loader_variable_is_refused() {
+    let platform = here();
+    for runner in ["npx", "uvx"] {
+        for name in [
+            "BASH_ENV",
+            "ENV",
+            "bash_env",
+            "LD_PRELOAD",
+            "NODE_OPTIONS",
+            "PYTHONPATH",
+            "PATH",
+        ] {
+            let index = registry_packaged(&json!({runner: {
+                "package": "agent",
+                "env": {name: "/tmp/hook.sh"},
+            }}));
+            let refused =
+                OwnEntry::registry(index.entry(&agent("own")).expect("listed"), &platform)
+                    .expect_err("a variable that chooses what code runs");
+            assert!(
+                matches!(&refused, CatalogError::Loader { name: refused, .. } if &**refused == name),
+                "{runner} {name}: {refused}"
+            );
+        }
+        let kept = own_packaged(&json!({runner: {
+            "package": "agent",
+            "env": {"BASH_ENVIRONMENT": "x", "ENVY": "y"},
+        }}));
+        assert_eq!(
+            kept.as_ref().map(OwnEntry::guess),
+            Some("agent"),
+            "{runner}: a name that only begins like one is not refused"
+        );
+    }
+}
+
+/// The shipped sources that name a package runner as text, each with why
+/// that text starts nothing.
+const NAMING_A_RUNNER: &[(&str, &str)] = &[
+    (
+        "crates/crucible-builtins/src/bash/wrapper.rs",
+        "classifies a command a model asks the shell to run",
+    ),
+    (
+        "crates/crucible-config/src/shape.rs",
+        "shows a command an MCP server of the user's own may be",
+    ),
+    (
+        "crates/crucible-external-harnesses/src/catalog/entry.rs",
+        "reads a catalog entry's kind",
+    ),
+    (
+        "crates/crucible-external-harnesses/src/catalog/registry.rs",
+        "reads the keys a registry distribution names a runner by",
+    ),
+    (
+        "crates/crucible-external-harnesses/src/catalog/own.rs",
+        "lists the names no package is guessed to be",
+    ),
+];
+
+/// Every place in `source` that names a package runner as text, as
+/// `(runner, starts it)`: whether it is the program a process is made for.
+fn runners_named(source: &str) -> Vec<(&'static str, bool)> {
+    let squeezed: String = source.chars().filter(|c| !c.is_whitespace()).collect();
+    let mut found = Vec::new();
+    for runner in super::own::RUNNERS {
+        for suffix in ["", ".exe", ".cmd"] {
+            let quoted = format!("\"{runner}{suffix}\"");
+            for (at, _) in squeezed.match_indices(&quoted) {
+                let started = squeezed
+                    .get(..at)
+                    .is_some_and(|before| before.ends_with("new(") || before.ends_with("new(r"));
+                found.push((*runner, started));
+            }
+        }
+    }
+    found
+}
+
+/// Every Rust source a shipped program is built from in the workspace at
+/// `root`: each crate's `src` and the binary's, without a test module's file.
+fn shipped_sources(root: &Path) -> Vec<PathBuf> {
+    let mut directories = vec![root.join("src")];
+    if let Ok(crates) = fs::read_dir(root.join("crates")) {
+        directories.extend(crates.flatten().map(|krate| krate.path().join("src")));
+    }
+    let mut sources = Vec::new();
+    while let Some(directory) = directories.pop() {
+        let Ok(read) = fs::read_dir(&directory) else {
+            continue;
+        };
+        for found in read.flatten() {
+            let path = found.path();
+            let name = found.file_name();
+            if name == "tests" || name == "tests.rs" {
+                continue;
+            }
+            if path.is_dir() {
+                directories.push(path);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                sources.push(path);
+            }
+        }
+    }
+    sources.sort();
+    sources
+}
+
+/// No shipped program starts a package runner: none makes a process for one,
+/// and only the sources [`NAMING_A_RUNNER`] lists name one as text at all.
+#[test]
+fn nothing_runs_a_package_runner() {
+    for runner in ["npx", "uvx"] {
+        assert!(super::own::RUNNERS.contains(&runner), "{runner}");
+    }
+    assert_eq!(
+        runners_named("let child = Command::new( \"npx\" ).arg(package);"),
+        [("npx", true)]
+    );
+    assert_eq!(
+        runners_named("SandboxCommand::new(\"uvx.exe\", args)"),
+        [("uvx", true)]
+    );
+    assert_eq!(
+        runners_named("match key { \"npx\" => Runner::Npx }"),
+        [("npx", false)]
+    );
+    assert!(runners_named("Command::new(\"npxx\")").is_empty());
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let sources = shipped_sources(&root);
+    assert!(
+        sources.len() > 100,
+        "only {} sources were searched",
+        sources.len()
+    );
+    let mut refused = Vec::new();
+    for path in &sources {
+        let source = fs::read_to_string(path).expect("a shipped source is text");
+        let shown = path
+            .strip_prefix(&root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let listed = NAMING_A_RUNNER.iter().any(|(listed, _)| *listed == shown);
+        for (runner, started) in runners_named(&source) {
+            if started || !listed {
+                refused.push(format!("{shown}: {runner}"));
+            }
+        }
+    }
+    assert!(refused.is_empty(), "a package runner is named: {refused:?}");
+    for (listed, why) in NAMING_A_RUNNER {
+        assert!(root.join(listed).is_file(), "{listed}, which {why}");
+    }
 }
 
 /// An npm or uvx catalog entry starts a pinned interpreter, not a program of
