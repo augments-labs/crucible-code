@@ -168,7 +168,9 @@ the sandbox there can read and start what is linked into it has not been
 checked. Your home is judged as written and where its links lead; where it is
 not a full path, or a link in it leads nowhere, no directory is given. A refused
 directory is shown on the screen in place of what the program could read, and a
-try of it says why and runs and writes nothing.
+try of it says why and runs and writes nothing. With the sandbox off nothing is
+judged of the directory, as no launch then judges it: the screen says so, and a
+try writes the instance.
 
 What crucible runs is the release the catalog crucible most lately believed
 offers at the version the instance's `executable` names. It is read from the

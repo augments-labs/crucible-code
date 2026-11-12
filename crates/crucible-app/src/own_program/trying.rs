@@ -151,11 +151,15 @@ pub(crate) struct Trial {
     canonical: PathBuf,
     /// What the sandbox is told of the directory it lies in.
     root: Root,
+    /// Whether the sandbox confines a launch started now, so that what it
+    /// is told of the directory is judged at all.
+    sandboxed: bool,
 }
 
 impl Trial {
     /// `of`'s program at `program`, judged against `trying`'s places; nothing
-    /// where its links cannot be followed.
+    /// where its links cannot be followed. A launch with the sandbox off
+    /// judges nothing of the directory, so neither does a trial then.
     fn found(trying: &Trying, of: Of, program: &Program) -> Option<Self> {
         let canonical = std::fs::canonicalize(program.path()).ok()?;
         let root = trying.places().map_or_else(
@@ -166,6 +170,7 @@ impl Trial {
             of,
             canonical,
             root,
+            sandboxed: trying.sandboxed,
         })
     }
 
@@ -174,11 +179,12 @@ impl Trial {
         &self.canonical
     }
 
-    /// Why the directory it lies in is given to no agent, where it is not.
+    /// Why the directory it lies in is given to no agent, where it is not
+    /// and the sandbox confines a launch started now.
     pub(crate) fn refused(&self) -> Option<&str> {
         match &self.root {
-            Root::Refused(why) => Some(why),
-            Root::NoRule | Root::Grant(_) => None,
+            Root::Refused(why) if self.sandboxed => Some(why),
+            Root::Refused(_) | Root::NoRule | Root::Grant(_) => None,
         }
     }
 
@@ -244,6 +250,11 @@ impl Trial {
         facts.push(listing("Arguments", &arguments, " "));
         facts.push(listing("Environment", &environment, ", "));
         facts.push(match &self.root {
+            Root::Refused(_) if !self.sandboxed => format!(
+                "With the sandbox off it starts as a plain process that reads what you can, so \
+                 nothing is judged of {}.",
+                shown(self.canonical.parent().unwrap_or(&self.canonical))
+            ),
             Root::Refused(why) => why.clone(),
             Root::NoRule => format!(
                 "{} is already readable inside the sandbox, so nothing is added to what it can \

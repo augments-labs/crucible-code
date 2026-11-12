@@ -1386,6 +1386,62 @@ fn a_refused_root_is_listed_with_its_reason_and_runs_nothing() -> Result<(), Fai
     Ok(())
 }
 
+/// With the sandbox off, a program in a directory no confined agent is given
+/// is tried as a launch would start it, as a plain process with nothing
+/// judged of its directory: the facts say so and not why the directory would
+/// be refused, and a yes writes the instance and starts nothing.
+#[test]
+fn a_refused_root_is_tried_with_the_sandbox_off() -> Result<(), Failed> {
+    let tree = Tree::new("external-choosing-own-refused-off")?;
+    trusting(&tree, &[entry("goose", "1.0.0", ONE)])?;
+    std::fs::create_dir_all(user(&tree))?;
+    let program = own_goose(&user(&tree), true)?;
+    let sandbox: Arc<dyn SandboxService> = Arc::new(LocalSandbox::new().watching_on(runtime()?));
+    let mut conversation = own_stepped_with(&tree, sandbox, &user(&tree), false)?;
+    let home = tree.home()?;
+    let own_program::Root::Refused(why) = own_program::root(
+        &program,
+        &std::fs::canonicalize(user(&tree))?,
+        home.path(),
+        &tree.sessions(),
+    ) else {
+        return Err("the user's home was given to an agent".into());
+    };
+
+    let (action, put) = chose_own(&tree, &mut conversation, "{}", "goose")?;
+
+    let (_, facts, _) = question(&put, 1).ok_or("the agent's question")?;
+    assert!(!facts.contains(&why.as_str()), "{facts:?}");
+    let parent = portable(&program.parent().ok_or("a directory")?.to_string_lossy());
+    assert!(facts.contains(&unjudged(&parent).as_str()), "{facts:?}");
+    let mut door = Picking::of([Some("Try it")]);
+    let tried = carried(&tree, &conversation, &action, &mut door)?;
+    let Ok(Door::Tried { instance, .. }) = tried else {
+        return Err(format!("the door answered {tried:?}").into());
+    };
+    assert_eq!(door.put.len(), 1, "the door asked: {:?}", door.put);
+    assert_eq!(
+        fake_peer::played(&user(&tree)),
+        0,
+        "the program was started"
+    );
+    let written = written(&tree, &instance)?.ok_or("no instance was written")?;
+    assert_eq!(
+        written.pointer("/executable").and_then(Value::as_str),
+        Some(&*program.to_string_lossy())
+    );
+    Ok(())
+}
+
+/// What the facts say of the directory `directory` an own program lies in,
+/// where the sandbox is off and nothing is judged of it.
+fn unjudged(directory: &str) -> String {
+    format!(
+        "With the sandbox off it starts as a plain process that reads what you can, so nothing \
+         is judged of {directory}."
+    )
+}
+
 /// The facts say everything in the directory the program lies in is
 /// readable to it, read-only, at every launch under the sandbox, and never
 /// that the directory holds no credential.

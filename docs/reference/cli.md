@@ -748,8 +748,8 @@ found, and one that does not speak ACP fails its first launch with why. It ends
 goose at /usr/local/bin/goose; nothing was started.` It ends 1, having written
 nothing, where the catalog and the registry list no such agent, where no
 program of your own is found, where an instance of the agent is configured and
-runs another program, since `/login` writes no second one beside it, where its
-directory is one no agent is given, as
+runs another program, since `/login` writes no second one beside it, where the
+sandbox is on and its directory is one no agent is given, as
 [the agent's page](../providers/agents.md#installed-coding-agents) says, and
 where it is answered with anything but `1` or asked with no terminal to answer
 on.

@@ -159,18 +159,18 @@ impl Door<'_> {
     /// Antigravity's, as the instance that already runs it or, where none of
     /// the agent is configured, a new one: the program must be the one a
     /// launch of that instance would find, its directory one an agent may be
-    /// given, and `front` must say yes to the door's own question before a
-    /// new instance is written. Nothing is started: the program is used as
-    /// found, and a launch of the instance is what first starts it. A refusal
-    /// writes nothing.
+    /// given where the sandbox is on, and `front` must say yes to the door's
+    /// own question before a new instance is written. Nothing is started: the
+    /// program is used as found, and a launch of the instance is what first
+    /// starts it. A refusal writes nothing.
     ///
     /// # Errors
     ///
     /// [`AgentsError::Untried`] where no conversation lent the steps that
     /// find it, [`AgentsError::Own`] where it is not the program a launch
-    /// would find, an instance of the agent runs another or its directory is
-    /// refused, and [`AgentsError::Remember`] where a new instance cannot be
-    /// written.
+    /// would find, an instance of the agent runs another or, with the sandbox
+    /// on, its directory is refused, and [`AgentsError::Remember`] where a new
+    /// instance cannot be written.
     pub(super) async fn try_own(
         &self,
         agent: &str,
