@@ -2,7 +2,11 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x50 cursor 47,4 scrollback 4
+80x50 cursor 45,4 scrollback 0
+|╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
+|│                                  │ Recent sessions                           │|
+|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
+|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No earlier session for this workspace     │|
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
 |│                                  │ ───────────────────────────────────────── │|
 |│  /…/workspace                    │                                           │|
@@ -18,24 +22,18 @@ expression: window.picture()
 |                                                                                |
 |A change written as a diff fence:                                               |
 |                                                                                |
-|┌─ diff                                                                         |
-|│ --- a/x.rs                                                                    |
-|│ +++ b/x.rs                                                                    |
-|│ @@ -1,2 +1,2 @@                                                               |
-|│ -let a = 1;                                                                   |
-|│ +let a = 2;                                                                   |
-|│  context                                                                      |
-|└─                                                                              |
+|╭─ x.rs · Added 1 line, removed 1 line                                          |
+|│    1 - let a = 1;                                                             |
+|│    1 + let a = 2;                                                             |
+|│    2   context                                                                |
+|╰─                                                                              |
 |                                                                                |
 |The same change written as a patch:                                             |
 |                                                                                |
-|┌─ patch                                                                        |
-|│ --- a/y.rs                                                                    |
-|│ +++ b/y.rs                                                                    |
-|│ @@ -1 +1 @@                                                                   |
-|│ -old                                                                          |
-|│ +new                                                                          |
-|└─                                                                              |
+|╭─ y.rs · Added 1 line, removed 1 line                                          |
+|│    1 - old                                                                    |
+|│    1 + new                                                                    |
+|╰─                                                                              |
 |                                                                                |
 |A fence named diff that is not a diff at all:                                   |
 |                                                                                |
@@ -53,3 +51,5 @@ expression: window.picture()
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|
+|                                                                                |
+|                                                                                |

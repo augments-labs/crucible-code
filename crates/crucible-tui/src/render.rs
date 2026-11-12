@@ -39,11 +39,12 @@
 use crate::bands::{Bands, Wants};
 use crate::clipboard;
 use crate::color::{Palette, Slot, Theme};
+use crate::drawing::Drawers;
 use crate::escape::Escapes;
 use crate::files::Files;
 use crate::forge::Forge;
 use crate::glyphs::Glyphs;
-use crate::markdown::{self, Block, Markdown, Said};
+use crate::markdown::{self, Block, Markdown, Offers, Said};
 use crate::record::{Record, Source};
 use crate::row::Row;
 use crate::scroll_rail::{self, ScrollRail};
@@ -1242,6 +1243,23 @@ impl<T: Terminal> Renderer<T> {
     /// hands a path on as it was written.
     pub fn reads_paths(&mut self, files: Option<Files>) {
         self.record.links_mut().files = files;
+        self.markdown = self.reader();
+    }
+
+    /// Hands this renderer the drawers a closed fence of an answer is drawn
+    /// by, each asked for the fences whose name it takes.
+    ///
+    /// Said once, at startup, for the reason [`Renderer::counts`] is. A
+    /// renderer handed none draws every fence as it was written. Where output
+    /// is redirected no key is read, so a drawer takes any key it offers out
+    /// of the rows it draws: of what is written, and of what is kept.
+    pub fn drawers(&mut self, drawers: Drawers) {
+        let offers = if self.terminal.is_terminal() {
+            Offers::Stand
+        } else {
+            Offers::Withdrawn
+        };
+        self.record.draws_with(drawers, offers);
         self.markdown = self.reader();
     }
 
@@ -2793,11 +2811,14 @@ impl<T: Terminal> Taking<'_, T> {
             .collect();
 
         // A redirected run is written the block as it is laid out now, row by
-        // row: a file has one width, and it is this one.
+        // row: a file has one width, and it is this one. It reads no key, so
+        // a drawer offers none in what is written.
         if let Some(out) = &mut self.out {
             out.write(self.unwritten)?;
             self.unwritten.clear();
-            for row in markdown::lay(&block, self.columns, self.glyphs, self.record.links()) {
+            let (links, drawers) = (self.record.links(), self.record.drawers());
+            let rows = markdown::lay_unoffered(&block, self.columns, self.glyphs, links, drawers);
+            for row in rows {
                 out.write(&row.text())?;
                 out.write("\n")?;
             }

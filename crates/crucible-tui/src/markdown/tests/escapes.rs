@@ -182,9 +182,12 @@ fn told(block: &Block) -> String {
     let mut out = String::new();
     tell(
         block,
-        ROOM,
-        Glyphs::Unicode,
+        Room {
+            columns: ROOM,
+            glyphs: Glyphs::Unicode,
+        },
         &Links::default(),
+        &Drawers::default(),
         &mut |_, text, _| {
             out.push_str(text);
         },

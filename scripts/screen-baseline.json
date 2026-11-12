@@ -2216,7 +2216,7 @@
         "Vendor::answering(transcript::said(\"diff\"))",
         "Watched::in_default_colours( \"transcript-diff-80-fullscreen\", (80, 50), Some(&vendor), None, )"
       ],
-      "sha256": "66618627f5ca09a5fbf30323364dd91830ce60e88b9b936310df108f852b50da"
+      "sha256": "3e54fd51dbc643bc52906c4e402ee2b67faa650dee52d44baa718f16fb8884c9"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_diff_80_native.snap",
@@ -2225,7 +2225,7 @@
         "Vendor::answering(transcript::said(\"diff\"))",
         "Watched::drawn_in_colour( \"transcript-diff-80-native\", (80, 50), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "5246f673626699cfe6ccb247296bcb063bb7d91ab2089e02cbeaf2ee9c1c60d5"
+      "sha256": "2f7534a175e61998a8cc8b516dffe93fa6a82c406e01d1564eff5e29c27d9dcc"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_headings_80_fullscreen.snap",
@@ -2684,7 +2684,7 @@
         "Vendor::calling( \"edit\", &transcript::rewrite_input(), transcript::said(\"tool_edit\"), )",
         "Watched::in_default_colours( \"transcript-tool-edit-80-fullscreen\", (80, 120), Some(&vendor), Some(\"edit(*)\"), )"
       ],
-      "sha256": "b615650ce2899303d4fdb1fbcb82ccc94142da5d4765f38560457b3604638216"
+      "sha256": "7e9d46493b8cf0680c9a24471d64b8c3e9ceb63cab7364a7b5ea826d3dfff18e"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_tool_edit_80_native.snap",
@@ -2693,7 +2693,7 @@
         "Vendor::calling( \"edit\", &transcript::rewrite_input(), transcript::said(\"tool_edit\"), )",
         "Watched::drawn_in_colour( \"transcript-tool-edit-80-native\", (80, 120), &vendor, Some(\"edit(*)\"), (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "4baeffd4425dc331e3d659415a1f580b51d7d4720d9f5a25ae8f33901c0b4c1d"
+      "sha256": "8ab0e96da6765e427c4878945ce33bd16a60f283bad041795bf45fb905cbd462"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__usage_in_colour.snap",

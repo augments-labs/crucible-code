@@ -51,7 +51,7 @@ fn runs(
     match said {
         Said::Run { slot, text, link } => say(slot, text, link),
         Said::Block(block) => {
-            for row in lay(&block, room, glyphs, &Links::default()) {
+            for row in lay(&block, room, glyphs, &Links::default(), &Drawers::default()) {
                 for (slot, text) in row.spans() {
                     say(slot, text, None);
                 }
@@ -2493,7 +2493,13 @@ fn a_held_block_laid_out_is_what_it_would_have_streamed_as() {
             panic!("{answer:?} was not held");
         };
         let mut laid = String::new();
-        for row in lay(block, ROOM, Glyphs::Unicode, &Links::default()) {
+        for row in lay(
+            block,
+            ROOM,
+            Glyphs::Unicode,
+            &Links::default(),
+            &Drawers::default(),
+        ) {
             laid.push_str(&row.text());
             laid.push('\n');
         }
@@ -3308,7 +3314,7 @@ fn a_heading_block_is_laid_out_as_a_rule_as_wide_as_its_words() {
         (heading(Level::Two, "## Title"), Glyphs::Ascii, "-----"),
         (heading(Level::Two, "**\n---"), Glyphs::Unicode, "──"),
     ] {
-        let rows = lay(&block, ROOM, glyphs, &links);
+        let rows = lay(&block, ROOM, glyphs, &links, &Drawers::default());
 
         assert_eq!(
             rows.iter().map(Row::text).collect::<Vec<_>>(),
@@ -3323,7 +3329,7 @@ fn a_heading_that_wraps_wears_a_rule_as_wide_as_its_last_row() {
     let links = Links::default();
     let block = heading(Level::One, "# aaa bbb ccc");
 
-    let rows = lay(&block, 8, Glyphs::Unicode, &links);
+    let rows = lay(&block, 8, Glyphs::Unicode, &links, &Drawers::default());
 
     assert_eq!(rows.iter().map(Row::text).collect::<Vec<_>>(), ["━━━"]);
 }
@@ -4913,6 +4919,7 @@ fn a_link_or_a_footnote_reference_after_brackets_reads_as_it_does_with_no_defini
     }
 }
 
+mod drawers;
 mod escapes;
 mod links;
 mod strikes;

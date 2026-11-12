@@ -16,12 +16,14 @@
 )]
 
 use crucible_tui::chrome::Undrawn;
-use crucible_tui::drawing::{Draws, Laid, Room};
+use crucible_tui::drawing::{Drawers, Draws, Laid, Room};
+use crucible_tui::testing::read as answered;
 use crucible_tui::{Glyphs, Row};
-use crucible_tui_diff::{Changes, MOST_BYTES, MOST_LINES};
+use crucible_tui_diff::{Changes, MOST_BYTES, MOST_LINES, read};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use std::sync::Arc;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -408,6 +410,89 @@ fn a_diff_written_with_carriage_returns_is_drawn_as_one_written_without() {
             .rows
     };
     assert_eq!(drawn(with), drawn(&without));
+}
+
+// ---------------------------------------------------------------------------
+// The corpus as a model would write it: in a fence of an answer.
+
+/// What the reader says on the frame of a fence it shows as written because
+/// it, or its drawer, cannot hold it.
+const PAST: &str = "┌─ diff · longer than this can hold · shown as written";
+
+/// The first row of `rows`, as text.
+fn opening(rows: &[Row]) -> String {
+    rows.first()
+        .map(|row| row.text().trim_end().to_owned())
+        .unwrap_or_default()
+}
+
+#[test]
+fn every_file_of_the_corpus_in_a_fence_of_an_answer_is_drawn_or_shown_as_written_safely() {
+    let changes = Drawers::default().with(Arc::new(Changes));
+    let mut past_the_reader = Vec::new();
+    let mut boxed = 0_usize;
+    for (name, expect) in ENTRIES {
+        let mut body = source(name);
+        if !body.is_empty() && !body.ends_with('\n') {
+            body.push('\n');
+        }
+        let answer = format!("```diff\n{body}```\n");
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            for columns in [NARROWEST, WIDTH, WIDEST] {
+                let (answer, drawers) = (answer.clone(), changes.clone());
+                let ended = guarded(DEADLINE, move || {
+                    let as_written = answered(&[&answer], &Drawers::default(), room(120, glyphs));
+                    let rows = answered(&[&answer], &drawers, room(columns, glyphs));
+                    (opening(&as_written), rows)
+                });
+                let Ended::Returned((as_written, rows)) = ended else {
+                    panic!("{name} at {columns} in {glyphs:?}: {ended:?}");
+                };
+                if let Err(why) = check_rows(name, &rows, columns) {
+                    panic!("{why}");
+                }
+                if (columns, glyphs) != (WIDTH, Glyphs::Unicode) {
+                    continue;
+                }
+                // The reader holds less than the drawer reads: a fence past
+                // the reader's own hold never reaches the drawer.
+                let held = as_written != PAST;
+                if !held {
+                    past_the_reader.push(*name);
+                }
+                let first = opening(&rows);
+                match expect {
+                    Drawn if held => {
+                        boxed += 1;
+                        assert!(first.starts_with("╭─"), "{name}: {first:?}");
+                    }
+                    Drawn | Shown(Undrawn::PastCap) => assert_eq!(first, PAST, "{name}"),
+                    // Never a change: code as written, with nothing said of it.
+                    Shown(Undrawn::NotHere) => assert_eq!(first, "┌─ diff", "{name}"),
+                }
+            }
+        }
+    }
+    assert_eq!(past_the_reader, ["many-pairs.diff", "one-long-pair.diff"]);
+    assert!(boxed >= 16, "{boxed}");
+}
+
+#[test]
+fn every_drawn_file_of_the_corpus_written_out_holds_no_control_character_but_its_line_ends() {
+    for (name, expect) in ENTRIES {
+        if *expect != Drawn {
+            continue;
+        }
+        let change = read(&source(name)).expect(name);
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let written = Changes.written(&change, glyphs);
+            assert!(written.lines().count() > 1, "{name}: {written:?}");
+            let found = written
+                .chars()
+                .find(|character| character.is_control() && *character != '\n');
+            assert_eq!(found, None, "{name}");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

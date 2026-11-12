@@ -1845,7 +1845,7 @@
     {
       "id": "CASE-TRANSCRIPT-CHANGE-BOX-FOLD",
       "family": "transcript-blocks",
-      "obligation": "A file of more than thirty-two rows draws its first twenty-four and last four around one row counting the rest, which names no key and offers nothing.",
+      "obligation": "A file of more than thirty-two rows draws its first twenty-four and last four around one row that counts the rest and names the key that expands it, the key alone in the slot that lights under the pointer and the rest of the row quiet, with the ascii marks in the ascii glyph set, and the change still holds every line.",
       "package": "crucible-tui-diff",
       "target": {
         "kind": "lib",
@@ -1853,7 +1853,7 @@
       },
       "case": "tests::a_file_longer_than_the_fold_shows_its_head_and_tail_and_counts_the_rest",
       "source": "crates/crucible-tui-diff/src/tests.rs",
-      "body_sha256": "68f66746ecebe298563f147bf7204b9ddcbab2c5caeca6a5384201559fb3d2fe",
+      "body_sha256": "19f1d97afce552749c6b9493c627afea42b6bb0fed7eb95101dd25c8abfef8cc",
       "platforms": [
         "linux",
         "macos",
@@ -1998,6 +1998,1032 @@
       "case": "a_misleading_path_is_drawn_with_what_would_mislead_replaced",
       "source": "crates/crucible-tui-diff/tests/hostile.rs",
       "body_sha256": "0036e2d35559d857d9770f41b7c608e8f90ff866536efd85166e161c99aaa65f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-DISPATCH",
+      "family": "transcript-blocks",
+      "obligation": "A closed diff fence read where a drawer taking its name is registered is drawn as one row of that drawer's for each of its lines between the prose before and after it, with no frame around them and the first of them slot for slot the drawer's, in the unicode and the ascii glyph set, and the drawer is asked once, for the lines between the fences, in the room and the glyph set the block was laid out for.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::drawers::a_closed_fence_a_registered_drawer_takes_is_drawn_by_that_drawer",
+      "source": "crates/crucible-tui/src/markdown/tests/drawers.rs",
+      "body_sha256": "6fb019f34ba2df9876df9e4287f6c0e21ab2b07b9ebd0074e401dbe3a0017514",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-TOLD-NO-KEY",
+      "family": "transcript-blocks",
+      "obligation": "A drawer whose row offers a key is not asked to take it out of a closed fence laid out for a screen, where the row keeps the key in the slot that lights under the pointer; told to a page printed once the drawer is asked once and the row is its count alone; and a fence the drawer declined is told as it was written, the drawer asked nothing more.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::drawers::a_drawer_takes_its_offer_of_a_key_out_of_what_a_page_printed_once_is_told_and_no_other_rows",
+      "source": "crates/crucible-tui/src/markdown/tests/drawers.rs",
+      "body_sha256": "b8568a461588614e29fb540e2e56d19ade4d1225722549eaf28dba8f18180de5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-NONE-REGISTERED",
+      "family": "transcript-blocks",
+      "obligation": "With no drawer registered a two-file diff fence is drawn as it was written, every line in the frame that names it, its frame and gutter quiet and its first lines in the colours its language gives them, with the ascii frame and gutter in the ascii glyph set, and a patch, a mermaid, a math and a text fence are each framed as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::drawers::with_no_drawer_registered_every_fence_is_drawn_exactly_as_it_was_written",
+      "source": "crates/crucible-tui/src/markdown/tests/drawers.rs",
+      "body_sha256": "3a8c7d75bcb0b66e73e384a199d69daaf261fc7609dc19fee889bd90e174f65b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-NOT-HERE",
+      "family": "transcript-blocks",
+      "obligation": "A fence its drawer answers is not something it draws is laid out row for row and slot for slot as with no drawer registered, in the unicode and the ascii glyph set, with no row saying it was not drawn, and the drawer is asked once each time the fence is laid out.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::drawers::a_fence_its_drawer_says_is_not_here_is_drawn_as_written_and_says_nothing_of_it",
+      "source": "crates/crucible-tui/src/markdown/tests/drawers.rs",
+      "body_sha256": "1036deb699d72c9f534e77f0284836dc1210c226b42959c83bf16186f592f435",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-PAST-CAP",
+      "family": "transcript-blocks",
+      "obligation": "A fence its drawer answers is past its caps is drawn as written under a frame whose label says it is longer than this can hold and shown as written, the row the reader draws for a block held past its own cap, with the ascii separators in the ascii glyph set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::drawers::a_fence_past_its_drawers_caps_is_drawn_as_written_in_the_frame_a_held_block_past_its_cap_has",
+      "source": "crates/crucible-tui/src/markdown/tests/drawers.rs",
+      "body_sha256": "e21958482a31dd1e4dab8a597cc69805ed8cb0036e2c70dc7afa9b1ec0beddfd",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-UNCLOSED",
+      "family": "transcript-blocks",
+      "obligation": "A diff fence the answer ended inside, with its lines whole, its last line unended, its closing fence half written or no line at all, is laid out exactly as with no drawer registered, opens on the frame naming it, and is handed to no drawer.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::drawers::a_fence_the_answer_ended_inside_is_drawn_as_written_and_handed_to_no_drawer",
+      "source": "crates/crucible-tui/src/markdown/tests/drawers.rs",
+      "body_sha256": "06dfac9a03767ca0c4065c1d5a990ea910c1ba15931ba74d455e2865e84bca24",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-CUT-ANYWHERE",
+      "family": "transcript-blocks",
+      "obligation": "A two-file diff fence between two lines of prose, cut in two at every character and delivered a character at a time, draws what the answer whole draws and its drawer is handed the block once and whole, with a cut inside a file header, a hunk header, a changed line and the closing fence among them.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::drawers::a_fence_cut_anywhere_is_handed_to_its_drawer_whole_and_draws_what_the_whole_answer_draws",
+      "source": "crates/crucible-tui/src/markdown/tests/drawers.rs",
+      "body_sha256": "6aa76733891f5878404ace0d72e910868efc6907b3d73eaa7a796ea744551153",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-HOLD-CAP",
+      "family": "transcript-blocks",
+      "obligation": "A diff fence one byte under the most the reader holds, and one of exactly that many bytes, is handed to its drawer once and whole in the reader's room and drawn by it, and one a byte longer is handed to no drawer and framed as longer than this can hold and shown as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::drawers::a_fence_is_handed_to_its_drawer_up_to_the_most_the_reader_holds_and_not_past_it",
+      "source": "crates/crucible-tui/src/markdown/tests/drawers.rs",
+      "body_sha256": "5b97e43a94e9bbce2f68c00e0501ac5739c061e6de9e2525711da5ba4cdbeeeb",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-LINKS-APART",
+      "family": "transcript-blocks",
+      "obligation": "What a reader links to can be compared, cloned and defaulted, its default naming no forge and no files, equal to its clone and unequal to one naming a forge, and laying a block out by a registered drawer leaves it as it was.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::drawers::what_a_reader_links_to_is_compared_by_its_forge_and_its_files_alone",
+      "source": "crates/crucible-tui/src/markdown/tests/drawers.rs",
+      "body_sha256": "0a0f52fea2363ffce7228dc02e5a5b5bbbac6bb88c1ee9f0292de3992d371f9a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-PICTURES",
+      "family": "transcript-blocks",
+      "obligation": "A two-file diff fence at 40 columns in the unicode glyph set lays out as the picture accepted for it when a stub drawer draws it, and as the picture accepted for it when no drawer is registered.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::drawers::a_fence_drawn_by_a_stub_drawer_and_the_same_fence_with_none_registered_are_pictured",
+      "source": "crates/crucible-tui/src/markdown/tests/drawers.rs",
+      "body_sha256": "cb2649491bb87001e05bf71b488f13600b5c3b565d2003923b3854f3f61a50ea",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-RENDERER",
+      "family": "transcript-blocks",
+      "obligation": "A renderer handed a drawer draws a diff fence of an answer on a screen of its own as that drawer's rows between the prose around it, with no frame, in the unicode and the ascii glyph set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::drawers::a_fence_of_an_answer_is_drawn_by_the_drawer_the_renderer_was_handed",
+      "source": "crates/crucible-tui/src/render/tests/drawers.rs",
+      "body_sha256": "a05e6a2d2780103b424c058fcacc6286143b93efc9bad9e7f5a8f9348f731c4f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-RENDERER-NONE",
+      "family": "transcript-blocks",
+      "obligation": "A renderer handed no drawer draws a diff fence of an answer on a screen of its own in the frame that names it, every line as written, and one handed an empty registry writes the same bytes.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::drawers::a_renderer_handed_no_drawer_draws_a_fence_exactly_as_it_was_written",
+      "source": "crates/crucible-tui/src/render/tests/drawers.rs",
+      "body_sha256": "6b5573e2b322c2c8d9004c555c559ebca5260a8b69d53d9ba29b77e997e334de",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-RENDERER-DECLINED",
+      "family": "transcript-blocks",
+      "obligation": "On a screen, a diff fence its drawer declines is drawn as written in the frame that names it, and one its drawer says is past its caps is drawn as written in a frame that says it is longer than this can hold and shown as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::drawers::a_fence_its_drawer_declines_is_drawn_as_written_and_one_past_its_caps_says_so",
+      "source": "crates/crucible-tui/src/render/tests/drawers.rs",
+      "body_sha256": "e8a1cb3973de5e60f6c0691484a8d12c5e7f463ab7a51508f3f5ef4e720e95e7",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-RENDERER-UNCLOSED",
+      "family": "transcript-blocks",
+      "obligation": "On a screen, a diff fence the answer ended inside is drawn as written under the frame that names it, by a renderer handed a drawer that would have drawn it closed.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::drawers::a_fence_the_answer_ended_inside_is_drawn_as_written_on_the_screen",
+      "source": "crates/crucible-tui/src/render/tests/drawers.rs",
+      "body_sha256": "5bcb051e63302cdde7650a5be78901949512746b81e2bdb2e9cc9acd3bb8239a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-RENDERER-NARROWED",
+      "family": "transcript-blocks",
+      "obligation": "A fence a drawer drew at 70 columns, in a window narrowed to 24, is row for row the fence a window opened at 24 draws, and no row of it is wider than the window.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::drawers::a_drawn_fence_narrowed_is_the_fence_a_window_that_narrow_draws",
+      "source": "crates/crucible-tui/src/render/tests/drawers.rs",
+      "body_sha256": "c68797aa36fa81cebddaecf0503812293e44e01c296b66b0abe3fc6cd2510746",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-RENDERER-SOURCES",
+      "family": "transcript-blocks",
+      "obligation": "A diff fence a drawer drew is listed once among what the screen can copy, under the word diff, with the whole fence as it was written, fence lines and all.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::drawers::a_drawn_fence_is_listed_with_the_whole_fence_it_was_written_as",
+      "source": "crates/crucible-tui/src/render/tests/drawers.rs",
+      "body_sha256": "f51784ecc330723aa6bcef7c2e73389f430f5fd4e90d86050f4b587d6326ccf1",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-RENDERER-REDIRECTED",
+      "family": "transcript-blocks",
+      "obligation": "A run whose output is redirected, wearing colour and handed a drawer, is written a diff fence as that drawer's rows between the prose around it, a line each, with no frame.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::drawers::a_redirected_run_is_written_a_fence_as_its_drawer_lays_it_out",
+      "source": "crates/crucible-tui/src/render/tests/drawers.rs",
+      "body_sha256": "672a8c6bfef4e953bd7156adc3c584c565dee30bc04d8a33ef082685da281daf",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-RENDERER-REDIRECTED-NO-KEY",
+      "family": "transcript-blocks",
+      "obligation": "A run whose output is redirected, wearing colour and handed a drawer whose row offers a key, is written a diff fence as that drawer's row with the offer taken out, between the prose around it, and keeps the same rows with none in the slot that lights under the pointer.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::drawers::a_redirected_run_is_written_a_drawn_fence_with_its_offer_of_a_key_taken_out",
+      "source": "crates/crucible-tui/src/render/tests/drawers.rs",
+      "body_sha256": "dd34d090d84dfb9819194107423de6f2336069e0e0c544021c53d3e264cd39bc",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-RENDERER-OFFER",
+      "family": "transcript-blocks",
+      "obligation": "On a screen, a diff fence drawn by a drawer whose row offers a key shows the row naming the key at 60 columns and again once the window is 40 wide, where the only run in the slot that lights under the pointer is the key's words.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::drawers::a_drawn_fences_offer_of_a_key_stands_on_the_screen_at_each_width_it_is_laid_out_for",
+      "source": "crates/crucible-tui/src/render/tests/drawers.rs",
+      "body_sha256": "aaabbae341cd9f5f42859ee9546209b5345e36e5da116093b43b3ef1515a87b7",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-HOSTILE",
+      "family": "transcript-blocks",
+      "obligation": "Diff and patch fences whose paths and lines carry escapes that colour and clear, string and picture escapes, a hyperlink, a bell, a backspace, controls of the second set, an override, an isolate, a zero width space and a byte order mark are drawn on a screen by the drawer the renderer was handed, in the unicode and the ascii glyph set, and none of those reaches the terminal.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::drawers::a_hostile_path_or_line_in_a_drawn_fence_writes_no_escape",
+      "source": "crates/crucible-tui/src/render/tests/drawers.rs",
+      "body_sha256": "4d969e9bf823859e69f85e5d5efac470774b50d255ad2845ffa6524820f4e969",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-HOSTILE-REDIRECTED",
+      "family": "transcript-blocks",
+      "obligation": "The same hostile diff and patch fences, drawn by a drawer for a run whose output is redirected, are written with the drawer's mark on their lines and no frame, with no control character but line ends and none of what a terminal would obey.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::drawers::a_hostile_fence_drawn_into_a_file_writes_no_escape_at_all",
+      "source": "crates/crucible-tui/src/render/tests/drawers.rs",
+      "body_sha256": "66cc1c71e20e1ad379fb976015da452bd613fa0945643711d64ed206c9472574",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-RENDERER-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "A renderer handed a drawer draws a diff fence of an answer in the terminal's own buffer as that drawer's rows between the prose around it, with no frame, in the unicode and the ascii glyph set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_fence_of_an_answer_is_drawn_by_the_drawer_the_renderer_was_handed",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "385cb90674e500da851fb6fc427c2ba9ff4ef13b14d9234a06d2e3ff58daa4f4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-RENDERER-NONE-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "A renderer handed no drawer draws a diff fence of an answer in the terminal's own buffer in the frame that names it, every line as written, and one handed an empty registry draws the same rows and writes the same bytes.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_renderer_handed_no_drawer_draws_a_fence_exactly_as_it_was_written",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "306820b9b917ebf2da86c9fa508d34d7cc8e03e9c708ce0b87447d0288d74592",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-RENDERER-NARROWED-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In the terminal's own buffer, a fence a drawer drew at 70 columns and narrowed to 24 is the one cut row a window opened at 24 draws.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_drawn_fence_narrowed_is_the_fence_a_window_that_narrow_draws",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "08cf29d94a9d976658c4575543b17ee338dd28a25005e94253fcb20c62e72e44",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-RENDERER-OFFER-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In the native screen, a diff fence drawn by a drawer whose row offers a key shows the row naming the key in a 64-column window and in one narrowed to 40.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_drawn_fences_offer_of_a_key_stands_at_each_width_it_is_laid_out_for",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "7352de703c2be546af7788c6428daf441b7be0c935df1f098980f18b699e8a0e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-HOSTILE-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "Diff and patch fences whose paths and lines carry escapes that colour and clear, string and picture escapes, a hyperlink, a bell, a backspace, controls of the second set, an override, an isolate, a zero width space and a byte order mark are drawn in the terminal's own buffer by the drawer the renderer was handed, in the unicode and the ascii glyph set, and none of those reaches the terminal.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_hostile_path_or_line_in_a_drawn_fence_writes_no_escape",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "7618272898fa4d3361e3fa6b6c5e08ca5021dfd9e00d882fe8023023b58d40a2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-TESTING-ANSWERS",
+      "family": "transcript-blocks",
+      "obligation": "The corpus answers a drawer crate's tests read hold exactly one answer with both a diff fence and a patch fence, the one named diff.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "testing::tests::the_answers_a_drawer_crate_reads_hold_the_corpus_diff_fences",
+      "source": "crates/crucible-tui/src/testing.rs",
+      "body_sha256": "a5bd78c757a26757c7f105c6c5e6e7c64ce7cf8d989d3a1a8f0507413c8fa707",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIFF-FENCE-PICTURE",
+      "family": "transcript-blocks",
+      "obligation": "A two-file diff fence read by the transcript's reader and drawn by this crate's drawer at 64 columns is the box the same change read directly draws, its second file opening on the box's tee with its path and summary, and lays out as the picture accepted for it, in the unicode and the ascii glyph set.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::picture_of_a_two_file_fence_the_reader_read_and_the_drawer_drew",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "b1cce14f06cfc8531125e860eb470591b24f6c6bd717b0e894d33d9d4430e5e4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIFF-FENCE-NAMES",
+      "family": "transcript-blocks",
+      "obligation": "A fence named diff, patch or DIFF is drawn as the box its change draws, and the same lines under the name text are framed under that name.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_diff_fence_and_a_patch_fence_are_drawn_as_the_change_and_any_other_as_written",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "be6517bcdee0dc6c6e660033839081bdfc23112f2aefabb3f35442cc54806b81",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIFF-FENCE-AS-WRITTEN",
+      "family": "transcript-blocks",
+      "obligation": "A diff fence that holds no unified diff, and one the answer ended inside, are row for row what the reader draws with no drawer registered, in the unicode and the ascii glyph set, under the frame naming it with no refusal; and with no drawer registered a diff is framed as the code it was written as.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_fence_this_drawer_does_not_draw_is_byte_for_byte_the_fence_no_drawer_was_asked_about",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "dee5263f50c5d53d9a8707df3906e82e5869123f088c305b3f58b9789cff1939",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIFF-FENCE-FILES-CAP",
+      "family": "transcript-blocks",
+      "obligation": "A diff fence of one file fewer than a change keeps, and of as many, is drawn as a box with a header and a line for each file, and one of one file more is shown as written, every line, in the frame that says it is longer than this can hold.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_fence_is_drawn_up_to_the_files_a_change_keeps_and_shown_as_written_one_past",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "771f700a6a0706c4527a272072a22219e60b6abe3885dd7ff7fdde03f423216c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIFF-CAPS",
+      "family": "transcript-blocks",
+      "obligation": "A diff one under each cap of lines, bytes and files, and one exactly at it, is drawn by the drawer, and one a line, a byte or a file past it is refused as past its caps.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_diff_is_read_up_to_each_of_its_caps_and_refused_one_past_it",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "3768a3ba8b7d585a923ff985a50d0411f72223e932449be9f13f8362497970a6",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIFF-FENCE-LINES-CAP",
+      "family": "transcript-blocks",
+      "obligation": "A diff fence one line short of the lines a file keeps is drawn as a box counting its added lines, and one of as many lines, or one more, is shown as written, every line, in the frame that says it is longer than this can hold.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_fence_of_fewer_lines_than_a_file_keeps_is_drawn_and_one_of_as_many_is_shown_as_written",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "ca50c0a2a081822d04c4f1c39164c62a0735b38c072e077e7313854af3900acf",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIFF-FENCE-WIDTHS",
+      "family": "transcript-blocks",
+      "obligation": "Every corpus answer holding a diff or a patch fence, read with this crate's drawer at every width from 8 to 160 in both glyph sets, has no row wider than its width, holds the box the drawer lays out for its first diff fence in that room, and is drawn the same whether read at that width or resized to it from 160 or from 8; at 80 columns a box opens in it.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::every_diff_fence_of_the_corpus_is_drawn_alike_however_its_window_reached_a_width",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "60b0496f37051df0d9f5b4242346b9bb6c8f2123144f7937fbd17c63a5c29f1c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIFF-FENCE-CUT",
+      "family": "transcript-blocks",
+      "obligation": "A two-file diff fence between two lines of prose, cut in two at every character as it arrives, is drawn as the fence whole with a box for each file, and so is a longer fence cut inside a file header, a git header, a hunk header, a changed line and its closing fence.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_diff_fence_cut_anywhere_as_it_arrives_is_drawn_as_the_fence_whole",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "f426d26e704e36a024d82260dde67fe748344215abd761e78ffe6f82e7d447c9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-WRITTEN-FOLDED",
+      "family": "transcript-blocks",
+      "obligation": "A change long enough to fold is written out under the words its box opens with, one line for each line it keeps with its number and sign, the lines the box folds among them, with no frame, no fold row and no key, and with the ascii dot in the ascii glyph set.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_folded_change_is_written_out_with_every_line_it_keeps",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "8bccf57c75d54b879f67d6c30c34822099edf154ffbe76e265f1fcbb65367f5a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-WRITTEN-ROWS",
+      "family": "transcript-blocks",
+      "obligation": "A change written out is, line for line and with the blanks a line ends in left off, what its box says inside its frame when nothing is cut or folded, for a tool's file with a jump, a tab, a line ending in spaces and lines never kept, more files than a change keeps, a file with no path, a rename with a binary file and a two-file diff, in both glyph sets; the line ending in spaces keeps them and is the only line written that ends in a blank; and it words the lines between, the lines and files not shown and a binary file as the box does.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_change_written_out_says_row_for_row_what_its_box_says_inside_its_frame",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "21d582423e567652c8fec827aec5fd13fb4af13fb21172c5f98ee49f95630457",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-WRITTEN-CONTROLS",
+      "family": "transcript-blocks",
+      "obligation": "A change whose path and lines carry an escape, a bell, a carriage return and controls of the second set is written out as three lines that keep its words and hold no control character but their line ends.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_change_written_out_holds_no_control_character_but_its_line_ends",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "05afb71abbe934014b05abbab6dd7ee2de176bb5a7771f3309ff8c1c9785c75c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-WRITTEN-TRAILING-BLANKS",
+      "family": "transcript-blocks",
+      "obligation": "A change whose pairs differ only in what a line ends in, spaces put on, a tab taken off and spaces on a line that held nothing, is written out in both glyph sets with each line's own blanks kept and the tab as four columns, a line that holds nothing ending at its number or its sign, so that past its number and sign no pair reads the same before and after.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_change_of_trailing_blanks_alone_is_written_out_as_lines_that_differ",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "e1d05954d6f6dd36358c73c7d1df26d0af135b0cfb89efa5d39a5387b9cf2e2b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-FOLD-AT",
+      "family": "transcript-blocks",
+      "obligation": "A change of one file of exactly as many lines as the fold is drawn in that many rows and two more.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_file_of_exactly_the_fold_is_drawn_whole",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "e51877f2138d804186359b1db0b78dc126f27a72039dad222b1280ee64bee09b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-FOLD-PAST",
+      "family": "transcript-blocks",
+      "obligation": "A file one line past the fold draws its first twenty-four and last four lines around one row that counts the five it hides and names the key that expands them.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_file_one_row_past_the_fold_is_folded_and_offers_the_rows_it_hides",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "26a25100ad6b4fabd03cd731ece5724923fd54e84975aea2aea3ea7434def3d9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-FOLDS",
+      "family": "transcript-blocks",
+      "obligation": "A file says it folds exactly when its box at 80 columns has a row counting folded lines, and exactly when it has more rows than the fold, for files from one row to twice the fold; a file of as many lines as the fold with a jump in its numbers folds, the row that stands for the jump being a row of its box; and in a room too narrow for the word no row of its box says folded.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_file_says_it_folds_exactly_when_its_box_counts_rows_it_hides",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "bfeb7f207b754cf16e9cf04bdb470798a48b06ddaa328f2e0c9c70214c1b5959",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-FOLD-UNOFFERED",
+      "family": "transcript-blocks",
+      "obligation": "A fold that stops offering keeps its count and loses its key: its row is the count alone, all quiet, in the unicode and the ascii glyph set, every other row of the box is unchanged, a fold a narrow room cut inside its key loses what was left of the key, and a row that offers the key for something other than a fold is left as it was.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_fold_that_stops_offering_keeps_its_count_and_loses_its_key",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "ae4614f701b22a6a2870efe63f6aaccc32821a88d1796519d4dda19b9453c36f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIFF-FENCE-HOSTILE-CORPUS",
+      "family": "transcript-blocks",
+      "obligation": "Every file of the hostile corpus written as a diff fence of an answer and read with this crate's drawer returns inside the deadline at 8, 80 and 160 columns in both glyph sets with no row wider than its room and no character a terminal would obey; at 80 columns a file the record says is drawn and the reader holds opens a box, one past the reader's hold or the drawer's caps opens the frame that says it is longer than this can hold, and one that is no change opens the frame naming it; exactly two files are past the reader's hold and at least sixteen open a box.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "every_file_of_the_corpus_in_a_fence_of_an_answer_is_drawn_or_shown_as_written_safely",
+      "source": "crates/crucible-tui-diff/tests/hostile.rs",
+      "body_sha256": "3f5cc29ae3d750cb7e2b81ea1c95c1ad27d9a8ed7d2b4cbeeb484406ac080366",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-WRITTEN-HOSTILE-CORPUS",
+      "family": "transcript-blocks",
+      "obligation": "Every file of the hostile corpus the record says is drawn is written out, in both glyph sets, as more than one line holding no control character but line ends.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "every_drawn_file_of_the_corpus_written_out_holds_no_control_character_but_its_line_ends",
+      "source": "crates/crucible-tui-diff/tests/hostile.rs",
+      "body_sha256": "224fe82629c1529aa4b67d9097c274e73ddd9bae66b7b8c1c23dcc8db00948a2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-AGREES",
+      "family": "transcript-blocks",
+      "obligation": "A tool's change and the same change written as a diff fence of an answer, read by a renderer handed the session's drawers in the same room, are drawn as the same rows slot for slot, the tool's hung two columns under its call, for a short change and a folded one, in both glyph sets, in a narrow window and at 80 columns.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::draw::tests::a_tools_change_and_the_fence_an_answer_says_it_in_are_drawn_as_the_same_rows",
+      "source": "src/cli/draw/tests.rs",
+      "body_sha256": "c4fb3b7b07cc7d676a5b35766186b2ffe4f0dee328e3e216951fe3c4786cfeea",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-FOLD-KEPT",
+      "family": "transcript-blocks",
+      "obligation": "A folded change's fold row counts its hidden lines and names the key that expands it, the key the only words in the slot that lights under the pointer; the change is kept for that key under its call's line, written out with its summary and every line the tool kept, when the call has just answered and when a session is put back on screen; and a change drawn whole under a whole call line is not kept.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::draw::tests::a_folded_change_offers_its_key_and_is_kept_written_out_with_every_line",
+      "source": "src/cli/draw/tests.rs",
+      "body_sha256": "bc35c6e0e0c840f5561390c07d0add15b83d5e954aa2c65f07f201ce21a78062",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-CUT-CALL-KEPT",
+      "family": "transcript-blocks",
+      "obligation": "A change under a call line that was cut is kept under the whole call line, written out as its box says it, summary and numbered lines, not as the sentence the model was sent, and a replayed result with counts and no lines is kept as what the call answered.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::draw::tests::a_change_under_a_call_line_that_was_cut_is_kept_written_out_and_not_as_the_model_was_told",
+      "source": "src/cli/draw/tests.rs",
+      "body_sha256": "b17827823cef8e3ca12a6360f4bed7bfc5c24227e99ba6569ad91e2733edeb29",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-FOLD-NO-KEY",
+      "family": "transcript-blocks",
+      "obligation": "A fold that can open nothing any more keeps its count at 80 columns and, at every width from 0 to 80 in both glyph sets, has no row in the slot that lights under the pointer and none naming the key, while at some width the offered fold named it.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::draw::tests::a_fold_that_can_open_nothing_any_more_keeps_its_count_and_names_no_key_at_any_width",
+      "source": "src/cli/draw/tests.rs",
+      "body_sha256": "df99e5c9d1aca53216e20efaff9c7a4356d742432e3fb90cb6fabd53a27a587d",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIFF-FENCE-FOLD-NO-KEY-AGREES",
+      "family": "transcript-blocks",
+      "obligation": "A folded change written as a diff fence of an answer, in a run whose output is redirected and that was handed the session's drawers, is kept as the rows a tool's call draws for the same change once each has its offer of a key taken out, slot for slot, and is written as their text with no key named, in both glyph sets at every window from 3 to 80 columns; at 80 the fold row written is its count between its marks, and at some width the call's rows named the key.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::draw::tests::a_folded_fence_written_where_no_key_opens_it_is_the_tools_change_with_its_key_taken_out",
+      "source": "src/cli/draw/tests.rs",
+      "body_sha256": "22ac61d02d221ce07aa248204c4126031a4d16dd5909162bec630034fa4725c2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIFF-FENCE-FOLD-OFFERED",
+      "family": "transcript-blocks",
+      "obligation": "A folded change written as a diff fence of an answer on a screen 80 columns wide, in the fullscreen and the native screen and in both glyph sets, keeps one fold row that counts its lines and names the key, whose words are the only run in the slot that lights under the pointer, and the words reach the terminal.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::draw::tests::a_folded_fence_on_a_screen_names_the_key_that_lists_it_in_both_screen_modes",
+      "source": "src/cli/draw/tests.rs",
+      "body_sha256": "553d2fcefad792d186bd521cf5645452de828d70ceef0e4d3118bc6a6c97bd97",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-FOLD-NARROW-KEPT",
+      "family": "transcript-blocks",
+      "obligation": "A folded change drawn in a window too narrow to name its key still counts its hidden lines, names no key there, and is kept written out, and the same window widened to 80 columns names the key on its fold row.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::draw::tests::a_fold_drawn_too_narrow_to_name_its_key_is_kept_for_the_window_that_names_it",
+      "source": "src/cli/draw/tests.rs",
+      "body_sha256": "b67bb3b4472df73979623a2c1c6d446919b1d9ee623832107c7838564d4f1f3c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-KEPT-LONGEST",
+      "family": "transcript-blocks",
+      "obligation": "The longest change a tool keeps, every line as long as one is kept and every character of it a tab, is held written out whole: its summary and every line with each tab as four columns to the end of the line, the last line uncut and no tab left.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::draw::tests::the_longest_change_a_tool_keeps_is_held_written_out_whole",
+      "source": "src/cli/draw/tests.rs",
+      "body_sha256": "ca4b6c56acb874a7c0fcf33166c168f1a439c52c4fb874d71a789a3211eff18e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-EXPANDED",
+      "family": "transcript-blocks",
+      "obligation": "The view the key that expands stands shows a folded change under its call's line, a blank row, its summary and every one of its lines numbered and signed, in fullscreen and in native mode.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::draw::tests::the_key_that_expands_shows_a_folded_change_under_its_call_with_every_line_on_either_screen",
+      "source": "src/cli/draw/tests.rs",
+      "body_sha256": "493efbc8d3e0edc6159b84d46f19fa69dbf8826e3ed242167573a461eef33ee2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-EXPANDED-HOSTILE",
+      "family": "transcript-blocks",
+      "obligation": "A change whose path and lines carry escapes that colour and clear, a hyperlink, a bell, a backspace, a control of the second set, overrides, isolates, a zero width space and a byte order mark, kept and stood whole in colour by the key that expands, has its count in what was kept and its last line on the screen, and no hyperlink, no colour escape of the path's, no bell, backspace, second-set control, override, isolate, zero width space or byte order mark reaches the terminal, in fullscreen and in native mode.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::draw::tests::a_hostile_change_stood_whole_by_the_key_writes_nothing_a_terminal_obeys_on_either_screen",
+      "source": "src/cli/draw/tests.rs",
+      "body_sha256": "e3a0ec5b4810f666903cc5286bbed5c563dab15bcf55724665b6d0b2deb9625a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIFF-FENCE-GLIMPSED",
+      "family": "transcript-blocks",
+      "obligation": "A session glimpsed in colour whose answer is a closed diff fence shows the box a change is drawn in, its path with what moved and the removed and the added line each under its number and sign, and no row holding the fence's new-file header or its hunk header as written.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::replaying::tests::a_diff_fence_in_a_session_glimpsed_is_drawn_as_the_change_it_holds",
+      "source": "src/cli/converse/replaying/tests.rs",
+      "body_sha256": "fbc04a6c516b7d39c358097badca2e621830d39ca1bbf961274c751baeea2225",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIFF-FENCE-GLIMPSED-FOLD-NO-KEY",
+      "family": "transcript-blocks",
+      "obligation": "A session glimpsed in colour whose answer is a closed diff fence of 64 added lines shows the change's header and one fold row that counts 36 lines between its marks, with no row naming a key and none in the slot that lights under the pointer.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::replaying::tests::a_folded_diff_fence_in_a_session_glimpsed_counts_its_lines_and_names_no_key",
+      "source": "src/cli/converse/replaying/tests.rs",
+      "body_sha256": "c1b61e1d87a41db75639b48517ba2b6d1628861d6797ef0b97fe88a323d68ceb",
       "platforms": [
         "linux",
         "macos",

@@ -613,6 +613,110 @@ fn a_glimpse_keeps_no_more_rows_than_it_was_asked_for() {
 }
 
 #[test]
+fn a_diff_fence_in_a_session_glimpsed_is_drawn_as_the_change_it_holds() {
+    // The preview's renderer is one of its own, and a renderer handed no
+    // drawers draws a fence as it was written: the picker would then show a
+    // diff as text that picking the session up draws as a change.
+    let mut transcript = Transcript::new();
+    transcript
+        .push(Message::said("change it"))
+        .expect("valid fixture transcript");
+    transcript
+        .push(Message::Agent {
+            continuation: None,
+            text: "```diff\n--- a/x.rs\n+++ b/x.rs\n@@ -1 +1 @@\n-old\n+new\n```\n".into(),
+            calls: Vec::new(),
+            stop: Some(StopReason::Yielded),
+        })
+        .expect("valid fixture transcript");
+    let runner = resumed(everything());
+    let pruned = Pruned::default();
+    // In colour, where an answer is read as the markdown it is.
+    let replay = Replay {
+        settled: crucible_app::Settled::from(&runner),
+        pruned: &pruned,
+        style: Style::coloured(),
+    };
+
+    let shown = glimpsed(transcript.messages(), &replay, 60, 64).expect("a recording cannot fail");
+    let said: Vec<String> = shown.iter().map(Row::text).collect();
+
+    // The box a change is drawn in: its path and what moved, and each line
+    // under its number and sign.
+    assert!(
+        said.iter()
+            .any(|row| row.contains("╭─ x.rs · Added 1 line, removed 1 line")),
+        "{said:#?}"
+    );
+    assert!(said.iter().any(|row| row.contains("1 - old")), "{said:#?}");
+    assert!(said.iter().any(|row| row.contains("1 + new")), "{said:#?}");
+    // And none of the fence as it was written.
+    assert!(
+        !said
+            .iter()
+            .any(|row| row.contains("+++ b/x.rs") || row.contains("@@")),
+        "{said:#?}"
+    );
+}
+
+#[test]
+fn a_folded_diff_fence_in_a_session_glimpsed_counts_its_lines_and_names_no_key() {
+    // Nothing is pressed in a preview: the rows are shown beside a list of
+    // sessions, and no key there opens what a fold hides. The fold keeps its
+    // count, which is still true, and offers nothing.
+    let lines = "+line\n".repeat(64);
+    let text = format!("```diff\n--- a/long.rs\n+++ b/long.rs\n@@ -0,0 +1,64 @@\n{lines}```\n");
+    let mut transcript = Transcript::new();
+    transcript
+        .push(Message::said("write it"))
+        .expect("valid fixture transcript");
+    transcript
+        .push(Message::Agent {
+            continuation: None,
+            text: text.into(),
+            calls: Vec::new(),
+            stop: Some(StopReason::Yielded),
+        })
+        .expect("valid fixture transcript");
+    let runner = resumed(everything());
+    let pruned = Pruned::default();
+    // In colour, where an answer is read as the markdown it is.
+    let replay = Replay {
+        settled: crucible_app::Settled::from(&runner),
+        pruned: &pruned,
+        style: Style::coloured(),
+    };
+
+    let shown = glimpsed(transcript.messages(), &replay, 60, 64).expect("a recording cannot fail");
+    let said: Vec<String> = shown
+        .iter()
+        .map(|row| row.text().trim().to_owned())
+        .collect();
+
+    assert!(
+        said.iter()
+            .any(|row| row.contains("╭─ long.rs · Added 64 lines")),
+        "{said:#?}"
+    );
+    let folds: Vec<&str> = said
+        .iter()
+        .map(String::as_str)
+        .filter(|row| row.contains("lines folded"))
+        .collect();
+    assert_eq!(folds, ["│  ⋯  36 lines folded  ⋯"], "{said:#?}");
+    assert!(
+        !said.iter().any(|row| row.contains("ctrl")),
+        "a key named where none is read: {said:#?}"
+    );
+    assert!(
+        shown
+            .iter()
+            .all(|row| row.kinds().all(|slot| slot != Slot::Cut)),
+        "a row lit as an offer: {said:#?}"
+    );
+}
+
+#[test]
 fn a_resumed_session_is_put_back_on_the_screen() {
     let screen = screen(everything(), 80);
     println!("\n{screen}");

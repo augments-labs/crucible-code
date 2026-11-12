@@ -27,9 +27,17 @@
 //! words; past either, the rest of its lines draw plain on their ground, so a
 //! change costs the same bounded time to lay out however much it holds. Lines
 //! the diff never held are one quiet row that counts them, and a file of more
-//! than [`FOLD`] rows draws its head and tail around a row that counts the
-//! lines of the file it hides. Files past what a change keeps are one quiet
-//! row before the close that counts them.
+//! than [`crate::FOLD`] rows draws its head and tail around a row that counts the
+//! lines of the file it hides and names the key that shows them. Files past
+//! what a change keeps are one quiet row before the close that counts them.
+//!
+//! [`Changes::written`] writes the same change out as plain text, every line
+//! it keeps and nothing folded, for what that key opens. Its words are the
+//! box's own: the header, the number and sign of a line, and each row that
+//! stands for lines or files are worded by the functions the rows are drawn
+//! from. [`unoffered`] takes the key back out of a fold's row once nothing
+//! answers it, and [`Changes`] takes it out of every row of a fence it drew
+//! for where no key is read, so the two rows read the same.
 //!
 //! The rows are laid out once for the room and then clipped to it: no more of
 //! a line is laid out than the room shows, a line cut short ends in the glyph
@@ -41,11 +49,11 @@
 use std::ops::Range;
 
 use crucible_tui::chrome::Undrawn;
-use crucible_tui::drawing::{Draws, Laid, Room};
+use crucible_tui::drawing::{Draws, EXPAND, Laid, Room};
 use crucible_tui::syntax::Syntax;
 use crucible_tui::{Glyphs, Row, Slot, clip, columns};
 
-use crate::change::{Change, FOLD, File, HEAD, Line, Side, TAIL};
+use crate::change::{Change, File, HEAD, Line, Side, TAIL};
 use crate::read::{NotADiff, read};
 use crate::words::{PAIRS, Raised, raised};
 
@@ -92,6 +100,102 @@ impl Changes {
             narrow: None,
         }
     }
+
+    /// `change` written out as plain text, a line to a line and each ended.
+    ///
+    /// Each file is a line that names it and says what moved in it, worded as
+    /// its header is, and then every line the change keeps: its number, as
+    /// wide as the widest, its sign, and its text to its last blank. A row of
+    /// the box leaves the blanks a line ends in off; here they are written, so
+    /// two lines that differ only in them read differently, and a line that
+    /// holds nothing ends at its number or its sign. What stands in the box
+    /// for lines between two hunks, for lines and files the change does not
+    /// hold, and for a binary file stands here in the same words, between the
+    /// same marks in `glyphs`. Nothing is folded and nothing is cut to a room,
+    /// so this is what shows whole a change its box folded.
+    ///
+    /// It holds as much as the change does, which is bounded, and no control
+    /// character but the line ends it writes.
+    #[must_use]
+    pub fn written(&self, change: &Change, glyphs: Glyphs) -> String {
+        let widest = numbered(change);
+        let mut written = String::new();
+        let mut line = |text: &str| {
+            written.push_str(text);
+            written.push('\n');
+        };
+        for file in change.files() {
+            let name = named(file, glyphs).filter(|name| !name.is_empty());
+            let moved = summary(file, name.is_some(), glyphs)
+                .map(|row| row.text())
+                .unwrap_or_default();
+            match name {
+                Some(name) => line(&format!("{name}{moved}")),
+                None => line(moved.trim_start()),
+            }
+            for kept in file.lines() {
+                match kept {
+                    Line::Gap { lines, section } => {
+                        line(&standing(&parted(*lines, section.as_deref()), glyphs));
+                    }
+                    Line::Text { side, number, text } => {
+                        let gutter = gutter(*number, widest, *side);
+                        if text.is_empty() {
+                            // The column of a sign a line that stayed leaves
+                            // empty is this function's, and not the line's.
+                            line(gutter.trim_end());
+                        } else {
+                            line(&format!("{gutter} {}", spelled(text)));
+                        }
+                    }
+                }
+            }
+            if file.is_binary() {
+                line(&standing(BINARY, glyphs));
+            }
+            if file.dropped() > 0 {
+                line(&standing(&unshown(file.dropped(), "line"), glyphs));
+            }
+        }
+        if change.unshown() > 0 && !change.files().is_empty() {
+            line(&standing(&unshown(change.unshown(), "file"), glyphs));
+        }
+        written
+    }
+}
+
+/// Takes the key out of `row` where it is a fold's row offering its lines,
+/// leaving the count: `20 lines folded · ctrl+o to expand` then reads
+/// `20 lines folded`.
+///
+/// For a row already drawn whose lines the key no longer shows. A fold cut
+/// short inside its key by a narrow room loses what was left of the key; any
+/// other row is left as it is.
+pub fn unoffered(row: &mut Row) {
+    let counted = format!("{FOLDED}{OFFERING}");
+    let mut before = None;
+    let mut key = None;
+    for (at, (slot, text)) in row.spans().enumerate() {
+        let offers = slot == Slot::Cut && !text.is_empty() && EXPAND.starts_with(text);
+        if offers && before == Some(true) {
+            key = Some(at);
+            break;
+        }
+        before = Some(slot == Slot::Quiet && text.ends_with(&counted));
+    }
+    let Some(key) = key else {
+        return;
+    };
+    row.rewrite(|at, slot, text| {
+        if at == key {
+            None
+        } else if at + 1 == key {
+            let count = text.strip_suffix(OFFERING).unwrap_or(text);
+            Some((slot, count.to_owned()))
+        } else {
+            Some((slot, text.to_owned()))
+        }
+    });
 }
 
 impl Draws for Changes {
@@ -109,6 +213,10 @@ impl Draws for Changes {
             NotADiff::Unread => Undrawn::NotHere,
         })?;
         Ok(self.draw(&change, room))
+    }
+
+    fn unoffered(&self, rows: &mut [Row]) {
+        rows.iter_mut().for_each(unoffered);
     }
 }
 
@@ -230,12 +338,7 @@ fn natural(change: &Change, room: &Room) -> Vec<Drawn> {
     }
 
     if change.unshown() > 0 && !drawn.is_empty() {
-        let noun = if change.unshown() == 1 {
-            "file"
-        } else {
-            "files"
-        };
-        let row = quiet_row(&format!("{} {noun} not shown", change.unshown()), glyphs);
+        let row = quiet_row(&unshown(change.unshown(), "file"), glyphs);
         drawn.push(Drawn::body(row, None));
     }
     if !drawn.is_empty() {
@@ -273,7 +376,7 @@ fn body(file: &File, widest: usize, room: &Room, budget: &mut Budget, drawn: &mu
     let glyphs = room.glyphs;
     let lines = file.lines();
     let shown: Vec<bool> = (0..lines.len())
-        .map(|at| lines.len() <= FOLD || at < HEAD || at >= lines.len() - TAIL)
+        .map(|at| !file.folds() || at < HEAD || at >= lines.len() - TAIL)
         .collect();
     let raised = paired(lines, &shown, budget);
     // The last line that wears its language's colours: a line after it would
@@ -301,7 +404,7 @@ fn body(file: &File, widest: usize, room: &Room, budget: &mut Budget, drawn: &mu
         if coloured_to.is_none_or(|last| at > last) {
             lining.syntax = None;
         }
-        if lines.len() > FOLD && at == HEAD {
+        if file.folds() && at == HEAD {
             // The rows it hides may hold a gap, which is not a line of the
             // file; the count is of the lines a reader would be shown.
             let hidden = lines
@@ -328,12 +431,11 @@ fn body(file: &File, widest: usize, room: &Room, budget: &mut Budget, drawn: &mu
     }
 
     if file.is_binary() {
-        drawn.push(Drawn::body(quiet_row("binary, not drawn", glyphs), None));
+        drawn.push(Drawn::body(quiet_row(BINARY, glyphs), None));
     }
     if file.dropped() > 0 {
-        let lines = if file.dropped() == 1 { "line" } else { "lines" };
         drawn.push(Drawn::body(
-            quiet_row(&format!("{} {lines} not shown", file.dropped()), glyphs),
+            quiet_row(&unshown(file.dropped(), "line"), glyphs),
             None,
         ));
     }
@@ -348,13 +450,13 @@ impl Lining<'_> {
         text: &str,
         marks: Option<&[Range<usize>]>,
     ) -> Drawn {
-        let (ground, word, numbered, sign) = match side {
-            Side::Kept => (Slot::Plain, Slot::Plain, Slot::Quiet, ' '),
-            Side::Removed => (Slot::Removed, Slot::RemovedWord, Slot::RemovedNumber, '-'),
-            Side::Added => (Slot::Added, Slot::AddedWord, Slot::AddedNumber, '+'),
+        let (ground, word, numbered) = match side {
+            Side::Kept => (Slot::Plain, Slot::Plain, Slot::Quiet),
+            Side::Removed => (Slot::Removed, Slot::RemovedWord, Slot::RemovedNumber),
+            Side::Added => (Slot::Added, Slot::AddedWord, Slot::AddedNumber),
         };
         let text = flattened(text);
-        let widest = self.widest;
+        let gutter = gutter(number, self.widest, side);
 
         // The cell after the sign is the number's on a line that moved, so
         // the ground runs from the number into the line with no cell of the
@@ -363,10 +465,10 @@ impl Lining<'_> {
             .then_structural(Slot::Quiet, self.room.glyphs.vertical())
             .then(Slot::Plain, " ");
         if side == Side::Kept {
-            row.push(numbered, format!(" {number:>widest$} {sign}"));
+            row.push(numbered, format!(" {gutter}"));
             row.push(Slot::Plain, " ");
         } else {
-            row.push(numbered, format!(" {number:>widest$} {sign} "));
+            row.push(numbered, format!(" {gutter} "));
         }
         let prefix = row.columns();
         let columns = prefix + columns(&text);
@@ -540,6 +642,18 @@ fn numbered(change: &Change) -> usize {
         .map_or(NUMBER, |widest| widest.to_string().len().max(NUMBER))
 }
 
+/// The number a line is found at, as wide as the `widest`, and the sign that
+/// says which way it went: what a row draws before a line and what a change
+/// written out writes before it.
+fn gutter(number: usize, widest: usize, side: Side) -> String {
+    let sign = match side {
+        Side::Kept => ' ',
+        Side::Removed => '-',
+        Side::Added => '+',
+    };
+    format!("{number:>widest$} {sign}")
+}
+
 /// What a header calls the file: its path, or where it was and where it is
 /// for a rename.
 fn named(file: &File, glyphs: Glyphs) -> Option<String> {
@@ -683,28 +797,68 @@ fn clipped(row: Row, room: usize, glyphs: Glyphs, slot: Slot) -> Row {
     }
 }
 
+/// What a file that holds no lines to draw says in place of them.
+const BINARY: &str = "binary, not drawn";
+
+/// The word a fold's row says of the lines it counts.
+const FOLDED: &str = "folded";
+
+/// What parts a fold's count from the key that shows the lines it counts.
+const OFFERING: &str = " · ";
+
+/// `count` of `noun`: one line, or two lines.
+fn some(count: usize, noun: &str) -> String {
+    if count == 1 {
+        format!("{count} {noun}")
+    } else {
+        format!("{count} {noun}s")
+    }
+}
+
+/// What is said of `count` lines or files a change does not hold.
+fn unshown(count: usize, noun: &str) -> String {
+    format!("{} not shown", some(count, noun))
+}
+
+/// What is said of the lines between two hunks, with the section they sit in
+/// where the diff named one.
+fn parted(lines: usize, section: Option<&str>) -> String {
+    let section = section.map_or_else(String::new, |section| format!(" · {}", flattened(section)));
+    format!("{} between{section}", some(lines, "line"))
+}
+
+/// `what` between the two marks that say it stands for lines.
+fn standing(what: &str, glyphs: Glyphs) -> String {
+    let mark = elided(glyphs);
+    format!("{mark}  {what}  {mark}")
+}
+
 /// A quiet row inside the box saying `what`, between two marks that say it
 /// stands for lines.
 fn quiet_row(what: &str, glyphs: Glyphs) -> Row {
-    let mark = elided(glyphs);
     Row::new()
         .then_structural(Slot::Quiet, glyphs.vertical())
-        .then(Slot::Quiet, format!("  {mark}  {what}  {mark}"))
+        .then(Slot::Quiet, format!("  {}", standing(what, glyphs)))
 }
 
 /// The row that counts the lines between two hunks, with the section they
 /// sit in where the diff named one.
 fn between(lines: usize, section: Option<&str>, glyphs: Glyphs) -> Row {
-    let noun = if lines == 1 { "line" } else { "lines" };
-    let section = section.map_or_else(String::new, |section| format!(" · {}", flattened(section)));
-    quiet_row(&format!("{lines} {noun} between{section}"), glyphs)
+    quiet_row(&parted(lines, section), glyphs)
 }
 
-/// The row that stands for the lines a fold hides, counting them. Nothing
-/// shows them yet, so it names no key.
+/// The row that stands for the lines a fold hides, counting them and naming
+/// the key that shows them, in the slot every offer to show more is made in.
 fn folded(lines: usize, glyphs: Glyphs) -> Row {
-    let noun = if lines == 1 { "line" } else { "lines" };
-    quiet_row(&format!("{lines} {noun} folded"), glyphs)
+    let mark = elided(glyphs);
+    Row::new()
+        .then_structural(Slot::Quiet, glyphs.vertical())
+        .then(
+            Slot::Quiet,
+            format!("  {mark}  {} {FOLDED}{OFFERING}", some(lines, "line")),
+        )
+        .then(Slot::Cut, EXPAND)
+        .then(Slot::Quiet, format!("  {mark}"))
 }
 
 /// The mark that stands for lines not drawn.
@@ -715,11 +869,16 @@ const fn elided(glyphs: Glyphs) -> &'static str {
     }
 }
 
-/// A line as it is drawn: its end trimmed, a tab as [`TAB`], and any other
-/// control character a space.
+/// A line as it is drawn: its end trimmed, and the rest as [`spelled`].
 fn flattened(text: &str) -> String {
+    spelled(text.trim_end())
+}
+
+/// `text` with a tab as [`TAB`] and any other control character a space, and
+/// nothing taken off either end of it.
+fn spelled(text: &str) -> String {
     let mut line = String::with_capacity(text.len());
-    for character in text.trim_end().chars() {
+    for character in text.chars() {
         match character {
             '\t' => line.push_str(TAB),
             control if control.is_control() => line.push(' '),

@@ -3,12 +3,17 @@
 //! in beside the drawer.
 
 use std::fmt::Write as _;
+use std::sync::Arc;
 
-use crucible_tui::drawing::{Draws, Room};
-use crucible_tui::testing::dump;
+use crucible_tui::chrome::Undrawn;
+use crucible_tui::drawing::{Drawers, Draws, EXPAND, Room};
+use crucible_tui::testing::{ANSWERS, dump, read as answered, resized};
 use crucible_tui::{Glyphs, Row, Slot};
 
-use crate::{Change, Changes, FOLD, File, Line, NotADiff, Side, read};
+use crate::{
+    Change, Changes, FOLD, File, Line, MOST_BYTES, MOST_FILES, MOST_LINES, NotADiff, Side, read,
+    unoffered,
+};
 
 const UNICODE: Glyphs = Glyphs::Unicode;
 const ASCII: Glyphs = Glyphs::Ascii;
@@ -385,14 +390,18 @@ fn a_file_longer_than_the_fold_shows_its_head_and_tail_and_counts_the_rest() {
     let fold = rows.get(25).expect("a fold row");
     assert_eq!(
         fold.text().trim_end(),
-        format!("│  ⋯  {} lines folded  ⋯", total - 28)
+        format!("│  ⋯  {} lines folded · ctrl+o to expand  ⋯", total - 28)
     );
-    // Nothing yet shows the folded lines, so the fold names no key and holds
-    // nothing that lights under the pointer as an offer would.
-    assert!(
-        fold.spans().all(|(slot, _)| slot != Slot::Cut),
-        "{:?}",
-        fold.spans().collect::<Vec<_>>()
+    // The key is the one every cut row names, in the slot that lights under
+    // the pointer as an offer does; the rest of the row is quiet.
+    assert_eq!(
+        fold.spans().collect::<Vec<_>>(),
+        [
+            (Slot::Quiet, "│"),
+            (Slot::Quiet, "  ⋯  20 lines folded · "),
+            (Slot::Cut, EXPAND),
+            (Slot::Quiet, "  ⋯"),
+        ]
     );
     // Every line it folded is still in the change.
     assert_eq!(lines_of(&change), total);
@@ -402,7 +411,10 @@ fn a_file_longer_than_the_fold_shows_its_head_and_tail_and_counts_the_rest() {
             .get(25)
             .map(|row| row.text().trim_end().to_owned())
             .unwrap_or_default(),
-        format!("|  ...  {} lines folded  ...", total - 28)
+        format!(
+            "|  ...  {} lines folded · ctrl+o to expand  ...",
+            total - 28
+        )
     );
 }
 
@@ -415,6 +427,101 @@ fn a_file_of_exactly_the_fold_is_drawn_whole() {
     let change = Change::new(vec![File::numbered(Some("x"), lines)]);
     assert_eq!(lines_of(&change), FOLD);
     assert_eq!(drawn(&change, 80, UNICODE).len(), FOLD + 2);
+}
+
+#[test]
+fn a_file_one_row_past_the_fold_is_folded_and_offers_the_rows_it_hides() {
+    let lines: Vec<(usize, Side, &str)> =
+        (1..=FOLD + 1).map(|at| (at, Side::Kept, "same")).collect();
+    let change = Change::new(vec![File::numbered(Some("x"), lines)]);
+    assert_eq!(lines_of(&change), FOLD + 1);
+    let rows = texts(&drawn(&change, 80, UNICODE));
+    // The header, the head, the fold, the tail, and the close.
+    assert_eq!(rows.len(), 1 + 24 + 1 + 4 + 1, "{rows:#?}");
+    assert_eq!(
+        rows.get(25).map(String::as_str),
+        Some("│  ⋯  5 lines folded · ctrl+o to expand  ⋯")
+    );
+    assert_eq!(rows.get(24).map(String::as_str), Some("│   24   same"));
+    assert_eq!(rows.get(26).map(String::as_str), Some("│   30   same"));
+}
+
+#[test]
+fn a_file_says_it_folds_exactly_when_its_box_counts_rows_it_hides() {
+    // Asked of the file and not read off its rows, because a narrow room cuts
+    // the fold's row short of the word and of the key, and the file is folded
+    // all the same.
+    for rows in [1, FOLD - 1, FOLD, FOLD + 1, FOLD + 2, 2 * FOLD] {
+        let lines: Vec<(usize, Side, &str)> =
+            (1..=rows).map(|at| (at, Side::Kept, "same")).collect();
+        let file = File::numbered(Some("x"), lines);
+        let change = Change::new(vec![file.clone()]);
+        let counts = texts(&drawn(&change, 80, UNICODE))
+            .iter()
+            .any(|row| row.contains("lines folded") || row.contains("line folded"));
+        assert_eq!(file.folds(), counts, "{rows} rows");
+        assert_eq!(file.folds(), rows > FOLD, "{rows} rows");
+    }
+
+    // A row that stands for the lines between two hunks is a row of the box:
+    // as many lines as the fold, and one row past it with the gap.
+    let mut lines: Vec<(usize, Side, &str)> =
+        (1..FOLD - 1).map(|at| (at, Side::Kept, "same")).collect();
+    lines.push((900, Side::Kept, "far"));
+    lines.push((901, Side::Kept, "far"));
+    assert_eq!(lines.len(), FOLD);
+    let gapped = File::numbered(Some("x"), lines);
+    assert_eq!(gapped.lines().len(), FOLD + 1);
+    assert!(gapped.folds());
+    let narrow = texts(&drawn(&Change::new(vec![gapped]), 12, UNICODE));
+    assert!(
+        narrow.iter().all(|row| !row.contains("folded")),
+        "{narrow:#?}"
+    );
+}
+
+#[test]
+fn a_fold_that_stops_offering_keeps_its_count_and_loses_its_key() {
+    let change = edited(Some("long.txt"), 40);
+    for (glyphs, counted) in [
+        (UNICODE, "│  ⋯  20 lines folded  ⋯"),
+        (ASCII, "|  ...  20 lines folded  ..."),
+    ] {
+        let offering = drawn(&change, 80, glyphs);
+        let mut rows = offering.clone();
+        for row in &mut rows {
+            unoffered(row);
+        }
+        for (at, (row, offered)) in rows.iter().zip(&offering).enumerate() {
+            if at == 25 {
+                assert_eq!(row.text().trim_end(), counted);
+                assert!(
+                    row.kinds().all(|slot| slot == Slot::Quiet),
+                    "{:?}",
+                    row.spans().collect::<Vec<_>>()
+                );
+            } else {
+                // No other row of the box said anything of a key.
+                assert_eq!(row, offered, "row {at}");
+            }
+        }
+    }
+
+    // A fold cut inside its key by a narrow room loses what was left of it.
+    let mut narrow = drawn(&change, 34, UNICODE);
+    let fold = narrow.get_mut(25).expect("a fold row");
+    assert_eq!(fold.text(), "│  ⋯  20 lines folded · ctrl+o to…");
+    unoffered(fold);
+    assert_eq!(fold.text(), "│  ⋯  20 lines folded…");
+    assert!(fold.kinds().all(|slot| slot == Slot::Quiet));
+
+    // A row that offers something else in the same words is not a fold's.
+    let other = Row::new()
+        .then(Slot::Quiet, "3 lines cut · ")
+        .then(Slot::Cut, EXPAND);
+    let mut left = other.clone();
+    unoffered(&mut left);
+    assert_eq!(left, other);
 }
 
 #[test]
@@ -770,18 +877,42 @@ fn picture_of_a_cut_line_and_a_summary_of_one_line_a_side_and_of_one_side() {
 
 #[test]
 fn the_caps_the_user_docs_state_are_the_ones_a_change_is_drawn_to() {
-    // The caps a tool's edit reaches; a diff the model writes in a reply is
-    // not drawn in a box yet, so the caps only it reaches are not stated.
-    use crate::{PAIRS, SYNTAX_BYTES, SYNTAX_LINES, TOKENS};
-    let documented = include_str!("../../../docs/tools/files.md");
-    let documented = documented.split_whitespace().collect::<Vec<_>>().join(" ");
-    for stated in [
-        format!("reads at most {SYNTAX_LINES} of its lines, and {SYNTAX_BYTES} bytes of them"),
-        format!("in at most {PAIRS} replaced lines, each of at most {TOKENS} words"),
+    // The caps a tool's edit reaches are stated beside the tools, and the
+    // ones only a diff written in a reply reaches beside the transcript.
+    use crate::{FOLD, PAIRS, SYNTAX_BYTES, SYNTAX_LINES, TOKENS};
+    let spaced = |page: &str| page.split_whitespace().collect::<Vec<_>>().join(" ");
+    let files = spaced(include_str!("../../../docs/tools/files.md"));
+    let transcript = spaced(include_str!("../../../docs/sessions/transcript.md"));
+    for (page, documented, stated) in [
+        (
+            "docs/tools/files.md",
+            &files,
+            format!("reads at most {SYNTAX_LINES} of its lines, and {SYNTAX_BYTES} bytes of them"),
+        ),
+        (
+            "docs/tools/files.md",
+            &files,
+            format!("in at most {PAIRS} replaced lines, each of at most {TOKENS} words"),
+        ),
+        (
+            "docs/tools/files.md",
+            &files,
+            format!("names more than {MOST_FILES} files is shown as the model wrote it"),
+        ),
+        (
+            "docs/sessions/transcript.md",
+            &transcript,
+            format!("names more than {MOST_FILES} files or runs to {MOST_LINES} lines or more"),
+        ),
+        (
+            "docs/sessions/transcript.md",
+            &transcript,
+            format!("A file of more than {FOLD} rows is folded"),
+        ),
     ] {
         assert!(
             documented.contains(&stated),
-            "docs/tools/files.md does not say {stated:?}"
+            "{page} does not say {stated:?}"
         );
     }
 }
@@ -806,7 +937,7 @@ fn a_fold_counts_the_lines_it_hides_and_not_a_gap_among_them_as_one() {
     let hidden = rows - 24 - 4 - 1;
     assert_eq!(
         text.get(25).map(String::as_str),
-        Some(format!("│  ⋯  {hidden} lines folded  ⋯").as_str()),
+        Some(format!("│  ⋯  {hidden} lines folded · ctrl+o to expand  ⋯").as_str()),
         "{text:#?}"
     );
 }
@@ -946,4 +1077,530 @@ fn a_git_header_names_its_file_only_where_its_two_halves_agree() {
         ),
         Some(Some("x b/y".to_owned()))
     );
+}
+
+// A change written out as plain text, for what shows a folded change whole.
+
+#[test]
+fn a_folded_change_is_written_out_with_every_line_it_keeps() {
+    let change = edited(Some("long.txt"), 40);
+    assert!(lines_of(&change) > FOLD);
+    let written = Changes.written(&change, UNICODE);
+    let lines: Vec<&str> = written.lines().collect();
+    // Worded as the opener is, and then a line for each line of the file.
+    assert_eq!(
+        lines.first().copied(),
+        Some("long.txt · Added 8 lines, removed 8 lines")
+    );
+    assert_eq!(lines.len(), 1 + lines_of(&change), "{written}");
+    // The head, the lines the box folds, and the tail, each with its number
+    // as wide as the widest and its sign.
+    for kept in [
+        "  1   line 1 of the file",
+        "  5 - line 5 of the file",
+        "  5 + line 5 of the changed file",
+        " 27   line 27 of the file",
+        " 30 - line 30 of the file",
+        " 30 + line 30 of the changed file",
+        " 36   line 36 of the file",
+        " 40 + line 40 of the changed file",
+    ] {
+        assert!(lines.contains(&kept), "{kept:?} is not in:\n{written}");
+    }
+    // It is the change and not the box: no frame, no fold and no key.
+    for drawn_only in ["│", "╭", "╰", "folded", EXPAND] {
+        assert!(
+            !written.contains(drawn_only),
+            "{drawn_only:?} in:\n{written}"
+        );
+    }
+    assert_eq!(
+        Changes.written(&change, ASCII).lines().next(),
+        Some("long.txt - Added 8 lines, removed 8 lines")
+    );
+}
+
+#[test]
+fn a_change_written_out_says_row_for_row_what_its_box_says_inside_its_frame() {
+    // A tool's file with a jump in it, a tab, a line ending in spaces, and
+    // lines the tool never kept.
+    let jumped = Change::new(vec![
+        File::numbered(
+            Some("src/x.rs"),
+            [
+                (3, Side::Kept, "a"),
+                (4, Side::Added, "\tb"),
+                (1200, Side::Removed, "c"),
+                (1200, Side::Kept, "d  "),
+            ],
+        )
+        .counted(100, 100)
+        .dropping(136),
+    ]);
+    let many = Change::new(vec![
+        File::numbered(Some("x"), [(1, Side::Added, "a")]);
+        MOST_FILES + 3
+    ]);
+    let unnamed = Change::new(vec![File::numbered(None, [(1, Side::Removed, "a")])]);
+    let renamed = read(
+        "diff --git a/old.rs b/new.rs\nrename from old.rs\nrename to new.rs\n\
+         --- a/old.rs\n+++ b/new.rs\n@@ -1,1 +1,1 @@\n-gone\n+came\n\
+         @@ -40,1 +40,1 @@ fn section\n-gone again\n+came again\n\
+         diff --git a/f.png b/f.png\nindex 0000000..1111111 100644\n\
+         Binary files a/f.png and b/f.png differ\n",
+    )
+    .expect("a diff");
+    let mock = read(TWO_FILES).expect("a diff");
+
+    for (name, change) in [
+        ("jumped", &jumped),
+        ("many", &many),
+        ("unnamed", &unnamed),
+        ("renamed", &renamed),
+        ("mock", &mock),
+    ] {
+        for glyphs in [UNICODE, ASCII] {
+            // Wide enough that the box cuts nothing, and short enough that it
+            // folds nothing.
+            let rows = drawn(change, 400, glyphs);
+            assert!(rows.len() > 2, "{name}");
+            let inside: Vec<String> = rows
+                .iter()
+                .take(rows.len() - 1)
+                .map(|row| {
+                    let text: String = row.text().chars().skip(3).collect();
+                    text.trim_end().to_owned()
+                })
+                .collect();
+            let written = Changes.written(change, glyphs);
+            // A row leaves off the blanks its line ends in, and those are all
+            // that is written and not drawn.
+            assert_eq!(
+                written.lines().map(str::trim_end).collect::<Vec<_>>(),
+                inside,
+                "{name} in {glyphs:?}"
+            );
+            // Nothing written ends in a blank but the one line that does.
+            let ended_blank: Vec<&str> = written
+                .lines()
+                .filter(|line| line.ends_with(char::is_whitespace))
+                .collect();
+            if name == "jumped" {
+                assert_eq!(ended_blank, ["1200   d  "], "{glyphs:?}");
+            } else {
+                assert!(ended_blank.is_empty(), "{name} in {glyphs:?}: {written}");
+            }
+        }
+    }
+    // What stands for lines and files is worded as the box words it.
+    let written = Changes.written(&jumped, UNICODE);
+    assert!(
+        written.contains("\n⋯  1195 lines between  ⋯\n"),
+        "{written}"
+    );
+    assert!(
+        written.ends_with("⋯  136 lines not shown  ⋯\n"),
+        "{written}"
+    );
+    assert!(written.contains("\n   4 +     b\n"), "{written}");
+    assert!(
+        Changes
+            .written(&many, ASCII)
+            .ends_with("...  3 files not shown  ...\n")
+    );
+    assert!(
+        Changes
+            .written(&renamed, UNICODE)
+            .contains("⋯  binary, not drawn  ⋯")
+    );
+}
+
+#[test]
+fn a_change_written_out_holds_no_control_character_but_its_line_ends() {
+    let change = Change::new(vec![File::numbered(
+        Some("a\u{1b}[31m.rs"),
+        [
+            (1, Side::Removed, "an escape \u{1b}[2J and a bell \u{7}"),
+            (
+                1,
+                Side::Added,
+                "a return \r and a second set \u{9b}2J\u{85}",
+            ),
+        ],
+    )]);
+    let written = Changes.written(&change, UNICODE);
+    assert_eq!(written.lines().count(), 3, "{written:?}");
+    assert!(written.contains("an escape"), "{written:?}");
+    assert!(
+        !written
+            .chars()
+            .any(|character| character.is_control() && character != '\n'),
+        "{written:?}"
+    );
+}
+
+#[test]
+fn a_change_of_trailing_blanks_alone_is_written_out_as_lines_that_differ() {
+    // Each pair changes only what its line ends in: spaces put on, a tab
+    // taken off, and spaces on a line that held nothing.
+    let change = Change::new(vec![File::numbered(
+        Some("src/x.rs"),
+        [
+            (1, Side::Kept, ""),
+            (2, Side::Removed, "let x = 1;"),
+            (2, Side::Added, "let x = 1;  "),
+            (3, Side::Removed, "}\t"),
+            (3, Side::Added, "}"),
+            (4, Side::Removed, ""),
+            (4, Side::Added, "  "),
+        ],
+    )]);
+    for glyphs in [UNICODE, ASCII] {
+        let written = Changes.written(&change, glyphs);
+        let lines: Vec<&str> = written.lines().skip(1).collect();
+        // A line's own blanks are written, a tab as the columns it stands
+        // for, and a line that holds nothing ends at its number or its sign.
+        assert_eq!(
+            lines,
+            [
+                "  1",
+                "  2 - let x = 1;",
+                "  2 + let x = 1;  ",
+                "  3 - }    ",
+                "  3 + }",
+                "  4 -",
+                "  4 +   ",
+            ],
+            "{glyphs:?}"
+        );
+        // Past its number and sign, no pair reads the same before and after.
+        for number in 2..=4 {
+            let said = |sign: char| {
+                let lead = format!("{number:>3} {sign}");
+                lines.iter().find_map(|line| line.strip_prefix(&lead))
+            };
+            assert!(said('-').is_some() && said('+').is_some(), "{written:?}");
+            assert_ne!(said('-'), said('+'), "line {number} in {glyphs:?}");
+        }
+    }
+}
+
+// A fence of an answer, read by the reader the transcript reads with and
+// drawn by this crate's drawer.
+
+/// The registry a composition hands the reader, holding this crate's drawer.
+fn changes() -> Drawers {
+    Drawers::default().with(Arc::new(Changes))
+}
+
+/// `body` as an answer that is one closed fence named `name`.
+fn fenced(name: &str, body: &str) -> String {
+    format!("```{name}\n{body}```\n")
+}
+
+/// The first row of `rows`, as text.
+fn opening(rows: &[Row]) -> String {
+    rows.first()
+        .map(|row| row.text().trim_end().to_owned())
+        .unwrap_or_default()
+}
+
+/// What the reader says on the frame of a fence its drawer cannot hold.
+const PAST: &str = "┌─ diff · longer than this can hold · shown as written";
+
+#[test]
+fn picture_of_a_two_file_fence_the_reader_read_and_the_drawer_drew() {
+    let answer = fenced("diff", TWO_FILES);
+    let change = read(TWO_FILES).expect("a diff");
+    for (glyphs, name, second) in [
+        (
+            UNICODE,
+            "fence_two_files_unicode",
+            "├─ README.md · Added 1 line",
+        ),
+        (
+            ASCII,
+            "fence_two_files_ascii",
+            "+- README.md - Added 1 line",
+        ),
+    ] {
+        let rows = answered(&[&answer], &changes(), room(64, glyphs));
+        // The fence is the box the change draws, with no frame of the
+        // reader's around it and no fence line left in it.
+        assert_eq!(
+            dump(&rows, 64),
+            dump(&drawn(&change, 64, glyphs), 64),
+            "{glyphs:?}"
+        );
+        assert_eq!(
+            rows.get(9).map(|row| row.text().trim_end().to_owned()),
+            Some(second.to_owned())
+        );
+        insta::assert_snapshot!(name, dump(&rows, 64));
+    }
+}
+
+#[test]
+fn a_diff_fence_and_a_patch_fence_are_drawn_as_the_change_and_any_other_as_written() {
+    let change = read(TWO_FILES).expect("a diff");
+    let boxed = dump(&drawn(&change, 64, UNICODE), 64);
+    for name in ["diff", "patch", "DIFF"] {
+        let rows = answered(&[&fenced(name, TWO_FILES)], &changes(), room(64, UNICODE));
+        assert_eq!(dump(&rows, 64), boxed, "{name}");
+    }
+    // A fence under another name is not this drawer's, whatever it holds.
+    let rows = answered(&[&fenced("text", TWO_FILES)], &changes(), room(64, UNICODE));
+    assert_eq!(opening(&rows), "┌─ text");
+}
+
+#[test]
+fn a_fence_this_drawer_does_not_draw_is_byte_for_byte_the_fence_no_drawer_was_asked_about() {
+    let not_a_diff = fenced("diff", "this is not a unified diff\nit has no hunks\n");
+    let unclosed = format!("```diff\n{TWO_FILES}");
+    for (what, answer) in [("not a diff", &not_a_diff), ("unclosed", &unclosed)] {
+        for glyphs in [UNICODE, ASCII] {
+            let as_written = answered(&[answer], &Drawers::default(), room(64, glyphs));
+            let rows = answered(&[answer], &changes(), room(64, glyphs));
+            assert_eq!(rows, as_written, "{what} in {glyphs:?}");
+            assert_eq!(dump(&rows, 64), dump(&as_written, 64));
+        }
+        // Framed as code under its name, with no refusal on the frame.
+        let rows = answered(&[answer], &changes(), room(64, UNICODE));
+        assert_eq!(opening(&rows), "┌─ diff", "{what}");
+    }
+    // And with no drawer registered, a diff is the code it was written as.
+    let rows = answered(
+        &[&fenced("diff", TWO_FILES)],
+        &Drawers::default(),
+        room(64, UNICODE),
+    );
+    assert_eq!(opening(&rows), "┌─ diff");
+    assert_eq!(
+        rows.get(2).map(Row::text).as_deref().map(str::trim_end),
+        Some("│ --- a/src/parse.rs")
+    );
+}
+
+/// A diff of `files` files, each opened by its `+++` alone.
+fn of_files(files: usize) -> String {
+    let mut diff = String::new();
+    for at in 0..files {
+        let _ = write!(diff, "+++ b/f{at}.txt\n@@ -0,0 +1,1 @@\n+a\n");
+    }
+    diff
+}
+
+/// A diff of one file that is `lines` lines long, counting its three header
+/// lines, each ended.
+fn of_lines(lines: usize) -> String {
+    let added = lines - 3;
+    format!(
+        "--- a/x\n+++ b/x\n@@ -0,0 +1,{added} @@\n{}",
+        "+x\n".repeat(added)
+    )
+}
+
+#[test]
+fn a_fence_is_drawn_up_to_the_files_a_change_keeps_and_shown_as_written_one_past() {
+    for (files, drawn_here) in [
+        (MOST_FILES - 1, true),
+        (MOST_FILES, true),
+        (MOST_FILES + 1, false),
+    ] {
+        let rows = answered(
+            &[&fenced("diff", &of_files(files))],
+            &changes(),
+            room(64, UNICODE),
+        );
+        if drawn_here {
+            assert_eq!(opening(&rows), "╭─ f0.txt · Added 1 line", "{files} files");
+            // A header and a line for each file, and the close.
+            assert_eq!(rows.len(), files * 2 + 1, "{files} files");
+        } else {
+            // As written, in the frame that says why, every line of it.
+            assert_eq!(opening(&rows), PAST, "{files} files");
+            assert_eq!(rows.len(), files * 3 + 2, "{files} files");
+        }
+    }
+}
+
+#[test]
+fn a_diff_is_read_up_to_each_of_its_caps_and_refused_one_past_it() {
+    let block = |source: &str| {
+        Changes
+            .block(source, &room(64, UNICODE))
+            .map(|laid| laid.rows.len() > 2)
+    };
+    // Lines, the last of them not ended: as many as a file keeps, and one more.
+    for (lines, read_here) in [
+        (MOST_LINES - 1, true),
+        (MOST_LINES, true),
+        (MOST_LINES + 1, false),
+    ] {
+        let source = of_lines(lines);
+        let source = source.trim_end_matches('\n');
+        assert_eq!(source.split('\n').count(), lines);
+        let expected = if read_here {
+            Ok(true)
+        } else {
+            Err(Undrawn::PastCap)
+        };
+        assert_eq!(block(source), expected, "{lines} lines");
+    }
+    // Bytes: one long line makes up the count.
+    for (bytes, read_here) in [
+        (MOST_BYTES - 1, true),
+        (MOST_BYTES, true),
+        (MOST_BYTES + 1, false),
+    ] {
+        let head = "--- a/x\n+++ b/x\n@@ -0,0 +1 @@\n+";
+        let source = format!("{head}{}\n", "x".repeat(bytes - head.len() - 1));
+        assert_eq!(source.len(), bytes);
+        let expected = if read_here {
+            Ok(true)
+        } else {
+            Err(Undrawn::PastCap)
+        };
+        assert_eq!(block(&source), expected, "{bytes} bytes");
+    }
+    // Files.
+    for (files, read_here) in [
+        (MOST_FILES - 1, true),
+        (MOST_FILES, true),
+        (MOST_FILES + 1, false),
+    ] {
+        let expected = if read_here {
+            Ok(true)
+        } else {
+            Err(Undrawn::PastCap)
+        };
+        assert_eq!(block(&of_files(files)), expected, "{files} files");
+    }
+}
+
+#[test]
+fn a_fence_of_fewer_lines_than_a_file_keeps_is_drawn_and_one_of_as_many_is_shown_as_written() {
+    let under = answered(
+        &[&fenced("diff", &of_lines(MOST_LINES - 1))],
+        &changes(),
+        room(64, UNICODE),
+    );
+    assert_eq!(
+        opening(&under),
+        format!("╭─ x · Added {} lines", MOST_LINES - 4)
+    );
+    // Every line of a fence is ended, so the one that reaches the count is
+    // already past it; each is shown as written, every line between its edges.
+    let at = answered(
+        &[&fenced("diff", &of_lines(MOST_LINES))],
+        &changes(),
+        room(64, UNICODE),
+    );
+    assert_eq!(opening(&at), PAST);
+    assert_eq!(at.len(), MOST_LINES + 2);
+    let past = answered(
+        &[&fenced("diff", &of_lines(MOST_LINES + 1))],
+        &changes(),
+        room(64, UNICODE),
+    );
+    assert_eq!(opening(&past), PAST);
+    assert_eq!(past.len(), MOST_LINES + 1 + 2);
+}
+
+/// The lines of the first fence of `answer`, between its two fence lines.
+fn first_change(answer: &str) -> &str {
+    let (_, after) = answer.split_once("```diff\n").expect("a diff fence");
+    let end = after.find("```").expect("a closing fence");
+    after.get(..end).expect("the lines of the fence")
+}
+
+#[test]
+fn every_diff_fence_of_the_corpus_is_drawn_alike_however_its_window_reached_a_width() {
+    let answers: Vec<(&str, &str)> = ANSWERS
+        .iter()
+        .copied()
+        .filter(|(_, answer)| answer.contains("```diff\n") || answer.contains("```patch\n"))
+        .collect();
+    assert!(!answers.is_empty());
+    for (name, answer) in answers {
+        for (glyphs, corner) in [(UNICODE, "╭─ "), (ASCII, "+- ")] {
+            // The sweep is of drawn changes: the box is there at a common width.
+            let common = texts(&answered(&[answer], &changes(), room(80, glyphs)));
+            assert!(
+                common.iter().any(|row| row.starts_with(corner)),
+                "{name}: {common:#?}"
+            );
+            for columns in 8..=160 {
+                let fresh = answered(&[answer], &changes(), room(columns, glyphs));
+                for row in &fresh {
+                    assert!(
+                        row.columns() <= columns,
+                        "{name} at {columns} in {glyphs:?}: {:?}",
+                        row.text()
+                    );
+                }
+                let fresh = dump(&fresh, columns);
+                // The box is the one the drawer lays out in that room, with
+                // no row of it folded again by what keeps it.
+                let laid = Changes
+                    .block(first_change(answer), &room(columns, glyphs))
+                    .expect("a diff");
+                assert!(
+                    fresh.contains(&dump(&laid.rows, columns)),
+                    "{name} at {columns} in {glyphs:?}: {fresh}"
+                );
+                for from in [160, 8] {
+                    let moved = resized(&[answer], &changes(), room(from, glyphs), columns);
+                    assert_eq!(
+                        dump(&moved, columns),
+                        fresh,
+                        "{name} at {columns} from {from} in {glyphs:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// A small answer with a fence of two files between two lines of prose.
+const SMALL_ANSWER: &str = "Before.\n\n```diff\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-x\n+y\n--- a/b.rs\n+++ b/b.rs\n@@ -1 +1,2 @@\n z\n+w\n```\n\nAfter.\n";
+
+#[test]
+fn a_diff_fence_cut_anywhere_as_it_arrives_is_drawn_as_the_fence_whole() {
+    // Every cut of a small fence of two files.
+    let whole = dump(
+        &answered(&[SMALL_ANSWER], &changes(), room(40, UNICODE)),
+        40,
+    );
+    assert!(
+        whole.contains("╭─</> <Path>a.rs") && whole.contains("├─</> <Path>b.rs"),
+        "{whole}"
+    );
+    let mut cuts = 0;
+    for (at, _) in SMALL_ANSWER.char_indices().skip(1) {
+        let (before, after) = SMALL_ANSWER.split_at(at);
+        let rows = answered(&[before, after], &changes(), room(40, UNICODE));
+        assert_eq!(dump(&rows, 40), whole, "cut at {at}: {before:?}");
+        cuts += 1;
+    }
+    assert!(cuts > 100, "{cuts}");
+
+    // The mock's fence, cut inside each kind of line a diff holds: a file
+    // header, a hunk header, a changed line, and the fence that closes it.
+    let answer = format!("A change:\n\n{}\nDone.\n", fenced("diff", TWO_FILES));
+    let whole = dump(&answered(&[&answer], &changes(), room(64, UNICODE)), 64);
+    assert!(whole.contains("├─</> <Path>README.md"), "{whole}");
+    let closing = answer.rfind("```").expect("a closing fence") + 2;
+    let inside = |line: &str| answer.find(line).expect("a line of the fence") + line.len();
+    for (what, at) in [
+        ("a file header", inside("+++ b/src/par")),
+        ("a git header", inside("diff --git a/README.md b/READ")),
+        ("a hunk header", inside("@@ -40,1 +4")),
+        ("a changed line", inside("+    for (at, li")),
+        ("the closing fence", closing),
+    ] {
+        let (before, after) = answer.split_at(at);
+        let rows = answered(&[before, after], &changes(), room(64, UNICODE));
+        assert_eq!(dump(&rows, 64), whole, "cut inside {what}: {before:?}");
+    }
 }

@@ -54,8 +54,9 @@ use std::collections::VecDeque;
 use std::ops::Range;
 
 use crate::color::{Slot, Theme};
+use crate::drawing::{Drawers, Room};
 use crate::glyphs::Glyphs;
-use crate::markdown::{self, Block, Links};
+use crate::markdown::{self, Block, Links, Offers};
 use crate::row::Row;
 use crate::scroll_rail::Place;
 
@@ -138,10 +139,20 @@ pub(crate) struct Drawn {
     edits: Vec<fn(&mut [Row])>,
 }
 
+/// What a block of an answer is laid out by: the links its addresses fold by,
+/// the drawers its closed fences are drawn by, and what becomes of a key
+/// their rows offer.
+#[derive(Clone, Copy)]
+struct By<'a> {
+    links: &'a Links,
+    drawers: &'a Drawers,
+    offers: Offers,
+}
+
 impl Drawn {
-    /// `block` laid out for `columns` in `glyphs` and `theme`, linking by
-    /// `links`.
-    fn new(block: Block, columns: usize, glyphs: Glyphs, theme: Theme, links: &Links) -> Self {
+    /// `block` laid out for `room` in `theme`, by what `by` holds.
+    fn new(block: Block, room: Room, theme: Theme, by: By<'_>) -> Self {
+        let Room { columns, glyphs } = room;
         let mut drawn = Self {
             block,
             rows: Vec::new(),
@@ -150,14 +161,18 @@ impl Drawn {
             laid: (columns, glyphs, theme),
             edits: Vec::new(),
         };
-        drawn.lay(columns, glyphs, links);
+        drawn.lay(columns, glyphs, by);
         drawn
     }
 
-    /// Lays the block out again for `columns` in `glyphs`, linking by
-    /// `links`, with every edit and the prefix it was given since.
-    fn lay(&mut self, columns: usize, glyphs: Glyphs, links: &Links) {
-        let laid = markdown::lay(&self.block, columns, glyphs, links);
+    /// Lays the block out again for `columns` in `glyphs`, by what `by`
+    /// holds, with every edit and the prefix it was given since.
+    fn lay(&mut self, columns: usize, glyphs: Glyphs, by: By<'_>) {
+        let lay = match by.offers {
+            Offers::Stand => markdown::lay,
+            Offers::Withdrawn => markdown::lay_unoffered,
+        };
+        let laid = lay(&self.block, columns, glyphs, by.links, by.drawers);
         let mut rows = responsive_rows(
             laid.iter()
                 .flat_map(|row| markdown::framed(row, columns).unwrap_or_else(|| row.fold(columns)))
@@ -416,6 +431,13 @@ pub(crate) struct Record {
     /// a drawn block is read again at every width and glyph set it is laid
     /// out for.
     links: Links,
+    /// What draws a closed fence of an answer in place of the fence as it was
+    /// written: kept here for the reason the links are, since a drawn block
+    /// asks its drawer again at every width and glyph set it is laid out for.
+    drawers: Drawers,
+    /// What becomes of a key a drawer offers in the rows kept here: it
+    /// stands, unless what draws this record said no key is read there.
+    offers: Offers,
 }
 
 /// Where in the record a display row is: a line, and how far into it.
@@ -460,6 +482,8 @@ impl Record {
             sent: 0,
             began: 0,
             links: Links::default(),
+            drawers: Drawers::default(),
+            offers: Offers::Stand,
         }
     }
 
@@ -474,6 +498,23 @@ impl Record {
     /// the new links the next time it is laid out.
     pub(crate) fn links_mut(&mut self) -> &mut Links {
         &mut self.links
+    }
+
+    /// What draws a closed fence of an answer.
+    pub(crate) fn drawers(&self) -> &Drawers {
+        &self.drawers
+    }
+
+    /// Hands this record the drawers a closed fence of an answer is drawn by,
+    /// and what becomes of a key their rows offer: `offers` is
+    /// [`Offers::Withdrawn`] where nothing reads a key from whoever is shown
+    /// these rows.
+    ///
+    /// Said at startup, before the first answer. A block already drawn asks
+    /// them the next time it is laid out.
+    pub(crate) fn draws_with(&mut self, drawers: Drawers, offers: Offers) {
+        self.drawers = drawers;
+        self.offers = offers;
     }
 
     /// Append streamed text, which flows.
@@ -616,7 +657,16 @@ impl Record {
     /// A block that lays out as nothing is not kept.
     pub(crate) fn drawn(&mut self, block: Block, glyphs: Glyphs, theme: Theme) {
         self.end();
-        let drawn = Drawn::new(block, self.columns, glyphs, theme, &self.links);
+        let room = Room {
+            columns: self.columns,
+            glyphs,
+        };
+        let by = By {
+            links: &self.links,
+            drawers: &self.drawers,
+            offers: self.offers,
+        };
+        let drawn = Drawn::new(block, room, theme, by);
         if !drawn.rows.is_empty() {
             self.put(Line::Drawn(drawn));
         }
@@ -651,6 +701,11 @@ impl Record {
     /// answers whether any was.
     fn relay_drawn(&mut self, columns: usize, glyphs: Glyphs) -> bool {
         let mut any = false;
+        let by = By {
+            links: &self.links,
+            drawers: &self.drawers,
+            offers: self.offers,
+        };
         for line in &mut self.lines {
             let Line::Drawn(drawn) = line else {
                 continue;
@@ -659,7 +714,7 @@ impl Record {
                 continue;
             }
             let was = drawn.weight;
-            drawn.lay(columns, glyphs, &self.links);
+            drawn.lay(columns, glyphs, by);
             self.weight = self.weight.saturating_sub(was).saturating_add(drawn.weight);
             any = true;
         }

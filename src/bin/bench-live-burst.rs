@@ -27,13 +27,19 @@
 //! Twice, and the two must be close. How each of those two rates is arrived at
 //! is `burst`'s, beside this file, and is shared with the probe that streams.
 //! What the ratio catches here is not what it catches there, because nothing is
-//! streaming and the record stays empty for the whole burst: it is a frame that
-//! keeps something. These rows stand over the transcript and never join it, so a
-//! burst of them has to leave the renderer holding what one frame left it
-//! holding. A frame that accumulated — rows appended where they should have
-//! replaced, anything growing with the count of frames rather than with the
-//! window — is fast in the first second and hopeless in the hundredth, and the
-//! ratio is the only place it shows.
+//! streaming and the record holds for the whole burst what it held before the
+//! first frame: it is a frame that keeps something. These rows stand over the
+//! transcript and never join it, so a burst of them has to leave the renderer
+//! holding what one frame left it holding. A frame that accumulated — rows
+//! appended where they should have replaced, anything growing with the count of
+//! frames rather than with the window — is fast in the first second and
+//! hopeless in the hundredth, and the ratio is the only place it shows.
+//!
+//! The transcript the band stands over is not empty, since a command runs after
+//! an answer and not before one. It holds the answers `burst` gives both
+//! probes, whose diff fences the renderer draws as changes with the drawer it
+//! is handed here, as a session's is: a frame is timed over a record that keeps
+//! a drawer's rows.
 
 // A binary may not reach into another's tree, so the driver the two burst probes
 // share is a module beside them. Where the bounded pipe below is unavailable this
@@ -50,6 +56,8 @@ use std::io::Read as _;
 use std::io::{self, Write as _};
 use std::process::ExitCode;
 #[cfg(target_os = "linux")]
+use std::sync::Arc;
+#[cfg(target_os = "linux")]
 use std::thread::JoinHandle;
 #[cfg(target_os = "linux")]
 use std::time::Duration;
@@ -57,7 +65,11 @@ use std::time::Duration;
 use burst::{Burst, SUSTAINED_FRACTION};
 use crucible_tui::TerminalError;
 #[cfg(target_os = "linux")]
+use crucible_tui::drawing::Drawers;
+#[cfg(target_os = "linux")]
 use crucible_tui::{Glyphs, Palette, Renderer, Row, Size, Slot, Terminal, Theme, Working};
+#[cfg(target_os = "linux")]
+use crucible_tui_diff::Changes;
 #[cfg(target_os = "linux")]
 use rustix::pipe::{PipeFlags, pipe_with};
 
@@ -237,12 +249,49 @@ fn footing(lines: &[String], from: usize, running: Duration) -> Vec<Row> {
     rows
 }
 
+/// The drawers the renderer is handed, as a session's is: the one that draws a
+/// change, for the diff fences of the answers the transcript holds.
+#[cfg(target_os = "linux")]
+fn drawers() -> Drawers {
+    Drawers::default().with(Arc::new(Changes))
+}
+
+/// The palette the band is drawn in.
+#[cfg(target_os = "linux")]
+fn palette() -> Palette {
+    Palette::resolve(true, Theme::Dark, None, &|_| None)
+}
+
+/// The palette the answers are read in: one that writes every hue it has,
+/// since a renderer whose palette writes none shows an answer as it arrived
+/// and reads no fence of it.
+#[cfg(target_os = "linux")]
+fn reading() -> Palette {
+    Palette::resolve(true, Theme::Dark, Some((13, 13, 16)), &|name| {
+        (name == "COLORTERM").then(|| "truecolor".to_owned())
+    })
+}
+
+/// Puts into `render`'s transcript the answers the band then stands over, read
+/// as a session reads them and their changes drawn by `drawers`.
+#[cfg(target_os = "linux")]
+fn answered<T: Terminal>(render: &mut Renderer<T>, drawers: Drawers) -> Result<(), TerminalError> {
+    render.wears(reading());
+    render.drawers(drawers);
+    for answer in burst::answers() {
+        render.stream(&answer)?;
+        render.settle()?;
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 fn measure() -> Result<Burst, ProbeError> {
     let lines = printed();
     let (sink, drain) = PipeSink::open()?;
     let mut render = Renderer::new(sink);
-    let palette = Palette::resolve(true, Theme::Dark, None, &|_| None);
+    let palette = palette();
+    answered(&mut render, drawers())?;
 
     let measured = burst::measure(|index| -> Result<(), ProbeError> {
         // Laid out inside the frame, because a real one is. The clock moves with
@@ -307,4 +356,76 @@ fn main() -> ExitCode {
     }
 
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+#[cfg(target_os = "linux")]
+mod tests {
+    use crucible_tui::Recording;
+
+    use super::*;
+
+    /// The transcript the band stands over, as a window tall enough for all of
+    /// it shows it, its answers drawn by a renderer handed `drawers`.
+    fn transcript(drawers: Drawers) -> Vec<String> {
+        let mut render = Renderer::new(Recording::new(COLUMNS, 200));
+        answered(&mut render, drawers).expect("the answers drawn");
+        let rows = footing(&printed(), 7, Duration::from_millis(112));
+        render.under(&rows, None, palette()).expect("a frame drawn");
+        render
+            .terminal()
+            .picture()
+            .rows()
+            .iter()
+            .map(|row| row.trim_end().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn the_band_stands_over_answers_whose_diff_fences_are_drawn_as_changes() {
+        let rows = transcript(drawers());
+        for opening in [
+            "╭─ src/reader.rs · Added 2 lines, removed 1 line",
+            "├─ src/window.rs · Added 1 line, removed 1 line",
+            "╭─ budgets.txt · Added 40 lines",
+        ] {
+            assert!(
+                rows.iter().any(|row| row.trim_start() == opening),
+                "no row {opening:?} in {rows:#?}"
+            );
+        }
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("lines folded · ctrl+o to expand")),
+            "the long change did not fold: {rows:#?}"
+        );
+        for written in ["┌─ diff", "┌─ patch", "@@ "] {
+            assert!(
+                !rows.iter().any(|row| row.contains(written)),
+                "a diff fence was shown as written, with {written:?}: {rows:#?}"
+            );
+        }
+        // The band is over them, and not in place of them.
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("Bash(cargo build --release)")),
+            "{rows:#?}"
+        );
+
+        // What the assertions above tell apart: handed no drawer, the same
+        // answers show each fence as the text it was written as.
+        let undrawn = transcript(Drawers::default());
+        assert!(
+            undrawn.iter().any(|row| row.contains("┌─ diff")),
+            "{undrawn:#?}"
+        );
+        assert!(
+            undrawn.iter().any(|row| row.contains("┌─ patch")),
+            "{undrawn:#?}"
+        );
+        assert!(
+            !undrawn.iter().any(|row| row.contains("╭─ ")),
+            "{undrawn:#?}"
+        );
+    }
 }

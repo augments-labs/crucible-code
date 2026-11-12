@@ -1169,7 +1169,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // Where it draws is read here, once: a session cannot move between a
     // screen of its own and the terminal's buffer without leaving half of
     // itself in a scrollback the other does not keep.
-    let mut renderer = Renderer::drawing(SystemTerminal::stdout(), drawn_on(settings.screen()));
+    let mut renderer = screen(settings.screen());
     watch_size(&mut renderer);
 
     // The mode the files named, or the one that asks. `None` is "no layer
@@ -1580,6 +1580,16 @@ fn watch_size<T: crucible_tui::Terminal>(renderer: &mut Renderer<T>) {
 /// Nothing to watch where no signal says a window changed size.
 #[cfg(not(unix))]
 fn watch_size<T: crucible_tui::Terminal>(_renderer: &mut Renderer<T>) {}
+
+/// The renderer a session is read on, drawing where `screen` names.
+///
+/// It is handed the drawers a fence of an answer is drawn by, since a renderer
+/// names none of them.
+fn screen(screen: crucible_config::ScreenMode) -> Renderer<SystemTerminal> {
+    let mut renderer = Renderer::drawing(SystemTerminal::stdout(), drawn_on(screen));
+    renderer.drawers(draw::drawers());
+    renderer
+}
 
 /// Where the renderer draws, for the screen the configuration names.
 ///

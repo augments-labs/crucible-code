@@ -1255,7 +1255,9 @@ done <<<"$sandbox_state"
 
 section "a drawer's test helpers stay out of a release"
 # `crucible-tui`'s `testing` feature carries the fit sweep's widths and rooms,
-# `dump` and the fit check, which a drawer crate's tests check a drawing with.
+# `dump` and the fit check, and the corpus of answers with the helpers that
+# read one through the reader, which a drawer crate's tests check a drawing
+# with.
 # What ships draws through the contract alone, so no table Cargo resolves for a
 # build that ships may turn the feature on: not a normal or build dependency,
 # under any target, not the workspace table a member inherits from, and not a
@@ -1778,9 +1780,15 @@ fi
 # directory it reaches. `bench-drawing` names `crucible_tui_diff` for the
 # drawer whose worst block it times, and `crucible_tui` for the contract that
 # drawer is called through and the room it is handed, so what it times is the
-# call the drawing thread makes. `bench-first-input-colour-silent` names
-# `crucible_tui` in its test alone, for the reply wait its budget is held to
-# the sum of, and measures the built binary like every other startup probe.
+# call the drawing thread makes. `bench-render-burst` names `crucible_tui_diff`
+# for the drawer it hands the renderer it streams to, so the diff fences of its
+# burst are timed drawn as the changes a session draws them as, and
+# `bench-live-burst` names it for the drawer that draws the answers its band
+# stands over, so a frame is timed over a record that keeps a drawer's rows;
+# each builds the drawers in its own file, where this list reads what it
+# names. `bench-first-input-colour-silent` names `crucible_tui` in its test
+# alone, for the reply wait its budget is held to the sum of, and measures the
+# built binary like every other startup probe.
 probes='src/bin/bench-drawing.rs crucible_tui
 src/bin/bench-drawing.rs crucible_tui_diff
 src/bin/bench-first-input-colour-silent.rs crucible_tui
@@ -1790,10 +1798,12 @@ src/bin/bench-grep.rs crucible_tools
 src/bin/bench-grep.rs crucible_types
 src/bin/bench-grep.rs crucible_workspace
 src/bin/bench-live-burst.rs crucible_tui
+src/bin/bench-live-burst.rs crucible_tui_diff
 src/bin/bench-read-back.rs crucible_session
 src/bin/bench-read-back.rs crucible_types
 src/bin/bench-read-back.rs crucible_workspace
 src/bin/bench-render-burst.rs crucible_tui
+src/bin/bench-render-burst.rs crucible_tui_diff
 src/bin/bench-session-rss.rs crucible_attachments
 src/bin/bench-session-rss.rs crucible_config
 src/bin/bench-session-rss-colour.rs crucible_attachments

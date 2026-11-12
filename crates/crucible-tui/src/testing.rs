@@ -2,17 +2,92 @@
 //!
 //! The widths and rooms of the fit sweep, the sweep itself, [`dump`] for
 //! pictures checked in beside a component, and [`fits`], the one rule every
-//! drawer keeps, asserted across the sweep. This crate's own `fits` sweep reads
+//! drawer keeps, asserted across the sweep. [`ANSWERS`] is the corpus of
+//! answers a model writes, and [`read`] and [`resized`] read one through the
+//! reader with a drawer registered, so a drawer's test sees its fence where an
+//! answer puts it. This crate's own `fits` sweep reads
 //! these, and a drawer crate reaches them by taking this crate with the
 //! `testing` feature as a dev-dependency, never as a normal one: a release
 //! build carries none of this, and `scripts/sh/repo-checks.sh` refuses a
 //! manifest that would.
 
-use crate::drawing::{Draws, Room};
+use crate::color::Theme;
+use crate::drawing::{Drawers, Draws, Room};
+use crate::escape::Escapes;
 use crate::glyphs::Glyphs;
+use crate::markdown::{Markdown, Offers, Said};
+use crate::record::Record;
 use crate::row::Row;
+use crate::width;
 
 pub use crate::dump::dump;
+
+/// Every answer of the corpus this crate's own pictures are of, under the
+/// name a case asks for it by: what a model writes, kept whole.
+pub const ANSWERS: &[(&str, &str)] = crate::markdown::corpus::ANSWERS;
+
+/// The rows an answer comes to in `room`, read by the reader the transcript
+/// reads with and kept as the transcript keeps it, its fences drawn by
+/// `drawers`.
+///
+/// `deltas` are the answer in the pieces it arrived in, one after another:
+/// one piece is the answer whole.
+#[must_use]
+pub fn read(deltas: &[&str], drawers: &Drawers, room: Room) -> Vec<Row> {
+    rows(&kept(deltas, drawers, room))
+}
+
+/// The rows [`read`] gives once the window has come to `columns` wide: the
+/// answer read in `room`, then laid out again as a window that changes width
+/// lays it out.
+#[must_use]
+pub fn resized(deltas: &[&str], drawers: &Drawers, room: Room, columns: usize) -> Vec<Row> {
+    let mut record = kept(deltas, drawers, room);
+    record.relay(columns, room.glyphs, Theme::Dark);
+    rows(&record)
+}
+
+/// The record of an answer read in `room`, taking the steps the renderer
+/// takes: what a terminal would obey goes, a run lands in the record, and a
+/// block is kept with its source for the record to lay out.
+fn kept(deltas: &[&str], drawers: &Drawers, room: Room) -> Record {
+    /// `text` without what a terminal would obey or would not show.
+    fn shown(escapes: &mut Escapes, text: &str) -> String {
+        text.chars()
+            .filter(|character| !escapes.holds(*character) && !width::unshown(*character))
+            .collect()
+    }
+
+    let Room { columns, glyphs } = room;
+    let mut record = Record::new(columns);
+    record.draws_with(drawers.clone(), Offers::Stand);
+    let mut markdown = Markdown::new(glyphs);
+    let mut escapes = Escapes::default();
+    let mut write = |said: Said<'_>| match said {
+        Said::Run { slot, text, link } => record.write(slot, &shown(&mut escapes, text), link),
+        // The theme is any: rows are glyphs and slots, and no colour.
+        Said::Block(mut block) => {
+            block.source = shown(&mut escapes, &block.source);
+            record.drawn(block, glyphs, Theme::Dark);
+        }
+        Said::Retract => record.retract(),
+        Said::Aside(text) => record.aside(&shown(&mut escapes, text)),
+        Said::Shortened(address) => record.shortened(address),
+    };
+    for delta in deltas {
+        markdown.read(delta, columns, &mut write);
+    }
+    markdown.finish(columns, &mut write);
+    record.end();
+    record
+}
+
+/// Every row `record` holds, top to bottom.
+fn rows(record: &Record) -> Vec<Row> {
+    (0..record.lines())
+        .flat_map(|line| record.folded(line))
+        .collect()
+}
 
 /// Every width worth walking: one column, and on past the widest terminal
 /// anybody works in.
@@ -237,6 +312,105 @@ mod tests {
             &Clipped,
             "a line far longer than the narrow end of the sweep",
         );
+    }
+
+    /// Draws each line of a `diff` fence under a mark, cut to the room.
+    struct Marks;
+
+    impl Draws for Marks {
+        fn names(&self) -> &'static [&'static str] {
+            &["diff"]
+        }
+
+        fn block(&self, source: &str, room: &Room) -> Result<Laid, Undrawn> {
+            let rows: Vec<Row> = source
+                .lines()
+                .map(|line| Row::plain(crate::width::clip(&format!("= {line}"), room.columns)))
+                .collect();
+            Ok(Laid {
+                natural: (room.columns, rows.len()),
+                rows,
+                narrow: None,
+            })
+        }
+    }
+
+    fn marking() -> Drawers {
+        Drawers::default().with(std::sync::Arc::new(Marks))
+    }
+
+    fn room(columns: usize) -> Room {
+        Room {
+            columns,
+            glyphs: Glyphs::Unicode,
+        }
+    }
+
+    fn texts(rows: &[Row]) -> Vec<String> {
+        rows.iter().map(Row::text).collect()
+    }
+
+    const FENCED: &str = "Said.\n\n```diff\n-a line that was\n+a line that is\n```\n";
+
+    #[test]
+    fn an_answer_is_read_by_the_reader_and_drawn_by_the_drawers_it_is_given() {
+        assert_eq!(
+            texts(&read(&[FENCED], &marking(), room(30))),
+            ["Said.", "", "= -a line that was", "= +a line that is"]
+        );
+        // With none registered the reader draws the fence itself.
+        assert_eq!(
+            texts(&read(&[FENCED], &Drawers::default(), room(30))),
+            [
+                "Said.",
+                "",
+                "┌─ diff",
+                "│ -a line that was",
+                "│ +a line that is",
+                "└─"
+            ]
+        );
+    }
+
+    #[test]
+    fn an_answer_cut_into_deltas_anywhere_reads_as_the_answer_whole() {
+        let whole = read(&[FENCED], &marking(), room(30));
+        assert_eq!(whole.len(), 4);
+        let cuts: Vec<usize> = FENCED.char_indices().map(|(at, _)| at).skip(1).collect();
+        assert!(cuts.len() > 40);
+        for cut in cuts {
+            let (before, after) = FENCED.split_at(cut);
+            // As pictures: a run that arrived in two pieces is two spans.
+            assert_eq!(
+                dump(&read(&[before, after], &marking(), room(30)), 30),
+                dump(&whole, 30),
+                "cut at {cut}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_answer_whose_window_changed_width_is_the_answer_read_at_that_width() {
+        let narrow = read(&[FENCED], &marking(), room(12));
+        assert_eq!(
+            texts(&narrow),
+            ["Said.", "", "= -a line th", "= +a line th"]
+        );
+        assert_eq!(resized(&[FENCED], &marking(), room(30), 12), narrow);
+        assert_eq!(
+            resized(&[FENCED], &marking(), room(12), 30),
+            read(&[FENCED], &marking(), room(30))
+        );
+    }
+
+    #[test]
+    fn the_answers_a_drawer_crate_reads_hold_the_corpus_diff_fences() {
+        let named: Vec<&str> = ANSWERS
+            .iter()
+            .filter(|(_, text)| text.contains("```diff\n") && text.contains("```patch\n"))
+            .map(|(name, _)| *name)
+            .collect();
+        assert_eq!(named, ["diff"]);
     }
 
     #[test]

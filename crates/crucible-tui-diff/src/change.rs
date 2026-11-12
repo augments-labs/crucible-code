@@ -260,6 +260,13 @@ impl File {
         &self.lines
     }
 
+    /// Whether the box draws this file folded: it holds more than [`FOLD`]
+    /// rows, so its middle is counted and not drawn.
+    #[must_use]
+    pub const fn folds(&self) -> bool {
+        self.lines.len() > FOLD
+    }
+
     /// Lines the change added.
     #[must_use]
     pub const fn added(&self) -> usize {

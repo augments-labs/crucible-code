@@ -117,7 +117,7 @@ Under three rows it is not drawn, but it is still there: <kbd>↑</kbd> and
 | --- | --- |
 | <kbd>Shift-Tab</kbd> | Steps the permission mode on the press: `ask`, `allowEdits`, `fullAccess`, then `ask` again. See [Stepping it while you type](../permissions/modes.md#stepping-it-while-you-type). |
 | <kbd>Ctrl+B</kbd> | Stands the list of commands left running. With none running it closes at once. A click on their count under the box does the same. While a turn runs it stands the list only when the turn has no command to leave in the background and one or more commands are left running: see [While a turn runs](#while-a-turn-runs). |
-| <kbd>Ctrl+O</kbd> | Stands the results the transcript cut short, then the source of each table, formula, diagram or diff it drew, then the whole of each address it drew shorter. Nothing while there is none of them: a drawn block or a shortened address alone opens it. See [Results cut short](#results-cut-short). |
+| <kbd>Ctrl+O</kbd> | Stands the results the transcript cut short, and each change it folded with every line kept of it under its call, then the source of each table, formula, diagram or diff it drew, then the whole of each address it drew shorter. Nothing while there is none of them: a drawn block or a shortened address alone opens it. See [Results cut short](#results-cut-short). |
 | <kbd>Ctrl+T</kbd> | Expands the plan past its seven rows, or folds it back. Nothing without a plan. See [Seven rows, and the key that gives the rest back](../tools/planning.md#seven-rows-and-the-key-that-gives-the-rest-back). |
 | <kbd>Esc</kbd> | Closes the command list, keeping the line. Nothing otherwise. |
 | <kbd>Ctrl+E</kbd>, <kbd>Ctrl+X</kbd> | Take the highlighted prompt of [the queue](#the-queue) back into the box, or delete it. Nothing while none are waiting. |
@@ -141,7 +141,7 @@ wheel. These differ:
 | <kbd>Ctrl+C</kbd> | Clears the box. When it is already empty it offers to leave as at the prompt, and the second press within two seconds stops the turn and ends the session. |
 | <kbd>Ctrl+D</kbd> | Nothing. |
 | <kbd>Ctrl+B</kbd> | Leaves the running command in the background, where it can be, including in the seconds before its row offering `(ctrl+b to background)` is drawn ([`output.pinAfterSeconds`](../configuration/configuration.md#output)). See [Leaving one running](../tools/commands.md#leaving-one-running). Where there is no such command and one or more commands are left running, it stands their `Still running` list, as a click on their count under the box does. Nothing otherwise. |
-| <kbd>Ctrl+O</kbd> | Stands the cut results, then the source of each drawn block, then each address drawn shorter, under the tail of the answer, which goes on arriving above them. Opens for a drawn block or a shortened address alone. |
+| <kbd>Ctrl+O</kbd> | Stands the cut results, a folded change's kept lines under its call among them, then the source of each drawn block, then each address drawn shorter, under the tail of the answer, which goes on arriving above them. Opens for a drawn block or a shortened address alone. |
 | <kbd>Ctrl+E</kbd>, <kbd>Ctrl+X</kbd> | Take the highlighted prompt of [the queue](#the-queue) back into the box, or delete it. Nothing while none are waiting. |
 | <kbd>Ctrl+Enter</kbd>, <kbd>Ctrl+S</kbd> | Stop the turn and send [the queue](#the-queue) now: all of it with the line in the box last, or the highlighted prompt alone. Each prompt is sent as the line it was typed as. |
 | <kbd>Tab</kbd> | Nothing. |
@@ -450,6 +450,11 @@ it, one result's worth at a time: a further one the window reaches says
 `read back from the session log as the view moves on to it` until the one
 above it leaves, as does one the running turn has not written yet, and a step
 stops at each such result rather than passing it.
+A [change](../tools/files.md#what-a-change-leaves-on-screen) the transcript
+folded is one of these results: its kept lines are shown under its call, the
+row naming the file and counting its lines and then every line the tool kept,
+each with its number and its sign, and none folded. One read back from the
+session log is what the model was told of the change, without its lines.
 Between
 turns the view takes the place of the box; while a turn runs it stands under
 the tail. Results cut after it opened are there the next time it is opened.
