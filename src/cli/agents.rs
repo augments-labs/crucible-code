@@ -1201,17 +1201,6 @@ fn configured(lookup: &dyn Fn(&str) -> Option<std::ffi::OsString>) -> Result<Set
     Settings::read_home(&home).map_err(|unread| failing(&caused(&unread)))
 }
 
-/// The mode `--unconfined` asks for as `lookup` reads the environment, or the
-/// refusal for standard error: the rule `probe` applies through
-/// [`Mode::under`] with the sandbox setting on, kept for the tests that hold it.
-#[cfg(test)]
-fn moded(
-    unconfined: bool,
-    lookup: &dyn Fn(&str) -> Option<std::ffi::OsString>,
-) -> Result<Mode, String> {
-    Mode::of(unconfined, lookup).map_err(|refused| failing(&caused(&refused)))
-}
-
 /// Writes `answer` to standard output where it is an answer and to standard
 /// error where it is a refusal.
 fn written(answer: Result<String, String>) -> ExitCode {

@@ -1290,10 +1290,30 @@ impl Unpacked {
         sandbox: &dyn Fn(Handle) -> Arc<dyn SandboxService>,
         within: Duration,
     ) -> Result<String, String> {
-        let _ = &self.scratch;
-        let mode = moded(unconfined, &disposable).expect("a runner to be thrown away");
+        let name = self.scratch.0.file_name().map(|name| name.to_string_lossy().into_owned());
+        let settings = the_sandbox(true, name.as_deref().unwrap_or("unpacked"));
+        let mode = Mode::under(&settings, unconfined, &disposable)
+            .expect("a runner to be thrown away");
         probed(&self.root, &self.entry, mode, sandbox, within)
     }
+}
+
+/// The user's settings with the sandbox setting `enabled`, read through their
+/// owner from a home of their own named for `name`.
+fn the_sandbox(enabled: bool, name: &str) -> Settings {
+    super::super::sample::Sample::new(name)
+        .user(&format!("{{\"sandbox\": {{\"enabled\": {enabled}}}}}"))
+}
+
+/// The mode the hidden probe takes under `settings`, `--unconfined` as
+/// `unconfined` says and the environment as `lookup` reads it, or the refusal
+/// it writes to standard error, as `probe` makes them.
+fn moded_under(
+    settings: &Settings,
+    unconfined: bool,
+    lookup: &dyn Fn(&str) -> Option<std::ffi::OsString>,
+) -> Result<Mode, String> {
+    Mode::under(settings, unconfined, lookup).map_err(|refused| failing(&caused(&refused)))
 }
 
 /// The environment of a disposable runner: `CI` is `true`.
@@ -1465,18 +1485,19 @@ fn probe_is_parsed_from_its_paths_and_left_out_of_the_help() {
     assert!(!help.contains("probe"), "{help}");
 }
 
-/// Starting an agent without the sandbox is allowed only on a process that
-/// says it is on a disposable runner: `CI` equal to `true`. Anything else is
-/// refused in one line naming that condition, and asking for the sandbox needs
-/// nothing.
+/// With the sandbox setting on, starting an agent without the sandbox is
+/// allowed only on a process that says it is on a disposable runner: `CI`
+/// equal to `true`. Anything else is refused in one line naming that
+/// condition, and asking for the sandbox needs nothing.
 #[test]
 fn unconfined_is_allowed_only_where_the_runner_says_it_is_disposable() {
     let says = |value: &'static str| {
         move |name: &str| (name == "CI").then(|| std::ffi::OsString::from(value))
     };
+    let on = the_sandbox(true, "probe-unconfined-on");
 
-    assert!(moded(true, &disposable).is_ok());
-    assert!(moded(false, &|_| None).is_ok(), "the sandbox needs no word");
+    assert!(moded_under(&on, true, &disposable).is_ok());
+    assert!(moded_under(&on, false, &|_| None).is_ok(), "the sandbox needs no word");
     for lookup in [
         &(|_: &str| None) as &dyn Fn(&str) -> Option<std::ffi::OsString>,
         &says("1"),
@@ -1484,13 +1505,29 @@ fn unconfined_is_allowed_only_where_the_runner_says_it_is_disposable() {
         &says("TRUE"),
         &says(""),
     ] {
-        let refused = moded(true, lookup).expect_err("not a disposable runner");
+        let refused = moded_under(&on, true, lookup).expect_err("not a disposable runner");
 
         assert!(refused.starts_with("crucible: "), "{refused}");
         assert!(refused.contains("CI is true"), "{refused}");
         assert!(refused.contains("--unconfined"), "{refused}");
         assert_eq!(refused.lines().count(), 1, "{refused}");
     }
+}
+
+/// With the sandbox setting off, the probe starts the agent as a plain local
+/// process, so `--unconfined` needs no word from the runner and changes
+/// nothing: the mode is the one the setting off gives, neither the sandbox
+/// nor a disposable runner's.
+#[test]
+fn unconfined_needs_no_disposable_runner_with_the_sandbox_off() {
+    let off = the_sandbox(false, "probe-unconfined-off");
+    let on = the_sandbox(true, "probe-unconfined-off-on");
+
+    let unconfined = moded_under(&off, true, &|_| None).expect("no runner word is needed");
+
+    assert_eq!(Ok(unconfined), moded_under(&off, false, &|_| None));
+    assert_ne!(unconfined, Mode::CONFINED);
+    assert_ne!(Ok(unconfined), moded_under(&on, true, &disposable));
 }
 
 /// A method that needs a real terminal is a way the agent signs in, listed
