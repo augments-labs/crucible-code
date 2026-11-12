@@ -65,6 +65,12 @@ pub enum Undrawn {
     /// what its fence says it is. Nothing went wrong, and it is shown as
     /// written.
     NotHere,
+    /// A part of it does not convert to text cleanly, and a drawing of the
+    /// rest would say something other than what was written.
+    NotText,
+    /// Drawn whole it is wider than the room it stands in, and a drawing cut
+    /// to the room would not be the whole of it.
+    TooWide,
 }
 
 impl Undrawn {
@@ -74,6 +80,8 @@ impl Undrawn {
         match self {
             Self::PastCap => "longer than this can hold",
             Self::NotHere => "not drawn here",
+            Self::NotText => "not drawn as text",
+            Self::TooWide => "too wide to draw at this width",
         }
     }
 }

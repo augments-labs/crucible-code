@@ -83,7 +83,12 @@ fn a_framed_block_fits_the_window_it_stands_in() {
         .map(|text| Row::new().then(Slot::Plain, *text))
         .collect();
 
-    for refusal in [None, Some(Undrawn::PastCap)] {
+    for refusal in [
+        None,
+        Some(Undrawn::PastCap),
+        Some(Undrawn::NotText),
+        Some(Undrawn::TooWide),
+    ] {
         across("a frame", |columns, glyphs| {
             let frame = Frame {
                 label: Label::new(LONG, glyphs),

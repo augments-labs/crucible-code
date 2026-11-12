@@ -921,6 +921,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-tui-math"
+version = "0.50.0"
+dependencies = [
+ "crucible-tui",
+ "insta",
+ "tokio",
+]
+
+[[package]]
 name = "crucible-types"
 version = "0.50.0"
 dependencies = [
