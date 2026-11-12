@@ -1068,6 +1068,8 @@ fn a_registry_install_surveys_probes_and_stores_the_record() -> Result<(), Faile
     use crucible_external_harnesses::store::Probe;
 
     let bench = Bench::new("registry-install-probed")?;
+    fs::create_dir_all(bench.user().parent().expect("a directory"))?;
+    fs::write(bench.user(), r#"{"sandbox": {"enabled": true}}"#)?;
     let built = bench.home.path().join("built");
     let initialized = acp::offering("goose-acp", "1.0.0", &json!([]));
     let program = fake_peer::install(
