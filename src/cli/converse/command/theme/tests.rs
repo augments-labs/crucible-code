@@ -176,21 +176,29 @@ fn taking_a_theme_leaves_the_session_drawing_in_it() {
 fn the_keys_and_the_arrows_are_drawn_in_the_glyph_set_in_force() {
     // A terminal set to ASCII glyphs is not sent U+00B7 or the arrows, in
     // either layout: beside the list, and beneath it on a narrow window.
-    let ascii = Style::drawn(Glyphs::Ascii);
-    for columns in [60, 120] {
-        let rows: Vec<String> = laid(&standing(), ascii, columns, 40)
-            .iter()
-            .map(Row::text)
-            .collect();
+    for (glyphs, arrows, keys) in [
+        (
+            Glyphs::Ascii,
+            "(< > )",
+            "enter takes it - esc puts back the one in force",
+        ),
+        (
+            Glyphs::Unicode,
+            "(← → )",
+            "enter takes it · esc puts back the one in force",
+        ),
+    ] {
+        for columns in [60, 120] {
+            let rows: Vec<String> = laid(&standing(), Style::drawn(glyphs), columns, 40)
+                .iter()
+                .map(Row::text)
+                .collect();
 
-        assert!(
-            rows.iter().any(|row| row.ends_with("(< > )")),
-            "{columns}: {rows:?}"
-        );
-        assert_eq!(
-            rows.last().map(String::as_str),
-            Some("enter takes it - esc puts back the one in force"),
-            "{columns}"
-        );
+            assert!(
+                rows.iter().any(|row| row.ends_with(arrows)),
+                "{columns}: {rows:?}"
+            );
+            assert_eq!(rows.last().map(String::as_str), Some(keys), "{columns}");
+        }
     }
 }

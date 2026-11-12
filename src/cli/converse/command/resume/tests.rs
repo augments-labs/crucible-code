@@ -1443,6 +1443,14 @@ fn enter_on_a_session_recorded_elsewhere_says_how_to_resume_it_there() {
         "Enter to resume - Esc to cancel"
     );
     assert_eq!(
+        taken(
+            stood.marked().expect("marked"),
+            sample.workspace().root(),
+            Glyphs::Unicode
+        ),
+        "Enter to resume · Esc to cancel"
+    );
+    assert_eq!(
         pressed(Pressed::Key(Key::Enter), &mut stood, &here),
         Moved::Took
     );

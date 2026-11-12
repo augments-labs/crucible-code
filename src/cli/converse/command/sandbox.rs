@@ -288,14 +288,16 @@ mod tests {
         // over it when it is: either way a terminal set to ASCII glyphs is not
         // sent U+00B7.
         let terms = crate::cli::converse::tests::plain();
+        let unicode = Standing::new(&terms).summary;
         terms
             .style
             .set(terms.style().drawing(crucible_tui::Glyphs::Ascii));
+        let ascii = Standing::new(&terms).summary;
 
-        let summary = Standing::new(&terms).summary;
-        assert!(summary.starts_with("Sandbox "), "{summary:?}");
-        assert!(summary.contains(" - "), "{summary:?}");
-        assert!(summary.is_ascii(), "{summary:?}");
+        assert!(unicode.starts_with("Sandbox "), "{unicode:?}");
+        assert!(unicode.contains(" · "), "{unicode:?}");
+        assert_eq!(ascii, unicode.replace(" · ", " - "));
+        assert!(ascii.is_ascii(), "{ascii:?}");
     }
 
     #[test]

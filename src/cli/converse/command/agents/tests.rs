@@ -473,18 +473,19 @@ fn every_state_of_the_list_fits_every_window_it_is_given() {
 fn the_keys_and_the_printed_lines_are_parted_with_the_glyph_sets_own_dot() {
     // A terminal set to ASCII glyphs is not sent U+00B7, on the panel or on
     // the lines printed where there is no room for it.
-    let mut listing = three();
-    let rows: Vec<String> = listing
-        .laid(80, 24, Glyphs::Ascii)
-        .0
-        .iter()
-        .map(Row::text)
-        .collect();
-    assert!(
-        rows.iter()
-            .any(|row| row.contains("Enter to open - Esc to cancel")),
-        "{rows:?}"
-    );
+    for (glyphs, takes) in [
+        (Glyphs::Ascii, "Enter to open - Esc to cancel"),
+        (Glyphs::Unicode, "Enter to open · Esc to cancel"),
+    ] {
+        let mut listing = three();
+        let rows: Vec<String> = listing
+            .laid(80, 24, glyphs)
+            .0
+            .iter()
+            .map(Row::text)
+            .collect();
+        assert!(rows.iter().any(|row| row.contains(takes)), "{rows:?}");
+    }
 
     let listing = Listing::new(
         vec![listed("goose", &["1.0.0"], "Apache-2.0", &[])],

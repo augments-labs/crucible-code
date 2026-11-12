@@ -25,7 +25,7 @@
 use crucible_app::Conversation;
 use crucible_app::content_use::{self, Warned};
 use crucible_client_api::Author;
-use crucible_tui::{Offered, Panel, Renderer, Terminal};
+use crucible_tui::{Glyphs, Offered, Panel, Renderer, Terminal};
 
 use crate::cli::Fatal;
 use crate::cli::style::Style;
@@ -224,6 +224,14 @@ pub(super) fn ask<T: Terminal>(
     ask_while(renderer, style, warned, put, &mut |_| Ok(()))
 }
 
+/// The route's name as the panel draws it.
+///
+/// The registry writes a name the way the design does, `Kimi Code · kimi.ai`;
+/// a terminal set to ASCII is sent the glyph set's own dot in its place.
+pub(super) fn named(warned: &Warned, glyphs: Glyphs) -> String {
+    warned.shown.replace('·', glyphs.dot())
+}
+
 /// [`ask`], with a running turn's drain run once a pass so what it reports
 /// goes on arriving behind the panel.
 ///
@@ -237,7 +245,7 @@ pub(super) fn ask_while<T: Terminal>(
     put: Put,
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<Answer, Fatal> {
-    let agent = &*warned.shown;
+    let agent = named(warned, style.glyphs());
     let starts = format!("Starts {agent} to check the account; this route is not asked again");
     let launching = [
         Offered {
@@ -279,7 +287,7 @@ pub(super) fn ask_while<T: Terminal>(
         &mut at,
         |marked, columns, _| {
             let panel = Panel {
-                title: &warned.shown,
+                title: &agent,
                 said: Some(&warned.warning.sentence),
                 source: Some(&cited),
                 told,

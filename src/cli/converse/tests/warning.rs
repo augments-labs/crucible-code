@@ -22,7 +22,7 @@ use crate::cli::converse::docking::Submission;
 use crate::cli::converse::queueing::{self, Retained};
 use crate::cli::converse::warning::{
     CRAMPED_NOTE, CRAMPED_QUEUE, CRAMPED_ROOM, CRAMPED_SEND, DROPPED, KEPT, Put, QUEUE_KEPT,
-    UNSENT, left, returned, unanswered,
+    UNSENT, left, named, returned, unanswered,
 };
 use crate::cli::converse::{Held, Work, ran, refreshed, typing, work};
 
@@ -788,5 +788,25 @@ fn a_line_is_the_work_of_where_it_was_sent_from() {
     assert!(
         matches!(&typed, Work::Turn(line, _, Author::Person) if line == "first"),
         "a typed line did not start a turn of the reader's"
+    );
+}
+
+#[test]
+fn the_panel_names_the_route_with_the_glyph_sets_own_dot() {
+    // The registry spells some routes with a dot between the plan and its
+    // site. The panel's title and its "Starts" line are drawn, so a terminal
+    // set to ASCII glyphs is not sent U+00B7 in either.
+    let routes = Routes::production();
+    let warned = routes
+        .warned("subscription:moonshot@kimi.ai")
+        .expect("the Kimi Code row is warned");
+
+    assert_eq!(
+        named(warned, crucible_tui::Glyphs::Ascii),
+        "Kimi Code - kimi.ai"
+    );
+    assert_eq!(
+        named(warned, crucible_tui::Glyphs::Unicode),
+        "Kimi Code · kimi.ai"
     );
 }
