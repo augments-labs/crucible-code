@@ -96,7 +96,7 @@ impl Trying {
                 key: key.clone(),
                 proposed: Box::new(proposed),
             },
-            program,
+            &program,
         )
     }
 
@@ -124,7 +124,7 @@ impl Trying {
             return None;
         };
         (Origin::of(&programs_beside(&self.state), program.path()) == Origin::Own)
-            .then(|| Trial::found(self, Of::Antigravity(row), program))
+            .then(|| Trial::found(self, Of::Antigravity(row), &program))
             .flatten()
     }
 }
@@ -156,10 +156,10 @@ pub(crate) struct Trial {
 impl Trial {
     /// `of`'s program at `program`, judged against `trying`'s places; nothing
     /// where its links cannot be followed.
-    fn found(trying: &Trying, of: Of, program: Program) -> Option<Self> {
+    fn found(trying: &Trying, of: Of, program: &Program) -> Option<Self> {
         let canonical = std::fs::canonicalize(program.path()).ok()?;
         let root = trying.places().map_or_else(
-            || Root::Refused(homeless(&program).to_string()),
+            || Root::Refused(homeless(program).to_string()),
             |places| places.root(&canonical),
         );
         Some(Self {
