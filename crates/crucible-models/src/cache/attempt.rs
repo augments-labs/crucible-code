@@ -366,6 +366,15 @@ fn mechanism_ineligibility(
     {
         return Some(PromptCacheIneligibleReason::DisallowedRetention);
     }
+    // `maxSeconds` is a hard ceiling: a class this mechanism keeps for longer
+    // than the policy allows is refused here, the one place that reads it.
+    if let (Some(kept), Some(ceiling)) = (
+        capability.kept_at_least(policy.retention().class()),
+        policy.retention().maximum_seconds(),
+    ) && kept > ceiling
+    {
+        return Some(PromptCacheIneligibleReason::DisallowedRetention);
+    }
 
     match capability.mechanism() {
         PromptCacheMechanism::ExplicitBreakpoints => {
@@ -642,6 +651,120 @@ mod tests {
                 .unwrap()
                 .selected()
                 .is_some()
+        );
+    }
+
+    const WITH_EXTENDED: [PromptCacheRetentionClass; 3] = [
+        PromptCacheRetentionClass::ProviderDefault,
+        PromptCacheRetentionClass::Ephemeral,
+        PromptCacheRetentionClass::Extended,
+    ];
+
+    fn extended(maximum_seconds: u32) -> PromptCachePolicy {
+        PromptCachePolicy::default().with_retention(
+            crucible_types::PromptCacheRetention::extended(maximum_seconds).unwrap(),
+        )
+    }
+
+    fn kept_twelve_hours() -> PromptCacheMechanismCapability {
+        PromptCacheMechanismCapability::automatic_prefix(
+            10,
+            false,
+            true,
+            &[PromptCacheContent::Text],
+        )
+        .with_retentions(&WITH_EXTENDED)
+        .with_kept_at_least(PromptCacheRetentionClass::Extended, 43_200)
+    }
+
+    #[test]
+    fn a_record_that_states_no_time_selects_an_extended_class_under_any_ceiling() {
+        let caps = capabilities(&[PromptCacheMechanismCapability::automatic_prefix(
+            10,
+            false,
+            true,
+            &[PromptCacheContent::Text],
+        )
+        .with_retentions(&WITH_EXTENDED)]);
+
+        for ceiling in [1, 43_199, 43_200] {
+            let selected =
+                PromptCacheSelection::prepare(extended(ceiling), &caps, &plan(20, &[]), false)
+                    .unwrap();
+            assert_eq!(
+                selected.selected(),
+                Some(PromptCacheSelected::new(
+                    PromptCacheMechanism::AutomaticPrefix,
+                    PromptCacheRetentionClass::Extended
+                )),
+                "{ceiling}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_extended_class_offered_by_the_automatic_prefix_alone_is_refused_to_explicit_breakpoints()
+    {
+        let caps = capabilities(&[
+            PromptCacheMechanismCapability::explicit_breakpoints(
+                10,
+                4,
+                &[PromptCacheBoundary::AfterMessage],
+                &[PromptCacheContent::Text],
+            )
+            .with_retentions(&WITH_EXTENDED[..2]),
+            kept_twelve_hours(),
+        ]);
+        let explicit_only = extended(43_200).allowing(crucible_types::PromptCacheMechanisms::one(
+            PromptCacheMechanism::ExplicitBreakpoints,
+        ));
+
+        let selected = PromptCacheSelection::prepare(
+            explicit_only,
+            &caps,
+            &plan(20, &[PromptCacheBoundary::AfterMessage]),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            selected.eligibility(),
+            PromptCacheEligibility::Ineligible(PromptCacheIneligibleReason::DisallowedRetention)
+        );
+    }
+
+    #[test]
+    fn an_extended_class_kept_longer_than_the_ceiling_is_a_disallowed_retention() {
+        let caps = capabilities(&[kept_twelve_hours()]);
+
+        let at_twelve_hours =
+            PromptCacheSelection::prepare(extended(43_200), &caps, &plan(20, &[]), false).unwrap();
+        let below =
+            PromptCacheSelection::prepare(extended(43_199), &caps, &plan(20, &[]), false).unwrap();
+        let required = PromptCacheSelection::prepare(
+            extended(43_199).with_mode(PromptCacheMode::Require),
+            &caps,
+            &plan(20, &[]),
+            false,
+        );
+
+        assert_eq!(
+            at_twelve_hours.selected(),
+            Some(PromptCacheSelected::new(
+                PromptCacheMechanism::AutomaticPrefix,
+                PromptCacheRetentionClass::Extended
+            ))
+        );
+        assert_eq!(below.selected(), None);
+        assert_eq!(
+            below.eligibility(),
+            PromptCacheEligibility::Ineligible(PromptCacheIneligibleReason::DisallowedRetention)
+        );
+        assert_eq!(
+            required,
+            Err(PromptCachePreparationError::Required(
+                PromptCacheIneligibleReason::DisallowedRetention
+            ))
         );
     }
 
