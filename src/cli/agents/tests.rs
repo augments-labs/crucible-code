@@ -1290,10 +1290,14 @@ impl Unpacked {
         sandbox: &dyn Fn(Handle) -> Arc<dyn SandboxService>,
         within: Duration,
     ) -> Result<String, String> {
-        let name = self.scratch.0.file_name().map(|name| name.to_string_lossy().into_owned());
+        let name = self
+            .scratch
+            .0
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned());
         let settings = the_sandbox(true, name.as_deref().unwrap_or("unpacked"));
-        let mode = Mode::under(&settings, unconfined, &disposable)
-            .expect("a runner to be thrown away");
+        let mode =
+            Mode::under(&settings, unconfined, &disposable).expect("a runner to be thrown away");
         probed(&self.root, &self.entry, mode, sandbox, within)
     }
 }
@@ -1497,7 +1501,10 @@ fn unconfined_is_allowed_only_where_the_runner_says_it_is_disposable() {
     let on = the_sandbox(true, "probe-unconfined-on");
 
     assert!(moded_under(&on, true, &disposable).is_ok());
-    assert!(moded_under(&on, false, &|_| None).is_ok(), "the sandbox needs no word");
+    assert!(
+        moded_under(&on, false, &|_| None).is_ok(),
+        "the sandbox needs no word"
+    );
     for lookup in [
         &(|_: &str| None) as &dyn Fn(&str) -> Option<std::ffi::OsString>,
         &says("1"),
