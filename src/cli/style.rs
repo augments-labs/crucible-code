@@ -3,9 +3,10 @@
 //! Settled at startup, and again only when a command says so, into plain
 //! answers the drawing can read without asking anything: whether to write
 //! colour and how much of it, which characters to draw with, how much of a
-//! line to show and how math is drawn. None of those may be asked per event — two are syscalls and
-//! the third is a file. What the start learned of where pictures can be drawn
-//! is kept beside them for the same reason: tmux's answer is a process run.
+//! line to show and how math is drawn. None of those may be asked per event —
+//! two are syscalls, the third is a file and the fourth is read from
+//! configuration. What the start learned of where pictures can be drawn is
+//! kept beside them for the same reason: tmux's answer is a process run.
 
 use crucible_config::{
     Color, Glyphs as Wanted, MathDrawing, ThemeChoice, ToolDetail, TranscriptColours,
