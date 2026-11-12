@@ -12125,6 +12125,22 @@
       "platforms": [
         "linux"
       ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SYNTAX-MEMORY-FIXTURE",
+      "family": "transcript-blocks",
+      "obligation": "In every measured turn the colour memory probe's fixture serves, the edit changes the file and leaves at least one line of it as it was, the answer's diff fence holds a row of a line that stayed, and the answer holds a fence that names rust and is not empty.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-session-rss-colour"
+      },
+      "case": "tests::every_measured_turn_keeps_a_line_of_its_file_and_answers_with_it_kept_and_with_rust",
+      "source": "src/bin/bench-session-rss-colour.rs",
+      "body_sha256": "273fba12c9d7633e54e58174f0ef1ad90f10e6202278eb08df68fab05a861c69",
+      "platforms": [
+        "linux"
+      ]
     }
   ]
 }
