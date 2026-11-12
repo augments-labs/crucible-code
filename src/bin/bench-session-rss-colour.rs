@@ -1204,6 +1204,72 @@ mod tests {
     }
 
     #[test]
+    fn every_measured_turn_keeps_a_line_of_its_file_and_answers_with_it_kept_and_with_rust() {
+        // What makes a session read code for a language's colours, asked of
+        // every measured turn as the fixture serves it. Each one missing is
+        // named rather than the first, so a fixture that loses one says which.
+        let mut file = format!("{}\n", left_by(0));
+        let mut missing = Vec::new();
+        for turn in 1..=TURNS {
+            let first = (turn - 1) * REQUESTS + 1;
+
+            let call = said(&replied(first + 1));
+            let input: serde_json::Value =
+                serde_json::from_str(&call.input).expect("the input in JSON");
+            let find = at(&input, "/find").expect("the text to find");
+            let replace = at(&input, "/replace").expect("the text to put");
+            let after = file.replacen(find, replace, 1);
+            assert_ne!(after, file, "turn {turn}: the edit changes nothing");
+
+            // A line the edit leaves where and as it was is a line its change
+            // keeps, and a kept line is drawn in the colours of its language.
+            let stayed: Vec<&str> = file
+                .lines()
+                .zip(after.lines())
+                .filter_map(|(was, now)| (was == now).then_some(was))
+                .collect();
+            if stayed.is_empty() {
+                missing.push(format!(
+                    "turn {turn}: the edit leaves no line of {REWRITTEN} as it was"
+                ));
+            }
+
+            // The diff the answer writes says the same: a row neither taken
+            // out nor put in, which is one of the lines that stayed.
+            let text = said(&replied(first + 2)).text;
+            let kept = text
+                .split_once("\n```diff\n")
+                .and_then(|(_, fence)| fence.split_once("```\n"))
+                .is_some_and(|(diff, _)| {
+                    diff.lines()
+                        .filter_map(|row| row.strip_prefix(' '))
+                        .any(|row| stayed.contains(&row))
+                });
+            if !kept {
+                missing.push(format!(
+                    "turn {turn}: the answer's diff fence holds no row of a line that stayed"
+                ));
+            }
+
+            // And code the answer shows for itself, in a fence that names the
+            // language by the word a model writes.
+            let code = text
+                .split_once("\n```rust\n")
+                .and_then(|(_, fence)| fence.split_once("```\n"))
+                .is_some_and(|(code, _)| !code.trim().is_empty());
+            if !code {
+                missing.push(format!(
+                    "turn {turn}: the answer holds no fence that names rust"
+                ));
+            }
+
+            file = after;
+        }
+
+        assert!(missing.is_empty(), "{missing:#?}");
+    }
+
+    #[test]
     fn a_measured_answer_ends_in_the_diff_of_its_turn_and_a_fill_answer_holds_none() {
         let text = said(&answer(3, DELTAS, false)).text;
         let (_, fence) = text.split_once("\n```diff\n").expect("a diff fence");
