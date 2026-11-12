@@ -939,12 +939,12 @@ fn a_catalog_method_named_like_a_fixed_choice_is_not_offered() -> Result<(), Fai
 }
 
 /// Where the user's own programs lie on the `PATH` a test of them looks on.
-fn tools(tree: &Tree) -> PathBuf {
+pub(crate) fn tools(tree: &Tree) -> PathBuf {
     tree.0.join("tools")
 }
 
 /// The user's home a test of their own programs judges a directory against.
-fn user(tree: &Tree) -> PathBuf {
+pub(crate) fn user(tree: &Tree) -> PathBuf {
     tree.0.join("user")
 }
 
@@ -1849,6 +1849,39 @@ pub(crate) fn tried_at_door(
 pub(crate) fn goose_of_your_own(tree: &Tree) -> Result<(Conversation, PathBuf), Failed> {
     trusting(tree, &[entry("goose", "1.0.0", ONE)])?;
     let program = own_goose(&tools(tree), true)?;
+    Ok((own_sandboxed(tree)?, program))
+}
+
+/// A tree whose catalog offers goose, saying how its vendor uses what it is
+/// sent, and whose user installed their own goose in a directory no `PATH`
+/// names, answering as an agent and taking a turn, with a link to it under
+/// goose's name on the `PATH` a conversation's steps look on; that
+/// conversation, and the path the link leads to.
+#[cfg(unix)]
+pub(crate) fn goose_through_a_link(tree: &Tree) -> Result<(Conversation, PathBuf), Failed> {
+    use crucible_external_harnesses::fake_peer::scripts::acp;
+
+    let mut goose = entry("goose", "1.0.0", ONE);
+    if let Some(goose) = goose.as_object_mut() {
+        goose.insert(
+            "content_use".into(),
+            json!({
+                "text": "The vendor may use what you send to improve goose.",
+                "source": "https://vendor.example/terms/data",
+                "date": "24 Oct 2026",
+                "origins": [],
+            }),
+        );
+    }
+    trusting(tree, &[goose])?;
+    let turning = Peer::once(
+        acp::opening(&acp::offering("goose-acp", "1.2.3", &json!([])))
+            .say(acp::stopped(2, "end_turn")),
+    );
+    let program = fake_peer::install(&tree.0.join("elsewhere"), "goose", &turning)?;
+    let program = std::fs::canonicalize(program)?;
+    std::fs::create_dir_all(tools(tree))?;
+    std::os::unix::fs::symlink(&program, tools(tree).join("goose"))?;
     Ok((own_sandboxed(tree)?, program))
 }
 

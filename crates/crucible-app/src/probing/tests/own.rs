@@ -907,3 +907,139 @@ fn the_lost_sign_in_sentence_is_shown_on_linux_only() {
         );
     }
 }
+
+/// A sandbox that holds a program in with its network closed and its
+/// filesystem enforced, and counts each start it is asked to prepare,
+/// preparing none.
+#[cfg(unix)]
+#[derive(Default)]
+struct Counting(std::sync::atomic::AtomicUsize);
+
+#[cfg(unix)]
+impl crucible_sandbox::SandboxService for Counting {
+    fn probe(
+        &self,
+    ) -> crucible_runtime::BoxFuture<
+        '_,
+        Result<
+            (
+                crucible_sandbox::SandboxBackendIdentity,
+                crucible_sandbox::SandboxCapabilities,
+            ),
+            crucible_sandbox::SandboxError,
+        >,
+    > {
+        use crucible_sandbox::{
+            SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
+            SandboxCapabilities, SandboxCapability, SandboxFeature,
+        };
+
+        Box::pin(async move {
+            let identity = SandboxBackendIdentity::new(
+                SandboxBackendId::new("counting").expect("a backend name"),
+                "1",
+                SandboxBackendProvenance::Compatibility,
+                None,
+            )
+            .expect("a backend identity");
+            let holding = SandboxCapabilities::none()
+                .with(SandboxFeature::NetworkDeny, SandboxCapability::Enforced)
+                .with(SandboxFeature::Filesystem, SandboxCapability::Enforced);
+            Ok((identity, holding))
+        })
+    }
+
+    fn prepare(
+        &self,
+        _request: crucible_sandbox::SandboxRequest,
+    ) -> crucible_runtime::BoxFuture<
+        '_,
+        Result<Box<dyn crucible_sandbox::SandboxSession>, crucible_sandbox::SandboxError>,
+    > {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async move {
+            Err(crucible_sandbox::SandboxError::Lifecycle(
+                std::io::Error::other("this sandbox starts nothing"),
+            ))
+        })
+    }
+}
+
+/// An executable file `name` in `directory` that says `says`.
+#[cfg(unix)]
+fn executable_in(directory: &Path, name: &str, says: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    fs::create_dir_all(directory).expect("a directory");
+    let program = directory.join(name);
+    fs::write(&program, format!("#!/bin/sh\necho {says}\n")).expect("a program");
+    fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).expect("executable");
+    program
+}
+
+/// A program found through a link that is pointed at another program before
+/// the probe starts it is refused as changed, and nothing is asked to start:
+/// the program started is the one that was found, never one the link leads
+/// to afterwards.
+#[cfg(unix)]
+#[test]
+fn a_link_retargeted_after_it_was_found_is_refused_and_not_started() {
+    use std::os::unix::fs::symlink;
+    use std::sync::Arc;
+
+    use crucible_external_harnesses::{Discovery, Refusal};
+
+    use crate::own_program::probe;
+
+    let sample = Sample::new("own-link-retargeted");
+    let found = executable_in(&sample.root().join("found"), "agent", "found");
+    let other = executable_in(&sample.root().join("other"), "agent", "another program");
+    let on_path = sample.root().join("path");
+    fs::create_dir_all(&on_path).expect("a directory on PATH");
+    let link = on_path.join("agent");
+    symlink(&found, &link).expect("a link");
+    let Discovery::Found(program) = Discovery::of(Some(&link)) else {
+        panic!("the program through the link was not found");
+    };
+
+    fs::remove_file(&link).expect("the link removed");
+    symlink(&other, &link).expect("the link pointed elsewhere");
+
+    let home = sample.home();
+    let crucible = home.join(".crucible");
+    let sessions = crucible.join("sessions");
+    let places = Places {
+        home: &home,
+        crucible: &crucible,
+        sessions: &sessions,
+    };
+    let row = REGISTRY
+        .row(Driver::Antigravity, None)
+        .expect("Antigravity's row");
+    let service = Arc::new(Counting::default());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime");
+    let probed = runtime.block_on(probe(
+        service.clone(),
+        runtime.handle().clone(),
+        &places,
+        &instance("agent", "agent", &[]),
+        &["agent"],
+        program,
+        dialect(&row, &link).expect("a wire"),
+        crate::probing::BOUND,
+    ));
+
+    assert!(
+        matches!(probed, Err(Unowned::Refused(Refusal::Changed(_)))),
+        "{probed:?}"
+    );
+    assert_eq!(
+        service.0.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "a start was prepared"
+    );
+    assert!(read(&crucible, &instance("agent", "agent", &[])).is_none());
+}
