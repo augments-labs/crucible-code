@@ -11,8 +11,7 @@ use std::process::Command;
 
 use crucible_sandbox::{
     PROTECTED_METADATA, SandboxCommand, SandboxError, SandboxFeature, SandboxFilesystemAccess,
-    SandboxFilesystemRule, SandboxNetworkPolicy, SandboxPrivateLoopback, SandboxRequest,
-    SandboxUnreadablePattern,
+    SandboxFilesystemRule, SandboxNetworkPolicy, SandboxRequest, SandboxUnreadablePattern,
 };
 
 use super::broker::Broker;
@@ -646,20 +645,9 @@ pub(super) fn build(plan: Plan<'_>) -> Result<Command, SandboxError> {
     if network.is_some() {
         process.arg("--network-proxy");
     }
-    // `--unshare-net` above is what makes a granted loopback private: it is
-    // the namespace's own, and the broker lifts bind and listen alone for it.
-    match (
-        request.policy().network(),
-        request.policy().private_loopback(),
-    ) {
-        (SandboxNetworkPolicy::Domains(policy), _) if policy.allow_local_binding() => {
-            process.arg("--allow-local-binding");
-        }
-        (SandboxNetworkPolicy::Closed, SandboxPrivateLoopback::Granted) => {
-            process.arg("--private-loopback");
-        }
-        (SandboxNetworkPolicy::Domains(_), _)
-        | (SandboxNetworkPolicy::Closed, SandboxPrivateLoopback::Refused) => {}
+    if matches!(request.policy().network(), SandboxNetworkPolicy::Domains(policy) if policy.allow_local_binding())
+    {
+        process.arg("--allow-local-binding");
     }
     process
         .arg("--")
