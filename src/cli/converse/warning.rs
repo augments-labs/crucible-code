@@ -24,6 +24,7 @@
 
 use crucible_app::Conversation;
 use crucible_app::content_use::{self, Warned};
+use crucible_client_api::Author;
 use crucible_tui::{Offered, Panel, Renderer, Terminal};
 
 use crate::cli::Fatal;
@@ -37,6 +38,10 @@ use super::{Held, Terms, Work, picking};
 pub(super) enum Put {
     /// A message about to be sent.
     Send,
+    /// The application's note about a command that ended, about to start a
+    /// turn. Held back, it is dropped rather than put in the prompt box,
+    /// where it would read as the person's message.
+    Note,
     /// The dock's answers about to be sent.
     Answer,
     /// A row or a model about to be chosen.
@@ -50,7 +55,8 @@ impl Put {
     pub(super) fn before(work: &Work) -> Self {
         match work {
             Work::Answer(_) => Self::Answer,
-            Work::Turn(..) | Work::Room(_) => Self::Send,
+            Work::Turn(_, _, Author::Application) => Self::Note,
+            Work::Turn(_, _, Author::Person) | Work::Room(_) => Self::Send,
         }
     }
 
@@ -59,6 +65,7 @@ impl Put {
     pub(super) fn offered(self) -> Option<&'static [Offered<'static>]> {
         match self {
             Self::Send => Some(&SENDING),
+            Self::Note => Some(&NOTING),
             Self::Answer => Some(&ANSWERING),
             Self::Choice => Some(&CHOOSING),
             Self::Launch => None,
@@ -99,6 +106,18 @@ const ANSWERING: [Offered<'static>; 2] = [
     Offered {
         name: "Go back",
         says: "Keeps your answers in the dock; nothing is sent",
+    },
+];
+
+/// The answers offered before the application's note starts a turn.
+const NOTING: [Offered<'static>; 2] = [
+    Offered {
+        name: "Use it anyway",
+        says: "Sends the note; this route is not asked about again",
+    },
+    Offered {
+        name: "Go back",
+        says: "Leaves the prompt box as it is; nothing is sent",
     },
 ];
 
@@ -188,9 +207,9 @@ pub(super) fn ask_while<T: Terminal>(
     let told: &[&str] = match put {
         // A message or an answer on an installed agent's route that starts
         // the agent says what starting it runs, as a launch does.
-        Put::Send | Put::Answer if content_use::launches(&warned.route) => launched,
+        Put::Send | Put::Note | Put::Answer if content_use::launches(&warned.route) => launched,
         Put::Launch => launched,
-        Put::Send | Put::Answer | Put::Choice => &[],
+        Put::Send | Put::Note | Put::Answer | Put::Choice => &[],
     };
     let cited = warned.warning.cited();
     let footer = format!("enter to choose {} esc to go back", style.glyphs().dot());
@@ -239,7 +258,8 @@ pub(super) fn recorded(terms: &Terms, warned: &Warned) -> Result<(), String> {
 
 /// Whether `work` is held back rather than sent: asked about first where the
 /// route it would go on has no yes, and handed back whole where the answer
-/// was anything but yes. A turn [`Conversation::unlaunchable`] refuses is not
+/// was anything but yes. The application's note about a command that ended is
+/// not handed back: it is dropped, and the prompt box keeps what it held. A turn [`Conversation::unlaunchable`] refuses is not
 /// held: it goes on to that refusal unasked.
 ///
 /// # Errors
@@ -279,21 +299,31 @@ pub(super) fn held<T: Terminal>(
                 Ok(()) => continue,
                 Err(said) => said,
             },
-            // Room to be made has no message to give back, and the dock's
-            // answers stay in the dock.
-            Answer::Back if matches!(work, Work::Room(_) | Work::Answer(_)) => UNSENT.to_owned(),
-            Answer::Cramped if matches!(work, Work::Room(_) | Work::Answer(_)) => {
-                CRAMPED_ROOM.to_owned()
-            }
+            // Room to be made has no message to give back, the dock's
+            // answers stay in the dock, and the application's note is not
+            // the person's to have back.
+            Answer::Back if returned(work).is_none() => UNSENT.to_owned(),
+            Answer::Cramped if returned(work).is_none() => CRAMPED_ROOM.to_owned(),
             Answer::Back => KEPT.to_owned(),
             Answer::Cramped => CRAMPED_SEND.to_owned(),
         };
     };
-    if let Work::Turn(prompt, _, _) = work {
+    if let Some(prompt) = returned(work) {
         held.editor.put(prompt);
     }
     renderer.commit(&said)?;
     Ok(true)
+}
+
+/// The message held back that goes back in the prompt box: only one the
+/// person wrote. Putting it back replaces what the box holds, so the
+/// application's note would overwrite a half-typed line and then be sent as
+/// the person's own.
+fn returned(work: &Work) -> Option<&str> {
+    match work {
+        Work::Turn(prompt, _, Author::Person) => Some(prompt),
+        Work::Turn(_, _, Author::Application) | Work::Room(_) | Work::Answer(_) => None,
+    }
 }
 
 /// What a run with no terminal says when `warned` has no yes: the route's

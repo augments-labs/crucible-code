@@ -492,3 +492,63 @@ fn the_question_before_a_dock_answer_says_the_answers_stay_in_the_dock() {
         going_back(&turn)
     );
 }
+
+#[test]
+fn a_woken_note_held_back_leaves_the_box_as_the_person_left_it() {
+    // The note that wakes the model when a background command ends is the
+    // application's words. Held back, it is not handed to the person as their
+    // message: what they had half-typed stays, and nothing claims otherwise.
+    let script = Script::new(vec![saying("answered")]);
+    let asked = script.asked();
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(script, Tools::new(), session)
+    });
+    let warned = Terms {
+        consent: serving_google(),
+        ..plain()
+    };
+    let opening = opening();
+    let mut input = Cursor::new(Vec::new());
+    let mut held = Held::new(
+        warned.plan.clone(),
+        warned.sending.get(),
+        Answers {
+            input: &mut input,
+            keys: true,
+        },
+        &opening,
+    );
+    held.editor.put("half a thought");
+    // Redirected and too short for the panel, so the warning ends unasked.
+    let mut cramped = Renderer::new(Recording::redirected(80, 3));
+    let note = "Background command finished: exit status 0".to_owned();
+
+    let ended = ran(
+        conversation,
+        &mut cramped,
+        &warned,
+        Work::Turn(note, Box::default(), Author::Application),
+        &mut held,
+    )
+    .map(|(_, leaving)| leaving);
+
+    assert!(matches!(ended, Ok(false)), "{ended:?}");
+    assert_eq!(asked.load(Ordering::SeqCst), 0, "the note was sent");
+    assert_eq!(held.editor.text(), "half a thought");
+    let written = cramped.terminal().written().to_string();
+    assert!(written.contains(CRAMPED_ROOM), "{written}");
+    assert!(!written.contains(CRAMPED_SEND), "{written}");
+}
+
+#[test]
+fn the_question_before_a_woken_note_does_not_promise_it_to_the_prompt_box() {
+    let note = Work::Turn(
+        "Background command finished: exit status 0".to_owned(),
+        Box::default(),
+        Author::Application,
+    );
+
+    let back = going_back(&note);
+    assert!(!back.contains("Keeps your message"), "{back}");
+    assert!(back.contains("nothing is sent"), "{back}");
+}
