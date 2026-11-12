@@ -549,6 +549,15 @@ fn registry_host(case: &str, version: &str) -> (Published, serde_json::Value) {
     (Published::registry(&index, archive), index)
 }
 
+/// [`NOTHING_CHOSEN`] with the sandbox on, so a registry release's install
+/// probe runs in the closed sandbox.
+const SANDBOXED: &str = concat!(
+    "{\n",
+    "  \"sandbox\": {\"enabled\": true},\n",
+    "  \"updates\": {\"check\": \"never\"}\n",
+    "}\n"
+);
+
 /// A registry agent is listed with its source and read date, installed under
 /// the question that names its archive and probe, launched under the
 /// conversation's policy after a restart without probing the vendor again,
@@ -563,7 +572,7 @@ fn a_registry_agent_is_listed_installed_probed_and_answers_a_turn() {
         &serde_json::json!([{"type": "env_var", "id": "key", "name": "API key"}]),
     );
 
-    let mut window = Watched::shipped(case, (80, 40), (NOTHING_CHOSEN, &[]), &published);
+    let mut window = Watched::shipped(case, (80, 40), (SANDBOXED, &[]), &published);
     window.types_until("/catalog\r", "1 of 1 offered");
     let listing = window.picture();
     assert!(listing.contains("Source: ACP Registry, read "), "{listing}");
