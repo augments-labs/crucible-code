@@ -241,10 +241,14 @@ formula as written.
 ## Diagrams
 
 A mermaid diagram in an answer is drawn as text: its boxes, the lines between
-them and their labels, in a terminal's characters. Three kinds are drawn: a
+them and their labels, in a terminal's characters. Six kinds are drawn: a
 flowchart (`graph` or `flowchart`), a state diagram (`stateDiagram` or
-`stateDiagram-v2`) and an entity-relationship diagram (`erDiagram`). A diagram
-is [held until it closes](#blocks-held-until-they-close) and drawn in a frame
+`stateDiagram-v2`), an entity-relationship diagram (`erDiagram`), a sequence
+diagram (`sequenceDiagram`), whose participants stand over lifelines with the
+messages between them; a gantt (`gantt`), whose tasks are bars along a line of
+dates, a day to a column up to 60 days; and a git graph (`gitGraph`), whose
+branches run beside `main` with their commits and merges. A diagram is
+[held until it closes](#blocks-held-until-they-close) and drawn in a frame
 that names its kind, here the state diagram `[*] --> Idle`,
 `Idle --> Running: start`, `Running --> [*]`:
 
@@ -265,23 +269,41 @@ would need any other character that is not ASCII is shown as written.
 A diagram is drawn whole or not at all, and is shown exactly as written in its
 frame, whose top edge says why, when:
 
-- it is another kind, such as a class diagram, a sequence diagram, a gantt
-  chart or a pie chart, which the frame names, as in
-  `┌─ mermaid · pie · not drawn as text · shown as written`;
+- it is another kind, such as a class diagram or a pie chart, which the frame
+  names, as in `┌─ mermaid · pie · not drawn as text · shown as written`;
 - it is a flowchart with a group (`subgraph`) in it:
   `┌─ mermaid · groups · not drawn as text · shown as written`;
-- it holds a statement crucible does not read, which is `not drawn as text`;
+- it holds a statement crucible does not read, which is `not drawn as text`.
+  In a sequence diagram that is a note, an activation, numbering
+  (`autonumber`), a group (`box`) or a block such as `loop`, `alt` or `rect`;
+  in a gantt, a milestone, a length in hours, the days it leaves out
+  (`excludes`, `includes`), a first task in a section with no start written,
+  or a task one day long in a gantt longer than 60 days; in a git graph, a
+  commit's type, a cherry-pick, a branch's order, a merge's own id or tag, and
+  a setting written before it (`%%{init: …}%%`);
 - it is larger than crucible draws, which is `longer than this can hold`: a
   flowchart with more than 16 boxes, 6 lines or 1024 bytes, or a label wider
   than 16 columns; a state diagram with more than 16 states, 8 transitions or
   1024 bytes, or a label wider than 12 columns; an entity-relationship diagram
-  with more than 48 entities, 64 relationships or 4096 bytes. These keep the
-  costliest diagram crucible draws inside the time one frame may take, and a
-  diagram's cost grows with its lines and the width of its labels, so a
-  flowchart allows fewer lines in exchange for longer labels;
+  with more than 48 entities, 64 relationships or 4096 bytes; a sequence
+  diagram with more than 8 participants, 32 messages or 2048 bytes, or a label
+  wider than 24 columns; a gantt with more than 32 sections and tasks
+  together or 2048 bytes, or a task's name wider than 15 columns; a git graph
+  with more than 32 commits, each merge counted as one, 8 branches beside
+  `main` or 2048 bytes. These keep the costliest diagram crucible draws
+  inside the time one frame may take, and a diagram's cost grows with its
+  lines and the width of its labels, so a flowchart allows fewer lines in
+  exchange for longer labels. A sequence diagram, a gantt and a git graph
+  cost far less, so their caps are set by what a terminal shows;
 - drawn whole it is wider than the window, which is
-  `too wide to draw at this width`, and it is drawn again once the window is
-  wide enough: see [Drawn again at every width](#drawn-again-at-every-width).
+  `too wide to draw at this width`. A sequence diagram, a gantt and a git
+  graph are drawn at their own width, never cut or squeezed to fit, so one
+  wider than the window is shown as written rather than drawn. Each is drawn
+  again once the window is wide enough: see
+  [Drawn again at every width](#drawn-again-at-every-width). In native mode
+  one already written to the terminal's scrollback as too wide is drawn there
+  only when the scrollback is written again, once the window has kept its new
+  size.
 
 A statement that styles a diagram, links from it or acts on a click (`style`,
 `classDef`, `click`) is left out of the drawing, and no address in one is
@@ -289,12 +311,13 @@ drawn or opened. A control or invisible character in a label, and a character
 boxes are drawn with, is left out of the label.
 
 [`output.diagrams`](../configuration/configuration.md#output) says how a
-diagram is drawn. `image`, the default, draws a diagram as a picture where one
-can be shown and as text everywhere else, which is everywhere for now; `text`
-draws it as text; `written` shows every diagram exactly as the model wrote it,
-in its fence. It is set apart from `output.math`, so either can be written
-while the other is drawn. A change in `/settings` takes effect at once: every
-diagram already drawn is laid out again in the new form. In native mode a
+diagram of any of the six kinds is drawn. `image`, the default, draws a
+diagram as a picture where one can be shown and as text everywhere else,
+which is everywhere for now; `text` draws it as text; `written` shows every
+diagram exactly as the model wrote it, in its fence. It is set apart from
+`output.math`, so either can be written while the other is drawn. A change in
+`/settings` takes effect at once: every diagram already drawn is laid out
+again in the new form. In native mode a
 diagram already written to the terminal's scrollback changes only when the
 scrollback is written again, once the window has been resized; see
 [What native mode cannot do](../configuration/configuration.md#what-native-mode-cannot-do).
