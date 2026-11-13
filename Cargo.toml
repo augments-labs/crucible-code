@@ -103,6 +103,7 @@ crucible-transport = { path = "crates/crucible-transport" }
 crucible-tui = { path = "crates/crucible-tui" }
 crucible-tui-diff = { path = "crates/crucible-tui-diff" }
 crucible-tui-math = { path = "crates/crucible-tui-math" }
+crucible-tui-mermaid = { path = "crates/crucible-tui-mermaid" }
 crucible-types = { path = "crates/crucible-types" }
 crucible-update = { path = "crates/crucible-update" }
 crucible-workspace = { path = "crates/crucible-workspace" }

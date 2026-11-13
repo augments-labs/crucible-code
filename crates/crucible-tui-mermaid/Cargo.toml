@@ -9,10 +9,25 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
-# The engine that lays a diagram out as text, called only once this crate's
-# own count of the source is inside its caps.
+# The drawing contract this crate implements, and the rows, slots, glyphs and
+# column widths it frames a diagram in. The engine lays a diagram out as text,
+# and is called only once this crate's own count of the source is inside its
+# caps.
 [dependencies]
+crucible-tui.workspace = true
 mermaid-text.workspace = true
 
 [lints]
 workspace = true
+
+# The fit sweep's widths and rooms and the reader a test answers through, for
+# this crate's own tests only; a release build of the crate never turns
+# `testing` on. `insta` compares the pictures of a diagram checked in beside
+# the drawer.
+[dev-dependencies]
+crucible-tui = { workspace = true, features = ["testing"] }
+insta.workspace = true
+
+# A named pipe the hostile sweep watches on Windows, where a FIFO is not one.
+[target.'cfg(windows)'.dev-dependencies]
+tokio = { workspace = true, features = ["net", "rt", "time"] }

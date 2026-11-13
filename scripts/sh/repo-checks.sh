@@ -880,8 +880,9 @@ fi
 #
 # A drawer is a crate that lays one kind of block out for the terminal. It
 # names `tui` alone, for the drawing contract it answers and the rows it
-# lays out, so `tui-diff tui` is the whole of what the diff drawer takes and
-# `tui-math tui` the whole of what the formula drawer takes.
+# lays out, so `tui-diff tui` is the whole of what the diff drawer takes,
+# `tui-math tui` the whole of what the formula drawer takes, and
+# `tui-mermaid tui` the whole of what the diagram drawer takes.
 # `code tui-diff` ships: the command line draws a tool's change through the
 # drawer that draws a diff in an answer, so the two cannot drift apart.
 # `code tui-math` ships: the command line hands every renderer of a session
@@ -1032,6 +1033,7 @@ transport sandbox
 transport types
 tui-diff tui
 tui-math tui
+tui-mermaid tui
 update http
 update privacy
 update runtime
@@ -1332,6 +1334,7 @@ section "a drawer or raster crate reaches no network"
 # a crate that takes it itself, where its sockets would be one call away, fails.
 offline_crates='crucible-tui-diff
 crucible-tui-math
+crucible-tui-mermaid
 crucible-raster'
 network_clients=' async-io async-net async-std attohttpc curl curl-sys h2 h3 hyper hyper-util isahc native-tls openssl quinn reqwest rustls smol socket2 surf tokio tokio-tungstenite tungstenite ureq '
 graphs=0

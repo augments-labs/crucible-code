@@ -966,7 +966,10 @@ dependencies = [
 name = "crucible-tui-mermaid"
 version = "0.50.0"
 dependencies = [
+ "crucible-tui",
+ "insta",
  "mermaid-text",
+ "tokio",
 ]
 
 [[package]]
