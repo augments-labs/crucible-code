@@ -447,7 +447,7 @@ fn nested_matrices(levels: usize) -> String {
 /// A label of `columns` columns for box or line `index`: an even one in
 /// characters two columns wide, an odd one in words.
 fn label(index: usize, columns: usize) -> String {
-    let wide = index % 2 == 0;
+    let wide = index.is_multiple_of(2);
     let head = index.to_string();
     let rest = columns.saturating_sub(head.len());
     let tail: String = if wide {
