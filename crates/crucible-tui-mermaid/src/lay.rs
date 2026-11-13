@@ -4,9 +4,14 @@
 //! Invariants:
 //!
 //! - The engine reads what [`scan`](crate::scan) kept, never the source as it
-//!   was written, and its reading agrees with that one or nothing is drawn:
-//!   the same boxes, with the same labels, joined by as many lines with the
-//!   same labels.
+//!   was written, and its reading agrees with that one or nothing is drawn.
+//!   A flowchart's has the same boxes, with the same labels, joined by as
+//!   many lines with the same labels. A state diagram's has as many
+//!   transitions with the same labels, and each state given a label labelled
+//!   alike; its states are counted, not named, since the engine names its
+//!   start and end markers and its notes by a scheme of its own. An
+//!   entity-relationship diagram's has the same entities, by name, and as
+//!   many relationships.
 //! - A line the engine draws with a control character in it refuses the
 //!   diagram; under the ASCII glyph set, so does a character that is neither
 //!   ASCII nor written in the source.
@@ -20,7 +25,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crucible_tui::drawing::Catching;
 use crucible_tui::{Glyphs, columns};
-use mermaid_text::{Error, Graph, RenderOptions, parser, render_with_options};
+use mermaid_text::{ErDiagram, Error, Graph, RenderOptions, parser, render_with_options};
 
 use crate::scan::{Read, Scanned};
 use crate::{Caps, Kind};
@@ -72,23 +77,56 @@ fn agrees(scanned: &Scanned) -> bool {
         Kind::Flowchart => {
             parser::flowchart::parse(source).is_ok_and(|graph| same(&graph, &scanned.read))
         }
-        Kind::State => parser::state::parse(source).is_ok_and(|graph| {
-            graph.nodes.len() <= Caps::STATE.nodes
-                && graph.edges.len() <= Caps::STATE.edges
-                && labelled(&graph, &scanned.read, false)
-        }),
+        Kind::State => {
+            parser::state::parse(source).is_ok_and(|graph| state_alike(&graph, &scanned.read))
+        }
         // The scan refuses a class diagram before it reaches the engine.
         Kind::Class => false,
-        Kind::EntityRelationship => parser::er::parse(source).is_ok_and(|diagram| {
-            diagram.entities.len() <= Caps::ENTITIES.nodes
-                && diagram.relationships.len() <= Caps::ENTITIES.edges
-        }),
+        Kind::EntityRelationship => {
+            parser::er::parse(source).is_ok_and(|diagram| entities_alike(&diagram, &scanned.read))
+        }
     }
+}
+
+/// Whether `graph`, a state diagram, holds the transitions `read` found,
+/// labelled alike, and labels each state `read` gave a label to alike. Its
+/// states are counted rather than named, since the engine names each start
+/// and end marker and each note by a scheme of its own.
+fn state_alike(graph: &Graph, read: &Read) -> bool {
+    graph.nodes.len() <= Caps::STATE.nodes
+        && joined_alike(graph, read)
+        && labelled(graph, read, false)
+}
+
+/// Whether `diagram` holds the entities `read` found, by name, and as many
+/// relationships.
+fn entities_alike(diagram: &ErDiagram, read: &Read) -> bool {
+    let names: BTreeSet<&str> = diagram
+        .entities
+        .iter()
+        .map(|entity| entity.name.as_str())
+        .collect();
+    names.len() == diagram.entities.len()
+        && names
+            .iter()
+            .copied()
+            .eq(read.boxes.keys().map(String::as_str))
+        && diagram.relationships.len() == read.lines.len()
 }
 
 /// Whether `graph` holds the boxes and lines `read` found, labelled alike.
 fn same(graph: &Graph, read: &Read) -> bool {
     let names: BTreeSet<&str> = graph.nodes.iter().map(|node| node.id.as_str()).collect();
+    names
+        .iter()
+        .copied()
+        .eq(read.boxes.keys().map(String::as_str))
+        && joined_alike(graph, read)
+        && labelled(graph, read, true)
+}
+
+/// Whether `graph` holds as many lines as `read` found, with the same labels.
+fn joined_alike(graph: &Graph, read: &Read) -> bool {
     let mut drawn: Vec<String> = graph
         .edges
         .iter()
@@ -101,12 +139,7 @@ fn same(graph: &Graph, read: &Read) -> bool {
         .collect();
     drawn.sort();
     written.sort();
-    names
-        .iter()
-        .copied()
-        .eq(read.boxes.keys().map(String::as_str))
-        && drawn == written
-        && labelled(graph, read, true)
+    drawn == written
 }
 
 /// Whether each box `read` gave a label to the engine labels alike, as a box
@@ -215,3 +248,6 @@ fn in_ascii(drawn: &str) -> String {
 fn widest(lines: &[String]) -> usize {
     lines.iter().map(|line| columns(line)).max().unwrap_or(0)
 }
+
+#[cfg(test)]
+mod tests;
