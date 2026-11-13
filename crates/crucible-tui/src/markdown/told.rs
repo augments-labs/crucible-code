@@ -9,9 +9,10 @@
 //!   another kind.
 //! - What it says is its own words, never the source's, so nothing written in
 //!   the block reaches the row.
-//! - A drawer that names nothing, a fence no drawer takes, a table and display
-//!   math between markers of its own leave the row naming what is held, as it
-//!   did before any drawer named a block.
+//! - A drawer that names nothing, a fence no drawer takes, a fence of a kind
+//!   a setting shows as written, a table and display math between markers of
+//!   its own leave the row naming what is held, as it did before any drawer
+//!   named a block.
 
 use super::{Holding, Markdown};
 use crate::color::Slot;

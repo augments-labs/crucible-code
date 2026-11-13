@@ -1,5 +1,6 @@
 ---
 source: tests/whole_screen/native.rs
+assertion_line: 586
 expression: scrolled
 ---
 80x24 cursor 23,0 scrollback 30
@@ -24,6 +25,6 @@ expression: scrolled
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |› Syntax theme                                                  Monokai Extended|
-|  ↓ 18 more                                                                     |
+|  ↓ 19 more                                                                     |
 |                                                                                |
 |↑↓ to walk · enter changes · / to search · ←→ tabs · esc to close               |

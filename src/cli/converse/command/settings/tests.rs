@@ -114,6 +114,15 @@ fn math_at(panel: &Panel) -> usize {
         .expect("a math row")
 }
 
+/// Where the diagrams row is in `panel`.
+fn diagrams_at(panel: &Panel) -> usize {
+    panel
+        .lines
+        .iter()
+        .position(|line| line.row.id() == crucible_config::RowId::Diagrams)
+        .expect("a diagrams row")
+}
+
 /// A style read as though the session ran on Linux, where the support table's
 /// cells were judged, so a test about a drawn cell holds on every host.
 fn on_linux() -> Style {
@@ -427,6 +436,7 @@ fn running(
         RowId::PinAfter => Some(terms.pinning.get().as_secs().to_string()),
         RowId::Images => Some(format!("{:?}", renderer.capability())),
         RowId::Math => Some(format!("{:?}", renderer.math_mode())),
+        RowId::Diagrams => Some(format!("{:?}", renderer.diagrams_mode())),
         RowId::Colour
         | RowId::ScreenMode
         | RowId::Tone
@@ -537,7 +547,8 @@ fn the_settings_rows_that_apply_at_once_are_these() {
             "Seconds before a call pins",
             "Mouse scroll speed",
             "Send with",
-            "Math"
+            "Math",
+            "Diagrams"
         ]
     );
 }
@@ -1188,5 +1199,93 @@ fn the_math_row_shows_each_answer_bare_since_each_is_drawn_at_once() {
         // A preview draws on a renderer of its own, from the style: the two
         // say the same.
         assert_eq!(terms.style().math(), renderer.math_mode(), "{word}");
+    }
+}
+
+#[test]
+fn a_diagram_drawing_chosen_in_settings_lays_diagrams_already_drawn_out_again_at_once() {
+    let sample = Sample::new("settings-diagrams-at-once");
+    let terms = keeping(&sample);
+    let counted = counted();
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    // In colour, where the markdown reader reads what the model wrote rather
+    // than leaving every marker where it is.
+    renderer.wears(crucible_tui::Palette::resolve(
+        true,
+        crucible_tui::Theme::Dark,
+        None,
+        &|name| (name == "COLORTERM").then(|| "truecolor".to_owned()),
+    ));
+    renderer.drawers(crate::cli::draw::drawers());
+    renderer
+        .stream("A graph:\n\n```mermaid\ngraph TD\nA --> B\n```\n")
+        .expect("streamed");
+    renderer.settle().expect("settled");
+    let said = |renderer: &Renderer<Recording>| renderer.terminal().picture().said();
+    let shows = |renderer: &Renderer<Recording>, wanted: &str| {
+        said(renderer).iter().any(|row| row.contains(wanted))
+    };
+    // Drawn, the frame names the kind and the line is no longer written.
+    assert!(
+        shows(&renderer, "mermaid · flowchart"),
+        "{:#?}",
+        said(&renderer)
+    );
+    assert!(!shows(&renderer, "A --> B"), "{:#?}", said(&renderer));
+    let mut panel = Panel::new(&terms, &counted);
+    let at = diagrams_at(&panel);
+
+    panel.asked = Some((at, "written".to_owned()));
+    let left = settle(&mut renderer, &terms, &mut panel);
+    assert_eq!(left.as_deref(), Some("Diagrams set to written"));
+    renderer.settle().expect("settled");
+    assert!(shows(&renderer, "A --> B"), "{:#?}", said(&renderer));
+    assert!(
+        !shows(&renderer, "mermaid · flowchart"),
+        "{:#?}",
+        said(&renderer)
+    );
+
+    // An image cannot be shown yet, so `image` is text, as `text` is.
+    for word in ["text", "image"] {
+        panel.asked = Some((at, word.to_owned()));
+        let left = settle(&mut renderer, &terms, &mut panel);
+        assert_eq!(left, Some(format!("Diagrams set to {word}")));
+        renderer.settle().expect("settled");
+        assert!(
+            shows(&renderer, "mermaid · flowchart"),
+            "{word}: {:#?}",
+            said(&renderer)
+        );
+        assert!(
+            !shows(&renderer, "A --> B"),
+            "{word}: {:#?}",
+            said(&renderer)
+        );
+    }
+}
+
+#[test]
+fn the_diagrams_row_shows_each_answer_bare_since_each_is_drawn_at_once() {
+    let sample = Sample::new("settings-diagrams-bare");
+    let terms = keeping(&sample);
+    let counted = counted();
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut panel = Panel::new(&terms, &counted);
+    // An image falls back to text where none can be shown, which is no
+    // refusal: the row says nothing after it.
+    let rows = drawn(&mut panel, 100, 40);
+    assert!(row_of(&rows, "Diagrams").ends_with("image"), "{rows:#?}");
+    let at = diagrams_at(&panel);
+    for word in ["written", "text", "image"] {
+        panel.asked = Some((at, word.to_owned()));
+        settle(&mut renderer, &terms, &mut panel);
+        let rows = drawn(&mut panel, 100, 40);
+        let row = row_of(&rows, "Diagrams");
+        assert!(row.ends_with(word), "{word}: {rows:#?}");
+        assert!(!row.contains(Glyphs::Unicode.dot()), "{word}: {rows:#?}");
+        // A preview draws on a renderer of its own, from the style: the two
+        // say the same.
+        assert_eq!(terms.style().diagrams(), renderer.diagrams_mode(), "{word}");
     }
 }

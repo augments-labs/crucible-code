@@ -41,7 +41,8 @@ pub use layers::{local, user};
 pub use mcp::McpServer;
 pub use menu::Forced;
 pub use output::{
-    Color, Glyphs, ImageOutput, MathDrawing, ScreenMode, ThemeChoice, ToolDetail, TranscriptColours,
+    Color, DiagramDrawing, Glyphs, ImageOutput, MathDrawing, ScreenMode, ThemeChoice, ToolDetail,
+    TranscriptColours,
 };
 pub use sandbox::SandboxSettings;
 pub use updates::{AgentUpdate, Updates};

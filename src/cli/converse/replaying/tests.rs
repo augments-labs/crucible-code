@@ -765,10 +765,11 @@ fn a_formula_in_a_session_glimpsed_is_drawn_the_way_the_session_draws_math() {
 }
 
 #[test]
-fn a_diagram_in_a_session_glimpsed_is_drawn_as_text() {
-    // The preview is handed the drawers a session is, so a diagram the
-    // session draws is drawn in the picker too, framed and named, and its
-    // source is not shown.
+fn a_diagram_in_a_session_glimpsed_is_drawn_the_way_the_session_draws_diagrams() {
+    // The preview's renderer is one of its own, and one never told how
+    // diagrams are drawn draws them as text: the picker would then show a
+    // diagram laid out that picking the session up, under `written`, shows as
+    // the source it was written in.
     let mut transcript = Transcript::new();
     transcript
         .push(Message::said("the flow"))
@@ -783,19 +784,34 @@ fn a_diagram_in_a_session_glimpsed_is_drawn_as_text() {
         .expect("valid fixture transcript");
     let runner = resumed(everything());
     let pruned = Pruned::default();
-    // In colour, where an answer is read as the markdown it is.
-    let replay = Replay {
-        settled: crucible_app::Settled::from(&runner),
-        pruned: &pruned,
-        style: Style::coloured(),
-    };
-    let shown = glimpsed(transcript.messages(), &replay, 60, 64).expect("a recording cannot fail");
-    let said: Vec<String> = shown.iter().map(Row::text).collect();
-    assert!(
-        said.iter().any(|row| row.contains("mermaid · flowchart")),
-        "{said:#?}"
+
+    let mut drawn = Vec::new();
+    for diagrams in [Mode::Written, Mode::Text] {
+        // In colour, where an answer is read as the markdown it is.
+        let replay = Replay {
+            settled: crucible_app::Settled::from(&runner),
+            pruned: &pruned,
+            style: Style::coloured().diagramming(diagrams),
+        };
+        let shown =
+            glimpsed(transcript.messages(), &replay, 60, 64).expect("a recording cannot fail");
+        let said: Vec<String> = shown.iter().map(Row::text).collect();
+        drawn.push((
+            diagrams,
+            said.iter().any(|row| row.contains("A --> B")),
+            said,
+        ));
+    }
+
+    let kept: Vec<(Mode, bool)> = drawn
+        .iter()
+        .map(|(diagrams, kept, _)| (*diagrams, *kept))
+        .collect();
+    assert_eq!(
+        kept,
+        [(Mode::Written, true), (Mode::Text, false)],
+        "{drawn:#?}"
     );
-    assert!(!said.iter().any(|row| row.contains("A --> B")), "{said:#?}");
 }
 
 #[test]

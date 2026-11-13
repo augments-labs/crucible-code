@@ -1,5 +1,6 @@
 ---
 source: tests/whole_screen/native.rs
+assertion_line: 712
 expression: shorter
 ---
 80x16 cursor 15,0 scrollback 38
@@ -16,6 +17,6 @@ expression: shorter
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |› Theme                                                                     auto|
-|  ↓ 19 more                                                                     |
+|  ↓ 20 more                                                                     |
 |                                                                                |
 |↑↓ to walk · enter changes · / to search · ←→ tabs · esc to close               |

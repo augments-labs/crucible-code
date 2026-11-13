@@ -18,7 +18,8 @@
 //! force the moment it is written: the theme, the syntax theme, the
 //! transcript's colours, the glyphs, the tool detail, the scroll rail, the
 //! wheel's speed, the key that sends, a protocol `output.images` names or
-//! `off`, and how math is drawn, which lays the math already drawn out again.
+//! `off`, and how math and diagrams are drawn, each of which lays out again
+//! what it draws already drawn.
 //! What only a start reads says so on its row, changed or not — `auto`
 //! among them, since only a start asks the terminal — and [`takes`] is where
 //! each row is given one answer or the other. A file that cannot be
@@ -463,7 +464,8 @@ fn takes(id: RowId, word: &str) -> Takes {
         | RowId::ScrollSpeed
         | RowId::PinAfter
         | RowId::Send
-        | RowId::Math => Takes::Now,
+        | RowId::Math
+        | RowId::Diagrams => Takes::Now,
         RowId::Colour
         | RowId::Tone
         | RowId::Compaction
@@ -563,6 +565,15 @@ fn worn<T: Terminal>(
                 terms.style.set(terms.style().laying_out(drawn));
             })
             .is_some(),
+        // As math is, apart from it: each way at once, `image` as text, and
+        // the diagrams already drawn laid out in it.
+        RowId::Diagrams => crucible_config::DiagramDrawing::read(word)
+            .map(|diagrams| {
+                let drawn = crate::cli::diagrams_drawn(diagrams);
+                renderer.diagrams(drawn);
+                terms.style.set(terms.style().diagramming(drawn));
+            })
+            .is_some(),
         RowId::Colour
         | RowId::ScreenMode
         | RowId::Tone
@@ -650,7 +661,8 @@ const fn fullscreen_only(id: RowId) -> bool {
         | RowId::CacheRetention
         | RowId::CachePersistent
         | RowId::Images
-        | RowId::Math => false,
+        | RowId::Math
+        | RowId::Diagrams => false,
     }
 }
 
@@ -681,7 +693,8 @@ impl Line {
             | RowId::CacheRetention
             | RowId::CachePersistent
             | RowId::Images
-            | RowId::Math => None,
+            | RowId::Math
+            | RowId::Diagrams => None,
         };
         let settled = terms
             .settled

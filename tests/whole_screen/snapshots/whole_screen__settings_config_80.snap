@@ -1,5 +1,6 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 6445
 expression: config
 ---
 80x30 cursor 29,0 scrolled 0
@@ -30,6 +31,6 @@ expression: config
 |  Cache retention                        providerDefault · applies at next start|
 |  Persistent cache                                forbid · applies at next start|
 |  Images                                            auto · applies at next start|
-|  Math                                                                     image|
+|  ↓ 2 more                                                                      |
 |                                                                                |
 |↑↓ to walk · enter changes · / to search · ←→ tabs · esc to close               |

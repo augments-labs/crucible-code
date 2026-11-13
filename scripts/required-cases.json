@@ -11615,15 +11615,15 @@
     {
       "id": "CASE-TRANSCRIPT-PICTURES-ROW-LAST",
       "family": "transcript-pictures",
-      "obligation": "The last settings row is Math, for output.math, usually image, and Images, for output.images, usually auto, is just before it.",
+      "obligation": "The last settings row is Diagrams, for output.diagrams, usually image; Math, for output.math, usually image, is just before it, and Images, for output.images, usually auto, before that.",
       "package": "crucible-config",
       "target": {
         "kind": "lib",
         "name": "crucible_config"
       },
-      "case": "shape::rows::tests::the_math_row_is_the_last_so_no_row_before_it_moves",
+      "case": "shape::rows::tests::the_diagrams_row_is_the_last_so_no_row_before_it_moves",
       "source": "crates/crucible-config/src/shape/rows/tests.rs",
-      "body_sha256": "4ebe31b45e49244784e313b1cc6b65df1d6c7e8e3efea81cb6ffb2303ac5f845",
+      "body_sha256": "4107e6be6b414ecf22d0c4149ef63dabc3aba093a6d4c6be79ab017a04a7b591",
       "platforms": [
         "linux",
         "macos",
@@ -13263,7 +13263,7 @@
       },
       "case": "render::tests::diagrams::a_fence_whose_drawer_gives_no_label_keeps_the_row_it_had",
       "source": "crates/crucible-tui/src/render/tests/diagrams.rs",
-      "body_sha256": "f1124cea19fd86bd0788d2c776644c8195bdd9931b76c806af3ff326b6d9c365",
+      "body_sha256": "0cae5b1882b9a8a62be6867d1301b7a46eb7e1e2624fdbbf6593f959a7a4afea",
       "platforms": [
         "linux",
         "macos",
@@ -13282,6 +13282,114 @@
       "case": "render::tests::diagrams::a_diagram_drawn_is_laid_out_again_when_the_glyphs_change",
       "source": "crates/crucible-tui/src/render/tests/diagrams.rs",
       "body_sha256": "605c2294b9a6d91b90f543ad9c8b287f0ee7482b9c8d0c651188c102d1d959b0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIAGRAMS-SETTING-READ",
+      "family": "transcript-blocks",
+      "obligation": "output.diagrams reads image when no layer sets it, and written, text or image where one does; any other word is not read.",
+      "package": "crucible-config",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_config"
+      },
+      "case": "settings::output::tests::diagrams_are_an_image_unless_a_layer_names_written_or_text",
+      "source": "crates/crucible-config/src/settings/output.rs",
+      "body_sha256": "451bc468bd2efd97cef3821915807b89ca0d9c2fefbf87b26d3aa92c3b8d5c5b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIAGRAMS-EACH-MODE",
+      "family": "transcript-blocks",
+      "obligation": "A renderer left alone draws diagrams as an image, which is text; written shows a diagram already drawn as its fence, and image and text draw it again, each at once.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::diagrams::a_diagram_drawn_is_laid_out_again_in_each_mode_chosen",
+      "source": "crates/crucible-tui/src/render/tests/diagrams.rs",
+      "body_sha256": "41ed413dec703c5644c704d8897e7a1f93a85decc6e3e671a4189f936df9e664",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIAGRAMS-APART-FROM-MATH",
+      "family": "transcript-blocks",
+      "obligation": "How math is drawn leaves diagrams drawn as they were, and how diagrams are drawn leaves math as it was.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::diagrams::how_math_is_drawn_and_how_diagrams_are_drawn_are_set_apart",
+      "source": "crates/crucible-tui/src/render/tests/diagrams.rs",
+      "body_sha256": "78038d8ed29f554813bd6a6976d729f56372135a435bff6b8964ca32ef08e31e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIAGRAMS-SETTING-AT-ONCE",
+      "family": "transcript-blocks",
+      "obligation": "A diagram drawing chosen in settings lays the diagrams already drawn out again at once.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::command::settings::tests::a_diagram_drawing_chosen_in_settings_lays_diagrams_already_drawn_out_again_at_once",
+      "source": "src/cli/converse/command/settings/tests.rs",
+      "body_sha256": "f07395a500c619bfebb4beb6a5cebe7b8497eff559be3031e6b4617a69a00500",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIAGRAMS-SETTING-BARE",
+      "family": "transcript-blocks",
+      "obligation": "The Diagrams row shows written, text and image bare, since each is in force at once, and the style a preview is drawn from holds the same way the renderer draws diagrams.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::command::settings::tests::the_diagrams_row_shows_each_answer_bare_since_each_is_drawn_at_once",
+      "source": "src/cli/converse/command/settings/tests.rs",
+      "body_sha256": "3a4da3c55c8c596813d8c4c9d1adfd295f4200fe23ca02325b4fd40ad44d17c8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIAGRAMS-GLIMPSED",
+      "family": "transcript-blocks",
+      "obligation": "A session glimpsed whose answer holds a diagram shows its source as written when diagrams are drawn as written, and draws it when they are drawn as text.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::replaying::tests::a_diagram_in_a_session_glimpsed_is_drawn_the_way_the_session_draws_diagrams",
+      "source": "src/cli/converse/replaying/tests.rs",
+      "body_sha256": "859173c147bfd99a209b25bb27774b4b3fd37b6947c7d58bb338e28255a620b5",
       "platforms": [
         "linux",
         "macos",

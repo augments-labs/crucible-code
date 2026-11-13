@@ -163,12 +163,17 @@ pub(crate) struct Modes {
     /// Display math: between `$$`, `\[` or a named environment, or a math
     /// fence.
     pub(crate) math: Mode,
+    /// A diagram: a fence named `mermaid`.
+    pub(crate) diagrams: Mode,
 }
 
 impl Default for Modes {
     /// The mode a setting left alone gives.
     fn default() -> Self {
-        Self { math: Mode::Image }
+        Self {
+            math: Mode::Image,
+            diagrams: Mode::Image,
+        }
     }
 }
 
@@ -178,12 +183,8 @@ impl Modes {
     const fn of(self, kind: Kind) -> Option<Mode> {
         match kind {
             Kind::DisplayMath => Some(self.math),
-            Kind::Table
-            | Kind::Rule
-            | Kind::Heading(_)
-            | Kind::Mermaid
-            | Kind::Diff
-            | Kind::Image => None,
+            Kind::Mermaid => Some(self.diagrams),
+            Kind::Table | Kind::Rule | Kind::Heading(_) | Kind::Diff | Kind::Image => None,
         }
     }
 
@@ -592,6 +593,12 @@ impl Record {
     /// drawn is laid out in it again by the next [`Self::relay`].
     pub(crate) fn draws_in(&mut self, modes: Modes) {
         self.modes = modes;
+    }
+
+    /// Whether a block of `kind` would be handed to its drawer here, rather
+    /// than shown as written.
+    pub(crate) const fn draws(&self, kind: Kind) -> bool {
+        self.modes.draws(kind)
     }
 
     /// Append streamed text, which flows.
