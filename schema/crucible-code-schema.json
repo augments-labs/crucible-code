@@ -520,6 +520,16 @@
           ],
           "type": "string"
         },
+        "diagrams": {
+          "default": "image",
+          "description": "How a diagram in an answer is drawn: written shows each diagram exactly as the model wrote it; text draws it as characters; image draws it as a picture where one can be shown and as text everywhere else",
+          "enum": [
+            "written",
+            "text",
+            "image"
+          ],
+          "type": "string"
+        },
         "glyphs": {
           "default": "unicode",
           "description": "Which characters crucible draws with: unicode for box drawing, ascii for a font that lacks it",

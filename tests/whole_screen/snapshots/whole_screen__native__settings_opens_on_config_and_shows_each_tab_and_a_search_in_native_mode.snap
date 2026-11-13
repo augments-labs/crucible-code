@@ -1,5 +1,6 @@
 ---
 source: tests/whole_screen/native.rs
+assertion_line: 1150
 expression: config
 ---
 80x30 cursor 29,0 scrollback 1
@@ -30,6 +31,6 @@ expression: config
 |  Syntax theme                                                  Monokai Extended|
 |  Glyphs                                                                 unicode|
 |  Colour                                            auto · applies at next start|
-|  ↓ 16 more                                                                     |
+|  ↓ 17 more                                                                     |
 |                                                                                |
 |↑↓ to walk · enter changes · / to search · ←→ tabs · esc to close               |

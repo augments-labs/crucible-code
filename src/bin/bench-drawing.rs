@@ -24,10 +24,28 @@
 //! matrices nested past that to the byte cap, timed to their refusal, a span
 //! at the byte cap and a span nested as deep as the drawer reads. A formula wider
 //! than its room is refused for it rather than drawn, so each is laid out in
-//! a room as wide as the drawer draws, in both glyph sets. Two
-//! milliseconds is the budget for text laid out on the drawing thread: a tenth
-//! of the first frame's twenty, so a block closing beside a streaming answer
-//! still leaves the frame its room.
+//! a room as wide as the drawer draws, in both glyph sets.
+//!
+//! A diagram is laid out on the same thread when its fence closes: for each
+//! kind drawn as text, every box and every line its caps hold, each label as
+//! long as the label cap and the byte cap leave room for, half of them in
+//! characters two columns wide; and for each kind the costliest shape, four
+//! boxes with every line the caps allow going out from the first to each of
+//! the others and back again, and each label as long as those caps leave
+//! room for, and for a state diagram the same inside a composite state. The
+//! engine's cost follows the lines and the labels rather than the boxes, so
+//! these are what a cap loosened on lines or labels makes dearer; each is
+//! built from the caps themselves, never written out, so a loosened cap is
+//! timed at what it admits. The costliest flowchart and state diagram found
+//! when the caps were set are timed beside them as they were written. A
+//! flowchart is laid top to bottom, which costs the engine more than left to
+//! right for the same boxes and lines. The engine lays a diagram out once whatever its room, and a drawing
+//! wider than the room is refused for it only after, so each is laid out at a
+//! common terminal's width, where it may be refused as too wide, and in a
+//! window wide enough to draw it, in both glyph sets. Two milliseconds is the
+//! budget for text laid out on the drawing thread: a tenth of the first
+//! frame's twenty, so a block closing beside a streaming answer still leaves
+//! the frame its room.
 //!
 //! The reported number is the slowest case's 95th percentile, with each case's
 //! median and its slowest reading kept as evidence. Every reading is one call,
@@ -40,12 +58,14 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use crucible_tui::Glyphs;
+use crucible_tui::chrome::Undrawn;
 use crucible_tui::drawing::{Draws, Room};
 use crucible_tui_diff::{
     Change, Changes, FOLD, File, MOST_BYTES, MOST_FILES, MOST_LINES, PAIRS, SYNTAX_BYTES,
     SYNTAX_LINES, Side, TOKENS,
 };
 use crucible_tui_math::{Formulas, MOST_COLUMNS, MOST_DEPTH, MOST_ROWS};
+use crucible_tui_mermaid::{Caps, Diagrams};
 
 /// The budget on a quiet machine, in milliseconds.
 const LIMIT: f64 = 2.0;
@@ -81,6 +101,53 @@ const CHANGE_ROOMS: &[usize] = &[WIDE, NARROW];
 /// reading is of a layout rather than of a refusal for the room.
 const FORMULA_ROOMS: &[usize] = &[MOST_COLUMNS + 2];
 
+/// The rooms a diagram is laid out in: a common terminal's width with a
+/// frame's gutter, and a window wide enough to draw any diagram at the caps.
+const DIAGRAM_ROOMS: &[usize] = &[WIDE + 2, 402];
+
+/// The boxes the costliest diagram of a kind has: few enough that every line
+/// its caps allow runs among the same boxes, out from one and back, which is
+/// the shape the engine took longest over when the caps were set.
+const FEW: usize = 4;
+
+/// The costliest flowchart found when its caps were set, timed as written
+/// beside the one built from the caps: five boxes, every line the caps allow,
+/// two of them going back up to the first, and each label at the label cap.
+const COSTLIEST_FLOWCHART: &str = "flowchart TD
+N0{{\"0漢字漢字漢字漢\"}}
+N1{\"1word word word \"}
+N2{\"2漢字漢字漢字漢\"}
+N3(\"3word word word \")
+N4([\"4漢字漢字漢字漢\"])
+N0 ---|1word word word | N1
+N0 ---|2漢字漢字漢字漢| N2
+N2 -->|5word word word | N3
+N0 -->|4漢字漢字漢字漢| N4
+N2 -->|2漢字漢字漢字漢| N0
+N4 ==>|4漢字漢字漢字漢| N0
+";
+
+/// The costliest state diagram found when its caps were set, timed as
+/// written beside the ones built from the caps: three states inside a
+/// composite one, every transition the caps allow, each going round them, and
+/// each label at the label cap.
+const COSTLIEST_STATE: &str = "stateDiagram-v2
+state \"0漢字漢字漢\" as S0
+[*] --> S0
+S0 --> G : 1word word w
+state G {
+state \"1word word w\" as T0
+state \"2漢字漢字漢\" as T1
+state \"3word word w\" as T2
+T0 --> T1 : 1word word w
+T1 --> T2 : 3word word w
+T2 --> T0 : 2漢字漢字漢
+T0 --> T1 : 1word word w
+T1 --> T0 : 1word word w
+T2 --> T0 : 2漢字漢字漢
+}
+";
+
 /// The deepest a continued fraction in a line is read: one level more and the
 /// formula drawer reads its nesting as past what it holds.
 const DEEPEST_SPAN: usize = 32;
@@ -109,6 +176,9 @@ enum Input {
     Span(String),
     /// A formula display math must refuse, timed to its refusal.
     Refused(String),
+    /// A mermaid diagram, laid out whole and then drawn, or refused as wider
+    /// than its room.
+    Diagram(String),
 }
 
 struct Case {
@@ -374,6 +444,188 @@ fn nested_matrices(levels: usize) -> String {
     )
 }
 
+/// A label of `columns` columns for box or line `index`: an even one in
+/// characters two columns wide, an odd one in words.
+fn label(index: usize, columns: usize) -> String {
+    let wide = index.is_multiple_of(2);
+    let head = index.to_string();
+    let rest = columns.saturating_sub(head.len());
+    let tail: String = if wide {
+        "漢字".chars().cycle().take(rest / 2).collect()
+    } else {
+        "word ".chars().cycle().take(rest).collect()
+    };
+    format!("{head}{}", tail.trim_end())
+}
+
+/// How a generated diagram's boxes are set out and joined.
+#[derive(Debug, Clone, Copy)]
+enum Shape {
+    /// Every box the caps hold, each after the first reached from one before
+    /// it, and the lines past those joining boxes again.
+    Spread,
+    /// [`FEW`] boxes with every line the caps hold running among them: out
+    /// from the first to each of the others, then back from each, the last
+    /// first, then out again.
+    Few,
+}
+
+impl Shape {
+    /// The boxes set out where the caps leave room for `most`.
+    fn boxes(self, most: usize) -> usize {
+        match self {
+            Self::Spread => most,
+            Self::Few => FEW.min(most),
+        }
+    }
+
+    /// The lines between `boxes` boxes, `edges` of them.
+    fn lines(self, boxes: usize, edges: usize) -> Vec<(usize, usize)> {
+        match self {
+            Self::Spread => {
+                let reached = boxes.saturating_sub(1).max(1);
+                (0..edges)
+                    .map(|line| {
+                        let to = line % reached + 1;
+                        (line * 5 % to, to)
+                    })
+                    .collect()
+            }
+            Self::Few => {
+                let boxes = boxes.max(2);
+                let out = (1..boxes).map(|to| (0, to));
+                let back = (1..boxes).rev().map(|from| (from, 0));
+                let round: Vec<(usize, usize)> = out.chain(back).collect();
+                round.iter().copied().cycle().take(edges).collect()
+            }
+        }
+    }
+}
+
+/// What writes one kind of diagram: its caps, how its boxes are set out, and
+/// the columns of each label.
+type Write = fn(Caps, Shape, usize) -> String;
+
+/// The longest source `write` makes in `shape`, with labels of at most
+/// `caps.label` columns, or as many as the bytes leave room for where labels
+/// are not capped, that `caps.bytes` holds.
+fn diagram_at_the_caps(caps: Caps, shape: Shape, write: Write) -> String {
+    widest_held(caps, shape, write)
+        .map(|columns| write(caps, shape, columns))
+        .unwrap_or_default()
+}
+
+/// The most columns a label of `write`'s may take in `shape`, up to
+/// `caps.label` or, where labels are not capped, `caps.bytes`, with the
+/// source still within `caps.bytes`; `None` where a label of one column is
+/// already past it. A source never shortens as its labels widen, so the
+/// columns are found by halving: a search a column at a time builds a source
+/// for each, and under a loosened byte cap that alone takes longer than the
+/// probe may.
+fn widest_held(caps: Caps, shape: Shape, write: Write) -> Option<usize> {
+    let held = |columns: usize| write(caps, shape, columns).len() <= caps.bytes;
+    if !held(1) {
+        return None;
+    }
+    let (mut low, mut high) = (1, caps.label.unwrap_or(caps.bytes).max(1));
+    while low < high {
+        let middle = high - (high - low) / 2;
+        if held(middle) {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+    Some(low)
+}
+
+/// A flowchart from top to bottom with as many boxes as `shape` sets out and
+/// every line its caps hold, each line labelled.
+fn flowchart(caps: Caps, shape: Shape, columns: usize) -> String {
+    let shapes = [
+        ("[\"", "\"]"),
+        ("(\"", "\")"),
+        ("{\"", "\"}"),
+        ("{{\"", "\"}}"),
+    ];
+    let boxes = shape.boxes(caps.nodes);
+    let mut source = String::from("flowchart TD\n");
+    for (index, (open, close)) in (0..boxes).zip(shapes.iter().cycle()) {
+        let _ = writeln!(source, "N{index}{open}{}{close}", label(index, columns));
+    }
+    for (from, to) in shape.lines(boxes, caps.edges) {
+        let _ = writeln!(source, "N{from} -->|{}| N{to}", label(from + to, columns));
+    }
+    source
+}
+
+/// A state diagram with as many states as `shape` sets out and every
+/// transition its caps hold, its start marker among the boxes and its first
+/// transition, each other transition labelled.
+fn states(caps: Caps, shape: Shape, columns: usize) -> String {
+    let named = shape.boxes(caps.nodes.saturating_sub(1));
+    let mut source = String::from("stateDiagram-v2\n");
+    for index in 0..named {
+        let _ = writeln!(source, "state \"{}\" as S{index}", label(index, columns));
+    }
+    source.push_str("[*] --> S0\n");
+    for (from, to) in shape.lines(named, caps.edges.saturating_sub(1)) {
+        let _ = writeln!(source, "S{from} --> S{to} : {}", label(from + to, columns));
+    }
+    source
+}
+
+/// A state diagram whose states after the first sit inside one composite
+/// state: the start marker into the first, a transition from it into the
+/// composite, and every other transition the caps hold among the states
+/// inside, each labelled.
+fn composite(caps: Caps, shape: Shape, columns: usize) -> String {
+    // The start marker, the first state and the composite are boxes too.
+    let inner = shape.boxes(caps.nodes.saturating_sub(3));
+    let mut source = String::from("stateDiagram-v2\n");
+    let _ = writeln!(source, "state \"{}\" as S0", label(0, columns));
+    source.push_str("[*] --> S0\n");
+    let _ = writeln!(source, "S0 --> G : {}", label(1, columns));
+    source.push_str("state G {\n");
+    for index in 0..inner {
+        let _ = writeln!(
+            source,
+            "state \"{}\" as T{index}",
+            label(index + 1, columns)
+        );
+    }
+    for (from, to) in shape.lines(inner, caps.edges.saturating_sub(2)) {
+        let _ = writeln!(source, "T{from} --> T{to} : {}", label(from + to, columns));
+    }
+    source.push_str("}\n");
+    source
+}
+
+/// An entity-relationship diagram with as many entities as `shape` sets out
+/// and every relationship its caps hold, each entity with two attributes and
+/// each relationship labelled.
+fn entities(caps: Caps, shape: Shape, columns: usize) -> String {
+    let kinds = ["||--o{", "||--|{", "}o--o{", "|o--||"];
+    let boxes = shape.boxes(caps.nodes);
+    let mut source = String::from("erDiagram\n");
+    for index in 0..boxes {
+        let named = label(index, columns).replace(' ', "_");
+        let _ = writeln!(source, "E{index} {{\nstring {named}\nint id\n}}");
+    }
+    for ((from, to), kind) in shape
+        .lines(boxes, caps.edges)
+        .into_iter()
+        .zip(kinds.iter().cycle())
+    {
+        let _ = writeln!(
+            source,
+            "E{from} {kind} E{to} : \"{}\"",
+            label(from + to, columns)
+        );
+    }
+    source
+}
+
 fn cases() -> Vec<Case> {
     vec![
         Case {
@@ -448,6 +700,55 @@ fn cases() -> Vec<Case> {
             input: Input::Span(continued_fraction(DEEPEST_SPAN)),
             rooms: FORMULA_ROOMS,
         },
+        Case {
+            name: "a flowchart at its caps",
+            input: Input::Diagram(diagram_at_the_caps(
+                Caps::FLOWCHART,
+                Shape::Spread,
+                flowchart,
+            )),
+            rooms: DIAGRAM_ROOMS,
+        },
+        Case {
+            name: "the costliest flowchart inside its caps",
+            input: Input::Diagram(diagram_at_the_caps(Caps::FLOWCHART, Shape::Few, flowchart)),
+            rooms: DIAGRAM_ROOMS,
+        },
+        Case {
+            name: "the costliest flowchart found when its caps were set",
+            input: Input::Diagram(COSTLIEST_FLOWCHART.to_owned()),
+            rooms: DIAGRAM_ROOMS,
+        },
+        Case {
+            name: "a state diagram at its caps",
+            input: Input::Diagram(diagram_at_the_caps(Caps::STATE, Shape::Spread, states)),
+            rooms: DIAGRAM_ROOMS,
+        },
+        Case {
+            name: "the costliest state diagram inside its caps",
+            input: Input::Diagram(diagram_at_the_caps(Caps::STATE, Shape::Few, states)),
+            rooms: DIAGRAM_ROOMS,
+        },
+        Case {
+            name: "the costliest composite state inside its caps",
+            input: Input::Diagram(diagram_at_the_caps(Caps::STATE, Shape::Few, composite)),
+            rooms: DIAGRAM_ROOMS,
+        },
+        Case {
+            name: "the costliest state diagram found when its caps were set",
+            input: Input::Diagram(COSTLIEST_STATE.to_owned()),
+            rooms: DIAGRAM_ROOMS,
+        },
+        Case {
+            name: "an er diagram at its caps",
+            input: Input::Diagram(diagram_at_the_caps(Caps::ENTITIES, Shape::Spread, entities)),
+            rooms: DIAGRAM_ROOMS,
+        },
+        Case {
+            name: "the costliest er diagram inside its caps",
+            input: Input::Diagram(diagram_at_the_caps(Caps::ENTITIES, Shape::Few, entities)),
+            rooms: DIAGRAM_ROOMS,
+        },
     ]
 }
 
@@ -460,6 +761,13 @@ fn lay(case: &Case, room: &Room) -> Option<usize> {
         Input::Span(text) => Formulas.inline(text, room).map(|runs| runs.len()),
         // One row stands for the refusal, and none for a formula drawn.
         Input::Refused(text) => Formulas.block(text, room).err().map(|_| 1),
+        // A diagram refused as wider than its room was laid out whole first,
+        // and one row stands for that refusal.
+        Input::Diagram(text) => match Diagrams.block(text, room) {
+            Ok(laid) => Some(laid.rows.len()),
+            Err(Undrawn::TooWide) => Some(1),
+            Err(_) => None,
+        },
     }
 }
 
@@ -467,9 +775,11 @@ fn lay(case: &Case, room: &Room) -> Option<usize> {
 fn misread(case: &Case) -> ProbeError {
     match case.input {
         Input::Refused(_) => ProbeError::Drawn(case.name),
-        Input::Diff(_) | Input::Change(_) | Input::Formula(_) | Input::Span(_) => {
-            ProbeError::Undrawn(case.name)
-        }
+        Input::Diff(_)
+        | Input::Change(_)
+        | Input::Formula(_)
+        | Input::Span(_)
+        | Input::Diagram(_) => ProbeError::Undrawn(case.name),
     }
 }
 
@@ -567,5 +877,55 @@ fn main() -> ExitCode {
             let _ = io::stderr().write_all(line.as_bytes());
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The columns a search a column at a time down from the most finds: the
+    /// first whose source `caps.bytes` holds.
+    fn widest_a_column_at_a_time(caps: Caps, shape: Shape, write: Write) -> Option<usize> {
+        let most = caps.label.unwrap_or(caps.bytes);
+        (1..=most)
+            .rev()
+            .find(|&columns| write(caps, shape, columns).len() <= caps.bytes)
+    }
+
+    /// Whether halving finds the columns a search a column at a time finds
+    /// for `write` in `shape` at `caps`, and some.
+    fn halved_alike(caps: Caps, shape: Shape, write: Write) {
+        let halved = widest_held(caps, shape, write);
+        assert!(halved.is_some(), "{shape:?} holds no label");
+        assert_eq!(
+            halved,
+            widest_a_column_at_a_time(caps, shape, write),
+            "{shape:?}"
+        );
+    }
+
+    #[test]
+    fn halving_finds_a_flowchart_s_columns_at_its_caps() {
+        halved_alike(Caps::FLOWCHART, Shape::Spread, flowchart);
+        halved_alike(Caps::FLOWCHART, Shape::Few, flowchart);
+    }
+
+    #[test]
+    fn halving_finds_a_state_diagram_s_columns_at_its_caps() {
+        halved_alike(Caps::STATE, Shape::Spread, states);
+        halved_alike(Caps::STATE, Shape::Few, states);
+        halved_alike(Caps::STATE, Shape::Spread, composite);
+        halved_alike(Caps::STATE, Shape::Few, composite);
+    }
+
+    #[test]
+    fn halving_finds_an_er_diagram_s_columns_at_its_caps_with_every_entity() {
+        halved_alike(Caps::ENTITIES, Shape::Spread, entities);
+    }
+
+    #[test]
+    fn halving_finds_an_er_diagram_s_columns_at_its_caps_with_few_entities() {
+        halved_alike(Caps::ENTITIES, Shape::Few, entities);
     }
 }

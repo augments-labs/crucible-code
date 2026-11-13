@@ -73,9 +73,12 @@ pub(super) fn asked(block: &Block, room: Room, drawers: &Drawers, offers: Offers
             Asked::Drawn(laid.rows)
         }
         Err(Undrawn::NotHere) => Asked::Written(None),
-        Err(refusal @ (Undrawn::PastCap | Undrawn::NotText | Undrawn::TooWide)) => {
-            Asked::Written(Some(refusal))
-        }
+        Err(
+            refusal @ (Undrawn::PastCap
+            | Undrawn::NotText
+            | Undrawn::TooWide
+            | Undrawn::Unsupported(_)),
+        ) => Asked::Written(Some(refusal)),
     }
 }
 

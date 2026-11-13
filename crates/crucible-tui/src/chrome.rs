@@ -71,6 +71,9 @@ pub enum Undrawn {
     /// Drawn whole it is wider than the room it stands in, and a drawing cut
     /// to the room would not be the whole of it.
     TooWide,
+    /// It is a kind of block its drawer knows and does not draw as text,
+    /// named here so a reader is told which kind it is.
+    Unsupported(&'static str),
 }
 
 impl Undrawn {
@@ -80,7 +83,7 @@ impl Undrawn {
         match self {
             Self::PastCap => "longer than this can hold",
             Self::NotHere => "not drawn here",
-            Self::NotText => "not drawn as text",
+            Self::NotText | Self::Unsupported(_) => "not drawn as text",
             Self::TooWide => "too wide to draw at this width",
         }
     }
@@ -97,7 +100,8 @@ pub struct Frame {
 
 impl Frame {
     /// The words of the top edge: the corner, the rule, and after them the
-    /// label and the reason, parted by the glyph set's dot.
+    /// label, the kind a refusal names, and the reason, parted by the glyph
+    /// set's dot.
     ///
     /// A block with no name and no reason is the edge alone, with nothing
     /// after the rule to trail off into.
@@ -109,6 +113,9 @@ impl Frame {
             parts.push(self.label.name.as_str());
         }
         if let Some(refusal) = self.refusal {
+            if let Undrawn::Unsupported(kind) = refusal {
+                parts.push(kind);
+            }
             parts.push(refusal.words());
             parts.push("shown as written");
         }
@@ -257,6 +264,20 @@ mod tests {
         assert_eq!(
             frame("mermaid", refused, Glyphs::Ascii).top(),
             "+- mermaid - longer than this can hold - shown as written"
+        );
+    }
+
+    #[test]
+    fn a_kind_not_drawn_as_text_is_named_in_the_top_edge_before_the_reason() {
+        let refused = Some(Undrawn::Unsupported("pie"));
+
+        assert_eq!(
+            frame("mermaid", refused, Glyphs::Unicode).top(),
+            "┌─ mermaid · pie · not drawn as text · shown as written"
+        );
+        assert_eq!(
+            frame("mermaid", refused, Glyphs::Ascii).top(),
+            "+- mermaid - pie - not drawn as text - shown as written"
         );
     }
 

@@ -282,10 +282,11 @@ pub(super) fn glimpsed(
     renderer.wears(against.style.palette());
     renderer.draws(against.style.glyphs());
     // The drawers the session's own screen is handed, and the way it draws
-    // math, so a fence or a formula in an answer is previewed as picking the
-    // session up draws it.
+    // math and diagrams, so a fence or a formula in an answer is previewed as
+    // picking the session up draws it.
     renderer.drawers(draw::drawers());
     renderer.math(against.style.math());
+    renderer.diagrams(against.style.diagrams());
 
     // A held of its own, dropped with the renderer: what a key would open is
     // the business of the session on the screen, and this one is not on it.

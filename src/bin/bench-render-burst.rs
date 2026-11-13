@@ -34,8 +34,8 @@
 //!
 //! The renderer is handed the drawers a session's is, so the diff fences in the
 //! burst are read and drawn as the changes a session draws them as, and its
-//! formulas as the text a session draws them as, and not shown as the text
-//! they were written as, which costs less than a user pays.
+//! formulas and diagrams as the text a session draws them as, and not shown as
+//! the text they were written as, which costs less than a user pays.
 
 // A binary may not reach into another's tree, so the driver the two burst probes
 // share is a module beside them. Where the bounded pipe below is unavailable this
@@ -54,6 +54,8 @@ use crucible_tui::{Palette, Renderer, Size, Terminal, Theme};
 use crucible_tui_diff::Changes;
 #[cfg(target_os = "linux")]
 use crucible_tui_math::Formulas;
+#[cfg(target_os = "linux")]
+use crucible_tui_mermaid::Diagrams;
 #[cfg(target_os = "linux")]
 use rustix::pipe::{PipeFlags, pipe_with};
 use std::fmt::Write as _;
@@ -234,7 +236,8 @@ fn streamed() -> Vec<String> {
     //
     // Last come the answers both burst probes hold, two changes more: one to
     // two files and one long enough to fold, so the burst draws every kind of
-    // row a change has; and a formula in a line beside one in a block.
+    // row a change has; a formula in a line beside one in a block; and a
+    // state diagram.
     for text in std::iter::once(HELD).chain(answers.iter().map(String::as_str)) {
         let held: Vec<char> = text.chars().collect();
         deltas.extend(held.chunks(5).map(|chunk| chunk.iter().collect::<String>()));
@@ -281,13 +284,14 @@ const HELD: &str = "\n```\n\n\
     \n";
 
 /// The drawers the renderer is handed, as a session's is: the one that draws a
-/// change, for the diff fences of the burst, and the one that draws math, for
-/// its formulas.
+/// change, for the diff fences of the burst, the one that draws math, for its
+/// formulas, and the one that draws a diagram, for its `mermaid` fences.
 #[cfg(target_os = "linux")]
 fn drawers() -> Drawers {
     Drawers::default()
         .with(Arc::new(Changes))
         .with(Arc::new(Formulas))
+        .with(Arc::new(Diagrams))
 }
 
 /// A palette that writes every hue it has.
@@ -518,6 +522,32 @@ mod tests {
         // Handed no drawer, the same burst shows each formula as written.
         let undrawn = cycle(Drawers::default());
         for written in [r"\sum_{i=1}^{n} \frac{x_i}{2}", r"$\frac{s}{o}"] {
+            assert!(
+                undrawn.iter().any(|row| row.contains(written)),
+                "{written:?} in {undrawn:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_diagram_of_the_burst_is_drawn_as_the_text_a_session_draws() {
+        let rows = cycle(drawers());
+        for opening in ["┌─ mermaid · flowchart", "┌─ mermaid · state diagram"] {
+            assert!(
+                rows.iter().any(|row| row.contains(opening)),
+                "no row {opening:?} in {rows:#?}"
+            );
+        }
+        for written in ["-->", "graph TD", "stateDiagram-v2", "[*]"] {
+            assert!(
+                !rows.iter().any(|row| row.contains(written)),
+                "a diagram was shown as written, with {written:?}: {rows:#?}"
+            );
+        }
+
+        // Handed no drawer, the same burst shows each diagram as written.
+        let undrawn = cycle(Drawers::default());
+        for written in ["reader --> record", "Held --> Drawn: closed"] {
             assert!(
                 undrawn.iter().any(|row| row.contains(written)),
                 "{written:?} in {undrawn:#?}"

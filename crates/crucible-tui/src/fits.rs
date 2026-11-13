@@ -88,6 +88,7 @@ fn a_framed_block_fits_the_window_it_stands_in() {
         Some(Undrawn::PastCap),
         Some(Undrawn::NotText),
         Some(Undrawn::TooWide),
+        Some(Undrawn::Unsupported("pie")),
     ] {
         across("a frame", |columns, glyphs| {
             let frame = Frame {

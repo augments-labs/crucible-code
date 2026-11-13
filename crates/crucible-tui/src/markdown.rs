@@ -177,6 +177,7 @@ mod links;
 mod math;
 mod strikes;
 mod table;
+mod told;
 
 pub(crate) use drawn::{Offers, lay_unoffered};
 pub(crate) use links::SHORTENED_CAP;
@@ -369,19 +370,7 @@ impl Holding {
     /// it and copies none of it.
     #[must_use]
     pub fn row(&self, columns: usize, glyphs: Glyphs) -> Row {
-        let lines = match self.lines {
-            1 => "1 line".to_owned(),
-            lines => format!("{lines} lines"),
-        };
-        let said = format!(
-            "{} drawing a {} {} {lines} so far",
-            glyphs.summed(),
-            self.held.word(),
-            glyphs.dot(),
-        );
-        Row::new()
-            .then_structural(Slot::Quiet, said)
-            .clipped(columns)
+        self.named(None, columns, glyphs)
     }
 }
 

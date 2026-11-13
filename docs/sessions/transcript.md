@@ -26,7 +26,9 @@ its place and none of its text:
 ```
 
 With the ASCII glyph set the row reads `o drawing a table - 4 lines so far`.
-The row names a formula, a mermaid diagram or a diff the same way. It shows in
+The row names a formula, a mermaid diagram or a diff the same way, and a
+mermaid diagram by its kind once the fence's first line has arrived, as in
+`◇ drawing a mermaid flowchart · 3 lines so far`. It shows in
 both [`output.screen`](../configuration/configuration.md#output) modes, in the
 full screen while you are reading at the foot of the transcript, and the block
 takes its place once the block closes. In the full screen, crucible's own
@@ -96,8 +98,8 @@ first, after any cut results, and then every
 
 ## Drawn again at every width
 
-A table, a diff, a formula drawn as a block, a rule and the rule under a
-heading are kept as the text the model wrote, beside the rows they were drawn as. When the window changes width,
+A table, a diff, a formula drawn as a block, a diagram, a rule and the rule
+under a heading are kept as the text the model wrote, beside the rows they were drawn as. When the window changes width,
 or you change the glyph set, each is laid out again from that text for the
 window it is in now, so a table drawn in a narrow window and then widened is
 the table a window that wide would have drawn, and a diff's grounds reach the
@@ -235,6 +237,69 @@ the window has been resized; see
 [What native mode cannot do](../configuration/configuration.md#what-native-mode-cannot-do).
 Output with no colour, including output that is not a terminal, keeps every
 formula as written.
+
+## Diagrams
+
+A mermaid diagram in an answer is drawn as text: its boxes, the lines between
+them and their labels, in a terminal's characters. Three kinds are drawn: a
+flowchart (`graph` or `flowchart`), a state diagram (`stateDiagram` or
+`stateDiagram-v2`) and an entity-relationship diagram (`erDiagram`). A diagram
+is [held until it closes](#blocks-held-until-they-close) and drawn in a frame
+that names its kind, here the state diagram `[*] --> Idle`,
+`Idle --> Running: start`, `Running --> [*]`:
+
+```text
+┌─ mermaid · state diagram
+│                                                ╭───────╮
+│ ╭─────╮       ╭──────╮  start╭─────────╮       │╭─────╮│
+│ (  ●  )──────▸│ Idle │──────▸│ Running │──────▸││  ●  ││
+│ ╰─────╯       ╰──────╯       ╰─────────╯       │╰─────╯│
+│                                                ╰───────╯
+└─
+```
+
+With the ASCII glyph set the frame, the boxes, the lines and the arrowheads are
+ASCII. A character a label was written with stays as it is, and a diagram that
+would need any other character that is not ASCII is shown as written.
+
+A diagram is drawn whole or not at all, and is shown exactly as written in its
+frame, whose top edge says why, when:
+
+- it is another kind, such as a class diagram, a sequence diagram, a gantt
+  chart or a pie chart, which the frame names, as in
+  `┌─ mermaid · pie · not drawn as text · shown as written`;
+- it is a flowchart with a group (`subgraph`) in it:
+  `┌─ mermaid · groups · not drawn as text · shown as written`;
+- it holds a statement crucible does not read, which is `not drawn as text`;
+- it is larger than crucible draws, which is `longer than this can hold`: a
+  flowchart with more than 16 boxes, 6 lines or 1024 bytes, or a label wider
+  than 16 columns; a state diagram with more than 16 states, 8 transitions or
+  1024 bytes, or a label wider than 12 columns; an entity-relationship diagram
+  with more than 48 entities, 64 relationships or 4096 bytes. These keep the
+  costliest diagram crucible draws inside the time one frame may take, and a
+  diagram's cost grows with its lines and the width of its labels, so a
+  flowchart allows fewer lines in exchange for longer labels;
+- drawn whole it is wider than the window, which is
+  `too wide to draw at this width`, and it is drawn again once the window is
+  wide enough: see [Drawn again at every width](#drawn-again-at-every-width).
+
+A statement that styles a diagram, links from it or acts on a click (`style`,
+`classDef`, `click`) is left out of the drawing, and no address in one is
+drawn or opened. A control or invisible character in a label, and a character
+boxes are drawn with, is left out of the label.
+
+[`output.diagrams`](../configuration/configuration.md#output) says how a
+diagram is drawn. `image`, the default, draws a diagram as a picture where one
+can be shown and as text everywhere else, which is everywhere for now; `text`
+draws it as text; `written` shows every diagram exactly as the model wrote it,
+in its fence. It is set apart from `output.math`, so either can be written
+while the other is drawn. A change in `/settings` takes effect at once: every
+diagram already drawn is laid out again in the new form. In native mode a
+diagram already written to the terminal's scrollback changes only when the
+scrollback is written again, once the window has been resized; see
+[What native mode cannot do](../configuration/configuration.md#what-native-mode-cannot-do).
+Output with no colour, including output that is not a terminal, keeps every
+diagram as written.
 
 ## Lists and quotes that wrap
 
@@ -518,8 +583,8 @@ Some text is drawn exactly as the model wrote it, rather than as a block:
 - **A fence or display math the answer never closes.** It is drawn as
   written when the answer ends. A table the answer ends in is still drawn as
   a table: its last row is where it stops.
-- **Mermaid diagrams.** They are held so they arrive whole, and are then
-  shown as written.
+- **A diagram crucible will not draw, and every diagram under `written`.**
+  See [Diagrams](#diagrams).
 - **A formula crucible will not draw, and every formula under `written`.**
   See [Math](#math).
 - **A diff crucible will not draw as a change.** A fence named `diff` or

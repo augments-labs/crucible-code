@@ -765,6 +765,56 @@ fn a_formula_in_a_session_glimpsed_is_drawn_the_way_the_session_draws_math() {
 }
 
 #[test]
+fn a_diagram_in_a_session_glimpsed_is_drawn_the_way_the_session_draws_diagrams() {
+    // The preview's renderer is one of its own, and one never told how
+    // diagrams are drawn draws them as text: the picker would then show a
+    // diagram laid out that picking the session up, under `written`, shows as
+    // the source it was written in.
+    let mut transcript = Transcript::new();
+    transcript
+        .push(Message::said("the flow"))
+        .expect("valid fixture transcript");
+    transcript
+        .push(Message::Agent {
+            continuation: None,
+            text: "It is\n\n```mermaid\ngraph TD\nA --> B\n```\n".into(),
+            calls: Vec::new(),
+            stop: Some(StopReason::Yielded),
+        })
+        .expect("valid fixture transcript");
+    let runner = resumed(everything());
+    let pruned = Pruned::default();
+
+    let mut drawn = Vec::new();
+    for diagrams in [Mode::Written, Mode::Text] {
+        // In colour, where an answer is read as the markdown it is.
+        let replay = Replay {
+            settled: crucible_app::Settled::from(&runner),
+            pruned: &pruned,
+            style: Style::coloured().diagramming(diagrams),
+        };
+        let shown =
+            glimpsed(transcript.messages(), &replay, 60, 64).expect("a recording cannot fail");
+        let said: Vec<String> = shown.iter().map(Row::text).collect();
+        drawn.push((
+            diagrams,
+            said.iter().any(|row| row.contains("A --> B")),
+            said,
+        ));
+    }
+
+    let kept: Vec<(Mode, bool)> = drawn
+        .iter()
+        .map(|(diagrams, kept, _)| (*diagrams, *kept))
+        .collect();
+    assert_eq!(
+        kept,
+        [(Mode::Written, true), (Mode::Text, false)],
+        "{drawn:#?}"
+    );
+}
+
+#[test]
 fn a_resumed_session_is_put_back_on_the_screen() {
     let screen = screen(everything(), 80);
     println!("\n{screen}");

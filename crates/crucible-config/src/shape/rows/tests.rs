@@ -281,17 +281,26 @@ fn a_settings_row_takes_only_the_words_its_declaration_reads() {
     for word in ["Text", "latex", "off", ""] {
         assert!(!take("output.math", word), "{word}");
     }
+    for word in ["written", "text", "image"] {
+        assert!(take("output.diagrams", word), "{word}");
+    }
+    for word in ["Image", "mermaid", "off", ""] {
+        assert!(!take("output.diagrams", word), "{word}");
+    }
 }
 
 #[test]
-fn the_math_row_is_the_last_so_no_row_before_it_moves() {
+fn the_diagrams_row_is_the_last_so_no_row_before_it_moves() {
     let mut from_the_end = rows().iter().rev();
     let last = from_the_end.next().expect("there are rows");
-    assert_eq!(last.id(), RowId::Math);
-    assert_eq!(last.key(), "output.math");
-    assert_eq!(last.label(), "Math");
+    assert_eq!(last.id(), RowId::Diagrams);
+    assert_eq!(last.key(), "output.diagrams");
+    assert_eq!(last.label(), "Diagrams");
     assert_eq!(last.usual(), Some("image"));
-    let images = from_the_end.next().expect("there is a row before it");
+    let math = from_the_end.next().expect("there is a row before it");
+    assert_eq!(math.id(), RowId::Math);
+    assert_eq!(math.usual(), Some("image"));
+    let images = from_the_end.next().expect("there is a row before that");
     assert_eq!(images.id(), RowId::Images);
     assert_eq!(images.usual(), Some("auto"));
 }
@@ -321,6 +330,7 @@ fn every_row_has_its_own_identity() {
         RowId::CachePersistent,
         RowId::Images,
         RowId::Math,
+        RowId::Diagrams,
     ];
     for id in every {
         let carrying = rows().iter().filter(|row| row.id() == id).count();

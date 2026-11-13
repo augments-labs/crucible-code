@@ -880,12 +880,15 @@ fi
 #
 # A drawer is a crate that lays one kind of block out for the terminal. It
 # names `tui` alone, for the drawing contract it answers and the rows it
-# lays out, so `tui-diff tui` is the whole of what the diff drawer takes and
-# `tui-math tui` the whole of what the formula drawer takes.
+# lays out, so `tui-diff tui` is the whole of what the diff drawer takes,
+# `tui-math tui` the whole of what the formula drawer takes, and
+# `tui-mermaid tui` the whole of what the diagram drawer takes.
 # `code tui-diff` ships: the command line draws a tool's change through the
 # drawer that draws a diff in an answer, so the two cannot drift apart.
 # `code tui-math` ships: the command line hands every renderer of a session
 # the formula drawer, so math in an answer is drawn as text.
+# `code tui-mermaid` ships: the command line hands every renderer of a
+# session the diagram drawer, so a mermaid fence in an answer is drawn as text.
 allowed='code app
 code attachments
 code auth
@@ -913,6 +916,7 @@ code tools
 code tui
 code tui-diff
 code tui-math
+code tui-mermaid
 code types
 code workspace
 app agents
@@ -1032,6 +1036,7 @@ transport sandbox
 transport types
 tui-diff tui
 tui-math tui
+tui-mermaid tui
 update http
 update privacy
 update runtime
@@ -1332,6 +1337,7 @@ section "a drawer or raster crate reaches no network"
 # a crate that takes it itself, where its sockets would be one call away, fails.
 offline_crates='crucible-tui-diff
 crucible-tui-math
+crucible-tui-mermaid
 crucible-raster'
 network_clients=' async-io async-net async-std attohttpc curl curl-sys h2 h3 hyper hyper-util isahc native-tls openssl quinn reqwest rustls smol socket2 surf tokio tokio-tungstenite tungstenite ureq '
 graphs=0
@@ -1783,22 +1789,24 @@ fi
 # lend the calls they time, so what they time includes handing the work to it,
 # `crucible_runtime` for the future their permission prompts answer with, and
 # `crucible_types` and `crucible_workspace` for the call they build and the
-# directory it reaches. `bench-drawing` names `crucible_tui_diff` and
-# `crucible_tui_math` for the drawers whose worst blocks it times, and
-# `crucible_tui` for the contract those drawers are called through and the room
-# each is handed, so what it times is the call the drawing thread makes.
-# `bench-render-burst` names `crucible_tui_diff` and `crucible_tui_math` for the
-# drawers it hands the renderer it streams to, so the diff fences and formulas
-# of its burst are timed drawn as a session draws them, and `bench-live-burst`
-# names them for the drawers that draw the answers its band stands over, so a
-# frame is timed over a record that keeps a drawer's rows; each builds the
-# drawers in its own file, where this list reads what it names.
+# directory it reaches. `bench-drawing` names `crucible_tui_diff`,
+# `crucible_tui_math` and `crucible_tui_mermaid` for the drawers whose worst
+# blocks it times, and `crucible_tui` for the contract those drawers are called
+# through and the room each is handed, so what it times is the call the drawing
+# thread makes. `bench-render-burst` names `crucible_tui_diff`,
+# `crucible_tui_math` and `crucible_tui_mermaid` for the drawers it hands the
+# renderer it streams to, so the diff fences, formulas and diagrams of its burst
+# are timed drawn as a session draws them, and `bench-live-burst` names them for
+# the drawers that draw the answers its band stands over, so a frame is timed
+# over a record that keeps a drawer's rows; each builds the drawers in its own
+# file, where this list reads what it names.
 # `bench-first-input-colour-silent` names `crucible_tui` in its test alone, for
 # the reply wait its budget is held to the sum of, and measures the built
 # binary like every other startup probe.
 probes='src/bin/bench-drawing.rs crucible_tui
 src/bin/bench-drawing.rs crucible_tui_diff
 src/bin/bench-drawing.rs crucible_tui_math
+src/bin/bench-drawing.rs crucible_tui_mermaid
 src/bin/bench-first-input-colour-silent.rs crucible_tui
 src/bin/bench-grep.rs crucible_builtins
 src/bin/bench-grep.rs crucible_runtime
@@ -1808,12 +1816,14 @@ src/bin/bench-grep.rs crucible_workspace
 src/bin/bench-live-burst.rs crucible_tui
 src/bin/bench-live-burst.rs crucible_tui_diff
 src/bin/bench-live-burst.rs crucible_tui_math
+src/bin/bench-live-burst.rs crucible_tui_mermaid
 src/bin/bench-read-back.rs crucible_session
 src/bin/bench-read-back.rs crucible_types
 src/bin/bench-read-back.rs crucible_workspace
 src/bin/bench-render-burst.rs crucible_tui
 src/bin/bench-render-burst.rs crucible_tui_diff
 src/bin/bench-render-burst.rs crucible_tui_math
+src/bin/bench-render-burst.rs crucible_tui_mermaid
 src/bin/bench-session-rss.rs crucible_attachments
 src/bin/bench-session-rss.rs crucible_config
 src/bin/bench-session-rss-colour.rs crucible_attachments

@@ -1,5 +1,6 @@
 ---
 source: tests/whole_screen/native.rs
+assertion_line: 543
 expression: opened
 ---
 80x24 cursor 23,0 scrollback 30
@@ -24,6 +25,6 @@ expression: opened
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |› Theme                                                                     auto|
-|  ↓ 19 more                                                                     |
+|  ↓ 20 more                                                                     |
 |                                                                                |
 |↑↓ to walk · enter changes · / to search · ←→ tabs · esc to close               |

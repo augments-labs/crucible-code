@@ -991,7 +991,7 @@ fn asked(
 /// What the `output` block said, gathered out of the settled layers.
 ///
 /// Its own function because it is the one value in `run` that is only a list:
-/// seven answers read out of one block, none of them decided here.
+/// eight answers read out of one block, none of them decided here.
 fn drawn(settings: &crucible_config::Settings) -> style::Output {
     style::Output {
         color: settings.color(),
@@ -1001,6 +1001,7 @@ fn drawn(settings: &crucible_config::Settings) -> style::Output {
         syntax: settings.syntax_theme().map(str::to_owned),
         colours: settings.transcript_colours(),
         math: settings.math(),
+        diagrams: settings.diagrams(),
     }
 }
 
@@ -1585,12 +1586,13 @@ fn watch_size<T: crucible_tui::Terminal>(_renderer: &mut Renderer<T>) {}
 /// The renderer a session is read on, drawing where `output.screen` names.
 ///
 /// It is handed the drawers a fence of an answer is drawn by, since a renderer
-/// names none of them, and how `output.math` asks math to be drawn, which
-/// `/settings` changes at once.
+/// names none of them, and how `output.math` asks math to be drawn and
+/// `output.diagrams` a diagram, which `/settings` changes at once.
 fn screen(settings: &Settings) -> Renderer<SystemTerminal> {
     let mut renderer = Renderer::drawing(SystemTerminal::stdout(), drawn_on(settings.screen()));
     renderer.drawers(draw::drawers());
     renderer.math(math_drawn(settings.math()));
+    renderer.diagrams(diagrams_drawn(settings.diagrams()));
     renderer
 }
 
@@ -1615,6 +1617,20 @@ pub(crate) const fn math_drawn(math: crucible_config::MathDrawing) -> crucible_t
         MathDrawing::Written => Mode::Written,
         MathDrawing::Text => Mode::Text,
         MathDrawing::Image => Mode::Image,
+    }
+}
+
+/// What `output.diagrams` asks a diagram in an answer to be drawn as, written
+/// out case by case for the reason [`math_drawn`] is.
+pub(crate) const fn diagrams_drawn(
+    diagrams: crucible_config::DiagramDrawing,
+) -> crucible_tui::drawing::Mode {
+    use crucible_config::DiagramDrawing;
+    use crucible_tui::drawing::Mode;
+    match diagrams {
+        DiagramDrawing::Written => Mode::Written,
+        DiagramDrawing::Text => Mode::Text,
+        DiagramDrawing::Image => Mode::Image,
     }
 }
 

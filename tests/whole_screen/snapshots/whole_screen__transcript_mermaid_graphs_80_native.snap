@@ -2,44 +2,42 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x58 cursor 55,4 scrollback 8
-|│                                  │                                           │|
-|│                                  │ · /          opens the command list       │|
-|│                                  │ · \ enter    adds a line without sending  │|
-|│                                  │ · shift+tab  steps the permission mode    │|
-|│                                  │ · ctrl+c     clears the line typed so far │|
-|╰──────────────────────────────────────────────────────────────────────────────╯|
-|                                                                                |
-|› show me the corpus                                                            |
-|                                                                                |
-|A flow chart:                                                                   |
-|                                                                                |
-|┌─ mermaid                                                                      |
-|│ graph TD                                                                      |
-|│   A[Start] --> B{Ok?}                                                         |
-|│   B -->|yes| C[Done]                                                          |
-|│   B -->|no| A                                                                 |
+80x58 cursor 55,4 scrollback 31
+|│        │ Ok? ├└┘                                                              |
+|│        ╲─────╱                                                                |
+|│           │                                                                   |
+|│           │                                                                   |
+|│           │                                                                   |
+|│           │yes                                                                |
+|│           │                                                                   |
+|│           │                                                                   |
+|│           │                                                                   |
+|│       ┌───▾──┐                                                                |
+|│       │ Done │                                                                |
+|│       └──────┘                                                                |
 |└─                                                                              |
 |                                                                                |
 |A state diagram:                                                                |
 |                                                                                |
-|┌─ mermaid                                                                      |
-|│ stateDiagram                                                                  |
-|│   [*] --> Idle                                                                |
+|┌─ mermaid · state diagram                                                      |
+|│ ╭─────╮     ╭──────╮                                                          |
+|│ (  ●  )────▸│ Idle │                                                          |
+|│ ╰─────╯     ╰──────╯                                                          |
 |└─                                                                              |
 |                                                                                |
 |And the versioned spelling:                                                     |
 |                                                                                |
-|┌─ mermaid                                                                      |
-|│ stateDiagram-v2                                                               |
-|│   [*] --> Idle                                                                |
-|│   Idle --> Running: start                                                     |
-|│   Running --> [*]                                                             |
+|┌─ mermaid · state diagram                                                      |
+|│                                                ╭───────╮                      |
+|│ ╭─────╮       ╭──────╮  start╭─────────╮       │╭─────╮│                      |
+|│ (  ●  )──────▸│ Idle │──────▸│ Running │──────▸││  ●  ││                      |
+|│ ╰─────╯       ╰──────╯       ╰─────────╯       │╰─────╯│                      |
+|│                                                ╰───────╯                      |
 |└─                                                                              |
 |                                                                                |
 |A class diagram:                                                                |
 |                                                                                |
-|┌─ mermaid                                                                      |
+|┌─ mermaid · class diagram · not drawn as text · shown as written               |
 |│ classDiagram                                                                  |
 |│   class Reader                                                                |
 |│   Reader : +read(delta)                                                       |
@@ -47,9 +45,11 @@ expression: window.picture()
 |                                                                                |
 |An entity relationship diagram:                                                 |
 |                                                                                |
-|┌─ mermaid                                                                      |
-|│ erDiagram                                                                     |
-|│   ANSWER ||--o{ BLOCK : draws                                                 |
+|┌─ mermaid · er diagram                                                         |
+|│               draws                                                           |
+|│ ┌──────────┐         ┌─────────┐                                              |
+|│ │  ANSWER  ┤1───────*├  BLOCK  │                                              |
+|│ └──────────┘         └─────────┘                                              |
 |└─                                                                              |
 |                                                                                |
 |The corpus ends here.                                                           |

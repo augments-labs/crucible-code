@@ -3,13 +3,14 @@
 //! Settled at startup, and again only when a command says so, into plain
 //! answers the drawing can read without asking anything: whether to write
 //! colour and how much of it, which characters to draw with, how much of a
-//! line to show and how math is drawn. None of those may be asked per event —
-//! two are syscalls, the third is a file and the fourth is read from
-//! configuration. What the start learned of where pictures can be drawn is
+//! line to show, how math is drawn and how a diagram is. None of those may be
+//! asked per event — two are syscalls, the third is a file and the last two
+//! are read from configuration. What the start learned of where pictures can be drawn is
 //! kept beside them for the same reason: tmux's answer is a process run.
 
 use crucible_config::{
-    Color, Glyphs as Wanted, MathDrawing, ThemeChoice, ToolDetail, TranscriptColours,
+    Color, DiagramDrawing, Glyphs as Wanted, MathDrawing, ThemeChoice, ToolDetail,
+    TranscriptColours,
 };
 use crucible_tui::drawing::Mode;
 use crucible_tui::graphics::{Passthrough, Platform};
@@ -41,6 +42,8 @@ pub(crate) struct Output {
     pub(crate) colours: Option<TranscriptColours>,
     /// How math in an answer is drawn.
     pub(crate) math: MathDrawing,
+    /// How a diagram in an answer is drawn.
+    pub(crate) diagrams: DiagramDrawing,
 }
 
 /// The maximum columns shown in a compact tool heading.
@@ -100,6 +103,9 @@ pub(crate) struct Style {
     /// How math in an answer is drawn, for a renderer of its own, as a
     /// preview's is, to draw it the way the session's screen does.
     math: Mode,
+    /// How a diagram in an answer is drawn, for a renderer of its own, for
+    /// the reason math is.
+    diagrams: Mode,
     /// Which way the terminal said its ground goes, where it has said.
     ground: Option<Ground>,
     /// The system the session runs on, which the terminal support table is
@@ -142,6 +148,7 @@ impl Style {
             syntax,
             colours,
             math,
+            diagrams,
         } = output;
 
         let color = match wanted.unwrap_or_default() {
@@ -209,6 +216,7 @@ impl Style {
             glyphs: glyph_set(glyphs),
             detail: detail.unwrap_or_default(),
             math: super::math_drawn(math),
+            diagrams: super::diagrams_drawn(diagrams),
             platform: Platform::current(),
             passthrough: Passthrough::Unknown,
             // Taken to be as the output is until the start has looked.
@@ -336,6 +344,16 @@ impl Style {
     /// How math in an answer is drawn.
     pub(crate) fn math(self) -> Mode {
         self.math
+    }
+
+    /// The same style, drawing a diagram a different way.
+    pub(crate) fn diagramming(self, diagrams: Mode) -> Self {
+        Self { diagrams, ..self }
+    }
+
+    /// How a diagram in an answer is drawn.
+    pub(crate) fn diagrams(self) -> Mode {
+        self.diagrams
     }
 
     /// What a component's slots are worth here.

@@ -11,6 +11,8 @@
 use std::process::{Command, Output};
 use std::thread;
 
+use crucible_tui::drawing::Catching;
+
 use super::Panics;
 
 /// Set in a copy of this binary to the body it runs.
@@ -345,6 +347,80 @@ fn a_panic_on_the_drawing_thread_itself_is_written_at_once_as_one_line() {
     assert!(
         matches!(lines.as_slice(), [one] if message(one, "drawing") == Some(&format!("{SHOWN}\n"))),
         "the drawing thread's own panic was not written as one escaped line: {said:?}"
+    );
+    assert!(copy.status.success(), "{:?}: {said}", copy.status);
+}
+
+#[test]
+fn a_panic_a_drawer_catches_on_the_drawing_thread_is_kept_and_not_written() {
+    if body().is_some() {
+        let drew = thread::Builder::new()
+            .name("drawing".to_owned())
+            .spawn(|| {
+                let panics = Panics::kept();
+                let caught = {
+                    let _catching = Catching::begin();
+                    std::panic::catch_unwind(|| panic!("{HOSTILE}"))
+                };
+                assert!(caught.is_err());
+                let (kept, unkept) = panics.take();
+                assert_eq!(unkept, 0);
+                assert!(
+                    matches!(kept.as_slice(), [one] if one.starts_with("drawing panicked at ")
+                        && one.ends_with(HOSTILE)),
+                    "the caught panic was not kept for the transcript: {kept:?}"
+                );
+                drop(panics);
+            })
+            .expect("a thread")
+            .join();
+        assert!(drew.is_ok(), "the drawing thread failed its own assertions");
+        return;
+    }
+
+    let copy = in_a_copy(
+        "cli::panicked::tests::a_panic_a_drawer_catches_on_the_drawing_thread_is_kept_and_not_written",
+        "caught",
+    );
+    let said = said(&copy);
+
+    assert_eq!(
+        said, "",
+        "a panic a drawer caught was written in the middle of a frame"
+    );
+    assert!(copy.status.success(), "{:?}: {said}", copy.status);
+}
+
+#[test]
+fn a_panic_on_the_drawing_thread_once_a_drawer_lets_go_of_its_catch_is_written_at_once() {
+    if body().is_some() {
+        let drew = thread::Builder::new()
+            .name("drawing".to_owned())
+            .spawn(|| {
+                let panics = Panics::kept();
+                drop(Catching::begin());
+                let gave_up = std::panic::catch_unwind(|| panic!("{HOSTILE}"));
+                assert!(gave_up.is_err());
+                let (kept, unkept) = panics.take();
+                assert_eq!((kept, unkept), (Vec::<String>::new(), 0));
+                drop(panics);
+            })
+            .expect("a thread")
+            .join();
+        assert!(drew.is_ok(), "the drawing thread failed its own assertions");
+        return;
+    }
+
+    let copy = in_a_copy(
+        "cli::panicked::tests::a_panic_on_the_drawing_thread_once_a_drawer_lets_go_of_its_catch_is_written_at_once",
+        "uncaught",
+    );
+    let said = said(&copy);
+
+    let lines: Vec<&str> = said.split_inclusive('\n').collect();
+    assert!(
+        matches!(lines.as_slice(), [one] if message(one, "drawing") == Some(&format!("{SHOWN}\n"))),
+        "a panic outside a drawer's catch was not written at once as one escaped line: {said:?}"
     );
     assert!(copy.status.success(), "{:?}: {said}", copy.status);
 }

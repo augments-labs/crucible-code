@@ -2789,7 +2789,7 @@
       },
       "case": "every_file_of_the_corpus_in_a_fence_of_an_answer_is_drawn_or_shown_as_written_safely",
       "source": "crates/crucible-tui-diff/tests/hostile.rs",
-      "body_sha256": "dcd5257ab8eb959deb598abf8fb30ffa98ad815afbb15819740fb7024f36f927",
+      "body_sha256": "29622f111e5707613df1c8a0b023869054b02e3d8b2f45964761efb66215c064",
       "platforms": [
         "linux",
         "macos",
@@ -11615,15 +11615,15 @@
     {
       "id": "CASE-TRANSCRIPT-PICTURES-ROW-LAST",
       "family": "transcript-pictures",
-      "obligation": "The last settings row is Math, for output.math, usually image, and Images, for output.images, usually auto, is just before it.",
+      "obligation": "The last settings row is Diagrams, for output.diagrams, usually image; Math, for output.math, usually image, is just before it, and Images, for output.images, usually auto, before that.",
       "package": "crucible-config",
       "target": {
         "kind": "lib",
         "name": "crucible_config"
       },
-      "case": "shape::rows::tests::the_math_row_is_the_last_so_no_row_before_it_moves",
+      "case": "shape::rows::tests::the_diagrams_row_is_the_last_so_no_row_before_it_moves",
       "source": "crates/crucible-config/src/shape/rows/tests.rs",
-      "body_sha256": "4ebe31b45e49244784e313b1cc6b65df1d6c7e8e3efea81cb6ffb2303ac5f845",
+      "body_sha256": "4107e6be6b414ecf22d0c4149ef63dabc3aba093a6d4c6be79ab017a04a7b591",
       "platforms": [
         "linux",
         "macos",
@@ -12663,15 +12663,15 @@
     {
       "id": "CASE-TRANSCRIPT-MATH-RSS-PROBE",
       "family": "transcript-blocks",
-      "obligation": "A measured colour-session answer writes a formula in a line and one in a block before its table.",
+      "obligation": "A measured colour-session answer writes a formula in a line, one in a block and a mermaid diagram before its table.",
       "package": "crucible-code",
       "target": {
         "kind": "bin",
         "name": "bench-session-rss-colour"
       },
-      "case": "tests::a_measured_answer_writes_a_formula_in_a_line_and_one_in_a_block_before_its_table",
+      "case": "tests::a_measured_answer_writes_two_formulas_and_a_diagram_before_its_table",
       "source": "src/bin/bench-session-rss-colour.rs",
-      "body_sha256": "76bce7a32f4e909b1bab777a91dd65f31c44af28845bd492b29d4030be3b59eb",
+      "body_sha256": "f31f9878809dae1c24bc3048823469a8cf572de29763a89492387ec941b1894f",
       "platforms": [
         "linux"
       ]
@@ -12742,6 +12742,654 @@
       "case": "tests::under_ascii_a_ceiling_or_a_floor_is_shown_as_written",
       "source": "crates/crucible-tui-math/src/tests.rs",
       "body_sha256": "c5a36830dcfdc453dd4d552be0e7de2581f8e9773cc5f1fa89ebff04557699d8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-PICTURES",
+      "family": "transcript-blocks",
+      "obligation": "The accepted pictures of a flowchart, a state diagram and an entity-relationship diagram at 80 columns in each glyph set hold.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::pictures_of_each_kind",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "541c028826f7a785744a6ded35339282e841f818bb7b7bf8aed64468f7988d59",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-FRAMED",
+      "family": "transcript-blocks",
+      "obligation": "Each kind drawn as text is framed by a top edge that names it, in each glyph set.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::each_kind_is_drawn_in_a_frame_that_names_it",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "ec0e391989466f081cb10f0c8f5f1c823f9d30f4aa0ed75a31bbeeb625a43865",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-UNSUPPORTED-NAMED",
+      "family": "transcript-blocks",
+      "obligation": "A diagram of a kind not drawn as text is refused with a reason that names its kind.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_kind_not_drawn_as_text_is_refused_naming_it",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "fcc892e2046b0fa023a7d2646dcb335544a9ef5ed548f2107cefa3471f770e3c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-CLASS-WRITTEN",
+      "family": "transcript-blocks",
+      "obligation": "A class diagram is named on the status row and refused, before the engine runs, as a class diagram shown as written.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_class_diagram_is_named_and_shown_as_written",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "643d672e14e196daba84e2ae3ddd1ee0a4df6de45a101d43546560ebbe69254b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-GROUPS-WRITTEN",
+      "family": "transcript-blocks",
+      "obligation": "A flowchart holding a group is refused saying groups are not drawn, and a label reading subgraph is drawn.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_flowchart_with_a_group_is_shown_as_written_saying_groups_are_not_drawn",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "24e625b5583536177fa5fce7a2cbfa1563236b15744a3c781fbfca6a74a0d89d",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-UNREAD-STATEMENT",
+      "family": "transcript-blocks",
+      "obligation": "A statement the reader does not take refuses the whole diagram rather than drawing it without that statement.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_statement_this_does_not_read_refuses_the_whole_diagram",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "9e88187199b9a4c680873c68538172cba42441ab19e3b4f91e41e87ea54b4f1b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-ENGINE-DISAGREES",
+      "family": "transcript-blocks",
+      "obligation": "A line the engine would read otherwise than mermaid does is refused rather than drawn wrong.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_line_the_engine_reads_otherwise_than_mermaid_is_refused",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "5473dd98f349d2e1a264e6713cdc2d06008f367ac6fb47836161983591cc199c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-BYTE-CAP",
+      "family": "transcript-blocks",
+      "obligation": "A source at its kind's byte cap is drawn and one byte past it is refused.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_source_past_its_kinds_byte_cap_is_refused",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "9582db1fea1d85bc23e3e947d8d457fea04852078c383059ed9aa001b922c908",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-BOX-CAP",
+      "family": "transcript-blocks",
+      "obligation": "Boxes at each kind's cap are drawn and one past it is refused, counting notes as boxes.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::boxes_past_each_kinds_cap_are_refused",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "1d9233a8db193d4be008ef8e559049b3184354d1e7b43353e4d9df0ecaa7639c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-LINE-CAP",
+      "family": "transcript-blocks",
+      "obligation": "Lines at each kind's cap are drawn and one past it is refused, counting each line a joined statement makes.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::lines_past_each_kinds_cap_are_refused",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "b2780143fc10f9d350b9b64eb8798c4517236b4ea2902f657afaab134f375b09",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-LABEL-CAP",
+      "family": "transcript-blocks",
+      "obligation": "A label at its kind's cap in columns is drawn and one column past it is refused, wherever the label stands.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_label_past_its_kinds_cap_is_refused_counting_columns",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "284134a3d93a356bca0a5d07e14ab377ad035d199f4a1cb40763a9f9cc63be93",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-CLICK-INERT",
+      "family": "transcript-blocks",
+      "obligation": "A click statement draws no link and no escape sequence.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_click_draws_no_link_and_acts_on_nothing",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "6e842f5fa468f1937943e0f14fa595383b9abf4785f9d21920c214a8760261ea",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-LABEL-CLEANED",
+      "family": "transcript-blocks",
+      "obligation": "Control characters, bidirectional overrides and zero-width characters are taken out of a label before it is drawn.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::what_a_terminal_would_act_on_is_taken_out_of_a_label",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "9b65aff59b9b66960308ac9aa38f9e3070c62bad77132603f3fe1c6e53447a5c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-TOO-WIDE",
+      "family": "transcript-blocks",
+      "obligation": "A diagram is laid out once and drawn whole when it fits, and refused as too wide when it does not.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_diagram_wider_than_its_room_is_refused_and_not_laid_out_again",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "0c9e78e640c70a8fabb861fe1e011d73575772d93c2448f4f1ed55665abd829b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-ASCII",
+      "family": "transcript-blocks",
+      "obligation": "Under ascii glyphs every character drawn is ascii or was written in a label.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::under_ascii_every_character_is_ascii_or_written_in_a_label",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "a99789a826f7a0b33988072600026a1f0d100ae11c87ba84c4f8c1161de61c4e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-STATUS-KIND",
+      "family": "transcript-blocks",
+      "obligation": "The status row is told the kind a fence's first line opens, and nothing for a kind not named.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::the_status_row_is_told_the_kind_its_first_line_opens",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "0977ba35f074c2d2cf210c81cc9e2ff1f66e042728b3f72c0ca92d4a54378b1c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-FITS-FLOWCHART",
+      "family": "transcript-blocks",
+      "obligation": "A hostile flowchart is drawn within, or refused at, every width and room the components are held to.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "fits::a_flowchart_fits_every_room",
+      "source": "crates/crucible-tui-mermaid/src/fits.rs",
+      "body_sha256": "2b791ddc903adc1ed2032995918a4030433fcff8c84626be3fd5a66594536693",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-FITS-KINDS",
+      "family": "transcript-blocks",
+      "obligation": "A hostile state diagram and entity-relationship diagram are drawn within, or refused at, every width and room.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "fits::every_other_kind_fits_every_room",
+      "source": "crates/crucible-tui-mermaid/src/fits.rs",
+      "body_sha256": "dbd58a90a83efb0cac9dd93db83c49cacc0ee1cc7eda5e500537f8099e279001",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-HOSTILE-CORPUS",
+      "family": "transcript-blocks",
+      "obligation": "Every entry of the hostile mermaid corpus is drawn or shown as written, as its record says.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "every_entry_of_the_corpus_is_drawn_or_shown_as_written_as_recorded",
+      "source": "crates/crucible-tui-mermaid/tests/hostile.rs",
+      "body_sha256": "97db83997828aed21ca4ad2d0fc634db5e476b74a251ea321310f0ac0502d4d4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-REFERENCES-INERT",
+      "family": "transcript-blocks",
+      "obligation": "A diagram naming a file, a pipe or an address is refused or drawn as if the name were not there, and what it names records nothing.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "every_reference_is_refused_or_drawn_as_if_it_were_not_there_and_what_it_names_records_nothing",
+      "source": "crates/crucible-tui-mermaid/tests/hostile.rs",
+      "body_sha256": "dbc2c24e926da684b5646ff1c8c989d5df301b1acd0de7bd90272f2cc2b5ec4a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-CHILD-SILENT",
+      "family": "transcript-blocks",
+      "obligation": "The whole corpus drawn in a child process prints nothing to stdout or stderr.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "the_whole_corpus_drawn_in_a_child_process_prints_nothing",
+      "source": "crates/crucible-tui-mermaid/tests/hostile.rs",
+      "body_sha256": "2c071777c15f59812d9980fd66bfbd661ef3f009b162d799012206717de043e4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-DETERMINISTIC",
+      "family": "transcript-blocks",
+      "obligation": "Every drawable entry of the corpus is drawn alike every time in one process, in each glyph set.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "every_drawable_entry_is_drawn_alike_every_time_in_one_process",
+      "source": "crates/crucible-tui-mermaid/tests/hostile.rs",
+      "body_sha256": "d088e8e343eea5cfc9b5cd7467d98a81f1cb8dda2a32bebe9fb5254379f8bf4f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-CORPUS-ASCII",
+      "family": "transcript-blocks",
+      "obligation": "Under ascii glyphs every row the corpus draws at every width is ascii or was written in its source.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "under_ascii_every_row_of_the_corpus_is_ascii_or_written_in_its_source",
+      "source": "crates/crucible-tui-mermaid/tests/hostile.rs",
+      "body_sha256": "91eff2851a0da6353124d89b2892e2d2de7a718e190292dd480a0c78d68ac988",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-DEADLINE",
+      "family": "transcript-blocks",
+      "obligation": "A diagram at the caps is answered at every width and glyph set inside the deadline, and a planted quadratic drawer is not.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_diagram_at_the_caps_is_answered_inside_the_deadline_and_the_planted_quadratic_is_not",
+      "source": "crates/crucible-tui-mermaid/tests/hostile.rs",
+      "body_sha256": "fc554d4425e12c1d42c66d73d7c3eee38c1038f395ee358fb4f6a2ee980e6619",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-IN-AN-ANSWER",
+      "family": "transcript-blocks",
+      "obligation": "A mermaid fence in an answer is drawn in its frame, and a refused one is shown as written with its reason.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_diagram_in_a_fence_of_an_answer_is_drawn_and_its_refusal_shown_as_written",
+      "source": "crates/crucible-tui-mermaid/tests/hostile.rs",
+      "body_sha256": "9928af67d08c72b555b800c0e0f83c76d1941916fc135594d7704b8a817b3ea7",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-CUT-FENCE",
+      "family": "transcript-blocks",
+      "obligation": "A fence the stream cut inside its first line or a label is shown as written and never drawn.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_fence_cut_inside_its_first_line_or_a_label_is_shown_as_written",
+      "source": "crates/crucible-tui-mermaid/tests/hostile.rs",
+      "body_sha256": "5a817aaf958be1236e06fcce985c20f61937fe4d5644c0c18b595e35ae560a57",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-GENERATED",
+      "family": "transcript-blocks",
+      "obligation": "Generated diagrams are drawn within their room or shown as written.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "test",
+        "name": "generated"
+      },
+      "case": "generated_diagrams_are_drawn_or_shown_as_written_within_their_room",
+      "source": "crates/crucible-tui-mermaid/tests/generated.rs",
+      "body_sha256": "d1eedfd65154928b79d0cb0c92ebf5c5158681239eac412d3ec646de8fd0d6e4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-LIVE-FOOT-NAMED",
+      "family": "transcript-blocks",
+      "obligation": "A diagram being streamed is named on the live foot in its drawer's words once its first line has ended.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::diagrams::a_diagram_being_streamed_is_named_by_its_drawer_in_the_live_foot",
+      "source": "crates/crucible-tui/src/render/tests/diagrams.rs",
+      "body_sha256": "7dc125497dbd57d946cb684ddca0bd7d011e432ecf6872266e90c5265adf1dd3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-LIVE-FOOT-UNNAMED",
+      "family": "transcript-blocks",
+      "obligation": "A fence whose drawer names nothing, or whose first line is still arriving, keeps the live foot's row naming what is held.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::diagrams::a_fence_whose_drawer_gives_no_label_keeps_the_row_it_had",
+      "source": "crates/crucible-tui/src/render/tests/diagrams.rs",
+      "body_sha256": "0cae5b1882b9a8a62be6867d1301b7a46eb7e1e2624fdbbf6593f959a7a4afea",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-GLYPH-RELAY",
+      "family": "transcript-blocks",
+      "obligation": "A diagram already drawn is laid out again in the new glyph set when the glyphs change, and math beside it is kept.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::diagrams::a_diagram_drawn_is_laid_out_again_when_the_glyphs_change",
+      "source": "crates/crucible-tui/src/render/tests/diagrams.rs",
+      "body_sha256": "605c2294b9a6d91b90f543ad9c8b287f0ee7482b9c8d0c651188c102d1d959b0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIAGRAMS-SETTING-READ",
+      "family": "transcript-blocks",
+      "obligation": "output.diagrams reads image when no layer sets it, and written, text or image where one does; any other word is not read.",
+      "package": "crucible-config",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_config"
+      },
+      "case": "settings::output::tests::diagrams_are_an_image_unless_a_layer_names_written_or_text",
+      "source": "crates/crucible-config/src/settings/output.rs",
+      "body_sha256": "451bc468bd2efd97cef3821915807b89ca0d9c2fefbf87b26d3aa92c3b8d5c5b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIAGRAMS-EACH-MODE",
+      "family": "transcript-blocks",
+      "obligation": "A renderer left alone draws diagrams as an image, which is text; written shows a diagram already drawn as its fence, and image and text draw it again, each at once.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::diagrams::a_diagram_drawn_is_laid_out_again_in_each_mode_chosen",
+      "source": "crates/crucible-tui/src/render/tests/diagrams.rs",
+      "body_sha256": "41ed413dec703c5644c704d8897e7a1f93a85decc6e3e671a4189f936df9e664",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIAGRAMS-APART-FROM-MATH",
+      "family": "transcript-blocks",
+      "obligation": "How math is drawn leaves diagrams drawn as they were, and how diagrams are drawn leaves math as it was.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::diagrams::how_math_is_drawn_and_how_diagrams_are_drawn_are_set_apart",
+      "source": "crates/crucible-tui/src/render/tests/diagrams.rs",
+      "body_sha256": "78038d8ed29f554813bd6a6976d729f56372135a435bff6b8964ca32ef08e31e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIAGRAMS-SETTING-AT-ONCE",
+      "family": "transcript-blocks",
+      "obligation": "A diagram drawing chosen in settings lays the diagrams already drawn out again at once.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::command::settings::tests::a_diagram_drawing_chosen_in_settings_lays_diagrams_already_drawn_out_again_at_once",
+      "source": "src/cli/converse/command/settings/tests.rs",
+      "body_sha256": "f07395a500c619bfebb4beb6a5cebe7b8497eff559be3031e6b4617a69a00500",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIAGRAMS-SETTING-BARE",
+      "family": "transcript-blocks",
+      "obligation": "The Diagrams row shows written, text and image bare, since each is in force at once, and the style a preview is drawn from holds the same way the renderer draws diagrams.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::command::settings::tests::the_diagrams_row_shows_each_answer_bare_since_each_is_drawn_at_once",
+      "source": "src/cli/converse/command/settings/tests.rs",
+      "body_sha256": "3a4da3c55c8c596813d8c4c9d1adfd295f4200fe23ca02325b4fd40ad44d17c8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIAGRAMS-GLIMPSED",
+      "family": "transcript-blocks",
+      "obligation": "A session glimpsed whose answer holds a diagram shows its source as written when diagrams are drawn as written, and draws it when they are drawn as text.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::replaying::tests::a_diagram_in_a_session_glimpsed_is_drawn_the_way_the_session_draws_diagrams",
+      "source": "src/cli/converse/replaying/tests.rs",
+      "body_sha256": "859173c147bfd99a209b25bb27774b4b3fd37b6947c7d58bb338e28255a620b5",
       "platforms": [
         "linux",
         "macos",

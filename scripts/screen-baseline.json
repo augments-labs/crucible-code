@@ -1462,7 +1462,7 @@
         "Vendor::answering(&crate::a_long_answer())",
         "Watched::native(case, 80, 24, vendor)"
       ],
-      "sha256": "d54735d7f93d73722ebf7131c5879f3fb5d6130603779c67169a78421d40d1ca"
+      "sha256": "9ab4965ea3ced51486550c3018e7770af7e7abe5cc70c8d3a832f798ed23a9f2"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__a_resize_with_a_panel_open_80x16.snap",
@@ -1471,7 +1471,7 @@
         "Vendor::answering(&crate::a_long_answer())",
         "Watched::native(case, 80, 24, vendor)"
       ],
-      "sha256": "fb9985ba21f075c9fe098c570fc3935ec2e87c381635b5a61f1c2133257e296e"
+      "sha256": "74b47b255f412e895f34899af79a75e1d7bf4e54dd780d706fca5fe96e055436"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__a_row_sealed_after_narrowing_is_folded_not_clipped_in_native_mode.snap",
@@ -1666,7 +1666,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::native(\"native-settings-tabs\", 80, 30, &vendor)"
       ],
-      "sha256": "9bfded25382a9f2390604a5424d4ea25c40c4896bb197d5396682b67c02d37d5"
+      "sha256": "8ad2906a782ec48594f39dc7060a17de41c1b7acd896370f155d1027ca51d60c"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__settings_scrolls_inside_its_room_in_native_mode.snap",
@@ -1675,7 +1675,7 @@
         "Vendor::answering(&crate::a_long_answer())",
         "Watched::native(case, 80, 24, vendor)"
       ],
-      "sha256": "c1b0b23129f6c77c77c8d716c782bfdbafa3642ecc540cb2310c26a81bd68a67"
+      "sha256": "958be63432dc7d903a87e85242f37cc13bfb13e9f5183a6fde64bcfea4552be1"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__settings_takes_at_most_half_the_window_in_native_mode.snap",
@@ -1684,7 +1684,7 @@
         "Vendor::answering(&crate::a_long_answer())",
         "Watched::native(case, 80, 24, vendor)"
       ],
-      "sha256": "a17d7c1ba8da1ebf19108c3974db1027ff4ae714838902615277ee085254cbb8"
+      "sha256": "f05077d1fdf8559035865c6d02bfbfd9bcc460fd8b62709263e548632d75b273"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__slash_list_takes_at_most_half_the_window_in_native_mode.snap",
@@ -1988,7 +1988,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(&case, columns, 30, &vendor)"
       ],
-      "sha256": "f372929596fe85fdf8fad16b26951b58fa2f4610c36181333839f42c6daf9d04"
+      "sha256": "46d0ccf0e8a44f67c09e3c3d09b7b0d1f8bc3f87061c0e9074d53dc8bcffd49e"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__settings_config_80.snap",
@@ -1997,7 +1997,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(&case, columns, 30, &vendor)"
       ],
-      "sha256": "3fa413b774627fb3430e755a80777f9c46f63e62eace1e0226f501c7b60695fa"
+      "sha256": "ad91af41f42ff78bfabf630888decf7e43669cc3665eb73530676a47c8861723"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__settings_search_40.snap",
@@ -2405,7 +2405,7 @@
         "Vendor::answering(transcript::said(\"mermaid_graphs\"))",
         "Watched::in_default_colours( \"transcript-mermaid_graphs-120-fullscreen\", (120, 64), Some(&vendor), None, )"
       ],
-      "sha256": "99a78a3a6b12f8b9194ef05652377f1e985c5be906a80d5628300b827d630c7b"
+      "sha256": "e90c0b0692f80ed3d291ae0d46f7f76ed8991ea4b7f5c990ccababf6a77bda24"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_mermaid_graphs_120_native.snap",
@@ -2414,7 +2414,7 @@
         "Vendor::answering(transcript::said(\"mermaid_graphs\"))",
         "Watched::drawn_in_colour( \"transcript-mermaid_graphs-120-native\", (120, 64), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "8a1985df32270a6141e70eb618de6a06ab05038cfd1875b21b18d1719741bdc8"
+      "sha256": "07c8e625dc6a7a1623367ad0bbae98ee4bbb72a5f86a09364cf555e7c247052d"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_mermaid_graphs_40_fullscreen.snap",
@@ -2423,7 +2423,7 @@
         "Vendor::answering(transcript::said(\"mermaid_graphs\"))",
         "Watched::in_default_colours( \"transcript-mermaid_graphs-40-fullscreen\", (40, 47), Some(&vendor), None, )"
       ],
-      "sha256": "cb0fa02a8f10d5018daed4f219c738b5353ddd4ee1279e4d228700335d15e16d"
+      "sha256": "cfd853bf8488648c9c53424a71c7db68081a301f74a9cab283bb4b6af1bdebfb"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_mermaid_graphs_40_native.snap",
@@ -2432,7 +2432,7 @@
         "Vendor::answering(transcript::said(\"mermaid_graphs\"))",
         "Watched::drawn_in_colour( \"transcript-mermaid_graphs-40-native\", (40, 47), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "6e072490a732dec5203cfb76a9a40f9bec10fcd929ddef25c0abdf4211d0153f"
+      "sha256": "39ccdd0d7a899ce0ef7d49c548a57c5cf6fed3a058c7ba07b7d440e65e6d95c4"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_mermaid_graphs_80_fullscreen.snap",
@@ -2441,7 +2441,7 @@
         "Vendor::answering(transcript::said(\"mermaid_graphs\"))",
         "Watched::in_default_colours( \"transcript-mermaid_graphs-80-fullscreen\", (80, 58), Some(&vendor), None, )"
       ],
-      "sha256": "cb15d811a5bf228276423e4639e60444a9c9d9710cc6e606b56db0d04fad2999"
+      "sha256": "8843017ee2dd02cc1a57a425220badc272b1293b94d79bea56b0410a17edacec"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_mermaid_graphs_80_native.snap",
@@ -2450,7 +2450,7 @@
         "Vendor::answering(transcript::said(\"mermaid_graphs\"))",
         "Watched::drawn_in_colour( \"transcript-mermaid_graphs-80-native\", (80, 58), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "e6e85b65303e11c817ae9d6ec5722244ce22e7f65c9c775a4840743a7a3b4b03"
+      "sha256": "e7b24db1554cd291c644bad1d95e93637756d96f815873d8de94e1b1fc488dba"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_mermaid_timelines_120_fullscreen.snap",
@@ -2459,7 +2459,7 @@
         "Vendor::answering(transcript::said(\"mermaid_timelines\"))",
         "Watched::in_default_colours( \"transcript-mermaid_timelines-120-fullscreen\", (120, 61), Some(&vendor), None, )"
       ],
-      "sha256": "8fc6af753010ba48dfe67449d2c72d020789234fbf3e8086b0a5d6f3c9162391"
+      "sha256": "580754e0cfc08c390f9d7c6e8842ccf74df17d02e7ca77afba0500085953be3c"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_mermaid_timelines_120_native.snap",
@@ -2468,7 +2468,7 @@
         "Vendor::answering(transcript::said(\"mermaid_timelines\"))",
         "Watched::drawn_in_colour( \"transcript-mermaid_timelines-120-native\", (120, 61), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "2ead391fd5c7e01aa3df7198c1e912171b91944840bee938967a723f1b2fc292"
+      "sha256": "5379f9cea5a601f7b98fe1db57523c460c93727df45e22dde128fafe2fbe2dc5"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_mermaid_timelines_40_fullscreen.snap",
@@ -2477,7 +2477,7 @@
         "Vendor::answering(transcript::said(\"mermaid_timelines\"))",
         "Watched::in_default_colours( \"transcript-mermaid_timelines-40-fullscreen\", (40, 44), Some(&vendor), None, )"
       ],
-      "sha256": "c8d4a3b8102cadb1a34f1af5633b48474e47627799f39ec5b48da36fee71a019"
+      "sha256": "8622eb2dd187c359c342b3deeffe8aaaaec6be16867ef20808235498a112f5c5"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_mermaid_timelines_40_native.snap",
@@ -2486,7 +2486,7 @@
         "Vendor::answering(transcript::said(\"mermaid_timelines\"))",
         "Watched::drawn_in_colour( \"transcript-mermaid_timelines-40-native\", (40, 44), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "e0c1eb5a1e42652448e755a75a415042f0913cb2b6d838ceb2748355dd4c9e9a"
+      "sha256": "fe5202e8b139f8b3f677384af3a3dc1913612de1dfab29dc05361a8abd351e12"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_mermaid_timelines_80_fullscreen.snap",
@@ -2495,7 +2495,7 @@
         "Vendor::answering(transcript::said(\"mermaid_timelines\"))",
         "Watched::in_default_colours( \"transcript-mermaid_timelines-80-fullscreen\", (80, 55), Some(&vendor), None, )"
       ],
-      "sha256": "1714b2e4f07c0faef05779646604298ff941e83e1eb5bd4d6bbbd2e5309ce1fb"
+      "sha256": "67fed5155b0b8fe4274218be455b887434a312a5bbcd64a8e750570efc847cb5"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_mermaid_timelines_80_native.snap",
@@ -2504,7 +2504,7 @@
         "Vendor::answering(transcript::said(\"mermaid_timelines\"))",
         "Watched::drawn_in_colour( \"transcript-mermaid_timelines-80-native\", (80, 55), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "ba04766d057574d74fd3a0036da27fd55fa570fac44d416d48e0563386827eda"
+      "sha256": "673238103e00257d5a88f095089f7517079016ed9ae33d602b9527228ae5f9e5"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_notes_80_fullscreen.snap",

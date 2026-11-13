@@ -432,6 +432,10 @@ pub struct Renderer<T: Terminal> {
     /// left alone gives, until the setting says otherwise. A renderer handed
     /// no drawer shows every formula as written whatever it holds.
     math: Mode,
+    /// How a diagram in an answer is drawn, apart from math and as it is:
+    /// [`Mode::Image`] until a setting says otherwise. A renderer handed no
+    /// drawer shows every diagram as written whatever it holds.
+    diagrams: Mode,
     /// Whether the transcript gives up its rightmost column to the scroll
     /// rail, where the window can spare one.
     ///
@@ -536,6 +540,7 @@ impl<T: Terminal> Renderer<T> {
             palette: Palette::plain(),
             glyphs: Glyphs::default(),
             math: Mode::Image,
+            diagrams: Mode::Image,
             rails: false,
             grip: None,
             notch: NOTCH,
@@ -1243,7 +1248,10 @@ impl<T: Terminal> Renderer<T> {
     pub fn math(&mut self, mode: Mode) {
         self.math = mode;
         self.markdown.maths(mode);
-        self.record.draws_in(Modes { math: mode });
+        self.record.draws_in(Modes {
+            math: mode,
+            diagrams: self.diagrams,
+        });
         self.record
             .relay(self.folds(), self.glyphs, self.palette.theme());
         self.painted.forget();
@@ -1253,6 +1261,31 @@ impl<T: Terminal> Renderer<T> {
     #[must_use]
     pub const fn math_mode(&self) -> Mode {
         self.math
+    }
+
+    /// Tells this renderer how a diagram in an answer is drawn.
+    ///
+    /// Said as [`Self::math`] is, and for its reasons: a diagram already
+    /// written is laid out again in `mode` now, and math is left drawn as it
+    /// was. Under [`Mode::Written`] the live foot names a diagram still
+    /// arriving by its fence rather than by its drawer, since it will not be
+    /// drawn. Until a picture can be shown in its place, [`Mode::Image`] draws
+    /// a diagram as [`Mode::Text`] does.
+    pub fn diagrams(&mut self, mode: Mode) {
+        self.diagrams = mode;
+        self.record.draws_in(Modes {
+            math: self.math,
+            diagrams: mode,
+        });
+        self.record
+            .relay(self.folds(), self.glyphs, self.palette.theme());
+        self.painted.forget();
+    }
+
+    /// How a diagram in an answer is drawn.
+    #[must_use]
+    pub const fn diagrams_mode(&self) -> Mode {
+        self.diagrams
     }
 
     /// Tells this renderer which repository the answer's bare numbers count
@@ -2626,6 +2659,17 @@ impl<T: Terminal> Renderer<T> {
         self.written_out(false)
     }
 
+    /// What the drawer that takes the fence being held says it is, once the
+    /// fence's first line has ended; `None` where no drawer says, and where
+    /// the setting for what is `held` shows it as written.
+    fn told(&self, held: markdown::Held) -> Option<&'static str> {
+        if !self.record.draws(held.kind()) {
+            return None;
+        }
+        let (fence, first) = self.markdown.opened()?;
+        self.record.drawers().for_name(fence)?.label(fence, first)
+    }
+
     /// The row that tells of a block the reader is holding, or shows the
     /// phrase it holds after a single tilde or the span of math it holds,
     /// drawn `columns` wide; `None` while nothing is held.
@@ -2635,7 +2679,7 @@ impl<T: Terminal> Renderer<T> {
     fn holding(&self, columns: usize) -> Option<Row> {
         self.markdown
             .holding()
-            .map(|holding| holding.row(columns, self.glyphs))
+            .map(|holding| holding.named(self.told(holding.held), columns, self.glyphs))
             .or_else(|| self.markdown.striking(columns))
             .or_else(|| self.markdown.spanning(columns))
     }
