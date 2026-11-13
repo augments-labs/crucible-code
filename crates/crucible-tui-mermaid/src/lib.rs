@@ -57,7 +57,10 @@
 //!   participants and 32 messages with labels of 24 columns, a gantt 32
 //!   sections and tasks with names of 15 columns, the widest the engine
 //!   draws whole, and a git graph 32 commits and 8 branches beside `main`,
-//!   each in 2048 bytes.
+//!   each in 2048 bytes. The drawing probe builds each of these from its caps
+//!   too, with every box and line they hold and labels as wide as they allow;
+//!   on the same machine its 95th percentile was 0.79 ms for a sequence
+//!   diagram, 0.16 ms for a gantt and 0.16 ms for a git graph.
 //! - **Hostile text taken out, not drawn.** Control, format and invisible
 //!   characters, and the characters boxes are drawn with, are taken out of a
 //!   label before the engine sees it, so a label neither acts on the terminal
