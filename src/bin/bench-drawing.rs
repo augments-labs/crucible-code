@@ -510,12 +510,33 @@ type Write = fn(Caps, Shape, usize) -> String;
 /// `caps.label` columns, or as many as the bytes leave room for where labels
 /// are not capped, that `caps.bytes` holds.
 fn diagram_at_the_caps(caps: Caps, shape: Shape, write: Write) -> String {
-    let most = caps.label.unwrap_or(caps.bytes);
-    (1..=most)
-        .rev()
+    widest_held(caps, shape, write)
         .map(|columns| write(caps, shape, columns))
-        .find(|source| source.len() <= caps.bytes)
         .unwrap_or_default()
+}
+
+/// The most columns a label of `write`'s may take in `shape`, up to
+/// `caps.label` or, where labels are not capped, `caps.bytes`, with the
+/// source still within `caps.bytes`; `None` where a label of one column is
+/// already past it. A source never shortens as its labels widen, so the
+/// columns are found by halving: a search a column at a time builds a source
+/// for each, and under a loosened byte cap that alone takes longer than the
+/// probe may.
+fn widest_held(caps: Caps, shape: Shape, write: Write) -> Option<usize> {
+    let held = |columns: usize| write(caps, shape, columns).len() <= caps.bytes;
+    if !held(1) {
+        return None;
+    }
+    let (mut low, mut high) = (1, caps.label.unwrap_or(caps.bytes).max(1));
+    while low < high {
+        let middle = high - (high - low) / 2;
+        if held(middle) {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+    Some(low)
 }
 
 /// A flowchart from top to bottom with as many boxes as `shape` sets out and
@@ -856,5 +877,55 @@ fn main() -> ExitCode {
             let _ = io::stderr().write_all(line.as_bytes());
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The columns a search a column at a time down from the most finds: the
+    /// first whose source `caps.bytes` holds.
+    fn widest_a_column_at_a_time(caps: Caps, shape: Shape, write: Write) -> Option<usize> {
+        let most = caps.label.unwrap_or(caps.bytes);
+        (1..=most)
+            .rev()
+            .find(|&columns| write(caps, shape, columns).len() <= caps.bytes)
+    }
+
+    /// Whether halving finds the columns a search a column at a time finds
+    /// for `write` in `shape` at `caps`, and some.
+    fn halved_alike(caps: Caps, shape: Shape, write: Write) {
+        let halved = widest_held(caps, shape, write);
+        assert!(halved.is_some(), "{shape:?} holds no label");
+        assert_eq!(
+            halved,
+            widest_a_column_at_a_time(caps, shape, write),
+            "{shape:?}"
+        );
+    }
+
+    #[test]
+    fn halving_finds_a_flowchart_s_columns_at_its_caps() {
+        halved_alike(Caps::FLOWCHART, Shape::Spread, flowchart);
+        halved_alike(Caps::FLOWCHART, Shape::Few, flowchart);
+    }
+
+    #[test]
+    fn halving_finds_a_state_diagram_s_columns_at_its_caps() {
+        halved_alike(Caps::STATE, Shape::Spread, states);
+        halved_alike(Caps::STATE, Shape::Few, states);
+        halved_alike(Caps::STATE, Shape::Spread, composite);
+        halved_alike(Caps::STATE, Shape::Few, composite);
+    }
+
+    #[test]
+    fn halving_finds_an_er_diagram_s_columns_at_its_caps_with_every_entity() {
+        halved_alike(Caps::ENTITIES, Shape::Spread, entities);
+    }
+
+    #[test]
+    fn halving_finds_an_er_diagram_s_columns_at_its_caps_with_few_entities() {
+        halved_alike(Caps::ENTITIES, Shape::Few, entities);
     }
 }
