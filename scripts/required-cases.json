@@ -12663,15 +12663,15 @@
     {
       "id": "CASE-TRANSCRIPT-MATH-RSS-PROBE",
       "family": "transcript-blocks",
-      "obligation": "A measured colour-session answer writes a formula in a line and one in a block before its table.",
+      "obligation": "A measured colour-session answer writes a formula in a line, one in a block and a mermaid diagram before its table.",
       "package": "crucible-code",
       "target": {
         "kind": "bin",
         "name": "bench-session-rss-colour"
       },
-      "case": "tests::a_measured_answer_writes_a_formula_in_a_line_and_one_in_a_block_before_its_table",
+      "case": "tests::a_measured_answer_writes_two_formulas_and_a_diagram_before_its_table",
       "source": "src/bin/bench-session-rss-colour.rs",
-      "body_sha256": "76bce7a32f4e909b1bab777a91dd65f31c44af28845bd492b29d4030be3b59eb",
+      "body_sha256": "f31f9878809dae1c24bc3048823469a8cf572de29763a89492387ec941b1894f",
       "platforms": [
         "linux"
       ]

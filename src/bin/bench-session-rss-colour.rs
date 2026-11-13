@@ -17,12 +17,12 @@
 //! Each turn asks the real read tool to read a planted file and the real edit
 //! tool to rewrite the twenty lines of a second one, all but its first and its
 //! last, then receives a streamed answer that ends in a formula in a line, one
-//! between `$$` lines, a table, the two lines that stayed in a fence of Rust,
-//! and the diff of that rewrite in a fence. A table is kept as the source it
-//! was written as beside the rows it was laid out as, and so is a diff, which
-//! is drawn as a change, and a formula, which is drawn as text; the edit's own
-//! change is drawn too, and being folded is kept written out for the key that
-//! shows it whole.
+//! between `$$` lines, a flowchart in a `mermaid` fence, a table, the two lines
+//! that stayed in a fence of Rust, and the diff of that rewrite in a fence. A
+//! table is kept as the source it was written as beside the rows it was laid
+//! out as, and so is a diff, which is drawn as a change, and a formula and a
+//! diagram, which are drawn as text; the edit's own change is drawn too, and
+//! being folded is kept written out for the key that shows it whole.
 //! So a session of them holds more than a session of prose the same length, and
 //! the fill below rolls every one of them out past the ceiling with its source.
 //! The measurement is refused if the second file does not end as the last edit
@@ -726,11 +726,12 @@ fn edit(turn: usize) -> String {
 /// the record bounds, so filling it is a question of how many endings arrive
 /// rather than of how much text does. A measured turn's prose is followed by a
 /// paragraph with a formula in a line, then a formula between `$$` lines, then
-/// a table, streamed a row at a time, which the blank line after it closes, then
-/// by the lines the turn's edit left where they were in a fence that names
-/// Rust, and then by the change that edit made, written as the unified diff of
-/// it in a fence with those lines as the rows it keeps. Both fences are
-/// streamed a line at a time and closed by their last line.
+/// a flowchart in a `mermaid` fence, then a table, streamed a row at a time,
+/// which the blank line after it closes, then by the lines the turn's edit left
+/// where they were in a fence that names Rust, and then by the change that edit
+/// made, written as the unified diff of it in a fence with those lines as the
+/// rows it keeps. Both fences are streamed a line at a time and closed by their
+/// last line.
 #[cfg(target_os = "linux")]
 fn answer(turn: usize, deltas: usize, lines: bool) -> String {
     // Two bytes into the JSON, where they are the escape a line ending is
@@ -739,7 +740,7 @@ fn answer(turn: usize, deltas: usize, lines: bool) -> String {
     let ending = if lines { "\\n" } else { "" };
     let mut body = String::with_capacity(
         deltas
-            .saturating_add(2 + TABLE_ROWS + 2 + EDITED * 2 + 4)
+            .saturating_add(3 + TABLE_ROWS + 2 + EDITED * 2 + 4)
             .saturating_mul(112)
             .saturating_add(512),
     );
@@ -754,19 +755,22 @@ fn answer(turn: usize, deltas: usize, lines: bool) -> String {
         );
     }
     if !lines {
-        let formulas = [
+        let drawn = [
             format!(
                 "\n\nThe pace of turn {turn} holds while $\\frac{{s}}{{o}} \\geq \\frac{{1}}{{2}}$, over every frame."
             ),
             format!(
                 "\n\n$$\nr_{{{turn}}} = \\frac{{1}}{{n}} \\sum_{{i=1}}^{{n}} \\frac{{f_i}}{{t_i}}\n$$"
             ),
+            format!(
+                "\n\n```mermaid\nflowchart LR\n  read[Read turn {turn}] --> lay[Lay out]\n  lay --> paint[Paint]\n```"
+            ),
         ];
-        for formula in formulas {
+        for block in drawn {
             let _ = write!(
                 body,
                 "event: content_block_delta\ndata: {{\"index\":0,\"delta\":{{\"type\":\"text_delta\",\"text\":\"{}\"}}}}\n\n",
-                quoted(&formula),
+                quoted(&block),
             );
         }
         let _ = write!(
@@ -1381,11 +1385,12 @@ mod tests {
     }
 
     #[test]
-    fn a_measured_answer_writes_a_formula_in_a_line_and_one_in_a_block_before_its_table() {
+    fn a_measured_answer_writes_two_formulas_and_a_diagram_before_its_table() {
         let text = said(&answer(3, DELTAS, false)).text;
-        // The prose closes on a paragraph whose formula is in a line, and the
-        // block after it stands between `$$` lines of its own, so the table
-        // that follows it is read as a table and the formula as a block.
+        // The prose closes on a paragraph whose formula is in a line, the
+        // block after it stands between `$$` lines of its own, and the diagram
+        // after that in a fence of its own, so the table that follows is read
+        // as a table, the formula as a block and the diagram as a diagram.
         assert!(
             text.contains(concat!(
                 "field 399 \n\n",
@@ -1393,6 +1398,11 @@ mod tests {
                 "$$\n",
                 "r_{3} = \\frac{1}{n} \\sum_{i=1}^{n} \\frac{f_i}{t_i}\n",
                 "$$\n\n",
+                "```mermaid\n",
+                "flowchart LR\n",
+                "  read[Read turn 3] --> lay[Lay out]\n",
+                "  lay --> paint[Paint]\n",
+                "```\n\n",
                 "| turn | field | read |\n",
             )),
             "{text}"
@@ -1400,5 +1410,6 @@ mod tests {
 
         let fill = said(&answer(TURNS + 1, 8, true)).text;
         assert!(!fill.contains('$'), "{fill}");
+        assert!(!fill.contains("mermaid"), "{fill}");
     }
 }

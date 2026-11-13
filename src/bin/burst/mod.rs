@@ -150,14 +150,16 @@ const ADDED: usize = 40;
 
 /// The answers a burst's transcript holds: two changes, each written as the
 /// unified diff a model writes one as, in a fence a drawer takes by its name,
-/// and a formula in a line of prose beside one set apart between `$$`.
+/// a formula in a line of prose beside one set apart between `$$`, and a
+/// state diagram in a fence the diagram drawer takes.
 ///
 /// The first is made to two files and the second is long enough to fold, so
 /// the rows a drawer lays them out as are the kinds a session's are: a file's
 /// line, a second file's, a hunk, changed lines and context, and a fold. Each
 /// ends after its fence has closed, since only a closed fence is a drawer's.
 /// The third is drawn as math is: its span as the line is read, and its block
-/// once its closing marker has come.
+/// once its closing marker has come. The fourth is drawn as text once its
+/// fence has closed, with a start, an end and a labelled line among its own.
 ///
 /// Which drawer draws them is each probe's to say in its own file, where what
 /// a probe names is read and held against the list of what it may name.
@@ -199,7 +201,20 @@ pub(crate) fn answers() -> Vec<String> {
         r = \\frac{1}{n} \\sum_{i=1}^{n} \\frac{f_i}{t_i}\n\
         $$\n\n";
 
-    vec![two.to_owned(), long, formulas.to_owned()]
+    let diagram = "A block moves through three states as it arrives:\n\n\
+        ```mermaid\n\
+        stateDiagram-v2\n\
+        \x20   [*] --> Held\n\
+        \x20   Held --> Drawn: closed\n\
+        \x20   Drawn --> [*]\n\
+        ```\n\n";
+
+    vec![
+        two.to_owned(),
+        long,
+        formulas.to_owned(),
+        diagram.to_owned(),
+    ]
 }
 
 /// The best of [`LIBERTY`] readings, by how much of the opening pace is left.

@@ -24,10 +24,22 @@
 //! matrices nested past that to the byte cap, timed to their refusal, a span
 //! at the byte cap and a span nested as deep as the drawer reads. A formula wider
 //! than its room is refused for it rather than drawn, so each is laid out in
-//! a room as wide as the drawer draws, in both glyph sets. Two
-//! milliseconds is the budget for text laid out on the drawing thread: a tenth
-//! of the first frame's twenty, so a block closing beside a streaming answer
-//! still leaves the frame its room.
+//! a room as wide as the drawer draws, in both glyph sets.
+//!
+//! A diagram is laid out on the same thread when its fence closes: for each
+//! kind drawn as text, every box and every line its caps hold, each label as
+//! long as the label cap and the byte cap leave room for, half of them in
+//! characters two columns wide; and for a flowchart and a state diagram the
+//! costliest shape found when their caps were set, a few boxes with every
+//! line the caps allow between them and each label at the label cap, since
+//! the engine's cost follows the lines and the labels rather than the
+//! boxes. The engine lays a diagram out once whatever its room, and a drawing
+//! wider than the room is refused for it only after, so each is laid out at a
+//! common terminal's width, where it may be refused as too wide, and in a
+//! window wide enough to draw it, in both glyph sets. Two milliseconds is the
+//! budget for text laid out on the drawing thread: a tenth of the first
+//! frame's twenty, so a block closing beside a streaming answer still leaves
+//! the frame its room.
 //!
 //! The reported number is the slowest case's 95th percentile, with each case's
 //! median and its slowest reading kept as evidence. Every reading is one call,
@@ -40,12 +52,14 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use crucible_tui::Glyphs;
+use crucible_tui::chrome::Undrawn;
 use crucible_tui::drawing::{Draws, Room};
 use crucible_tui_diff::{
     Change, Changes, FOLD, File, MOST_BYTES, MOST_FILES, MOST_LINES, PAIRS, SYNTAX_BYTES,
     SYNTAX_LINES, Side, TOKENS,
 };
 use crucible_tui_math::{Formulas, MOST_COLUMNS, MOST_DEPTH, MOST_ROWS};
+use crucible_tui_mermaid::{Caps, Diagrams};
 
 /// The budget on a quiet machine, in milliseconds.
 const LIMIT: f64 = 2.0;
@@ -81,6 +95,47 @@ const CHANGE_ROOMS: &[usize] = &[WIDE, NARROW];
 /// reading is of a layout rather than of a refusal for the room.
 const FORMULA_ROOMS: &[usize] = &[MOST_COLUMNS + 2];
 
+/// The rooms a diagram is laid out in: a common terminal's width with a
+/// frame's gutter, and a window wide enough to draw any diagram at the caps.
+const DIAGRAM_ROOMS: &[usize] = &[WIDE + 2, 402];
+
+/// The costliest flowchart found when its caps were set: five boxes, every
+/// line the caps allow between them, two of them back to the first box, and
+/// each label at the label cap, half in characters two columns wide.
+const COSTLIEST_FLOWCHART: &str = "flowchart TD
+N0{{\"0漢字漢字漢字漢\"}}
+N1{\"1word word word \"}
+N2{\"2漢字漢字漢字漢\"}
+N3(\"3word word word \")
+N4([\"4漢字漢字漢字漢\"])
+N0 ---|1word word word | N1
+N0 ---|2漢字漢字漢字漢| N2
+N2 -->|5word word word | N3
+N0 -->|4漢字漢字漢字漢| N4
+N2 -->|2漢字漢字漢字漢| N0
+N4 ==>|4漢字漢字漢字漢| N0
+";
+
+/// The costliest state diagram found when its caps were set: three states
+/// inside a composite one, every transition the caps allow, each going round
+/// them, and each label at the label cap.
+const COSTLIEST_STATE: &str = "stateDiagram-v2
+state \"0漢字漢字漢\" as S0
+[*] --> S0
+S0 --> G : 1word word w
+state G {
+state \"1word word w\" as T0
+state \"2漢字漢字漢\" as T1
+state \"3word word w\" as T2
+T0 --> T1 : 1word word w
+T1 --> T2 : 3word word w
+T2 --> T0 : 2漢字漢字漢
+T0 --> T1 : 1word word w
+T1 --> T0 : 1word word w
+T2 --> T0 : 2漢字漢字漢
+}
+";
+
 /// The deepest a continued fraction in a line is read: one level more and the
 /// formula drawer reads its nesting as past what it holds.
 const DEEPEST_SPAN: usize = 32;
@@ -109,6 +164,9 @@ enum Input {
     Span(String),
     /// A formula display math must refuse, timed to its refusal.
     Refused(String),
+    /// A mermaid diagram, laid out whole and then drawn, or refused as wider
+    /// than its room.
+    Diagram(String),
 }
 
 struct Case {
@@ -374,6 +432,95 @@ fn nested_matrices(levels: usize) -> String {
     )
 }
 
+/// A label of `columns` columns for box or line `index`: an even one in
+/// characters two columns wide, an odd one in words.
+fn label(index: usize, columns: usize) -> String {
+    let wide = index % 2 == 0;
+    let head = index.to_string();
+    let rest = columns.saturating_sub(head.len());
+    let tail: String = if wide {
+        "漢字".chars().cycle().take(rest / 2).collect()
+    } else {
+        "word ".chars().cycle().take(rest).collect()
+    };
+    format!("{head}{}", tail.trim_end())
+}
+
+/// The lines between `nodes` boxes, `edges` of them: each box after the first
+/// is reached from one before it, and the lines past those join boxes again.
+fn lines(nodes: usize, edges: usize) -> impl Iterator<Item = (usize, usize)> {
+    let reached = nodes.saturating_sub(1).max(1);
+    (0..edges).map(move |line| {
+        let to = line % reached + 1;
+        (line * 5 % to, to)
+    })
+}
+
+/// The longest source `write` makes, with labels of at most `caps.label`
+/// columns, that `caps.bytes` holds.
+fn diagram_at_the_caps(caps: Caps, write: fn(Caps, usize) -> String) -> String {
+    let most = caps.label.unwrap_or(caps.bytes);
+    (1..=most)
+        .rev()
+        .map(|columns| write(caps, columns))
+        .find(|source| source.len() <= caps.bytes)
+        .unwrap_or_default()
+}
+
+/// A flowchart from left to right with every box and every line its caps
+/// hold, each line labelled.
+fn flowchart(caps: Caps, columns: usize) -> String {
+    let shapes = [
+        ("[\"", "\"]"),
+        ("(\"", "\")"),
+        ("{\"", "\"}"),
+        ("{{\"", "\"}}"),
+    ];
+    let mut source = String::from("flowchart LR\n");
+    for (index, (open, close)) in (0..caps.nodes).zip(shapes.iter().cycle()) {
+        let _ = writeln!(source, "N{index}{open}{}{close}", label(index, columns));
+    }
+    for (from, to) in lines(caps.nodes, caps.edges) {
+        let _ = writeln!(source, "N{from} -->|{}| N{to}", label(from + to, columns));
+    }
+    source
+}
+
+/// A state diagram with every state and every transition its caps hold, its
+/// start marker among the boxes and its first transition, each other
+/// transition labelled.
+fn states(caps: Caps, columns: usize) -> String {
+    let named = caps.nodes.saturating_sub(1);
+    let mut source = String::from("stateDiagram-v2\n");
+    for index in 0..named {
+        let _ = writeln!(source, "state \"{}\" as S{index}", label(index, columns));
+    }
+    source.push_str("[*] --> S0\n");
+    for (from, to) in lines(named, caps.edges.saturating_sub(1)) {
+        let _ = writeln!(source, "S{from} --> S{to} : {}", label(from + to, columns));
+    }
+    source
+}
+
+/// An entity-relationship diagram with every entity and relationship its caps
+/// hold, each entity with two attributes and each relationship labelled.
+fn entities(caps: Caps, columns: usize) -> String {
+    let kinds = ["||--o{", "||--|{", "}o--o{", "|o--||"];
+    let mut source = String::from("erDiagram\n");
+    for index in 0..caps.nodes {
+        let named = label(index, columns).replace(' ', "_");
+        let _ = writeln!(source, "E{index} {{\nstring {named}\nint id\n}}");
+    }
+    for ((from, to), kind) in lines(caps.nodes, caps.edges).zip(kinds.iter().cycle()) {
+        let _ = writeln!(
+            source,
+            "E{from} {kind} E{to} : \"{}\"",
+            label(from + to, columns)
+        );
+    }
+    source
+}
+
 fn cases() -> Vec<Case> {
     vec![
         Case {
@@ -448,6 +595,31 @@ fn cases() -> Vec<Case> {
             input: Input::Span(continued_fraction(DEEPEST_SPAN)),
             rooms: FORMULA_ROOMS,
         },
+        Case {
+            name: "a flowchart at its caps",
+            input: Input::Diagram(diagram_at_the_caps(Caps::FLOWCHART, flowchart)),
+            rooms: DIAGRAM_ROOMS,
+        },
+        Case {
+            name: "the costliest flowchart inside its caps",
+            input: Input::Diagram(COSTLIEST_FLOWCHART.to_owned()),
+            rooms: DIAGRAM_ROOMS,
+        },
+        Case {
+            name: "a state diagram at its caps",
+            input: Input::Diagram(diagram_at_the_caps(Caps::STATE, states)),
+            rooms: DIAGRAM_ROOMS,
+        },
+        Case {
+            name: "the costliest state diagram inside its caps",
+            input: Input::Diagram(COSTLIEST_STATE.to_owned()),
+            rooms: DIAGRAM_ROOMS,
+        },
+        Case {
+            name: "an er diagram at its caps",
+            input: Input::Diagram(diagram_at_the_caps(Caps::ENTITIES, entities)),
+            rooms: DIAGRAM_ROOMS,
+        },
     ]
 }
 
@@ -460,6 +632,13 @@ fn lay(case: &Case, room: &Room) -> Option<usize> {
         Input::Span(text) => Formulas.inline(text, room).map(|runs| runs.len()),
         // One row stands for the refusal, and none for a formula drawn.
         Input::Refused(text) => Formulas.block(text, room).err().map(|_| 1),
+        // A diagram refused as wider than its room was laid out whole first,
+        // and one row stands for that refusal.
+        Input::Diagram(text) => match Diagrams.block(text, room) {
+            Ok(laid) => Some(laid.rows.len()),
+            Err(Undrawn::TooWide) => Some(1),
+            Err(_) => None,
+        },
     }
 }
 
@@ -467,9 +646,11 @@ fn lay(case: &Case, room: &Room) -> Option<usize> {
 fn misread(case: &Case) -> ProbeError {
     match case.input {
         Input::Refused(_) => ProbeError::Drawn(case.name),
-        Input::Diff(_) | Input::Change(_) | Input::Formula(_) | Input::Span(_) => {
-            ProbeError::Undrawn(case.name)
-        }
+        Input::Diff(_)
+        | Input::Change(_)
+        | Input::Formula(_)
+        | Input::Span(_)
+        | Input::Diagram(_) => ProbeError::Undrawn(case.name),
     }
 }
 
