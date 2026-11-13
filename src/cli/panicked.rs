@@ -28,20 +28,20 @@
 //! own again, so a panic on another thread is never lost. Each is one line,
 //! written as a failure is, so a message holding a line break or a control
 //! character cannot add a line of its own or act on the terminal. A panic a
-//! drawer catches on the drawing thread, in code it does not own and holds
-//! `crucible_tui::drawing::Catching` around, is kept the same way: the drawer
-//! answers for it, the session goes on, and the transcript says it rather
-//! than a line written into the frame being drawn. Any other panic on the
-//! drawing thread is still written at once, the same way: it ends the
-//! session, and there is nobody left to keep it for — nor for what it had
-//! taken to say, if it gave up while saying it. That write lands where the
-//! cursor stands, so it can be lost: onto a screen of crucible's own, which
-//! goes when the screen is handed back, or into the live region of the
-//! terminal's own buffer, which closing that region on the way out may
-//! erase. What the drawing thread took for a draw that failed is put back
-//! whole and written out with the rest: a line drawn before the failure went
-//! to a terminal that has just failed, so it may be said twice, but it is not
-//! lost.
+//! drawer catches on the drawing thread, holding
+//! `crucible_tui::drawing::Catching` around the code whose panic it catches,
+//! is kept the same way: the drawer answers for it, the session goes on, and
+//! the transcript says it rather than a line written into the frame being
+//! drawn. Any other panic on the drawing thread is still written at once, the
+//! same way: it ends the session, and there is nobody left to keep it for —
+//! nor for what it had taken to say, if it gave up while saying it. That write
+//! lands where the cursor stands, so it can be lost: onto a screen of
+//! crucible's own, which goes when the screen is handed back, or into the live
+//! region of the terminal's own buffer, which closing that region on the way
+//! out may erase. What the drawing thread took for a draw that failed is put
+//! back whole and written out with the rest: a line drawn before the failure
+//! went to a terminal that has just failed, so it may be said twice, but it is
+//! not lost.
 //!
 //! Only a session holding the terminal takes the hook, and it puts back the
 //! hook it found when it lets go, so every other path panics the way that hook

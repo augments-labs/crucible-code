@@ -56,8 +56,9 @@ pub(crate) fn lay(scanned: &Scanned, room: usize, glyphs: Glyphs) -> Result<Draw
     // The read above bounds what reaches it and the checks below bound what
     // comes back, but a panic inside it must still leave the answer shown as
     // written rather than take the drawing thread down; the release profile
-    // unwinds, so it is caught here. The guard tells the session's panic hook
-    // the panic is caught, so it is said in the transcript rather than
+    // unwinds, so it is caught here, with the checks around the engine call.
+    // The guard, held over all the catch covers, tells the session's panic
+    // hook the panic is caught, so it is said in the transcript rather than
     // written into the frame being drawn.
     let _catching = Catching::begin();
     catch_unwind(AssertUnwindSafe(|| drawn(scanned, room, glyphs))).unwrap_or(Err(Unlaid::Unread))

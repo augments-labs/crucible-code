@@ -13,9 +13,9 @@
 //!
 //! - It runs on the drawing thread when a block closes. It never writes to a
 //!   terminal and never starts a thread or a process. Where it catches a
-//!   panic from code it does not own, it holds [`Catching`] around that
-//!   code, so the panic is kept for the transcript rather than written in
-//!   the middle of a frame.
+//!   panic, it holds [`Catching`] around the code whose panic it catches, so
+//!   the panic is kept for the transcript rather than written in the middle
+//!   of a frame.
 //! - It counts the input's structure against the caps it states before any
 //!   engine runs, and answers [`Undrawn::PastCap`] for a block past them,
 //!   rather than spending the frame finding out.
