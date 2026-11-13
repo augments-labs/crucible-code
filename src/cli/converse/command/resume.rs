@@ -103,7 +103,7 @@ const KEPT: usize = 256;
 ///
 /// Both keys, because this line is under the reader's eyes while they decide,
 /// and the way out is half of that decision.
-const TAKES: &str = "Enter to resume · Esc to cancel";
+const TAKES: &[&str] = &["Enter to resume", "Esc to cancel"];
 
 /// What Enter and Esc do, said under a session recorded in another directory.
 ///
@@ -111,7 +111,7 @@ const TAKES: &str = "Enter to resume · Esc to cancel";
 /// directory the session belongs to. Short enough to be whole in the preview
 /// pane of an eighty-column window, where "Esc to cancel" is the half that
 /// would be cut.
-const SHOWS: &str = "Enter to see how to resume · Esc to cancel";
+const SHOWS: &[&str] = &["Enter to see how to resume", "Esc to cancel"];
 
 /// What a workspace nothing was ever recorded in says: the welcome card's
 /// words, so the two say it the same way.
@@ -898,7 +898,10 @@ fn stood<T: Terminal>(
                 takes: if stood.standing.renaming.is_some() {
                     ""
                 } else {
-                    marked.map_or(TAKES, |session| taken(session, &here.root))
+                    &marked.map_or_else(
+                        || parted(TAKES, glyphs),
+                        |session| taken(session, &here.root, glyphs),
+                    )
                 },
                 nothing: &empty,
                 noview: NOVIEW,
@@ -1034,12 +1037,21 @@ fn pressed(arrived: Pressed, stood: &mut Stood, here: &Here) -> Moved {
 }
 
 /// What the preview's foot says Enter does on `session`, standing at `root`.
-fn taken(session: &Recorded, root: &Path) -> &'static str {
-    if session.workspace() == root {
-        TAKES
-    } else {
-        SHOWS
-    }
+fn taken(session: &Recorded, root: &Path, glyphs: Glyphs) -> String {
+    parted(
+        if session.workspace() == root {
+            TAKES
+        } else {
+            SHOWS
+        },
+        glyphs,
+    )
+}
+
+/// `keys` parted by the glyph set's dot, so a terminal that cannot draw
+/// U+00B7 is never sent it.
+fn parted(keys: &[&str], glyphs: Glyphs) -> String {
+    keys.join(&format!(" {} ", glyphs.dot()))
 }
 
 /// The first [`SHOWN`] of them, for the ways in that print rather than stand.

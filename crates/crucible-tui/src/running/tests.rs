@@ -46,7 +46,11 @@ fn every_command_is_listed_with_how_long_and_how_much() {
     );
     assert!(rows.iter().any(|row| row.contains("84 lines")), "{rows:?}");
     assert!(rows.iter().any(|row| row.contains("6.4 kB")), "{rows:?}");
-    assert!(rows.iter().any(|row| row.contains(KEYS)), "{rows:?}");
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("esc to close · enter shows it · x stops it")),
+        "{rows:?}"
+    );
 }
 
 #[test]
@@ -173,4 +177,22 @@ fn a_long_command_gives_way_so_the_counts_survive() {
         crate::width::columns(listed) <= WIDE,
         "the row ran past the window: {listed:?}"
     );
+}
+
+#[test]
+fn the_keys_are_parted_with_the_glyph_sets_own_dot() {
+    // The panel is handed the glyph set, so a terminal drawn without Unicode is
+    // not sent a dot it was never meant to get.
+    let shown = [one(1, "Bash(npm run dev)", 252, 84, 6_400)];
+    let rows = text(
+        &Running {
+            shown: &shown,
+            at: 0,
+        }
+        .rows(WIDE, 24, Glyphs::Ascii),
+    );
+    let last = rows.last().cloned().unwrap_or_default();
+
+    assert_eq!(last, "esc to close - enter shows it - x stops it");
+    assert!(rows.iter().all(|row| row.is_ascii()), "{rows:?}");
 }
