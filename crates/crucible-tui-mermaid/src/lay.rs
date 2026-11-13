@@ -7,9 +7,12 @@
 //!   was written, and its reading agrees with that one or nothing is drawn.
 //!   A flowchart's has the same boxes, with the same labels, joined by as
 //!   many lines with the same labels. A state diagram's has as many
-//!   transitions with the same labels, and each state given a label labelled
-//!   alike; its states are counted, not named, since the engine names its
-//!   start and end markers and its notes by a scheme of its own. An
+//!   transitions with the same labels, each state given a label labelled
+//!   alike, and no more states than its cap. Its states are held to neither
+//!   the scan's names nor its count: the engine names its start and end
+//!   markers and its notes by a scheme of its own, adds markers where a
+//!   transition reaches a composite state, and leaves out markers joined to
+//!   no state. An
 //!   entity-relationship diagram's has the same entities, by name, and as
 //!   many relationships.
 //! - A line the engine draws with a control character in it refuses the
@@ -89,9 +92,10 @@ fn agrees(scanned: &Scanned) -> bool {
 }
 
 /// Whether `graph`, a state diagram, holds the transitions `read` found,
-/// labelled alike, and labels each state `read` gave a label to alike. Its
-/// states are counted rather than named, since the engine names each start
-/// and end marker and each note by a scheme of its own.
+/// labelled alike, labels each state `read` gave a label to alike, and has
+/// no more states than its cap. Its states are not held to `read`'s, by name
+/// or by count, since the engine names, adds and leaves out start and end
+/// markers by rules of its own.
 fn state_alike(graph: &Graph, read: &Read) -> bool {
     graph.nodes.len() <= Caps::STATE.nodes
         && joined_alike(graph, read)

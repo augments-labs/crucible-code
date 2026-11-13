@@ -13,9 +13,9 @@
 //!   or draws one that is not there, says what the source did not. The
 //!   engine's reading is held to this one as far as the engine's names
 //!   allow: a flowchart's boxes, lines and labels; a state diagram's
-//!   transitions and their labels, the labels it gave states and how many
-//!   states; an entity-relationship diagram's entities and how many
-//!   relationships.
+//!   transitions and their labels and the labels it gave states, with no
+//!   more states than its cap; an entity-relationship diagram's entities and
+//!   how many relationships.
 //! - **Bounded before the engine.** A source past [`MOST_BYTES`] is refused
 //!   before it is read, and one past its kind's [`Caps`] (bytes, boxes, lines
 //!   or the columns of one label) is refused as the read reaches the one past
