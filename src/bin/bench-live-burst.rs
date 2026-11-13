@@ -488,4 +488,46 @@ mod tests {
             "{undrawn:#?}"
         );
     }
+
+    #[test]
+    fn the_band_stands_over_an_answer_whose_timelines_are_drawn_as_text() {
+        // A frame names a diagram's kind only when it drew it: one refused, as
+        // written or as too wide, says why instead, so the whole row is held.
+        let rows = transcript(drawers());
+        for opening in [
+            "┌─ mermaid · sequence diagram",
+            "┌─ mermaid · gantt",
+            "┌─ mermaid · git graph",
+        ] {
+            assert!(
+                rows.iter().any(|row| row.trim() == opening),
+                "no row {opening:?} in {rows:#?}"
+            );
+        }
+        for written in [
+            "sequenceDiagram",
+            "participant",
+            "dateFormat",
+            "gitGraph",
+            "checkout main",
+        ] {
+            assert!(
+                !rows.iter().any(|row| row.contains(written)),
+                "a diagram was shown as written, with {written:?}: {rows:#?}"
+            );
+        }
+
+        // Handed no drawer, the same answers show each of them as written.
+        let undrawn = transcript(Drawers::default());
+        for written in [
+            "R->>W: block closed",
+            "dateFormat YYYY-MM-DD",
+            "checkout main",
+        ] {
+            assert!(
+                undrawn.iter().any(|row| row.contains(written)),
+                "{written:?} in {undrawn:#?}"
+            );
+        }
+    }
 }

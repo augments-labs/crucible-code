@@ -13647,6 +13647,22 @@
         "macos",
         "windows"
       ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-TIMELINE-LIVE-PROBE",
+      "family": "transcript-blocks",
+      "obligation": "The live burst's band stands over an answer whose sequence diagram, gantt and git graph are each drawn as text, not shown as written.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-live-burst"
+      },
+      "case": "tests::the_band_stands_over_an_answer_whose_timelines_are_drawn_as_text",
+      "source": "src/bin/bench-live-burst.rs",
+      "body_sha256": "d02987c89001df5049ec0731ccf5a88e63d2b815f4afacdc788758954541844b",
+      "platforms": [
+        "linux"
+      ]
     }
   ]
 }
