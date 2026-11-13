@@ -2459,7 +2459,7 @@
         "Vendor::answering(transcript::said(\"mermaid_timelines\"))",
         "Watched::in_default_colours( \"transcript-mermaid_timelines-120-fullscreen\", (120, 61), Some(&vendor), None, )"
       ],
-      "sha256": "580754e0cfc08c390f9d7c6e8842ccf74df17d02e7ca77afba0500085953be3c"
+      "sha256": "3e9d2dcaae29b7f4903ea31db7fe4c40dce85b0ab1670a12dd330b0a27c9ef68"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_mermaid_timelines_120_native.snap",
@@ -2468,7 +2468,7 @@
         "Vendor::answering(transcript::said(\"mermaid_timelines\"))",
         "Watched::drawn_in_colour( \"transcript-mermaid_timelines-120-native\", (120, 61), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "5379f9cea5a601f7b98fe1db57523c460c93727df45e22dde128fafe2fbe2dc5"
+      "sha256": "464c5a2bf8546d115350be329ac8b8314fd7dae15899fc43abade67bd0f24d9c"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_mermaid_timelines_40_fullscreen.snap",
@@ -2477,7 +2477,7 @@
         "Vendor::answering(transcript::said(\"mermaid_timelines\"))",
         "Watched::in_default_colours( \"transcript-mermaid_timelines-40-fullscreen\", (40, 44), Some(&vendor), None, )"
       ],
-      "sha256": "8622eb2dd187c359c342b3deeffe8aaaaec6be16867ef20808235498a112f5c5"
+      "sha256": "a38a901f81774a9cfcb7540d5aefe09bebb1fcc2cf0039296dc608695b604dae"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_mermaid_timelines_40_native.snap",
@@ -2486,7 +2486,7 @@
         "Vendor::answering(transcript::said(\"mermaid_timelines\"))",
         "Watched::drawn_in_colour( \"transcript-mermaid_timelines-40-native\", (40, 44), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "fe5202e8b139f8b3f677384af3a3dc1913612de1dfab29dc05361a8abd351e12"
+      "sha256": "f63983e96308627aad66b83a36b0485bbf9608d531a19fde78709fa2fe14f509"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_mermaid_timelines_80_fullscreen.snap",
@@ -2495,7 +2495,7 @@
         "Vendor::answering(transcript::said(\"mermaid_timelines\"))",
         "Watched::in_default_colours( \"transcript-mermaid_timelines-80-fullscreen\", (80, 55), Some(&vendor), None, )"
       ],
-      "sha256": "67fed5155b0b8fe4274218be455b887434a312a5bbcd64a8e750570efc847cb5"
+      "sha256": "24756c4a28cef930d5e808899f443755ae8de07b242151648a6d7a9e77e62cd9"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_mermaid_timelines_80_native.snap",
@@ -2504,7 +2504,7 @@
         "Vendor::answering(transcript::said(\"mermaid_timelines\"))",
         "Watched::drawn_in_colour( \"transcript-mermaid_timelines-80-native\", (80, 55), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "673238103e00257d5a88f095089f7517079016ed9ae33d602b9527228ae5f9e5"
+      "sha256": "3e7411b76bafbda4fadb16f7f9d0d0f39239207178be89945eaba78d95e0018c"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_notes_80_fullscreen.snap",

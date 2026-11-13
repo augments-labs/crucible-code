@@ -12795,7 +12795,7 @@
       },
       "case": "tests::a_kind_not_drawn_as_text_is_refused_naming_it",
       "source": "crates/crucible-tui-mermaid/src/tests.rs",
-      "body_sha256": "fcc892e2046b0fa023a7d2646dcb335544a9ef5ed548f2107cefa3471f770e3c",
+      "body_sha256": "6b7fea3b4a2d23e15c71fb6edbbdc8ff5a88c77f1d0df1491ac5052b1f627b76",
       "platforms": [
         "linux",
         "macos",
@@ -12849,7 +12849,7 @@
       },
       "case": "tests::a_statement_this_does_not_read_refuses_the_whole_diagram",
       "source": "crates/crucible-tui-mermaid/src/tests.rs",
-      "body_sha256": "9e88187199b9a4c680873c68538172cba42441ab19e3b4f91e41e87ea54b4f1b",
+      "body_sha256": "c7d3bc51e265fb43847365001f3dfb433c075599bd1907215d56358857e9d6bc",
       "platforms": [
         "linux",
         "macos",
@@ -12885,7 +12885,7 @@
       },
       "case": "tests::a_source_past_its_kinds_byte_cap_is_refused",
       "source": "crates/crucible-tui-mermaid/src/tests.rs",
-      "body_sha256": "9582db1fea1d85bc23e3e947d8d457fea04852078c383059ed9aa001b922c908",
+      "body_sha256": "a31bf3bf67b44d8f9585824868e3d4d5311b5e8521c7402c794d374994113125",
       "platforms": [
         "linux",
         "macos",
@@ -12903,7 +12903,7 @@
       },
       "case": "tests::boxes_past_each_kinds_cap_are_refused",
       "source": "crates/crucible-tui-mermaid/src/tests.rs",
-      "body_sha256": "1d9233a8db193d4be008ef8e559049b3184354d1e7b43353e4d9df0ecaa7639c",
+      "body_sha256": "30f0858939c93623eb73e441de79b6be7adf5a65859e5e7f0d9ad6f4d41281fb",
       "platforms": [
         "linux",
         "macos",
@@ -12921,7 +12921,7 @@
       },
       "case": "tests::lines_past_each_kinds_cap_are_refused",
       "source": "crates/crucible-tui-mermaid/src/tests.rs",
-      "body_sha256": "b2780143fc10f9d350b9b64eb8798c4517236b4ea2902f657afaab134f375b09",
+      "body_sha256": "094aa57b5d54b9518b136d7c0f2aad59d89f55b87e934c79731f54a349b2175e",
       "platforms": [
         "linux",
         "macos",
@@ -13011,7 +13011,7 @@
       },
       "case": "tests::under_ascii_every_character_is_ascii_or_written_in_a_label",
       "source": "crates/crucible-tui-mermaid/src/tests.rs",
-      "body_sha256": "a99789a826f7a0b33988072600026a1f0d100ae11c87ba84c4f8c1161de61c4e",
+      "body_sha256": "229a8c9abef8d3731d5660e40c327f300c0bc1540c259432230b400d5a26d025",
       "platforms": [
         "linux",
         "macos",
@@ -13029,7 +13029,7 @@
       },
       "case": "tests::the_status_row_is_told_the_kind_its_first_line_opens",
       "source": "crates/crucible-tui-mermaid/src/tests.rs",
-      "body_sha256": "0977ba35f074c2d2cf210c81cc9e2ff1f66e042728b3f72c0ca92d4a54378b1c",
+      "body_sha256": "9398ab7b81c32146be5cfed7bd7b63be4d2cbd76a46ea20a22f709e1365ea243",
       "platforms": [
         "linux",
         "macos",
@@ -13173,7 +13173,7 @@
       },
       "case": "a_diagram_at_the_caps_is_answered_inside_the_deadline_and_the_planted_quadratic_is_not",
       "source": "crates/crucible-tui-mermaid/tests/hostile.rs",
-      "body_sha256": "fc554d4425e12c1d42c66d73d7c3eee38c1038f395ee358fb4f6a2ee980e6619",
+      "body_sha256": "56e589a3445fac5807105cf64e13ab42ede881fbc05a9eec180d4f43b2441d94",
       "platforms": [
         "linux",
         "macos",
@@ -13191,7 +13191,7 @@
       },
       "case": "a_diagram_in_a_fence_of_an_answer_is_drawn_and_its_refusal_shown_as_written",
       "source": "crates/crucible-tui-mermaid/tests/hostile.rs",
-      "body_sha256": "9928af67d08c72b555b800c0e0f83c76d1941916fc135594d7704b8a817b3ea7",
+      "body_sha256": "dcc901ef15e3e0e52a18496cf99a797c7b5731d7d3376bbad2040efb8530d743",
       "platforms": [
         "linux",
         "macos",
@@ -13390,6 +13390,258 @@
       "case": "cli::converse::replaying::tests::a_diagram_in_a_session_glimpsed_is_drawn_the_way_the_session_draws_diagrams",
       "source": "src/cli/converse/replaying/tests.rs",
       "body_sha256": "859173c147bfd99a209b25bb27774b4b3fd37b6947c7d58bb338e28255a620b5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-SEQUENCE-DRAWN",
+      "family": "transcript-blocks",
+      "obligation": "A sequence diagram is drawn as its participants and labelled messages, with none of its syntax.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_sequence_diagram_draws_its_participants_and_messages_and_none_of_its_syntax",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "4e7c29aa5df31471e8b7254020d49e14ee1892948c47e3a799099a2894a2de2e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-GANTT-DRAWN",
+      "family": "transcript-blocks",
+      "obligation": "A gantt is drawn as its title, sections and tasks, with none of its syntax.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_gantt_draws_its_title_sections_and_tasks_and_none_of_its_syntax",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "29b8b28c8a39f9b62cbc4e37175eaab9d31432bb750529105fe27d021cf17c20",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-GANTT-DAY-A-CELL",
+      "family": "transcript-blocks",
+      "obligation": "Each day of a gantt's task is a cell of its bar.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_gantt_draws_each_day_of_a_task_as_a_cell_of_its_bar",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "5cd81cc270658a1b2dc378120943b6f6b6e5fee83fa88dc6f181327bde86c7f9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-GANTT-LONG",
+      "family": "transcript-blocks",
+      "obligation": "A gantt too long to draw a day to a cell draws every task or is refused.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_gantt_too_long_to_draw_a_day_a_cell_draws_every_task_or_is_refused",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "df86ac0999062764f362ab682b72214f07f72d994ff09249fbf5ae40b951127b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-GIT-GRAPH-DRAWN",
+      "family": "transcript-blocks",
+      "obligation": "A git graph is drawn as its branches, commits and tags, with none of its syntax.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_git_graph_draws_its_branches_commits_and_tags_and_none_of_its_syntax",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "2468d518e367f5cd111bf4789efe8e4f521bc2c871920081722aee5f9679baf8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-GANTT-CAPS",
+      "family": "transcript-blocks",
+      "obligation": "A gantt's tasks and sections count against its box cap, and it has no lines to cap.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_gantt_has_no_lines_and_a_task_is_a_box",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "825c7b6770fa7407d420ffa4fec9e70a9ee64fec81f5d75524e06015e98d5ff8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-GIT-GRAPH-CAPS",
+      "family": "transcript-blocks",
+      "obligation": "A git graph's ids and tags are held by its byte cap alone.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_git_graph_label_is_held_by_the_byte_cap_alone",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "2e4a62ca1de779bc66e28d5fce9250f6d404f6232c4ae55bcf7fd5bdf5b2f008",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-TIMELINE-TOO-WIDE",
+      "family": "transcript-blocks",
+      "obligation": "A sequence diagram, gantt or git graph wider than its room is refused as too wide and never cut or laid out again.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_timeline_wider_than_its_room_is_refused_and_not_laid_out_again",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "4377845415de9db5b82f38a4bd726dcdfe136a5119df22ba43dfaf7540321738",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-TIMELINE-READ-ALIKE",
+      "family": "transcript-blocks",
+      "obligation": "A sequence diagram, gantt or git graph the engine reads as it was read is drawn.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "lay::tests::a_timeline_read_alike_is_held",
+      "source": "crates/crucible-tui-mermaid/src/lay/tests.rs",
+      "body_sha256": "19f16c82a9bbb3c062bf3f0a4a68d9030abd9763f9fd0f845db539707c102543",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-TIMELINE-READ-OTHERWISE",
+      "family": "transcript-blocks",
+      "obligation": "A sequence diagram, gantt or git graph the engine reads otherwise, leaving out or changing a statement, is refused whole.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "lay::tests::a_timeline_reading_that_leaves_out_or_changes_what_was_read_is_refused",
+      "source": "crates/crucible-tui-mermaid/src/lay/tests.rs",
+      "body_sha256": "7f6171cf487d4afb191aa82f2464cc2a3fedb5bbd7385f524f96698ede60f7b0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-EACH-KIND-DEADLINE",
+      "family": "transcript-blocks",
+      "obligation": "Each diagram kind at its caps is read whole and answered inside the deadline, and one past them is refused.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "each_diagram_at_its_caps_is_read_whole_and_answered_inside_the_deadline",
+      "source": "crates/crucible-tui-mermaid/tests/hostile.rs",
+      "body_sha256": "8e188c72192871c4ea2869189b72cdecc327f159d5171d33b38264bdb0e76726",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-TIMELINE-GLYPH-RELAY",
+      "family": "transcript-blocks",
+      "obligation": "A sequence diagram, gantt or git graph already drawn is laid out again in the new glyph set when the glyphs change.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::diagrams::a_timeline_drawn_is_laid_out_again_when_the_glyphs_change",
+      "source": "crates/crucible-tui/src/render/tests/diagrams.rs",
+      "body_sha256": "83fd639997f6b703f70d2cc2fe7cedbc3e9b2ea755b15eefdd2491da97322005",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-TIMELINE-LIVE-FOOT",
+      "family": "transcript-blocks",
+      "obligation": "A sequence diagram, gantt or git graph being streamed is named on the live foot in its drawer's words.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::diagrams::a_timeline_being_streamed_is_named_by_its_drawer_in_the_live_foot",
+      "source": "crates/crucible-tui/src/render/tests/diagrams.rs",
+      "body_sha256": "a0d264847f7a9dbf31ad3755a0b325bd6f61d55073d64088592bd1f7dafb7818",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-DRAWING-PROBE",
+      "family": "transcript-blocks",
+      "obligation": "Every diagram the drawing probe times is laid out, or refused only as wider than its room.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-drawing"
+      },
+      "case": "tests::every_diagram_timed_is_laid_out",
+      "source": "src/bin/bench-drawing.rs",
+      "body_sha256": "9a0325e314312386e5a2b0fde0c4b93e47911fc599403f2b0e9da486b450409f",
       "platforms": [
         "linux",
         "macos",
