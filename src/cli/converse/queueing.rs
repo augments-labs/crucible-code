@@ -6,7 +6,7 @@
 //! or the content-use question held them back — and it is the same panel in
 //! both places, but for its title: under a turn it names the key that stops
 //! the turn to send them, and between turns, where that key is Return, it
-//! says they go with the next prompt. There is nothing to open. Up and
+//! says they wait for the next turn. There is nothing to open. Up and
 //! down walk the highlight once the line in the box has no row to reach and no
 //! list is standing, Ctrl+E takes the highlighted line back into the box to be
 //! edited or sent sooner, and Ctrl+X deletes it. The highlight stays at the
@@ -594,15 +594,19 @@ pub(super) struct Reading<'a> {
     pub(super) steer: &'a Steer,
 }
 
-/// What the queue's panel stands over, which decides what its title says sends
-/// the lines.
+/// Where the queue's panel stands, which decides what its title says about
+/// sending the lines.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Over {
-    /// A running turn, which Ctrl+Enter stops to send every line now.
-    Turn,
-    /// The box between turns, where Ctrl+Enter is Enter: the lines go with the
-    /// next prompt sent, and an empty box sends nothing.
-    Idle,
+pub(super) enum Stands {
+    /// Under a running turn, which Ctrl+Enter stops to send every line now.
+    UnderTurn,
+    /// Over the box between turns, where Ctrl+Enter is Enter and an empty box
+    /// sends nothing. The lines wait for the next turn: the turn a prompt the
+    /// reader sends starts takes them with it, and work the application starts
+    /// on its own, or room made for the window, takes none of them but lets
+    /// them go once it ends other than on a used-up plan, as [`taken`] says.
+    /// The title promises no more than that they wait.
+    BetweenTurns,
 }
 
 /// The panel naming the prompts waiting, as it stands over the box.
@@ -612,7 +616,7 @@ pub(super) enum Over {
 /// sends them all, because the count is the one fact that cannot go: three
 /// are named at most, and the rest are only in the number. Under a turn that
 /// is the key that stops it to send them; between turns, where the same key
-/// is Enter, it is the next prompt, which `over` says. The
+/// is Enter, it is that they wait for the next turn, which `stands` says. The
 /// highlighted line leads with the mark a line is typed after and is drawn in
 /// the accent, so a key's target is never a guess; the rest stand two columns
 /// in under it. Each line is cut to a row: the panel is a list of what is
@@ -628,7 +632,7 @@ pub(super) enum Over {
 /// or where the window is too narrow to put any of a line beside its mark.
 pub(super) fn panel(
     queue: &Prompts,
-    over: Over,
+    stands: Stands,
     columns: usize,
     room: usize,
     style: Style,
@@ -645,9 +649,9 @@ pub(super) fn panel(
         .then(Slot::Strong, format!("{count} queued"))
         .then(
             Slot::Quiet,
-            match over {
-                Over::Turn => format!(" {dot} ctrl+enter to send all now"),
-                Over::Idle => format!(" {dot} sent with your next prompt"),
+            match stands {
+                Stands::UnderTurn => format!(" {dot} ctrl+enter to send all now"),
+                Stands::BetweenTurns => format!(" {dot} waiting for the next turn"),
             },
         );
 

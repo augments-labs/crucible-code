@@ -366,8 +366,9 @@ fn plan_limit_stands_the_held_line_in_the_queue_panel_over_the_idle_prompt() {
     // Held and unseen, the line would go with whatever the reader sends
     // next without anything on screen having said it was still there. The
     // panel that names it while a turn runs names it here, with the same keys,
-    // and the box stays under it. Its title says what sends it: with no turn
-    // to stop, Ctrl+Enter is Enter, and an empty box sends nothing.
+    // and the box stays under it. Its title says only that the line waits:
+    // with no turn to stop, Ctrl+Enter is Enter, and an empty box sends
+    // nothing.
     let (_, rows) = stopped_then(
         "plan-limit-idle-box",
         None,
@@ -387,7 +388,7 @@ fn plan_limit_stands_the_held_line_in_the_queue_panel_over_the_idle_prompt() {
             &[
                 rule.clone(),
                 String::new(),
-                "1 queued \u{b7} sent with your next prompt".to_owned(),
+                "1 queued \u{b7} waiting for the next turn".to_owned(),
                 String::new(),
                 format!("\u{203a} {QUEUED}"),
                 String::new(),

@@ -161,8 +161,8 @@ pub(in crate::cli::converse) fn draw<T: Terminal>(
 /// the list, with a blank row over its rule to keep the rule off what is above
 /// it. With nothing under it, it closes with a blank row of its own, which
 /// keeps the box off it in place of the one owed below. Only its title is not
-/// the turn's: with no turn for Ctrl+Enter to stop, it says the next prompt
-/// sends them.
+/// the turn's: with no turn for Ctrl+Enter to stop, it says they wait for the
+/// next turn.
 ///
 /// With the rows comes where a line of the dock is being written, counted
 /// from the first of them, which is where the cursor stands when the window
@@ -201,7 +201,13 @@ pub(super) fn over(
     // when it is the last thing over the box.
     let owed = usize::from(!(opened || (planned.is_empty() && docked.is_empty())));
     let left = room.saturating_sub(listed.len() + docked.len() + planned.len() + 1 + owed);
-    let panel = queueing::panel(around.queued, queueing::Over::Idle, columns, left, style);
+    let panel = queueing::panel(
+        around.queued,
+        queueing::Stands::BetweenTurns,
+        columns,
+        left,
+        style,
+    );
 
     let mut over =
         Vec::with_capacity(1 + panel.len() + planned.len() + docked.len() + blank + listed.len());
