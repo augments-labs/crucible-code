@@ -518,7 +518,14 @@ whenever any are waiting: a title counting them, up to three of them a blank
 row apart with one highlighted, and a footer naming the keys. Between turns the
 same panel holds the prompts left queued behind a turn that stopped on a
 used-up plan, or that the [content-use](../providers/content-use.md) question
-held back, until you send a prompt, which takes them with it. You go on typing
+held back. Its title then says `waiting for the next turn` where a turn's says
+`ctrl+enter to send all now`, since with no turn to stop <kbd>Ctrl+Enter</kbd>
+is <kbd>Enter</kbd>. The turn a prompt you send starts takes them with it, as
+does one your answers from the
+[dock](#answering-questions-asked-without-waiting) start. A turn that starts
+without you, such as the one a background command's ending wakes, takes none
+of them, and nor does the room `/compact` makes; once either ends they go as a
+turn of their own, unless it too stopped on a used-up plan. You go on typing
 into the box under it; the panel only adds these keys:
 
 | Key | What it does |

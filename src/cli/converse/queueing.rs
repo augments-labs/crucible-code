@@ -4,7 +4,9 @@
 //! The panel stands whenever anything is waiting — under a running turn, and
 //! between turns while a used-up plan holds the lines it stopped in front of,
 //! or the content-use question held them back — and it is the same panel in
-//! both places. There is nothing to open. Up and
+//! both places, but for its title: under a turn it names the key that stops
+//! the turn to send them, and between turns, where that key is Return, it
+//! says they wait for the next turn. There is nothing to open. Up and
 //! down walk the highlight once the line in the box has no row to reach and no
 //! list is standing, Ctrl+E takes the highlighted line back into the box to be
 //! edited or sent sooner, and Ctrl+X deletes it. The highlight stays at the
@@ -592,12 +594,29 @@ pub(super) struct Reading<'a> {
     pub(super) steer: &'a Steer,
 }
 
+/// Where the queue's panel stands, which decides what its title says about
+/// sending the lines.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Stands {
+    /// Under a running turn, which Ctrl+Enter stops to send every line now.
+    UnderTurn,
+    /// Over the box between turns, where Ctrl+Enter is Enter and an empty box
+    /// sends nothing. The lines wait for the next turn: the turn a prompt the
+    /// reader sends starts takes them with it, and work the application starts
+    /// on its own, or room made for the window, takes none of them but lets
+    /// them go once it ends other than on a used-up plan, as [`taken`] says.
+    /// The title promises no more than that they wait.
+    BetweenTurns,
+}
+
 /// The panel naming the prompts waiting, as it stands over the box.
 ///
 /// The shape every other panel has: a rule, a title, the lines, and a footer
-/// naming every key that works. The title says how many are waiting and the
-/// key that sends them all, because the count is the one fact that cannot go:
-/// three are named at most, and the rest are only in the number. The
+/// naming every key that works. The title says how many are waiting and what
+/// sends them all, because the count is the one fact that cannot go: three
+/// are named at most, and the rest are only in the number. Under a turn that
+/// is the key that stops it to send them; between turns, where the same key
+/// is Enter, it is that they wait for the next turn, which `stands` says. The
 /// highlighted line leads with the mark a line is typed after and is drawn in
 /// the accent, so a key's target is never a guess; the rest stand two columns
 /// in under it. Each line is cut to a row: the panel is a list of what is
@@ -611,7 +630,13 @@ pub(super) struct Reading<'a> {
 /// down to one, and below that draws nothing — the queue is still the queue,
 /// and its turn will say each line. No rows at all where nothing is waiting,
 /// or where the window is too narrow to put any of a line beside its mark.
-pub(super) fn panel(queue: &Prompts, columns: usize, room: usize, style: Style) -> Vec<Row> {
+pub(super) fn panel(
+    queue: &Prompts,
+    stands: Stands,
+    columns: usize,
+    room: usize,
+    style: Style,
+) -> Vec<Row> {
     let count = queue.waiting_count();
     if count == 0 || columns <= MARKED {
         return Vec::new();
@@ -622,7 +647,13 @@ pub(super) fn panel(queue: &Prompts, columns: usize, room: usize, style: Style) 
 
     let title = Row::new()
         .then(Slot::Strong, format!("{count} queued"))
-        .then(Slot::Quiet, format!(" {dot} ctrl+enter to send all now"));
+        .then(
+            Slot::Quiet,
+            match stands {
+                Stands::UnderTurn => format!(" {dot} ctrl+enter to send all now"),
+                Stands::BetweenTurns => format!(" {dot} waiting for the next turn"),
+            },
+        );
 
     // Beside the title where the row holds both, since it is about the line
     // under the highlight and not a line of its own; under it where the row

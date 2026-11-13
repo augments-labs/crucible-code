@@ -531,11 +531,15 @@ turn are one thing you wanted said, and answering the first before reading the
 third is working to a question you had already added to. Each is still its own
 message, in the order you typed it; nothing is joined into a prompt you did not
 write. A turn that stopped on a used-up plan is the exception: the queue waits
-in the same panel over the box, where the same keys edit or delete it, until
-you send a prompt, since sent on its own it would reach a plan that is spent.
-A queue you held back at the [content-use](../providers/content-use.md)
-question waits the same way. The prompt you send then takes the queue with it,
-as a turn takes what was queued under it.
+in the same panel over the box, where the same keys edit or delete it, since
+sent on its own it would reach a plan that is spent. A queue you held back at
+the [content-use](../providers/content-use.md) question waits the same way.
+The panel's title then says `waiting for the next turn`, since with no turn to
+stop <kbd>Ctrl+Enter</kbd> is <kbd>Enter</kbd>. The prompt you send takes the
+queue with it, as a turn takes what was queued under it. A turn that starts
+without you, such as the one a background command's ending wakes, takes none
+of it, and once that turn ends the queue goes as a turn of its own, unless it
+too stopped on a used-up plan.
 
 Nothing holds the queue while you look at it. The turn above goes on writing,
 tools go on running, and the turn takes every waiting prompt at its next step,

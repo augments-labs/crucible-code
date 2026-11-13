@@ -37,8 +37,8 @@ pub(in crate::cli::converse) struct Around<'a> {
     /// Where in the retained prompts the line came from, which the top border
     /// of the box says while an arrow is what put it there.
     pub(super) history: Recalled,
-    /// The lines waiting behind the box, which only a used-up plan leaves
-    /// there between turns.
+    /// The lines waiting behind the box, which only a used-up plan or the
+    /// content-use question leaves there between turns.
     pub(super) queued: &'a Prompts,
     /// The questions the model asked without waiting, docked over the box.
     pub(super) docking: &'a Docking,
@@ -103,7 +103,7 @@ pub(in crate::cli::converse) fn around<'a>(
 /// The box goes into the band that is held to a share of the window, because
 /// that share is a rule about how much of the screen a long prompt may take
 /// from what it is answering. Everything above it — the list, the plan, and
-/// the lines a used-up plan held — goes into the band above, which has no
+/// the lines left queued — goes into the band above, which has no
 /// share of its own: a list is what the reader is looking at while it is open,
 /// so the transcript is what gives way to it rather than the box being pushed
 /// off the screen. How much of the window the two may take together is the
@@ -154,13 +154,15 @@ pub(in crate::cli::converse) fn draw<T: Terminal>(
 /// and it is one row until somebody opens it. Open, it is what the reader is
 /// answering, so the plan gives way to it rather than the other way round.
 ///
-/// The lines a used-up plan held are measured last, in the panel a running
-/// turn stands them in, as they are measured there: what the window cannot fit
-/// of it gives way before the plan or the list does. It stands where it stands
-/// under a turn, over the plan and the list, with a blank row over its rule to
-/// keep the rule off what is above it. With nothing under it, it closes with a
-/// blank row of its own, which keeps the box off it in place of the one owed
-/// below.
+/// The lines a used-up plan or the content-use question left queued are
+/// measured last, in the panel a running turn stands them in, as they are
+/// measured there: what the window cannot fit of it gives way before the plan
+/// or the list does. It stands where it stands under a turn, over the plan and
+/// the list, with a blank row over its rule to keep the rule off what is above
+/// it. With nothing under it, it closes with a blank row of its own, which
+/// keeps the box off it in place of the one owed below. Only its title is not
+/// the turn's: with no turn for Ctrl+Enter to stop, it says they wait for the
+/// next turn.
 ///
 /// With the rows comes where a line of the dock is being written, counted
 /// from the first of them, which is where the cursor stands when the window
@@ -199,7 +201,13 @@ pub(super) fn over(
     // when it is the last thing over the box.
     let owed = usize::from(!(opened || (planned.is_empty() && docked.is_empty())));
     let left = room.saturating_sub(listed.len() + docked.len() + planned.len() + 1 + owed);
-    let panel = queueing::panel(around.queued, columns, left, style);
+    let panel = queueing::panel(
+        around.queued,
+        queueing::Stands::BetweenTurns,
+        columns,
+        left,
+        style,
+    );
 
     let mut over =
         Vec::with_capacity(1 + panel.len() + planned.len() + docked.len() + blank + listed.len());

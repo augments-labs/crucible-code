@@ -37,7 +37,16 @@ const FIVE: [&str; 5] = ["first", "second", "third", "fourth", "fifth"];
 
 #[test]
 fn nothing_waiting_lays_no_panel_out() {
-    assert!(panel(&Prompts::default(), 80, 40, Style::plain()).is_empty());
+    assert!(
+        panel(
+            &Prompts::default(),
+            Stands::UnderTurn,
+            80,
+            40,
+            Style::plain()
+        )
+        .is_empty()
+    );
 }
 
 #[test]
@@ -48,7 +57,7 @@ fn the_panel_names_three_lines_under_a_title_that_counts_them_all() {
     let rule = "─".repeat(80);
 
     assert_eq!(
-        said(&panel(&queue, 80, 40, Style::plain())),
+        said(&panel(&queue, Stands::UnderTurn, 80, 40, Style::plain())),
         vec![
             rule.as_str(),
             "",
@@ -67,12 +76,42 @@ fn the_panel_names_three_lines_under_a_title_that_counts_them_all() {
 }
 
 #[test]
+fn between_turns_the_title_says_the_lines_wait_for_the_next_turn() {
+    // With no turn to stop, Ctrl+Enter is Enter, and an empty box sends
+    // nothing; the lines wait for the next turn. Only the title says so: the
+    // lines and the keys under it are the turn's own.
+    let (queue, _) = queued(&FIVE);
+    for (glyphs, title) in [
+        (Glyphs::Unicode, "5 queued · waiting for the next turn"),
+        (Glyphs::Ascii, "5 queued - waiting for the next turn"),
+    ] {
+        let style = Style::drawn(glyphs);
+        let idle = said(&panel(&queue, Stands::BetweenTurns, 80, 40, style));
+        let turn = said(&panel(&queue, Stands::UnderTurn, 80, 40, style));
+
+        assert_eq!(idle.get(2).map(String::as_str), Some(title), "{glyphs:?}");
+        assert_eq!(idle.len(), turn.len(), "{glyphs:?}");
+        for (place, (idle, turn)) in idle.iter().zip(&turn).enumerate() {
+            if place != 2 {
+                assert_eq!(idle, turn, "{glyphs:?} row {place}");
+            }
+        }
+    }
+}
+
+#[test]
 fn the_panel_in_ascii_says_the_same_in_the_glyphs_every_terminal_has() {
     let (queue, _) = queued(&FIVE);
     let rule = "-".repeat(80);
 
     assert_eq!(
-        said(&panel(&queue, 80, 40, Style::drawn(Glyphs::Ascii))),
+        said(&panel(
+            &queue,
+            Stands::UnderTurn,
+            80,
+            40,
+            Style::drawn(Glyphs::Ascii)
+        )),
         vec![
             rule.as_str(),
             "",
@@ -93,7 +132,7 @@ fn the_panel_in_ascii_says_the_same_in_the_glyphs_every_terminal_has() {
 #[test]
 fn a_narrow_window_folds_the_footer_rather_than_cutting_a_key_off_it() {
     let (queue, _) = queued(&FIVE);
-    let laid = said(&panel(&queue, 40, 40, Style::plain()));
+    let laid = said(&panel(&queue, Stands::UnderTurn, 40, 40, Style::plain()));
 
     assert!(laid.iter().all(|row| crucible_tui::columns(row) <= 40));
     assert_eq!(
@@ -146,7 +185,7 @@ fn the_three_named_follow_the_highlight_down_the_queue() {
         queue.walk(false);
     }
 
-    let laid = said(&panel(&queue, 80, 40, Style::plain()));
+    let laid = said(&panel(&queue, Stands::UnderTurn, 80, 40, Style::plain()));
     assert_eq!(
         laid.get(4..9),
         Some(
@@ -192,7 +231,7 @@ fn deleting_the_last_line_in_the_queue_leaves_the_highlight_on_the_new_last() {
     assert!(queue.delete(Offer::Turn(&steer)));
     assert_eq!(queue.waiting_count(), 0);
     assert!(
-        panel(&queue, 80, 40, Style::plain()).is_empty(),
+        panel(&queue, Stands::UnderTurn, 80, 40, Style::plain()).is_empty(),
         "the panel goes"
     );
     assert!(!steer.any(), "a deleted line was sent anyway");
@@ -482,7 +521,7 @@ fn a_line_the_box_has_no_room_for_stays_queued_and_the_panel_says_so() {
         "the turn still reads it"
     );
 
-    let laid = said(&panel(&queue, 80, 40, Style::plain()));
+    let laid = said(&panel(&queue, Stands::UnderTurn, 80, 40, Style::plain()));
     assert_eq!(
         laid.get(2).map(String::as_str),
         Some("2 queued · ctrl+enter to send all now · no room in the box · line stays queued"),
@@ -491,7 +530,7 @@ fn a_line_the_box_has_no_room_for_stays_queued_and_the_panel_says_so() {
 
     assert!(queue.settle(), "the next key clears it");
     assert!(!queue.settle(), "and only once");
-    let laid = said(&panel(&queue, 80, 40, Style::plain()));
+    let laid = said(&panel(&queue, Stands::UnderTurn, 80, 40, Style::plain()));
     assert_eq!(
         laid.get(2).map(String::as_str),
         Some("2 queued · ctrl+enter to send all now")
@@ -508,7 +547,7 @@ fn a_narrow_window_says_the_box_had_no_room_under_the_title() {
     );
     queue.take_back(&mut editor, Offer::Turn(&steer));
 
-    let laid = said(&panel(&queue, 40, 40, Style::plain()));
+    let laid = said(&panel(&queue, Stands::UnderTurn, 40, 40, Style::plain()));
     assert_eq!(
         laid.get(2..5),
         Some(
@@ -521,7 +560,7 @@ fn a_narrow_window_says_the_box_had_no_room_under_the_title() {
         "in the blank that parted the title from the lines"
     );
 
-    let laid = said(&panel(&queue, 24, 40, Style::plain()));
+    let laid = said(&panel(&queue, Stands::UnderTurn, 24, 40, Style::plain()));
     assert!(laid.iter().all(|row| crucible_tui::columns(row) <= 24));
     assert!(
         laid.iter().any(|row| row == "line stays queued"),
@@ -551,7 +590,7 @@ fn a_short_window_names_fewer_lines_and_none_below_one() {
     // and the blank under it. Each line past the first costs a blank too.
     let (queue, _) = queued(&FIVE);
     let named = |room| {
-        said(&panel(&queue, 80, room, Style::plain()))
+        said(&panel(&queue, Stands::UnderTurn, 80, room, Style::plain()))
             .iter()
             .filter(|row| {
                 row.ends_with("first") || row.ends_with("second") || row.ends_with("third")
@@ -560,13 +599,13 @@ fn a_short_window_names_fewer_lines_and_none_below_one() {
     };
 
     assert_eq!(named(7), 0);
-    assert!(panel(&queue, 80, 7, Style::plain()).is_empty());
+    assert!(panel(&queue, Stands::UnderTurn, 80, 7, Style::plain()).is_empty());
     assert_eq!(named(8), 1);
     assert_eq!(named(10), 2);
     assert_eq!(named(12), 3);
     assert_eq!(named(40), 3);
     for room in 0..40 {
-        assert!(panel(&queue, 80, room, Style::plain()).len() <= room);
+        assert!(panel(&queue, Stands::UnderTurn, 80, room, Style::plain()).len() <= room);
     }
 }
 
@@ -576,7 +615,7 @@ fn a_megabyte_line_is_cut_to_its_row() {
     let (queue, _) = queued(&[long.as_str()]);
     let style = Style::plain();
 
-    let laid = said(&panel(&queue, 80, 40, style));
+    let laid = said(&panel(&queue, Stands::UnderTurn, 80, 40, style));
     let named = laid.get(4).map(String::as_str).unwrap_or_default();
     assert_eq!(crucible_tui::columns(named), 80);
     assert!(named.starts_with("› yyy"));
@@ -619,7 +658,7 @@ fn the_panel_follows_the_colour_rule() {
                     if refused {
                         queue.take_back(&mut full, Offer::Turn(&steer));
                     }
-                    let laid = panel(&queue, columns, 40, Style::drawn(glyphs));
+                    let laid = panel(&queue, Stands::UnderTurn, columns, 40, Style::drawn(glyphs));
 
                     crate::cli::colour_rule::holds(
                         &format!("queue panel at {columns}, {at}, {refused}"),
@@ -642,12 +681,12 @@ fn a_window_too_narrow_for_a_line_beside_its_mark_lays_no_panel_out() {
         let style = Style::drawn(glyphs);
         for columns in 0..=MARKED {
             assert!(
-                panel(&queue, columns, 40, style).is_empty(),
+                panel(&queue, Stands::UnderTurn, columns, 40, style).is_empty(),
                 "{columns} {glyphs:?}"
             );
         }
         for columns in MARKED + 1..=12 {
-            let laid = panel(&queue, columns, 80, style);
+            let laid = panel(&queue, Stands::UnderTurn, columns, 80, style);
             assert!(!laid.is_empty(), "{columns} {glyphs:?}");
             for row in said(&laid) {
                 assert!(
@@ -664,7 +703,8 @@ fn every_state_of_the_panel_fits_every_window_it_is_given() {
     // The panel's own fit sweep, since it is laid out here and not among the
     // components the crate's sweep walks: fresh, walked into the middle,
     // walked to the end, and saying the box had no room — each at every width
-    // and every room it decides anything at, in either glyph set.
+    // and every room it decides anything at, in either glyph set, under a turn
+    // and between turns.
     let fresh = queued(&FIVE).0;
     let mut middle = queued(&FIVE).0;
     middle.walk(false);
@@ -688,12 +728,15 @@ fn every_state_of_the_panel_fits_every_window_it_is_given() {
         ("refused", &refused),
     ] {
         let marked = queue.waiting_all().nth(queue.highlighted()).unwrap();
-        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        for (glyphs, stands) in [Glyphs::Unicode, Glyphs::Ascii]
+            .into_iter()
+            .flat_map(|glyphs| [(glyphs, Stands::UnderTurn), (glyphs, Stands::BetweenTurns)])
+        {
             let style = Style::drawn(glyphs);
             for columns in 1..=200 {
                 for room in 0..=24 {
-                    let laid = said(&panel(queue, columns, room, style));
-                    let at = format!("{state} {glyphs:?} {columns}x{room}");
+                    let laid = said(&panel(queue, stands, columns, room, style));
+                    let at = format!("{state} {glyphs:?} {stands:?} {columns}x{room}");
                     assert!(laid.len() <= room, "{at}: {laid:?}");
                     for row in &laid {
                         assert!(crucible_tui::columns(row) <= columns, "{at}: {row:?}");
