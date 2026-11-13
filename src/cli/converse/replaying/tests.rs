@@ -765,6 +765,40 @@ fn a_formula_in_a_session_glimpsed_is_drawn_the_way_the_session_draws_math() {
 }
 
 #[test]
+fn a_diagram_in_a_session_glimpsed_is_drawn_as_text() {
+    // The preview is handed the drawers a session is, so a diagram the
+    // session draws is drawn in the picker too, framed and named, and its
+    // source is not shown.
+    let mut transcript = Transcript::new();
+    transcript
+        .push(Message::said("the flow"))
+        .expect("valid fixture transcript");
+    transcript
+        .push(Message::Agent {
+            continuation: None,
+            text: "It is\n\n```mermaid\ngraph TD\nA --> B\n```\n".into(),
+            calls: Vec::new(),
+            stop: Some(StopReason::Yielded),
+        })
+        .expect("valid fixture transcript");
+    let runner = resumed(everything());
+    let pruned = Pruned::default();
+    // In colour, where an answer is read as the markdown it is.
+    let replay = Replay {
+        settled: crucible_app::Settled::from(&runner),
+        pruned: &pruned,
+        style: Style::coloured(),
+    };
+    let shown = glimpsed(transcript.messages(), &replay, 60, 64).expect("a recording cannot fail");
+    let said: Vec<String> = shown.iter().map(Row::text).collect();
+    assert!(
+        said.iter().any(|row| row.contains("mermaid · flowchart")),
+        "{said:#?}"
+    );
+    assert!(!said.iter().any(|row| row.contains("A --> B")), "{said:#?}");
+}
+
+#[test]
 fn a_resumed_session_is_put_back_on_the_screen() {
     let screen = screen(everything(), 80);
     println!("\n{screen}");

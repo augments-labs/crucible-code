@@ -7,7 +7,7 @@ expression: window.picture()
 |                                       │|
 |A sequence diagram:                    ●|
 |                                       ┃|
-|┌─ mermaid                             ┃|
+|┌─ mermaid · sequence diagram · not dra┃|
 |│ sequenceDiagram                      ┃|
 |│   Alice->>Bob: Hello                 ┃|
 |│   Bob-->>Alice: Hi                   ┃|
@@ -15,7 +15,7 @@ expression: window.picture()
 |                                       ┃|
 |A gantt chart:                         ┃|
 |                                       ┃|
-|┌─ mermaid                             ┃|
+|┌─ mermaid · gantt · not drawn as text ┃|
 |│ gantt                                ┃|
 |│   title Release                      ┃|
 |│   section Tests                      ┃|
@@ -24,7 +24,7 @@ expression: window.picture()
 |                                       ┃|
 |A git graph:                           ┃|
 |                                       ┃|
-|┌─ mermaid                             ┃|
+|┌─ mermaid · git graph · not drawn as t┃|
 |│ gitGraph                             ┃|
 |│   commit id: "one"                   ┃|
 |│   branch feature                     ┃|
@@ -35,7 +35,7 @@ expression: window.picture()
 |                                       ┃|
 |A kind with no drawing of its own:     ┃|
 |                                       ┃|
-|┌─ mermaid                             ┃|
+|┌─ mermaid · pie · not drawn as text · ┃|
 |│ pie                                  ┃|
 |│   "drawn" : 1                        ┃|
 |└─                                     ┃|

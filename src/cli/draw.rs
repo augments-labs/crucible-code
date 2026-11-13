@@ -67,6 +67,7 @@ use crucible_tui::{
 };
 use crucible_tui_diff::{Changes, File, Side};
 use crucible_tui_math::Formulas;
+use crucible_tui_mermaid::Diagrams;
 use crucible_types::{
     Answer, Attachment, Change, Changed, Compacted, Compacting, Diff, Modality, Question,
     RecordedToolOutput, StopReason, ToolCall, ToolId,
@@ -1738,7 +1739,8 @@ fn count(row: &mut Row, word: &str, lines: usize) {
 
 /// The drawers every renderer of a session is handed: [`Changes`], which
 /// draws a `diff` or `patch` fence of an answer as the box [`block`] draws a
-/// call's change as, and [`Formulas`], which draws math as text.
+/// call's change as, [`Formulas`], which draws math as text, and
+/// [`Diagrams`], which draws a `mermaid` fence as text.
 ///
 /// One function, so the screen a session is read on and the preview of one
 /// nobody has picked up are handed the same drawers, and draw the same answer
@@ -1747,6 +1749,7 @@ pub(crate) fn drawers() -> Drawers {
     Drawers::default()
         .with(Arc::new(Changes))
         .with(Arc::new(Formulas))
+        .with(Arc::new(Diagrams))
 }
 
 /// The change a tool kept of one edit, as the box takes it: the one file it

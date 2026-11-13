@@ -887,6 +887,8 @@ fi
 # drawer that draws a diff in an answer, so the two cannot drift apart.
 # `code tui-math` ships: the command line hands every renderer of a session
 # the formula drawer, so math in an answer is drawn as text.
+# `code tui-mermaid` ships: the command line hands every renderer of a
+# session the diagram drawer, so a mermaid fence in an answer is drawn as text.
 allowed='code app
 code attachments
 code auth
@@ -914,6 +916,7 @@ code tools
 code tui
 code tui-diff
 code tui-math
+code tui-mermaid
 code types
 code workspace
 app agents

@@ -2626,6 +2626,13 @@ impl<T: Terminal> Renderer<T> {
         self.written_out(false)
     }
 
+    /// What the drawer that takes the fence being held says it is, once the
+    /// fence's first line has ended; `None` where no drawer says.
+    fn told(&self) -> Option<&'static str> {
+        let (fence, first) = self.markdown.opened()?;
+        self.record.drawers().for_name(fence)?.label(fence, first)
+    }
+
     /// The row that tells of a block the reader is holding, or shows the
     /// phrase it holds after a single tilde or the span of math it holds,
     /// drawn `columns` wide; `None` while nothing is held.
@@ -2635,7 +2642,7 @@ impl<T: Terminal> Renderer<T> {
     fn holding(&self, columns: usize) -> Option<Row> {
         self.markdown
             .holding()
-            .map(|holding| holding.row(columns, self.glyphs))
+            .map(|holding| holding.named(self.told(), columns, self.glyphs))
             .or_else(|| self.markdown.striking(columns))
             .or_else(|| self.markdown.spanning(columns))
     }

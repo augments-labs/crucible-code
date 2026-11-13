@@ -13233,6 +13233,60 @@
         "macos",
         "windows"
       ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-LIVE-FOOT-NAMED",
+      "family": "transcript-blocks",
+      "obligation": "A diagram being streamed is named on the live foot in its drawer's words once its first line has ended.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::diagrams::a_diagram_being_streamed_is_named_by_its_drawer_in_the_live_foot",
+      "source": "crates/crucible-tui/src/render/tests/diagrams.rs",
+      "body_sha256": "7dc125497dbd57d946cb684ddca0bd7d011e432ecf6872266e90c5265adf1dd3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-LIVE-FOOT-UNNAMED",
+      "family": "transcript-blocks",
+      "obligation": "A fence whose drawer names nothing, or whose first line is still arriving, keeps the live foot's row naming what is held.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::diagrams::a_fence_whose_drawer_gives_no_label_keeps_the_row_it_had",
+      "source": "crates/crucible-tui/src/render/tests/diagrams.rs",
+      "body_sha256": "f1124cea19fd86bd0788d2c776644c8195bdd9931b76c806af3ff326b6d9c365",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-GLYPH-RELAY",
+      "family": "transcript-blocks",
+      "obligation": "A diagram already drawn is laid out again in the new glyph set when the glyphs change, and math beside it is kept.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::diagrams::a_diagram_drawn_is_laid_out_again_when_the_glyphs_change",
+      "source": "crates/crucible-tui/src/render/tests/diagrams.rs",
+      "body_sha256": "605c2294b9a6d91b90f543ad9c8b287f0ee7482b9c8d0c651188c102d1d959b0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
     }
   ]
 }

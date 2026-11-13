@@ -605,6 +605,7 @@ dependencies = [
  "crucible-tui",
  "crucible-tui-diff",
  "crucible-tui-math",
+ "crucible-tui-mermaid",
  "crucible-types",
  "crucible-update",
  "crucible-workspace",

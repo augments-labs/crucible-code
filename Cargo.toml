@@ -649,6 +649,7 @@ crucible-tui.workspace = true
 crucible-tui-diff.workspace = true
 # What draws math in an answer as text, in every renderer of a session.
 crucible-tui-math.workspace = true
+crucible-tui-mermaid.workspace = true
 image.workspace = true
 # The hash an attachment is recorded under, taken here because this is where a
 # file is attached and the runner compares it on every request afterwards. Both
