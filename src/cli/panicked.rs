@@ -27,8 +27,12 @@
 //! lets go is written to standard error then, once the screen is the reader's
 //! own again, so a panic on another thread is never lost. Each is one line,
 //! written as a failure is, so a message holding a line break or a control
-//! character cannot add a line of its own or act on the terminal. A panic on the
-//! drawing thread itself is still written at once, the same way: it ends the
+//! character cannot add a line of its own or act on the terminal. A panic a
+//! drawer catches on the drawing thread, in code it does not own and holds
+//! `crucible_tui::drawing::Catching` around, is kept the same way: the drawer
+//! answers for it, the session goes on, and the transcript says it rather
+//! than a line written into the frame being drawn. Any other panic on the
+//! drawing thread is still written at once, the same way: it ends the
 //! session, and there is nobody left to keep it for — nor for what it had
 //! taken to say, if it gave up while saying it. That write lands where the
 //! cursor stands, so it can be lost: onto a screen of crucible's own, which
@@ -195,10 +199,10 @@ fn said(info: &PanicHookInfo<'_>) -> String {
 }
 
 /// The hook while a session holds the terminal: `info` kept for the drawing
-/// thread, unless it is the drawing thread's own or the session has let go,
-/// when it is written at once.
+/// thread, unless it is the drawing thread's own outside a drawer's catch or
+/// the session has let go, when it is written at once.
 fn keep(kept: &Mutex<Kept>, drawing: ThreadId, info: &PanicHookInfo<'_>) {
-    if thread::current().id() == drawing {
+    if thread::current().id() == drawing && !crucible_tui::drawing::catching() {
         return write(info);
     }
     let mut said = said(info);
