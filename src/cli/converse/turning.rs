@@ -1016,7 +1016,7 @@ impl Turning {
         let spare = room
             .saturating_sub(ROWS + 1 + usize::from(self.making.is_some()))
             .saturating_add(usize::from(panel.is_empty()));
-        let panel_rows = queueing::panel(queued, window, spare, style);
+        let panel_rows = queueing::panel(queued, queueing::Over::Turn, window, spare, style);
         let calling = self.standing();
         let standing = if calling
             .is_some_and(|calling| calling.backgroundable || calling.printing.lines() > 0)

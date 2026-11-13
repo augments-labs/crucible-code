@@ -518,8 +518,10 @@ whenever any are waiting: a title counting them, up to three of them a blank
 row apart with one highlighted, and a footer naming the keys. Between turns the
 same panel holds the prompts left queued behind a turn that stopped on a
 used-up plan, or that the [content-use](../providers/content-use.md) question
-held back, until you send a prompt, which takes them with it. You go on typing
-into the box under it; the panel only adds these keys:
+held back, until you send a prompt, which takes them with it; its title then
+says `sent with your next prompt` where a turn's says
+`ctrl+enter to send all now`. You go on typing into the box under it; the panel
+only adds these keys:
 
 | Key | What it does |
 | --- | --- |
