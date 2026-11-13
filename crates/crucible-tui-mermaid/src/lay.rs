@@ -14,24 +14,44 @@
 //!   transition reaches a composite state, and leaves out markers joined to
 //!   no state. An
 //!   entity-relationship diagram's has the same entities, by name, and as
-//!   many relationships.
+//!   many relationships. A sequence diagram's has the same participants, in
+//!   order, with the same labels, the same messages, in order, between the
+//!   same participants with the same labels, and nothing else: no note,
+//!   activation, block, group or numbering. A gantt's has the same sections
+//!   and the same tasks in them, in order, by name. A git graph's has the
+//!   same branches, in order, and the same commits, in order, each on the
+//!   same branch with the same id and tag, a merge where one was written and
+//!   from the same branch, and nothing cherry-picked.
 //! - A line the engine draws with a control character in it refuses the
 //!   diagram; under the ASCII glyph set, so does a character that is neither
 //!   ASCII nor written in the source.
 //! - The engine lays a diagram out once, for its room, at its own spacing:
 //!   never again at a tighter one, since each layout costs as much as the
 //!   first. Every line it draws is measured, and a drawing wider than the
-//!   room is refused, never cut.
+//!   room is refused, never cut. A git graph is drawn without its room, since
+//!   the engine would cut a commit's label to fit it, and so is a gantt,
+//!   since the engine draws a task's bar a day short and a one-day task with
+//!   no bar at all whenever its room holds more cells than the gantt has
+//!   days. Without its room the engine draws a gantt a day to a cell, up to
+//!   [`DAYS_A_CELL_EACH`] days; past them it draws more days to a cell, can
+//!   draw a one-day task with no bar, and a gantt with one is refused.
 
 use std::collections::BTreeSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crucible_tui::drawing::Catching;
 use crucible_tui::{Glyphs, columns};
-use mermaid_text::{ErDiagram, Error, Graph, RenderOptions, parser, render_with_options};
+use mermaid_text::{
+    CommitKind, ErDiagram, Error, GanttDiagram, GitGraph, Graph, RenderOptions, SequenceDiagram,
+    parser, render_with_options,
+};
 
-use crate::scan::{Read, Scanned};
+use crate::scan::{Read, Scanned, Step};
 use crate::{Caps, Kind};
+
+/// The most days of a gantt the engine draws a day to a cell, without its
+/// room; past them it draws more than one to a cell.
+const DAYS_A_CELL_EACH: i64 = 60;
 
 /// Why the engine's drawing of a diagram is not shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,7 +109,110 @@ fn agrees(scanned: &Scanned) -> bool {
         Kind::EntityRelationship => {
             parser::er::parse(source).is_ok_and(|diagram| entities_alike(&diagram, &scanned.read))
         }
+        Kind::Sequence => parser::sequence::parse(source)
+            .is_ok_and(|diagram| sequence_alike(&diagram, &scanned.read)),
+        Kind::Gantt => {
+            parser::gantt::parse(source).is_ok_and(|diagram| gantt_alike(&diagram, &scanned.read))
+        }
+        Kind::GitGraph => parser::git_graph::parse(source)
+            .is_ok_and(|graph| git_graph_alike(&graph, &scanned.read)),
     }
+}
+
+/// Whether `diagram` holds the participants `read` found, in order and
+/// labelled alike, and the messages, in order, between the same participants
+/// and labelled alike, and nothing the scan refuses.
+fn sequence_alike(diagram: &SequenceDiagram, read: &Read) -> bool {
+    let participants = read.steps.iter().filter_map(|step| match step {
+        Step::Participant { name, label } => Some((name.as_str(), label.as_str())),
+        _ => None,
+    });
+    let messages = read.steps.iter().filter_map(|step| match step {
+        Step::Message { from, to, label } => Some((from.as_str(), to.as_str(), label.as_str())),
+        _ => None,
+    });
+    diagram.notes.is_empty()
+        && diagram.activations.is_empty()
+        && diagram.blocks.is_empty()
+        && diagram.autonumber_changes.is_empty()
+        && diagram.participant_groups.is_empty()
+        && diagram
+            .participants
+            .iter()
+            .map(|participant| (participant.id.as_str(), participant.label.as_str()))
+            .eq(participants)
+        && diagram
+            .messages
+            .iter()
+            .map(|message| {
+                (
+                    message.from.as_str(),
+                    message.to.as_str(),
+                    message.text.as_str(),
+                )
+            })
+            .eq(messages)
+}
+
+/// Whether `diagram` holds the sections and tasks `read` found, in order and
+/// by name, and the engine draws a bar for every task.
+fn gantt_alike(diagram: &GanttDiagram, read: &Read) -> bool {
+    let drawn = diagram.sections.iter().flat_map(|section| {
+        let named = section.name.clone().map(Step::Section);
+        named.into_iter().chain(
+            section
+                .tasks
+                .iter()
+                .map(|task| Step::Task(task.name.clone())),
+        )
+    });
+    let every_task_drawn = diagram.span_days() <= DAYS_A_CELL_EACH
+        || diagram
+            .sections
+            .iter()
+            .flat_map(|section| &section.tasks)
+            .all(|task| task.duration_days() > 1);
+    every_task_drawn && drawn.eq(read.steps.iter().cloned())
+}
+
+/// Whether `graph` holds the branches `read` found, in order, and the
+/// commits, in order, each on the same branch, with the same id and tag, and
+/// merging the same branch.
+fn git_graph_alike(graph: &GitGraph, read: &Read) -> bool {
+    let branches = graph.branches.iter().map(|branch| branch.name.as_str());
+    let made = std::iter::once("main").chain(read.steps.iter().filter_map(|step| match step {
+        Step::Branch(name) => Some(name.as_str()),
+        _ => None,
+    }));
+    let written = read.steps.iter().filter_map(|step| match step {
+        Step::Commit {
+            branch,
+            id,
+            tag,
+            merged,
+        } => Some((branch, id, tag, merged)),
+        _ => None,
+    });
+    branches.eq(made)
+        && graph.commits.len() == written.clone().count()
+        && graph.commits.iter().zip(written).enumerate().all(
+            |(at, (commit, (branch, id, tag, merged)))| {
+                let named = id.clone().unwrap_or_else(|| format!("c{at}"));
+                let from = commit
+                    .merge_parent
+                    .and_then(|parent| graph.commits.get(parent))
+                    .map(|parent| &parent.branch);
+                commit.branch == *branch
+                    && commit.id == named
+                    && commit.tag == *tag
+                    && from == merged.as_ref()
+                    && match commit.kind {
+                        CommitKind::Normal => merged.is_none(),
+                        CommitKind::Merge => merged.is_some(),
+                        CommitKind::CherryPick => false,
+                    }
+            },
+        )
 }
 
 /// Whether `graph`, a state diagram, holds the transitions `read` found,
@@ -194,11 +317,12 @@ const SPACING: (usize, usize) = (6, 2);
 /// Given its spacing, the engine lays a flowchart or a state diagram out once
 /// rather than again at tighter spacing while it is wider than `room`; an
 /// entity-relationship diagram's entities are set in rows as wide as `room`,
-/// in one pass.
+/// in one pass. The engine lays a sequence diagram out at its own width
+/// whatever the room, and a git graph and a gantt are handed none.
 fn rendered(scanned: &Scanned, room: usize, glyphs: Glyphs) -> Result<Vec<String>, Unlaid> {
     let ascii = glyphs == Glyphs::Ascii;
     let options = RenderOptions {
-        max_width: Some(room),
+        max_width: (!matches!(scanned.kind, Kind::GitGraph | Kind::Gantt)).then_some(room),
         ascii,
         gaps_override: Some(SPACING),
         ..RenderOptions::default()

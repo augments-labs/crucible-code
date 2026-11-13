@@ -1,0 +1,17 @@
+---
+source: crates/crucible-tui-mermaid/src/tests.rs
+expression: "dump(&rows, 80)"
+---
+<Quiet>┌─ mermaid · gantt</>                                                              
+<Quiet>│ </>Gantt: Release (2026-01-05 → 2026-01-14, 10 days)                             
+<Quiet>│ </>                                                                              
+<Quiet>│ </>                  01-05                                                       
+<Quiet>│ </>                                                                              
+<Quiet>│ </>Build                                                                         
+<Quiet>│ </>  Design          ███░░░░░░░  [01-05 → 01-07, 3d]                             
+<Quiet>│ </>  Code            ░░░█████░░  [01-08 → 01-12, 5d]                             
+<Quiet>│ </>                                                                              
+<Quiet>│ </>Ship                                                                          
+<Quiet>│ </>  Test            ░░░░░░░██░  [01-12 → 01-13, 2d]                             
+<Quiet>│ </>  Release         ░░░░░░░░░█  [01-14 → 01-14, 1d]                             
+<Quiet>└─</>
