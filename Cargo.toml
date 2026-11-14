@@ -138,7 +138,7 @@ thiserror = "=2.0.21"
 # sequence diff, and a longest-common-subsequence written here would be the
 # algorithm this is, without its bounds. Already in the graph under `insta`,
 # so this compiles the same version once; the default `text` feature only.
-similar = "=2.7.0"
+similar = "=3.2.1"
 
 # Asks the terminal what colour its own background is, over OSC 11, and reads
 # the answer. `std` has no timed read on a file descriptor and `crossterm` has
