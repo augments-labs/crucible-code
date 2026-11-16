@@ -39,7 +39,13 @@
 //! timed at what it admits. The costliest flowchart and state diagram found
 //! when the caps were set are timed beside them as they were written. A
 //! flowchart is laid top to bottom, which costs the engine more than left to
-//! right for the same boxes and lines. The engine lays a diagram out once whatever its room, and a drawing
+//! right for the same boxes and lines. A sequence diagram is timed with every
+//! participant and every message its caps hold, and with its messages among
+//! four participants; a gantt with every task its caps hold, in four sections
+//! and in one, spanning as many days as it may and still be drawn a day to a
+//! cell; and a git graph with every commit its caps hold, on every branch
+//! they allow and on three, each id and tag as long as the byte cap leaves
+//! room for. The engine lays a diagram out once whatever its room, and a drawing
 //! wider than the room is refused for it only after, so each is laid out at a
 //! common terminal's width, where it may be refused as too wide, and in a
 //! window wide enough to draw it, in both glyph sets. Two milliseconds is the
@@ -104,6 +110,10 @@ const FORMULA_ROOMS: &[usize] = &[MOST_COLUMNS + 2];
 /// The rooms a diagram is laid out in: a common terminal's width with a
 /// frame's gutter, and a window wide enough to draw any diagram at the caps.
 const DIAGRAM_ROOMS: &[usize] = &[WIDE + 2, 402];
+
+/// The days a timed gantt's tasks start within: two short of the most the
+/// engine draws a day to a cell, so a task two days long ends inside them.
+const GANTT_DAYS: usize = 58;
 
 /// The boxes the costliest diagram of a kind has: few enough that every line
 /// its caps allow runs among the same boxes, out from one and back, which is
@@ -626,6 +636,90 @@ fn entities(caps: Caps, shape: Shape, columns: usize) -> String {
     source
 }
 
+/// A sequence diagram with as many participants as `shape` sets out, each
+/// declared with a label, and every message its caps hold, each labelled.
+fn sequence(caps: Caps, shape: Shape, columns: usize) -> String {
+    let arrows = ["->>", "-->>", "->", "-->"];
+    let participants = shape.boxes(caps.nodes);
+    let mut source = String::from("sequenceDiagram\n");
+    for index in 0..participants {
+        let _ = writeln!(source, "participant P{index} as {}", label(index, columns));
+    }
+    for ((from, to), arrow) in shape
+        .lines(participants, caps.edges)
+        .into_iter()
+        .zip(arrows.iter().cycle())
+    {
+        let _ = writeln!(source, "P{from}{arrow}P{to}: {}", label(from + to, columns));
+    }
+    source
+}
+
+/// A gantt with every section and task its caps hold: four sections where
+/// `shape` spreads them and one where it keeps them few, each task two days
+/// long and starting on its own day within [`GANTT_DAYS`], each section and
+/// task named.
+fn gantt(caps: Caps, shape: Shape, columns: usize) -> String {
+    let sections = match shape {
+        Shape::Spread => FEW,
+        Shape::Few => 1,
+    };
+    let tasks = caps.nodes.saturating_sub(sections);
+    let mut source = String::from("gantt\ndateFormat YYYY-MM-DD\n");
+    for index in 0..tasks {
+        if index % tasks.div_ceil(sections).max(1) == 0 {
+            let _ = writeln!(source, "section {}", label(index, columns));
+        }
+        let day = index * 2 % GANTT_DAYS;
+        let (month, date) = if day < 31 {
+            (1, day + 1)
+        } else {
+            (2, day - 30)
+        };
+        let _ = writeln!(
+            source,
+            "{} :2026-{month:02}-{date:02}, 2d",
+            label(index + 1, columns)
+        );
+    }
+    source
+}
+
+/// A git graph with every commit its caps hold: one on `main`, then for each
+/// branch `shape` sets out a commit on it with a tag and one on `main`, then a
+/// merge of each, then commits on `main` to the cap; each commit's id and tag
+/// as long as `columns`.
+fn git_graph(caps: Caps, shape: Shape, columns: usize) -> String {
+    let branches = shape.boxes(caps.edges.saturating_add(1)).saturating_sub(1);
+    let mut source = String::from("gitGraph\n");
+    let mut commits = 0;
+    commit(&mut source, &mut commits, columns, false);
+    for branch in 0..branches {
+        let _ = writeln!(source, "branch b{branch}");
+        commit(&mut source, &mut commits, columns, true);
+        source.push_str("checkout main\n");
+        commit(&mut source, &mut commits, columns, false);
+    }
+    for branch in 0..branches {
+        let _ = writeln!(source, "merge b{branch}");
+    }
+    for _ in commits.saturating_add(branches)..caps.nodes {
+        commit(&mut source, &mut commits, columns, false);
+    }
+    source
+}
+
+/// One commit of a git graph written to `source`, its id the next of
+/// `commits` and as long as `columns`, with a tag as long where `tagged`.
+fn commit(source: &mut String, commits: &mut usize, columns: usize, tagged: bool) {
+    let _ = write!(source, "commit id: \"{}\"", label(*commits, columns));
+    if tagged {
+        let _ = write!(source, " tag: \"{}\"", label(*commits + 1, columns));
+    }
+    source.push('\n');
+    *commits += 1;
+}
+
 fn cases() -> Vec<Case> {
     vec![
         Case {
@@ -747,6 +841,40 @@ fn cases() -> Vec<Case> {
         Case {
             name: "the costliest er diagram inside its caps",
             input: Input::Diagram(diagram_at_the_caps(Caps::ENTITIES, Shape::Few, entities)),
+            rooms: DIAGRAM_ROOMS,
+        },
+        Case {
+            name: "a sequence diagram at its caps",
+            input: Input::Diagram(diagram_at_the_caps(Caps::SEQUENCE, Shape::Spread, sequence)),
+            rooms: DIAGRAM_ROOMS,
+        },
+        Case {
+            name: "a sequence diagram's messages among few participants",
+            input: Input::Diagram(diagram_at_the_caps(Caps::SEQUENCE, Shape::Few, sequence)),
+            rooms: DIAGRAM_ROOMS,
+        },
+        Case {
+            name: "a gantt at its caps in four sections",
+            input: Input::Diagram(diagram_at_the_caps(Caps::GANTT, Shape::Spread, gantt)),
+            rooms: DIAGRAM_ROOMS,
+        },
+        Case {
+            name: "a gantt at its caps in one section",
+            input: Input::Diagram(diagram_at_the_caps(Caps::GANTT, Shape::Few, gantt)),
+            rooms: DIAGRAM_ROOMS,
+        },
+        Case {
+            name: "a git graph at its caps on every branch",
+            input: Input::Diagram(diagram_at_the_caps(
+                Caps::GIT_GRAPH,
+                Shape::Spread,
+                git_graph,
+            )),
+            rooms: DIAGRAM_ROOMS,
+        },
+        Case {
+            name: "a git graph at its caps on few branches",
+            input: Input::Diagram(diagram_at_the_caps(Caps::GIT_GRAPH, Shape::Few, git_graph)),
             rooms: DIAGRAM_ROOMS,
         },
     ]
@@ -927,5 +1055,43 @@ mod tests {
     #[test]
     fn halving_finds_an_er_diagram_s_columns_at_its_caps_with_few_entities() {
         halved_alike(Caps::ENTITIES, Shape::Few, entities);
+    }
+
+    #[test]
+    fn halving_finds_a_sequence_diagram_s_columns_at_its_caps() {
+        halved_alike(Caps::SEQUENCE, Shape::Spread, sequence);
+        halved_alike(Caps::SEQUENCE, Shape::Few, sequence);
+    }
+
+    #[test]
+    fn halving_finds_a_gantt_s_columns_at_its_caps() {
+        halved_alike(Caps::GANTT, Shape::Spread, gantt);
+        halved_alike(Caps::GANTT, Shape::Few, gantt);
+    }
+
+    #[test]
+    fn halving_finds_a_git_graph_s_columns_at_its_caps() {
+        halved_alike(Caps::GIT_GRAPH, Shape::Spread, git_graph);
+        halved_alike(Caps::GIT_GRAPH, Shape::Few, git_graph);
+    }
+
+    /// Every diagram a case times is drawn, or refused only as wider than its
+    /// room: a refusal for any other reason would time the refusal.
+    #[test]
+    fn every_diagram_timed_is_laid_out() {
+        for case in cases() {
+            if let Input::Diagram(text) = &case.input {
+                for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+                    for &columns in case.rooms {
+                        let laid = Diagrams.block(text, &Room { columns, glyphs });
+                        assert!(
+                            matches!(laid, Ok(_) | Err(Undrawn::TooWide)),
+                            "{} at {columns} in {glyphs:?}: {laid:?}\n{text}",
+                            case.name
+                        );
+                    }
+                }
+            }
+        }
     }
 }

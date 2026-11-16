@@ -1,9 +1,11 @@
-//! Mermaid diagrams in an answer drawn as text: flowcharts, state and entity-relationship diagrams.
+//! Mermaid diagrams in an answer drawn as text: flowcharts, state, entity-relationship and sequence diagrams, gantts and git graphs.
 //!
 //! [`Diagrams`] reads the source in a `mermaid` fence and hands what it read
 //! to the `mermaid-text` engine, which lays the boxes and the lines between
-//! them out in a terminal's characters. The other kinds of Mermaid diagram
-//! (class, sequence, gantt, pie and the rest) are named and shown as written.
+//! them out in a terminal's characters: a sequence diagram's participants
+//! over their lifelines, a gantt's tasks as bars along its days, a git
+//! graph's commits down its branches. The other kinds of Mermaid diagram
+//! (class, pie and the rest) are named and shown as written.
 //!
 //! What this crate holds to:
 //!
@@ -15,7 +17,11 @@
 //!   allow: a flowchart's boxes, lines and labels; a state diagram's
 //!   transitions and their labels and the labels it gave states, with no
 //!   more states than its cap; an entity-relationship diagram's entities and
-//!   how many relationships.
+//!   how many relationships; a sequence diagram's participants and their
+//!   labels and its messages, their ends and labels, in order; a gantt's
+//!   sections and its tasks' names, in order, and that a bar is drawn for
+//!   every task; a git graph's branches and its commits, each with the branch
+//!   it is made on, its id, its tag and the branch it merges, in order.
 //! - **Bounded before the engine.** A source past [`MOST_BYTES`] is refused
 //!   before it is read, and one past its kind's [`Caps`] (bytes, boxes, lines
 //!   or the columns of one label) is refused as the read reaches the one past
@@ -41,7 +47,20 @@
 //!   allow going out from one and back, so a loosened cap is timed at what it
 //!   admits; on a quiet machine its 95th percentile was 1.15 ms for a
 //!   flowchart, 1.05 ms for a state diagram and 0.20 ms for an
-//!   entity-relationship diagram.
+//!   entity-relationship diagram. A sequence diagram, a gantt and a git graph
+//!   cost far less: a release build timing each 31 times in a room of 80
+//!   columns found a sequence diagram of 16 participants and 64 messages
+//!   with labels of 40 columns, in 3830 bytes, at 0.56 ms (95th percentile),
+//!   and a gantt of 96 tasks and a git graph of 12 branches, each in more
+//!   bytes than its cap, under 0.2 ms. So their caps are set by what a
+//!   terminal shows rather than by time: a sequence diagram holds 8
+//!   participants and 32 messages with labels of 24 columns, a gantt 32
+//!   sections and tasks with names of 15 columns, the widest the engine
+//!   draws whole, and a git graph 32 commits and 8 branches beside `main`,
+//!   each in 2048 bytes. The drawing probe builds each of these from its caps
+//!   too, with every box and line they hold and labels as wide as they allow;
+//!   on the same machine its 95th percentile was 0.79 ms for a sequence
+//!   diagram, 0.16 ms for a gantt and 0.16 ms for a git graph.
 //! - **Hostile text taken out, not drawn.** Control, format and invisible
 //!   characters, and the characters boxes are drawn with, are taken out of a
 //!   label before the engine sees it, so a label neither acts on the terminal
@@ -60,12 +79,18 @@
 //! - **Every row fits.** The engine lays a diagram out once, for its room,
 //!   and every row of what it draws is measured; a drawing wider than its
 //!   room is refused for it, never cut and never laid out again, so a
-//!   narrower window shows it as written.
+//!   narrower window shows it as written. A sequence diagram is laid out at
+//!   its own width whatever its room, and a gantt and a git graph are laid
+//!   out with none, a day of a gantt to a cell and a git graph's labels
+//!   whole, so each is drawn as it is or refused as too wide, never squeezed.
 
 mod entities;
 mod flowchart;
+mod gantt;
+mod git_graph;
 mod lay;
 mod scan;
+mod sequence;
 mod state;
 
 #[cfg(test)]
@@ -90,13 +115,15 @@ pub struct Caps {
     /// The most bytes of source.
     pub bytes: usize,
     /// The most boxes, counting a state diagram's composite states and notes
-    /// and its start and end markers.
+    /// and its start and end markers; a sequence diagram's participants; a
+    /// gantt's sections and tasks; a git graph's commits.
     pub nodes: usize,
-    /// The most lines between boxes.
+    /// The most lines between boxes: a sequence diagram's messages; a git
+    /// graph's branches beside `main`.
     pub edges: usize,
     /// The most columns one label takes, where labels are capped: a box's
     /// label, or its name where it is drawn with none; a line's label; each
-    /// line of a note.
+    /// line of a note; a gantt task's name.
     pub label: Option<usize>,
 }
 
@@ -124,20 +151,52 @@ impl Caps {
         edges: 64,
         label: None,
     };
+
+    /// A sequence diagram's caps.
+    pub const SEQUENCE: Self = Self {
+        bytes: 2048,
+        nodes: 8,
+        edges: 32,
+        label: Some(24),
+    };
+
+    /// A gantt's caps. Its label cap is the widest task name the engine
+    /// draws whole: one wider is cut short with an ellipsis.
+    pub const GANTT: Self = Self {
+        bytes: 2048,
+        nodes: 32,
+        edges: 0,
+        label: Some(15),
+    };
+
+    /// A git graph's caps.
+    pub const GIT_GRAPH: Self = Self {
+        bytes: 2048,
+        nodes: 32,
+        edges: 8,
+        label: None,
+    };
 }
 
 /// The most bytes of source read before its kind is known: the largest of
 /// the kinds' byte caps.
-pub const MOST_BYTES: usize = most_bytes([Caps::FLOWCHART, Caps::STATE, Caps::ENTITIES]);
+pub const MOST_BYTES: usize = most_bytes(&[
+    Caps::FLOWCHART,
+    Caps::STATE,
+    Caps::ENTITIES,
+    Caps::SEQUENCE,
+    Caps::GANTT,
+    Caps::GIT_GRAPH,
+]);
 
-const fn most_bytes(all: [Caps; 3]) -> usize {
-    let [one, two, three] = all;
-    let mut most = one.bytes;
-    if two.bytes > most {
-        most = two.bytes;
-    }
-    if three.bytes > most {
-        most = three.bytes;
+const fn most_bytes(all: &[Caps]) -> usize {
+    let mut most = 0;
+    let mut rest = all;
+    while let [caps, after @ ..] = rest {
+        if caps.bytes > most {
+            most = caps.bytes;
+        }
+        rest = after;
     }
     most
 }
@@ -153,6 +212,12 @@ pub enum Kind {
     Class,
     /// `erDiagram`: entities, their attributes, and their relationships.
     EntityRelationship,
+    /// `sequenceDiagram`: participants and the messages between them.
+    Sequence,
+    /// `gantt`: tasks in sections, as bars along the days they take.
+    Gantt,
+    /// `gitGraph`: commits on branches, and the merges between them.
+    GitGraph,
 }
 
 impl Kind {
@@ -164,6 +229,9 @@ impl Kind {
             Self::State => "state diagram",
             Self::Class => "class diagram",
             Self::EntityRelationship => "er diagram",
+            Self::Sequence => "sequence diagram",
+            Self::Gantt => "gantt",
+            Self::GitGraph => "git graph",
         }
     }
 
@@ -176,6 +244,9 @@ impl Kind {
             Self::State => Some(Caps::STATE),
             Self::Class => None,
             Self::EntityRelationship => Some(Caps::ENTITIES),
+            Self::Sequence => Some(Caps::SEQUENCE),
+            Self::Gantt => Some(Caps::GANTT),
+            Self::GitGraph => Some(Caps::GIT_GRAPH),
         }
     }
 
@@ -187,6 +258,9 @@ impl Kind {
             Self::State => "a mermaid state diagram",
             Self::Class => "a mermaid class diagram",
             Self::EntityRelationship => "a mermaid er diagram",
+            Self::Sequence => "a mermaid sequence diagram",
+            Self::Gantt => "a mermaid gantt",
+            Self::GitGraph => "a mermaid git graph",
         }
     }
 
@@ -197,6 +271,9 @@ impl Kind {
             "statediagram" | "statediagram-v2" => Some(Self::State),
             "classdiagram" => Some(Self::Class),
             "erdiagram" => Some(Self::EntityRelationship),
+            "sequencediagram" => Some(Self::Sequence),
+            "gantt" => Some(Self::Gantt),
+            "gitgraph" => Some(Self::GitGraph),
             _ => None,
         }
     }

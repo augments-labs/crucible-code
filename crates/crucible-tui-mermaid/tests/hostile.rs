@@ -81,9 +81,20 @@ fn this_crate(source: &str, room: &Room) -> Result<Laid, Undrawn> {
     Diagrams.block(source, room)
 }
 
+/// What the planted panic panics on: a statement of the corpus's flowchart,
+/// sequence diagram, gantt and git graph, each.
+const PANICKED_ON: [(&str, &str); 4] = [
+    ("flowchart.mmd", "{Is it?}"),
+    ("sequence.mmd", "Bob-->>Alice"),
+    ("gantt.mmd", "Task :a1"),
+    ("gitgraph.mmd", "commit id: \"base\""),
+];
+
 fn panics_on_a_decision(source: &str, room: &Room) -> Result<Laid, Undrawn> {
     assert!(
-        !source.contains("{Is it?}"),
+        !PANICKED_ON
+            .iter()
+            .any(|(_, statement)| source.contains(statement)),
         "planted: a drawer that panics"
     );
     Diagrams.block(source, room)
@@ -143,22 +154,28 @@ const ENTRIES: &[(&str, Expect)] = &[
     ("cut-er-label.mmd", Shown(Undrawn::NotText)),
     ("cut-flowchart-first-line.mmd", Shown(Undrawn::NotText)),
     ("cut-flowchart-label.mmd", Shown(Undrawn::NotText)),
+    ("cut-gantt-first-line.mmd", Shown(Undrawn::NotText)),
+    ("cut-gantt-label.mmd", Shown(Undrawn::NotText)),
+    ("cut-gitgraph-first-line.mmd", Shown(Undrawn::NotText)),
+    ("cut-gitgraph-label.mmd", Shown(Undrawn::NotText)),
+    ("cut-sequence-first-line.mmd", Shown(Undrawn::NotText)),
+    // A message's label is written unquoted, so one cut short is a message
+    // still: the drawer draws it, and the fence left open shows it as written.
+    ("cut-sequence-label.mmd", Drawn),
     ("cut-state-first-line.mmd", Shown(Undrawn::NotText)),
     ("cut-state-label.mmd", Shown(Undrawn::NotText)),
     ("empty.mmd", Shown(Undrawn::NotHere)),
     ("er.mmd", Drawn),
     ("flowchart-lr.mmd", Drawn),
     ("flowchart.mmd", Drawn),
-    ("gantt.mmd", Shown(Undrawn::Unsupported("gantt"))),
+    ("gantt.mmd", Drawn),
+    ("gitgraph.mmd", Drawn),
     ("init-and-comments.mmd", Drawn),
     ("long-label.mmd", Shown(Undrawn::PastCap)),
     ("past-boxes.mmd", Shown(Undrawn::PastCap)),
     ("past-bytes.mmd", Shown(Undrawn::PastCap)),
     ("past-lines.mmd", Shown(Undrawn::PastCap)),
-    (
-        "sequence.mmd",
-        Shown(Undrawn::Unsupported("sequence diagram")),
-    ),
+    ("sequence.mmd", Drawn),
     ("state-v1.mmd", Drawn),
     ("state.mmd", Drawn),
     ("subgraph.mmd", Shown(Undrawn::Unsupported("groups"))),
@@ -299,10 +316,14 @@ fn the_corpus_and_its_record_name_the_same_files() {
 #[test]
 fn a_planted_panic_is_found_by_the_corpus_run() {
     let wrong = what_a_drawer_does_with_the_corpus(panics_on_a_decision);
-    assert!(
-        wrong.iter().any(|line| line == "flowchart.mmd: panicked"),
-        "{wrong:#?}"
-    );
+    for (name, _) in PANICKED_ON {
+        assert!(
+            wrong
+                .iter()
+                .any(|line| *line == format!("{name}: panicked")),
+            "{name}: {wrong:#?}"
+        );
+    }
 }
 
 #[test]
@@ -316,41 +337,167 @@ fn a_planted_quadratic_drawer_is_found_by_the_corpus_run() {
     );
 }
 
-/// An entity-relationship diagram at its kind's caps: every entity and every
-/// relationship it may hold, its attributes and labels filling the bytes the
-/// largest byte cap leaves.
-fn at_the_caps() -> String {
-    let Caps {
-        bytes,
-        nodes,
-        edges,
-        ..
-    } = Caps::ENTITIES;
-    let mut lines = vec!["erDiagram".to_owned()];
-    for at in 0..edges {
-        let (from, to) = (at % nodes, (at * 7 + 1) % nodes);
-        lines.push(format!("E{from} ||--o{{ E{to} : \"漢字 and words\""));
-    }
+/// A label as wide as `columns`, in wide characters, numbered `at` so no two
+/// are alike.
+fn wide_label(at: usize, columns: usize) -> String {
+    let numbered = format!("{at:02}");
+    format!("{numbered}{}", "字".repeat((columns - numbered.len()) / 2))
+}
+
+/// `lines` joined, filled with a comment to within a line of `bytes`.
+fn filled(lines: &[String], bytes: usize) -> String {
     let mut text = lines.join("\n");
-    let mut entity = 0;
-    while text.len() + 40 < bytes {
-        let _ = write!(text, "\nE{} {{\nstring 字段_{entity}\n}}", entity % nodes);
-        entity += 1;
+    if text.len() + 4 < bytes {
+        let _ = write!(text, "\n%%{}", "x".repeat(bytes - text.len() - 4));
     }
     text
 }
 
+/// A diagram of each kind with caps of its own the engine reads, at those
+/// caps: every box and every line it may hold, labels at the label cap,
+/// filling its byte cap. By name, with its caps.
+fn at_the_caps() -> [(&'static str, Caps, String); 4] {
+    let entities = {
+        let Caps {
+            bytes,
+            nodes,
+            edges,
+            ..
+        } = Caps::ENTITIES;
+        let mut lines = vec!["erDiagram".to_owned()];
+        for at in 0..edges {
+            let (from, to) = (at % nodes, (at * 7 + 1) % nodes);
+            lines.push(format!("E{from} ||--o{{ E{to} : \"漢字 and words\""));
+        }
+        let mut text = lines.join("\n");
+        let mut entity = 0;
+        while text.len() + 40 < bytes {
+            let _ = write!(text, "\nE{} {{\nstring 字段_{entity}\n}}", entity % nodes);
+            entity += 1;
+        }
+        text
+    };
+    let sequence = {
+        let Caps {
+            bytes,
+            nodes,
+            edges,
+            label,
+        } = Caps::SEQUENCE;
+        let label = label.expect("a sequence diagram's labels are capped");
+        let mut lines = vec!["sequenceDiagram".to_owned()];
+        for at in 0..nodes {
+            lines.push(format!("participant P{at} as {}", wide_label(at, label)));
+        }
+        for at in 0..edges {
+            let (from, to) = (at % nodes, (at * 3 + 1) % nodes);
+            lines.push(format!("P{from}->>P{to}: {}", wide_label(at, label)));
+        }
+        filled(&lines, bytes)
+    };
+    let gantt = {
+        let Caps {
+            bytes,
+            nodes,
+            label,
+            ..
+        } = Caps::GANTT;
+        let label = label.expect("a gantt's task names are capped");
+        let mut lines = vec!["gantt".to_owned(), "dateFormat YYYY-MM-DD".to_owned()];
+        let sections = 4;
+        for at in 0..nodes - sections {
+            if at % ((nodes - sections) / sections) == 0 {
+                lines.push(format!("section {}", wide_label(at, label)));
+            }
+            let start = if at == 0 {
+                "2026-01-01".to_owned()
+            } else {
+                format!("after t{}", at - 1)
+            };
+            lines.push(format!("{} :t{at}, {start}, 2d", wide_label(at, label)));
+        }
+        filled(&lines, bytes)
+    };
+    let git_graph = {
+        let Caps {
+            bytes,
+            nodes,
+            edges,
+            ..
+        } = Caps::GIT_GRAPH;
+        let mut lines = vec!["gitGraph".to_owned(), "commit".to_owned()];
+        let mut commits = 1;
+        for branch in 0..edges {
+            lines.push(format!("branch b{branch}"));
+            lines.push(format!("commit tag: \"{}\"", wide_label(branch, 24)));
+            lines.push("checkout main".to_owned());
+            lines.push(format!("commit id: \"{}\"", wide_label(branch, 24)));
+            commits += 2;
+        }
+        for branch in 0..edges {
+            lines.push(format!("merge b{branch}"));
+            commits += 1;
+        }
+        while commits < nodes {
+            lines.push("commit".to_owned());
+            commits += 1;
+        }
+        filled(&lines, bytes)
+    };
+    [
+        ("entities", Caps::ENTITIES, entities),
+        ("sequence", Caps::SEQUENCE, sequence),
+        ("gantt", Caps::GANTT, gantt),
+        ("git graph", Caps::GIT_GRAPH, git_graph),
+    ]
+}
+
 #[test]
-fn a_diagram_at_the_caps_is_answered_inside_the_deadline_and_the_planted_quadratic_is_not() {
-    let text = at_the_caps();
-    assert!(text.len() <= MOST_BYTES && text.len() + 40 >= Caps::ENTITIES.bytes);
-    for (drawer, inside) in [(this_crate as Drawer, true), (quadratic as Drawer, false)] {
-        let text = text.clone();
+fn each_diagram_at_its_caps_is_read_whole_and_answered_inside_the_deadline() {
+    for (name, caps, text) in at_the_caps() {
+        assert!(
+            text.len() <= caps.bytes && text.len() + 40 >= caps.bytes,
+            "{name}: {} bytes",
+            text.len()
+        );
+        let shown = Diagrams.block(&text, &room(400, Glyphs::Unicode));
+        assert!(
+            matches!(shown, Ok(_) | Err(Undrawn::TooWide)),
+            "{name}: {shown:?}"
+        );
+        let more = format!("{text}\n%%{}", "x".repeat(caps.bytes - text.len()));
+        assert!(more.len() > caps.bytes, "{name}");
+        assert_eq!(
+            Diagrams.block(&more, &room(400, Glyphs::Unicode)),
+            Err(Undrawn::PastCap),
+            "{name}"
+        );
         let ended = guarded(DEADLINE, move || {
             let mut drawn = 0_usize;
             for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
                 for columns in NARROWEST..=WIDEST {
-                    drawn += usize::from(drawer(&text, &room(columns, glyphs)).is_ok());
+                    drawn += usize::from(this_crate(&text, &room(columns, glyphs)).is_ok());
+                }
+            }
+            drawn
+        });
+        assert!(matches!(ended, Ended::Returned(_)), "{name}: {ended:?}");
+    }
+}
+
+#[test]
+fn a_diagram_at_the_caps_is_answered_inside_the_deadline_and_the_planted_quadratic_is_not() {
+    let texts = at_the_caps().map(|(_, _, text)| text);
+    assert!(texts.iter().all(|text| text.len() <= MOST_BYTES));
+    for (drawer, inside) in [(this_crate as Drawer, true), (quadratic as Drawer, false)] {
+        let texts = texts.clone();
+        let ended = guarded(DEADLINE, move || {
+            let mut drawn = 0_usize;
+            for text in &texts {
+                for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+                    for columns in NARROWEST..=WIDEST {
+                        drawn += usize::from(drawer(text, &room(columns, glyphs)).is_ok());
+                    }
                 }
             }
             drawn
@@ -433,6 +580,24 @@ fn a_diagram_in_a_fence_of_an_answer_is_drawn_and_its_refusal_shown_as_written()
         "{drawn:#?}"
     );
     assert!(!drawn.iter().any(|row| row.contains("-->")), "{drawn:#?}");
+
+    for (name, kind) in [
+        ("sequence.mmd", "sequence diagram"),
+        ("gantt.mmd", "gantt"),
+        ("gitgraph.mmd", "git graph"),
+    ] {
+        let drawn = texts(name);
+        assert!(
+            drawn
+                .iter()
+                .any(|row| *row == format!("┌─ mermaid · {kind}")),
+            "{name}: {drawn:#?}"
+        );
+        assert!(
+            !drawn.iter().any(|row| row.contains("shown as written")),
+            "{name}: {drawn:#?}"
+        );
+    }
 
     let refused = texts("class.mmd");
     assert!(

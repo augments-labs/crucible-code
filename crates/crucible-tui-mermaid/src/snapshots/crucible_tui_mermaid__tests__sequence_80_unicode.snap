@@ -1,0 +1,21 @@
+---
+source: crates/crucible-tui-mermaid/src/tests.rs
+expression: "dump(&rows, 80)"
+---
+<Quiet>┌─ mermaid · sequence diagram</>                                                   
+<Quiet>│ </> ┌────────┐         ┌──────────┐                                              
+<Quiet>│ </> │  User  │         │  Server  │                                              
+<Quiet>│ </> └────────┘         └──────────┘                                              
+<Quiet>│ </>      ┆ request           ┆                                                   
+<Quiet>│ </>      ────────────────────▸                                                   
+<Quiet>│ </>      ┆ answer            ┆                                                   
+<Quiet>│ </>      ◂┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄                                                   
+<Quiet>│ </>      ┆                   ┆                                                   
+<Quiet>│ </>      ├───────┐           ┆                                                   
+<Quiet>│ </>      ┆think  │           ┆                                                   
+<Quiet>│ </>      ├◂──────┘           ┆                                                   
+<Quiet>│ </>      ┆                   ┆                                                   
+<Quiet>│ </> ┌────────┐         ┌──────────┐                                              
+<Quiet>│ </> │  User  │         │  Server  │                                              
+<Quiet>│ </> └────────┘         └──────────┘                                              
+<Quiet>└─</>

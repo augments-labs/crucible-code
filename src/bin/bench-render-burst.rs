@@ -237,7 +237,7 @@ fn streamed() -> Vec<String> {
     // Last come the answers both burst probes hold, two changes more: one to
     // two files and one long enough to fold, so the burst draws every kind of
     // row a change has; a formula in a line beside one in a block; and a
-    // state diagram.
+    // state diagram, a sequence diagram, a gantt and a git graph.
     for text in std::iter::once(HELD).chain(answers.iter().map(String::as_str)) {
         let held: Vec<char> = text.chars().collect();
         deltas.extend(held.chunks(5).map(|chunk| chunk.iter().collect::<String>()));

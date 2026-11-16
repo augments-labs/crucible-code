@@ -1,6 +1,6 @@
-//! Generated input: flowcharts, state diagrams and entity-relationship
-//! diagrams written whole inside their kind's caps from the forms this crate
-//! reads, the same diagrams cut, spliced and littered, and noise made of
+//! Generated input: flowcharts, state diagrams, entity-relationship
+//! diagrams, sequence diagrams, gantts and git graphs written whole inside
+//! their kind's caps from the forms this crate reads, the same diagrams cut, spliced and littered, and noise made of
 //! Mermaid's own pieces, each drawn into a room of its own. None may come back
 //! as a panic, a hang, a row wider than its room, or a character a terminal
 //! would obey; and a diagram written whole must be drawn wherever it fits.
@@ -315,12 +315,164 @@ fn entities(rng: &mut Rng) -> String {
     out
 }
 
+/// The arrows a message is written with.
+const ARROWS: &[&str] = &["->>", "-->>", "->", "-->"];
+
+/// A sequence diagram written whole inside its caps: participants declared
+/// before any message names them, then messages between them.
+fn sequence(rng: &mut Rng) -> String {
+    let caps = Caps::SEQUENCE;
+    let participants = rng.between(2, caps.nodes.min(5));
+    let mut out = String::from("sequenceDiagram\n");
+    if rng.chance(4) {
+        out.push_str("    accTitle: Messages\n");
+    }
+    for at in 0..participants {
+        if rng.chance(2) {
+            let keyword = rng.pick(&["participant", "actor"]);
+            if rng.chance(2) {
+                let _ = writeln!(out, "    {keyword} P{at} as {}", rng.pick(LABELS));
+            } else {
+                let _ = writeln!(out, "    {keyword} P{at}");
+            }
+        }
+    }
+    for _ in 0..rng.between(1, caps.edges.min(10)) {
+        let from = rng.below(participants);
+        let to = rng.below(participants);
+        let arrow = rng.pick(ARROWS);
+        if rng.chance(3) {
+            let _ = writeln!(out, "    P{from}{arrow}P{to}");
+        } else {
+            let _ = writeln!(out, "    P{from}{arrow}P{to}: {}", rng.pick(LABELS));
+        }
+    }
+    if rng.chance(4) {
+        out.push_str("    %% a comment\n");
+    }
+    out
+}
+
+/// The axis formats a gantt may be drawn with, and a task's lengths.
+const AXIS_FORMATS: &[&str] = &["%b %d", "%m/%d", "%d", "%m-%d"];
+const LENGTHS: &[&str] = &["1d", "2d", "3d", "4d", "1w"];
+
+/// A gantt written whole inside its caps: no more than seven tasks a week
+/// long at most, starting in the first ten days, so it spans fewer days than
+/// the engine draws a day to a cell.
+fn gantt(rng: &mut Rng) -> String {
+    let mut out = String::from("gantt\n");
+    if rng.chance(2) {
+        let _ = writeln!(out, "    title {}", rng.pick(LABELS));
+    }
+    if rng.chance(2) {
+        out.push_str("    dateFormat YYYY-MM-DD\n");
+    }
+    if rng.chance(3) {
+        let _ = writeln!(out, "    axisFormat {}", rng.pick(AXIS_FORMATS));
+    }
+    if rng.chance(4) {
+        out.push_str("    todayMarker off\n");
+    }
+    let tasks = rng.between(1, 7);
+    let mut made = 0;
+    while made < tasks {
+        let _ = writeln!(out, "    section {}", rng.pick(LABELS));
+        for in_section in 0..rng.between(1, tasks - made) {
+            let mut fields = Vec::new();
+            if rng.chance(4) {
+                fields.push(rng.pick(&["done", "active", "crit"]).to_owned());
+            }
+            fields.push(format!("t{made}"));
+            match (made, rng.below(3)) {
+                (0, _) | (_, 0) => {
+                    fields.push(format!("2026-01-{:02}", 5 + rng.below(10)));
+                }
+                (_, 1) => fields.push(format!("after t{}", rng.below(made))),
+                // The day after the task above it, which only a task with one
+                // above it in its section may leave unwritten.
+                _ if in_section > 0 => {}
+                _ => fields.push(format!("after t{}", made - 1)),
+            }
+            fields.push(rng.pick(LENGTHS).to_owned());
+            let _ = writeln!(out, "    {} :{}", rng.pick(LABELS), fields.join(", "));
+            made += 1;
+        }
+    }
+    out
+}
+
+/// A git graph written whole inside its caps: each statement one Mermaid
+/// takes from where the graph stands.
+fn git_graph(rng: &mut Rng) -> String {
+    let caps = Caps::GIT_GRAPH;
+    let mut out = String::from("gitGraph\n    commit\n");
+    // Each branch's name, whether a commit was made on it, and its head.
+    let mut branches = vec![("main".to_owned(), true, 0_usize)];
+    let mut current = 0;
+    let mut commits = 1;
+    for _ in 0..rng.between(1, 12) {
+        match rng.below(4) {
+            0 if branches.len() <= caps.edges.min(3) => {
+                let name = format!("b{}", branches.len());
+                let head = branches.get(current).map_or(0, |branch| branch.2);
+                let _ = writeln!(out, "    branch {name}");
+                branches.push((name, false, head));
+                current = branches.len() - 1;
+            }
+            1 => {
+                current = rng.below(branches.len());
+                let name = branches
+                    .get(current)
+                    .map_or("main", |branch| branch.0.as_str());
+                let _ = writeln!(out, "    checkout {name}");
+            }
+            2 => {
+                let from = rng.below(branches.len());
+                let into = branches.get(current).cloned();
+                let merged = branches.get(from).cloned();
+                if let (Some(into), Some(merged)) = (into, merged)
+                    && from != current
+                    && merged.1
+                    && merged.2 != into.2
+                {
+                    let _ = writeln!(out, "    merge {}", merged.0);
+                    if let Some(branch) = branches.get_mut(current) {
+                        branch.1 = true;
+                        branch.2 = commits;
+                    }
+                    commits += 1;
+                }
+            }
+            _ => {
+                let mut commit = String::from("    commit");
+                if rng.chance(3) {
+                    let _ = write!(commit, " id: \"made-{commits}\"");
+                }
+                if rng.chance(3) {
+                    let _ = write!(commit, " tag: \"{}\"", rng.pick(LABELS));
+                }
+                let _ = writeln!(out, "{commit}");
+                if let Some(branch) = branches.get_mut(current) {
+                    branch.1 = true;
+                    branch.2 = commits;
+                }
+                commits += 1;
+            }
+        }
+    }
+    out
+}
+
 /// A diagram of one of the kinds drawn as text, written whole.
 fn written(rng: &mut Rng) -> String {
-    match rng.below(3) {
+    match rng.below(6) {
         0 => flowchart(rng),
         1 => state(rng),
-        _ => entities(rng),
+        2 => entities(rng),
+        3 => sequence(rng),
+        4 => gantt(rng),
+        _ => git_graph(rng),
     }
 }
 
@@ -352,6 +504,16 @@ const PIECES: &[&str] = &[
     "classDiagram",
     "erDiagram",
     "sequenceDiagram",
+    "gantt",
+    "gitGraph",
+    "participant ",
+    "->>",
+    "section ",
+    "Task :a1, 2026-01-01, 3d",
+    "commit",
+    "branch ",
+    "checkout ",
+    "merge ",
     "subgraph",
     "end",
     "[*]",
@@ -584,6 +746,22 @@ fn a_written_run_holds_every_kind_and_form_the_generator_knows() {
         "direction LR",
         "}o..|{",
         " {\n        ",
+        "sequenceDiagram\n",
+        "-->>",
+        "actor ",
+        " as ",
+        "accTitle: ",
+        "gantt\n",
+        "section ",
+        "after t",
+        "done, ",
+        "axisFormat ",
+        "1w\n",
+        "gitGraph\n",
+        "branch b",
+        "checkout ",
+        "merge ",
+        "tag: \"",
     ] {
         assert!(written.contains(construct), "no {construct:?} in a run");
     }
@@ -595,6 +773,12 @@ fn every_written_diagram_is_inside_its_kinds_caps() {
         let (_, case) = case(index);
         let caps = if case.source.starts_with("erDiagram") {
             Caps::ENTITIES
+        } else if case.source.starts_with("sequenceDiagram") {
+            Caps::SEQUENCE
+        } else if case.source.starts_with("gantt") {
+            Caps::GANTT
+        } else if case.source.starts_with("gitGraph") {
+            Caps::GIT_GRAPH
         } else if case.source.starts_with("state") {
             Caps::STATE
         } else {
@@ -637,14 +821,44 @@ fn every_written_diagram_is_drawn_in_a_room_wide_enough_for_it() {
     );
 }
 
+/// What the planted panic panics on, by the kind it is written in: a state
+/// diagram's note, a sequence diagram's message, a gantt's section and a git
+/// graph's checkout.
+const PANICKED_ON: [(&str, &str); 4] = [
+    ("stateDiagram", "note "),
+    ("sequenceDiagram", "->>"),
+    ("gantt", "section "),
+    ("gitGraph", "checkout "),
+];
+
+/// A drawer that panics on a diagram of the kind [`PANICKED_ON`] holds at
+/// `AT`, written with what it panics on.
+fn panics_on<const AT: usize>(source: &str, room: &Room) -> Result<Laid, Undrawn> {
+    if let Some((kind, statement)) = PANICKED_ON.get(AT) {
+        assert!(
+            !(source.starts_with(kind) && source.contains(statement)),
+            "planted: a drawer that panics"
+        );
+    }
+    this_crate(source, room)
+}
+
 #[test]
 fn a_planted_drawer_that_panics_is_found_by_the_generated_run() {
-    fn panics_on_a_note(source: &str, room: &Room) -> Result<Laid, Undrawn> {
-        assert!(!source.contains("note "), "planted: a drawer that panics");
-        this_crate(source, room)
+    let planted: [Drawer; 4] = [
+        panics_on::<0>,
+        panics_on::<1>,
+        panics_on::<2>,
+        panics_on::<3>,
+    ];
+    for ((kind, _), drawer) in PANICKED_ON.iter().zip(planted) {
+        let found = run(0, 256, drawer).expect_err(kind);
+        assert!(found.contains("panicked"), "{kind}: {found}");
+        assert!(
+            found.contains(&format!("panicked\n{kind}")),
+            "{kind}: {found}"
+        );
     }
-    let found = run(0, 256, panics_on_a_note).expect_err("the planted panic");
-    assert!(found.contains("panicked"), "{found}");
 }
 
 #[test]

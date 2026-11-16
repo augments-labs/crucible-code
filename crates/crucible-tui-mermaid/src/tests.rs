@@ -57,11 +57,43 @@ const ENTITIES: &str = "erDiagram
     }
 ";
 
+const SEQUENCE: &str = "sequenceDiagram
+    participant U as User
+    participant S as Server
+    U->>S: request
+    S-->>U: answer
+    U->>U: think
+";
+
+const GANTT: &str = "gantt
+    title Release
+    dateFormat YYYY-MM-DD
+    section Build
+    Design :a1, 2026-01-05, 3d
+    Code :after a1, 5d
+    section Ship
+    Test :t1, 2026-01-12, 2d
+    Release :1d
+";
+
+const GIT_GRAPH: &str = "gitGraph
+    commit
+    commit id: \"base\"
+    branch feature
+    commit
+    checkout main
+    commit tag: \"v1\"
+    merge feature
+";
+
 /// One diagram of each kind drawn as text, and the kind it is.
-const KINDS: [(&str, &str, Kind); 3] = [
+const KINDS: [(&str, &str, Kind); 6] = [
     ("flowchart", FLOWCHART, Kind::Flowchart),
     ("state", STATE, Kind::State),
     ("entities", ENTITIES, Kind::EntityRelationship),
+    ("sequence", SEQUENCE, Kind::Sequence),
+    ("gantt", GANTT, Kind::Gantt),
+    ("gitgraph", GIT_GRAPH, Kind::GitGraph),
 ];
 
 #[test]
@@ -78,10 +110,13 @@ fn the_status_row_is_told_the_kind_its_first_line_opens() {
         ("stateDiagram-v2", "a mermaid state diagram"),
         ("classDiagram", "a mermaid class diagram"),
         ("erDiagram", "a mermaid er diagram"),
+        ("sequenceDiagram", "a mermaid sequence diagram"),
+        ("gantt", "a mermaid gantt"),
+        ("gitGraph", "a mermaid git graph"),
     ] {
         assert_eq!(Diagrams.label("mermaid", first), Some(told), "{first}");
     }
-    for first in ["pie", "sequenceDiagram", "nonsense", "", "%%{init: {}}%%"] {
+    for first in ["pie", "journey", "nonsense", "", "%%{init: {}}%%"] {
         assert_eq!(Diagrams.label("mermaid", first), None, "{first}");
     }
 }
@@ -115,12 +150,84 @@ fn a_flowchart_draws_its_labels_and_none_of_its_syntax() {
 }
 
 #[test]
+fn a_sequence_diagram_draws_its_participants_and_messages_and_none_of_its_syntax() {
+    let rows = texts(&block(SEQUENCE, 80, UNICODE).unwrap_or_default()).join("\n");
+    for label in ["User", "Server", "request", "answer", "think"] {
+        assert!(rows.contains(label), "{label} in\n{rows}");
+    }
+    for syntax in ["->>", "-->>", "participant", " as "] {
+        assert!(!rows.contains(syntax), "{syntax} in\n{rows}");
+    }
+}
+
+#[test]
+fn a_gantt_draws_its_title_sections_and_tasks_and_none_of_its_syntax() {
+    let rows = texts(&block(GANTT, 80, UNICODE).unwrap_or_default()).join("\n");
+    for label in ["Release", "Build", "Ship", "Design", "Code", "Test"] {
+        assert!(rows.contains(label), "{label} in\n{rows}");
+    }
+    for syntax in ["dateFormat", "after a1", "section", ":a1"] {
+        assert!(!rows.contains(syntax), "{syntax} in\n{rows}");
+    }
+}
+
+/// The cells of each task's bar in a gantt's rows, by the task's name.
+fn bars(rows: &str, full: char) -> Vec<(String, usize)> {
+    rows.lines()
+        .filter(|row| row.contains('['))
+        .map(|row| {
+            let name = row.trim_start_matches(['│', '|']).split_whitespace().next();
+            let cells = row.chars().filter(|character| *character == full).count();
+            (name.unwrap_or_default().to_owned(), cells)
+        })
+        .collect()
+}
+
+#[test]
+fn a_gantt_draws_each_day_of_a_task_as_a_cell_of_its_bar() {
+    for (glyphs, full) in [(UNICODE, '█'), (ASCII, '#')] {
+        for columns in [80, 160] {
+            let rows = texts(&block(GANTT, columns, glyphs).unwrap_or_default()).join("\n");
+            assert_eq!(
+                bars(&rows, full),
+                [("Design", 3), ("Code", 5), ("Test", 2), ("Release", 1)]
+                    .map(|(name, days)| (name.to_owned(), days)),
+                "{glyphs:?} {columns}\n{rows}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_gantt_too_long_to_draw_a_day_a_cell_draws_every_task_or_is_refused() {
+    let long = "gantt\nFirst : 2026-01-01, 30d\nSecond : 2026-03-01, 2d\nThird : 2026-03-10, 4d\n";
+    let rows = texts(&block(long, 160, UNICODE).unwrap_or_default()).join("\n");
+    let drawn = bars(&rows, '█');
+    assert_eq!(drawn.len(), 3, "{rows}");
+    assert!(drawn.iter().all(|(_, cells)| *cells > 0), "{rows}");
+    assert_eq!(
+        block(&long.replace("2d", "1d"), 160, UNICODE),
+        Err(Undrawn::NotText)
+    );
+    let short = "gantt\nFirst : 2026-01-01, 30d\nSecond : 2026-01-20, 1d\n";
+    assert!(block(short, 160, UNICODE).is_ok());
+}
+
+#[test]
+fn a_git_graph_draws_its_branches_commits_and_tags_and_none_of_its_syntax() {
+    let rows = texts(&block(GIT_GRAPH, 80, UNICODE).unwrap_or_default()).join("\n");
+    for label in ["main", "feature", "base", "v1"] {
+        assert!(rows.contains(label), "{label} in\n{rows}");
+    }
+    for syntax in ["checkout", "commit id", "tag:", "merge feature"] {
+        assert!(!rows.contains(syntax), "{syntax} in\n{rows}");
+    }
+}
+
+#[test]
 fn a_kind_not_drawn_as_text_is_refused_naming_it() {
     for (source, named) in [
         ("pie\n  \"a\" : 1\n", "pie"),
-        ("sequenceDiagram\n  A->>B: hi\n", "sequence diagram"),
-        ("gantt\n  title x\n", "gantt"),
-        ("gitGraph\n  commit\n", "git graph"),
         ("C4Context\n  title x\n", "c4 diagram"),
         ("xychart-beta\n  title x\n", "xy chart"),
         ("%% a comment first\nmindmap\n  root\n", "mindmap"),
@@ -204,6 +311,37 @@ fn a_statement_this_does_not_read_refuses_the_whole_diagram() {
         "erDiagram\nA ||--o{ B : \"cut short\n",
         "erDiagram\nA ||--o{ B : cut short\"\n",
         "erDiagram\nA ||--o{ B : \"one\" \"two\"\n",
+        "sequenceDiagram\nA->>B: hi\nNote right of A: a note\n",
+        "sequenceDiagram\nloop every minute\nA->>B: hi\nend\n",
+        "sequenceDiagram\nautonumber\nA->>B: hi\n",
+        "sequenceDiagram\nA->>B: hi\nactivate B\n",
+        "sequenceDiagram\nbox Aqua a group\nparticipant A\nend\n",
+        "sequenceDiagram\nA->>B: hi\nparticipant A as Declared late\n",
+        "sequenceDiagram\nparticipant A as One\nparticipant A as Two\n",
+        "sequenceDiagram\nparticipant A AS Shouted\n",
+        "sequenceDiagram\nA says hello to B\n",
+        "gantt\nA task : 1d\n",
+        "gantt\nA task : 2026-01-01, 3h\n",
+        "gantt\nA task : milestone, 2026-01-01, 0d\n",
+        "gantt\nexcludes weekends\nA task : 2026-01-01, 1d\n",
+        "gantt\nA task : 2026-01-01, 1d, done\n",
+        "gantt\ntitle one\ntitle two\n",
+        "gantt\ndateFormat DD-MM-YYYY\n",
+        "gantt\naxisFormat %H:%M\n",
+        "gantt\nA task : after nothing, 1d\n",
+        "gantt\nA task : a1, 2026-01-01, 1d\nB task : a1, 2026-01-02, 1d\n",
+        "gitGraph\ncommit\ncherry-pick id: \"x\"\n",
+        "gitGraph\ncommit type: HIGHLIGHT\n",
+        "gitGraph\nbranch early\n",
+        "gitGraph\ncommit\ncheckout nowhere\n",
+        "gitGraph\ncommit\nbranch b\nmerge b\n",
+        "gitGraph\ncommit\nbranch b\ncheckout main\nmerge b\n",
+        "gitGraph\ncommit id: \"a\"\ncommit id: \"a\"\n",
+        "gitGraph\ncommit\nbranch b\nbranch b\n",
+        "gitGraph\ncommit\nswitch main\n",
+        "gitGraph\ncommit\nbranch b order: 1\n",
+        "%%{init: {\"gitGraph\": {\"mainBranchName\": \"trunk\"}}}%%\ngitGraph\ncommit\n",
+        "gitgraph\ncommit\n",
     ] {
         assert_eq!(
             block(source, 80, UNICODE),
@@ -256,9 +394,11 @@ fn caps_of(kind: Kind) -> Caps {
     kind.caps().expect("a kind that is drawn has caps")
 }
 
-/// For each kind drawn: its opening, and a statement of it that names a box
-/// `{}` and a line, written `n` times with `{}` as 0 to `n - 1`.
-const SHAPES: [(Kind, &str, &str, &str); 3] = [
+/// For each kind drawn: its opening, a statement of it that adds a box and
+/// one that adds a line, each written `n` times with `{}` as 0 to `n - 1`. A
+/// git graph's box is a commit and its line a branch, made from a commit; a
+/// gantt's box is a task, and a gantt has no lines.
+const SHAPES: [(Kind, &str, &str, &str); 6] = [
     (Kind::Flowchart, "graph TD\n", "N{}\n", "A --> B\n"),
     (
         Kind::State,
@@ -272,12 +412,37 @@ const SHAPES: [(Kind, &str, &str, &str); 3] = [
         "E{}\n",
         "E0 ||--o{ E1 : has\n",
     ),
+    (
+        Kind::Sequence,
+        "sequenceDiagram\n",
+        "participant P{}\n",
+        "A->>B: hi\n",
+    ),
+    (
+        Kind::Gantt,
+        "gantt\n",
+        "T{} : 2026-01-01, 1d\n",
+        "T : 2026-01-01, 1d\n",
+    ),
+    (
+        Kind::GitGraph,
+        "gitGraph\n",
+        "commit\n",
+        "commit\nbranch b{}\n",
+    ),
 ];
+
+/// `statement` written `count` times, `{}` in it as 0 to `count - 1`.
+fn written(statement: &str, count: usize) -> String {
+    (0..count)
+        .map(|at| statement.replace("{}", &at.to_string()))
+        .collect()
+}
 
 #[test]
 fn a_source_past_its_kinds_byte_cap_is_refused() {
     for (kind, head, _, line) in SHAPES {
-        let head = format!("{head}{line}");
+        let head = format!("{head}{}", written(line, 1));
         let caps = caps_of(kind);
         let at_cap = format!("{head}%%{}", "x".repeat(caps.bytes - head.len() - 2));
         assert!(block(&at_cap, 160, UNICODE).is_ok(), "{kind:?}");
@@ -295,12 +460,7 @@ fn a_source_past_its_kinds_byte_cap_is_refused() {
 fn boxes_past_each_kinds_cap_are_refused() {
     for (kind, head, named, _) in SHAPES {
         let caps = caps_of(kind);
-        let boxes = |count: usize| -> String {
-            let named: String = (0..count)
-                .map(|at| named.replace("{}", &at.to_string()))
-                .collect();
-            format!("{head}{named}")
-        };
+        let boxes = |count: usize| format!("{head}{}", written(named, count));
         assert_ne!(
             block(&boxes(caps.nodes), 400, UNICODE),
             Err(Undrawn::PastCap),
@@ -324,9 +484,12 @@ fn boxes_past_each_kinds_cap_are_refused() {
 
 #[test]
 fn lines_past_each_kinds_cap_are_refused() {
-    for (kind, head, _, line) in SHAPES {
+    for (kind, head, _, line) in SHAPES
+        .into_iter()
+        .filter(|(kind, ..)| caps_of(*kind).edges > 0)
+    {
         let caps = caps_of(kind);
-        let lines = |count: usize| format!("{head}{}", line.repeat(count));
+        let lines = |count: usize| format!("{head}{}", written(line, count));
         assert_ne!(
             block(&lines(caps.edges), 400, UNICODE),
             Err(Undrawn::PastCap),
@@ -353,7 +516,7 @@ fn lines_past_each_kinds_cap_are_refused() {
 }
 
 /// Each place a label stands, by kind, with `{}` where it goes.
-const LABELLED: [(Kind, &str); 9] = [
+const LABELLED: [(Kind, &str); 13] = [
     (Kind::Flowchart, "graph TD\nA[\"{}\"] --> B\n"),
     (Kind::Flowchart, "graph TD\n{} --> B\n"),
     (Kind::Flowchart, "graph TD\nA -->|{}| B\n"),
@@ -372,6 +535,13 @@ const LABELLED: [(Kind, &str); 9] = [
         Kind::State,
         "stateDiagram-v2\n[*] --> A\nnote right of A\nshort\n{}\nend note\n",
     ),
+    (
+        Kind::Sequence,
+        "sequenceDiagram\nparticipant A as {}\nA->>B: hi\n",
+    ),
+    (Kind::Sequence, "sequenceDiagram\n{}->>B: hi\n"),
+    (Kind::Sequence, "sequenceDiagram\nA->>B: {}\n"),
+    (Kind::Gantt, "gantt\n{} : 2026-01-01, 1d\n"),
 ];
 
 #[test]
@@ -391,6 +561,35 @@ fn a_label_past_its_kinds_cap_is_refused_counting_columns() {
             );
         }
     }
+}
+
+#[test]
+fn a_gantt_has_no_lines_and_a_task_is_a_box() {
+    assert_eq!(Caps::GANTT.edges, 0);
+    let tasks = |count: usize| format!("gantt\n{}", written("T{} : 2026-01-01, 1d\n", count));
+    assert!(block(&tasks(Caps::GANTT.nodes), 400, UNICODE).is_ok());
+    let sections = written("section S{}\nT{} : 2026-01-01, 1d\n", Caps::GANTT.nodes / 2);
+    assert!(block(&format!("gantt\n{sections}"), 400, UNICODE).is_ok());
+    assert_eq!(
+        block(&format!("gantt\n{sections}section past\n"), 400, UNICODE),
+        Err(Undrawn::PastCap)
+    );
+}
+
+#[test]
+fn a_git_graph_label_is_held_by_the_byte_cap_alone() {
+    assert_eq!(Caps::GIT_GRAPH.label, None);
+    let source = format!(
+        "gitGraph\ncommit id: \"{}\" tag: \"{}\"\n",
+        "x".repeat(64),
+        "y".repeat(64)
+    );
+    let rows = block(&source, 400, UNICODE).map(|rows| texts(&rows).join("\n"));
+    assert!(
+        rows.as_ref()
+            .is_ok_and(|rows| rows.contains(&"x".repeat(64)) && rows.contains(&"y".repeat(64))),
+        "{rows:?}"
+    );
 }
 
 #[test]
@@ -467,13 +666,68 @@ fn a_diagram_wider_than_its_room_is_refused_and_not_laid_out_again() {
     assert_eq!(block(wide, 60, UNICODE), Err(Undrawn::TooWide));
 }
 
+/// A diagram of each kind the engine lays out at its own width whatever the
+/// room, each wider than 40 columns.
+const UNFITTED: [(Kind, &str); 3] = [
+    (
+        Kind::Sequence,
+        "sequenceDiagram\nparticipant A as The first participant\nparticipant B as The second participant\nparticipant C as The third participant\nA->>B: a request\nB->>C: passed on\n",
+    ),
+    (Kind::Gantt, GANTT),
+    (
+        Kind::GitGraph,
+        "gitGraph\ncommit id: \"the first commit\" tag: \"the first tag\"\nbranch one\ncommit id: \"the first commit on the first branch\" tag: \"a tag\"\nbranch two\ncommit id: \"on the second branch\"\ncheckout main\nmerge two\n",
+    ),
+];
+
+#[test]
+fn a_timeline_wider_than_its_room_is_refused_and_not_laid_out_again() {
+    for (kind, source) in UNFITTED {
+        let natural = block(source, 400, UNICODE).unwrap_or_default();
+        let widest = natural.iter().map(Row::columns).max().unwrap_or(0);
+        assert!(widest > 40, "{kind:?} {widest}");
+        for columns in widest..=widest + 40 {
+            assert_eq!(
+                block(source, columns, UNICODE).map(|rows| rows == natural),
+                Ok(true),
+                "{kind:?} {columns}"
+            );
+        }
+        for columns in [widest - 1, 40, 8] {
+            assert_eq!(
+                block(source, columns, UNICODE),
+                Err(Undrawn::TooWide),
+                "{kind:?} {columns}"
+            );
+        }
+    }
+}
+
 #[test]
 fn under_ascii_every_character_is_ascii_or_written_in_a_label() {
-    let labelled = "graph LR\nA[Ünïcödé 漢字] -->|→ ×| B((é)) -.-> C{ß}\n";
-    for (_, source, kind) in KINDS
-        .into_iter()
-        .chain([("labelled", labelled, Kind::Flowchart)])
-    {
+    let labelled = [
+        (
+            "flowchart",
+            "graph LR\nA[Ünïcödé 漢字] -->|→ ×| B((é)) -.-> C{ß}\n",
+            Kind::Flowchart,
+        ),
+        (
+            "sequence",
+            "sequenceDiagram\nparticipant A as Ünïcödé 漢字\nA->>B: → ×\nB-->>A: ß\n",
+            Kind::Sequence,
+        ),
+        (
+            "gantt",
+            "gantt\ntitle Ünïcödé\nsection 漢字\nØ task : 2026-01-01, 3d\n→ next : 2d\n",
+            Kind::Gantt,
+        ),
+        (
+            "gitgraph",
+            "gitGraph\ncommit id: \"Ünï\" tag: \"漢字\"\nbranch ß\ncommit\ncheckout main\nmerge ß\n",
+            Kind::GitGraph,
+        ),
+    ];
+    for (_, source, kind) in KINDS.into_iter().chain(labelled) {
         let rows = texts(&block(source, 80, ASCII).unwrap_or_default()).join("\n");
         assert!(!rows.is_empty(), "{kind:?}");
         let strays: String = rows

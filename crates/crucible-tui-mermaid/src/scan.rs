@@ -16,13 +16,15 @@
 //!   like) is left out of what the engine is handed, so no address or action
 //!   in it reaches a row.
 //! - What was read is kept beside what the engine is handed, so the engine's
-//!   own reading of it can be held to this one.
+//!   own reading of it can be held to this one: a sequence diagram, a gantt
+//!   and a git graph in the order they say it, since the order is what they
+//!   draw.
 
 use std::collections::BTreeMap;
 
 use crucible_tui::columns;
 
-use crate::{Caps, Kind, MOST_BYTES, entities, flowchart, state};
+use crate::{Caps, Kind, MOST_BYTES, entities, flowchart, gantt, git_graph, sequence, state};
 
 /// Why a source is not handed to the engine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,8 +62,42 @@ pub(crate) struct Read {
     /// Each line between boxes, with its label where it has one.
     pub(crate) lines: Vec<Option<String>>,
     /// The groups drawn around boxes: a state diagram's composite states,
-    /// and its notes.
+    /// and its notes; a gantt's sections.
     pub(crate) groups: usize,
+    /// The boxes known by their place rather than a name: a gantt's tasks,
+    /// a git graph's commits.
+    placed: usize,
+    /// What a sequence diagram, a gantt or a git graph says, in the order it
+    /// says it.
+    pub(crate) steps: Vec<Step>,
+}
+
+/// One thing a diagram drawn in order says, as both readings name it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Step {
+    /// A sequence diagram's participant, the first time it is named, and the
+    /// label it is drawn with: the one declared, or its name.
+    Participant { name: String, label: String },
+    /// A message from one participant to another, with its label.
+    Message {
+        from: String,
+        to: String,
+        label: String,
+    },
+    /// A gantt's section, by its name.
+    Section(String),
+    /// A gantt's task, by its name.
+    Task(String),
+    /// A git graph's branch, as it is made.
+    Branch(String),
+    /// A commit on `branch`, with the id and tag it was written with, and the
+    /// branch it merges where it is a merge.
+    Commit {
+        branch: String,
+        id: Option<String>,
+        tag: Option<String>,
+        merged: Option<String>,
+    },
 }
 
 impl Read {
@@ -72,7 +108,21 @@ impl Read {
             boxes: BTreeMap::new(),
             lines: Vec::new(),
             groups: 0,
+            placed: 0,
+            steps: Vec::new(),
         }
+    }
+
+    /// Takes `step`, said in order, and counts nothing for it.
+    pub(crate) fn stepped(&mut self, step: Step) {
+        self.steps.push(step);
+    }
+
+    /// Takes `step` as a box known by its place.
+    pub(crate) fn placed(&mut self, step: Step) -> Result<(), Refused> {
+        self.placed = self.placed.saturating_add(1);
+        self.steps.push(step);
+        self.within()
     }
 
     /// Takes `name` as a box, with `label` where the source gives it one and
@@ -118,7 +168,12 @@ impl Read {
 
     /// Whether what was read so far is inside the caps.
     fn within(&self) -> Result<(), Refused> {
-        if self.boxes.len().saturating_add(self.groups) > self.caps.nodes
+        if self
+            .boxes
+            .len()
+            .saturating_add(self.groups)
+            .saturating_add(self.placed)
+            > self.caps.nodes
             || self.lines.len() > self.caps.edges
         {
             return Err(Refused::PastCap);
@@ -130,10 +185,7 @@ impl Read {
 /// The kinds of Mermaid diagram this crate knows and does not draw as text,
 /// by the word that opens one, lowercased, and the name a reader is told.
 const NOT_DRAWN: &[(&str, &str)] = &[
-    ("sequencediagram", "sequence diagram"),
     ("pie", "pie"),
-    ("gantt", "gantt"),
-    ("gitgraph", "git graph"),
     ("journey", "journey"),
     ("mindmap", "mindmap"),
     ("timeline", "timeline"),
@@ -180,6 +232,9 @@ pub(crate) fn scan(source: &str) -> Result<Scanned, Refused> {
         // A kind with no caps is refused above.
         Kind::Class => return Err(Refused::Unsupported(kind.name())),
         Kind::EntityRelationship => entities::read(&cleaned, read)?,
+        Kind::Sequence => sequence::read(&cleaned, read)?,
+        Kind::Gantt => gantt::read(&cleaned, read)?,
+        Kind::GitGraph => git_graph::read(&cleaned, read)?,
     };
     Ok(Scanned { kind, source, read })
 }

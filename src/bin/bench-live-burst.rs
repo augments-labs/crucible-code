@@ -37,7 +37,7 @@
 //!
 //! The transcript the band stands over is not empty, since a command runs after
 //! an answer and not before one. It holds the answers `burst` gives both
-//! probes, whose diff fences, formulas and diagram the renderer draws as
+//! probes, whose diff fences, formulas and diagrams the renderer draws as
 //! changes and as text with the drawers it is handed here, as a session's is: a
 //! frame is timed over a record that keeps a drawer's rows.
 
@@ -256,7 +256,7 @@ fn footing(lines: &[String], from: usize, running: Duration) -> Vec<Row> {
 /// The drawers the renderer is handed, as a session's is: the one that draws a
 /// change, for the diff fences of the answers the transcript holds, the one
 /// that draws math, for the formulas of the third, and the one that draws a
-/// diagram, for the last.
+/// diagram, for the diagrams of the last.
 #[cfg(target_os = "linux")]
 fn drawers() -> Drawers {
     Drawers::default()
@@ -487,5 +487,47 @@ mod tests {
                 .any(|row| row.contains("Held --> Drawn: closed")),
             "{undrawn:#?}"
         );
+    }
+
+    #[test]
+    fn the_band_stands_over_an_answer_whose_timelines_are_drawn_as_text() {
+        // A frame names a diagram's kind only when it drew it: one refused, as
+        // written or as too wide, says why instead, so the whole row is held.
+        let rows = transcript(drawers());
+        for opening in [
+            "┌─ mermaid · sequence diagram",
+            "┌─ mermaid · gantt",
+            "┌─ mermaid · git graph",
+        ] {
+            assert!(
+                rows.iter().any(|row| row.trim() == opening),
+                "no row {opening:?} in {rows:#?}"
+            );
+        }
+        for written in [
+            "sequenceDiagram",
+            "participant",
+            "dateFormat",
+            "gitGraph",
+            "checkout main",
+        ] {
+            assert!(
+                !rows.iter().any(|row| row.contains(written)),
+                "a diagram was shown as written, with {written:?}: {rows:#?}"
+            );
+        }
+
+        // Handed no drawer, the same answers show each of them as written.
+        let undrawn = transcript(Drawers::default());
+        for written in [
+            "R->>W: block closed",
+            "dateFormat YYYY-MM-DD",
+            "checkout main",
+        ] {
+            assert!(
+                undrawn.iter().any(|row| row.contains(written)),
+                "{written:?} in {undrawn:#?}"
+            );
+        }
     }
 }
