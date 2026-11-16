@@ -587,6 +587,7 @@ dependencies = [
  "crucible-models",
  "crucible-privacy",
  "crucible-provider",
+ "crucible-raster",
  "crucible-registry",
  "crucible-runner",
  "crucible-runtime",

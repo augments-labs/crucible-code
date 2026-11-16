@@ -956,6 +956,11 @@ fi
 # the formula drawer, so math in an answer is drawn as text.
 # `code tui-mermaid` ships: the command line hands every renderer of a
 # session the diagram drawer, so a mermaid fence in an answer is drawn as text.
+# `code raster` is the drawing probe's and the command line's tests' alone for
+# now: the probe times a diagram's picture rasterised and encoded as a
+# picture will be shown, and the tests hold the font the raster draws with to
+# the characters a drawer lets into a picture. A drawer names no raster type;
+# it hands an SVG to whatever composes it.
 allowed='code app
 code attachments
 code auth
@@ -969,6 +974,7 @@ code mcp
 code models
 code privacy
 code provider
+code raster
 code registry
 code update
 code runner
