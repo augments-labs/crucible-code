@@ -53,8 +53,24 @@
 //! frame's twenty, so a block closing beside a streaming answer still leaves
 //! the frame its room.
 //!
-//! The reported number is the slowest case's 95th percentile, with each case's
-//! median and its slowest reading kept as evidence. Every reading is one call,
+//! A diagram is also drawn as a picture of the same layout, and a picture is
+//! made on the same thread: laid out, rasterised and encoded as a PNG. For each
+//! kind the costliest picture its caps hold is timed through all three, every
+//! label in Latin letters, since a diagram holding a letter the picture's font
+//! lacks keeps its text drawing and is never rasterised, and each label as long
+//! as the caps leave room for, so a picture carries as many letters as the caps
+//! let in, and every letter is outlines the rasteriser draws. It is rasterised
+//! in every slot's ink, as a theme hands them, at the widest the most pixels a
+//! picture may hold allow for its proportions, in a window wide enough to draw
+//! it, since a picture is drawn at its own size whatever the room, and in both
+//! glyph sets. A picture the drawer or the rasteriser refuses fails the probe
+//! rather than timing the refusal. Twenty milliseconds is the budget for a
+//! picture: the first frame's whole budget, which a picture spends once, when
+//! its fence closes.
+//!
+//! The reported number is the slowest text case's 95th percentile, with each
+//! case's median and its slowest reading kept as evidence, and the slowest
+//! picture's 95th percentile kept beside them with its limit. Every reading is one call,
 //! timed with the input already built: the reading is the drawer's, not the
 //! fixture's.
 
@@ -63,9 +79,10 @@ use std::io::{self, Write as _};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use crucible_tui::Glyphs;
+use crucible_raster::{MOST_DECODED, png, rasterise};
 use crucible_tui::chrome::Undrawn;
 use crucible_tui::drawing::{Draws, Room};
+use crucible_tui::{Glyphs, Slot};
 use crucible_tui_diff::{
     Change, Changes, FOLD, File, MOST_BYTES, MOST_FILES, MOST_LINES, PAIRS, SYNTAX_BYTES,
     SYNTAX_LINES, Side, TOKENS,
@@ -85,6 +102,10 @@ const LIMIT: f64 = 2.0;
 /// slowdown is the quiet-machine run's to catch, under [`LIMIT`], before a
 /// release.
 const SHARED_RUNNER_LIMIT: f64 = 15.0;
+
+/// The budget for a picture, in milliseconds: laid out, rasterised and
+/// encoded, on a quiet machine and on a shared runner alike.
+const PICTURE_LIMIT: f64 = 20.0;
 
 /// Readings taken of each case, after the ones that warm it.
 const RUNS: usize = 101;
@@ -107,9 +128,18 @@ const CHANGE_ROOMS: &[usize] = &[WIDE, NARROW];
 /// reading is of a layout rather than of a refusal for the room.
 const FORMULA_ROOMS: &[usize] = &[MOST_COLUMNS + 2];
 
+/// A window wide enough to draw any diagram at the caps.
+const WINDOW: usize = 402;
+
 /// The rooms a diagram is laid out in: a common terminal's width with a
 /// frame's gutter, and a window wide enough to draw any diagram at the caps.
-const DIAGRAM_ROOMS: &[usize] = &[WIDE + 2, 402];
+const DIAGRAM_ROOMS: &[usize] = &[WIDE + 2, WINDOW];
+
+/// The room a picture is made in: a window wide enough to draw any diagram at
+/// the caps. A picture is drawn at its layout's own size whatever the room, so
+/// a narrower one only refuses it as too wide, and a reading of that would
+/// time the refusal.
+const PICTURE_ROOMS: &[usize] = &[WINDOW];
 
 /// The days a timed gantt's tasks start within: two short of the most the
 /// engine draws a day to a cell, so a task two days long ends inside them.
@@ -172,6 +202,10 @@ enum ProbeError {
     Undrawn(&'static str),
     #[error("bench-drawing: {0} was drawn; a reading of it would time a layout, not its refusal")]
     Drawn(&'static str),
+    #[error(
+        "bench-drawing: {0} was not made a picture ({1}); a reading of it would time a refusal"
+    )]
+    Unpictured(&'static str, String),
 }
 
 /// What a case hands the drawer.
@@ -189,6 +223,8 @@ enum Input {
     /// A mermaid diagram, laid out whole and then drawn, or refused as wider
     /// than its room.
     Diagram(String),
+    /// A mermaid diagram drawn as a picture: laid out, rasterised and encoded.
+    Picture(String),
 }
 
 struct Case {
@@ -454,10 +490,22 @@ fn nested_matrices(levels: usize) -> String {
     )
 }
 
-/// A label of `columns` columns for box or line `index`: an even one in
-/// characters two columns wide, an odd one in words.
-fn label(index: usize, columns: usize) -> String {
-    let wide = index.is_multiple_of(2);
+/// The letters a generated diagram's labels are written in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Letters {
+    /// Half the labels in characters two columns wide, which cost a text
+    /// layout the most for their columns.
+    Mixed,
+    /// Every label in Latin words: a picture is made only of a diagram whose
+    /// every letter its font has.
+    Latin,
+}
+
+/// A label of `columns` columns for box or line `index`: in `letters`, an
+/// even one in characters two columns wide where they are mixed, and any
+/// other in words.
+fn label(index: usize, columns: usize, letters: Letters) -> String {
+    let wide = letters == Letters::Mixed && index.is_multiple_of(2);
     let head = index.to_string();
     let rest = columns.saturating_sub(head.len());
     let tail: String = if wide {
@@ -512,28 +560,28 @@ impl Shape {
     }
 }
 
-/// What writes one kind of diagram: its caps, how its boxes are set out, and
-/// the columns of each label.
-type Write = fn(Caps, Shape, usize) -> String;
+/// What writes one kind of diagram: its caps, how its boxes are set out, the
+/// letters of its labels and the columns of each.
+type Write = fn(Caps, Shape, Letters, usize) -> String;
 
-/// The longest source `write` makes in `shape`, with labels of at most
-/// `caps.label` columns, or as many as the bytes leave room for where labels
-/// are not capped, that `caps.bytes` holds.
-fn diagram_at_the_caps(caps: Caps, shape: Shape, write: Write) -> String {
-    widest_held(caps, shape, write)
-        .map(|columns| write(caps, shape, columns))
+/// The longest source `write` makes in `shape`, with labels in `letters` of at
+/// most `caps.label` columns, or as many as the bytes leave room for where
+/// labels are not capped, that `caps.bytes` holds.
+fn diagram_at_the_caps(caps: Caps, shape: Shape, letters: Letters, write: Write) -> String {
+    widest_held(caps, shape, letters, write)
+        .map(|columns| write(caps, shape, letters, columns))
         .unwrap_or_default()
 }
 
-/// The most columns a label of `write`'s may take in `shape`, up to
+/// The most columns a label of `write`'s in `letters` may take in `shape`, up to
 /// `caps.label` or, where labels are not capped, `caps.bytes`, with the
 /// source still within `caps.bytes`; `None` where a label of one column is
 /// already past it. A source never shortens as its labels widen, so the
 /// columns are found by halving: a search a column at a time builds a source
 /// for each, and under a loosened byte cap that alone takes longer than the
 /// probe may.
-fn widest_held(caps: Caps, shape: Shape, write: Write) -> Option<usize> {
-    let held = |columns: usize| write(caps, shape, columns).len() <= caps.bytes;
+fn widest_held(caps: Caps, shape: Shape, letters: Letters, write: Write) -> Option<usize> {
+    let held = |columns: usize| write(caps, shape, letters, columns).len() <= caps.bytes;
     if !held(1) {
         return None;
     }
@@ -551,7 +599,7 @@ fn widest_held(caps: Caps, shape: Shape, write: Write) -> Option<usize> {
 
 /// A flowchart from top to bottom with as many boxes as `shape` sets out and
 /// every line its caps hold, each line labelled.
-fn flowchart(caps: Caps, shape: Shape, columns: usize) -> String {
+fn flowchart(caps: Caps, shape: Shape, letters: Letters, columns: usize) -> String {
     let shapes = [
         ("[\"", "\"]"),
         ("(\"", "\")"),
@@ -561,10 +609,18 @@ fn flowchart(caps: Caps, shape: Shape, columns: usize) -> String {
     let boxes = shape.boxes(caps.nodes);
     let mut source = String::from("flowchart TD\n");
     for (index, (open, close)) in (0..boxes).zip(shapes.iter().cycle()) {
-        let _ = writeln!(source, "N{index}{open}{}{close}", label(index, columns));
+        let _ = writeln!(
+            source,
+            "N{index}{open}{}{close}",
+            label(index, columns, letters)
+        );
     }
     for (from, to) in shape.lines(boxes, caps.edges) {
-        let _ = writeln!(source, "N{from} -->|{}| N{to}", label(from + to, columns));
+        let _ = writeln!(
+            source,
+            "N{from} -->|{}| N{to}",
+            label(from + to, columns, letters)
+        );
     }
     source
 }
@@ -572,15 +628,23 @@ fn flowchart(caps: Caps, shape: Shape, columns: usize) -> String {
 /// A state diagram with as many states as `shape` sets out and every
 /// transition its caps hold, its start marker among the boxes and its first
 /// transition, each other transition labelled.
-fn states(caps: Caps, shape: Shape, columns: usize) -> String {
+fn states(caps: Caps, shape: Shape, letters: Letters, columns: usize) -> String {
     let named = shape.boxes(caps.nodes.saturating_sub(1));
     let mut source = String::from("stateDiagram-v2\n");
     for index in 0..named {
-        let _ = writeln!(source, "state \"{}\" as S{index}", label(index, columns));
+        let _ = writeln!(
+            source,
+            "state \"{}\" as S{index}",
+            label(index, columns, letters)
+        );
     }
     source.push_str("[*] --> S0\n");
     for (from, to) in shape.lines(named, caps.edges.saturating_sub(1)) {
-        let _ = writeln!(source, "S{from} --> S{to} : {}", label(from + to, columns));
+        let _ = writeln!(
+            source,
+            "S{from} --> S{to} : {}",
+            label(from + to, columns, letters)
+        );
     }
     source
 }
@@ -589,23 +653,27 @@ fn states(caps: Caps, shape: Shape, columns: usize) -> String {
 /// state: the start marker into the first, a transition from it into the
 /// composite, and every other transition the caps hold among the states
 /// inside, each labelled.
-fn composite(caps: Caps, shape: Shape, columns: usize) -> String {
+fn composite(caps: Caps, shape: Shape, letters: Letters, columns: usize) -> String {
     // The start marker, the first state and the composite are boxes too.
     let inner = shape.boxes(caps.nodes.saturating_sub(3));
     let mut source = String::from("stateDiagram-v2\n");
-    let _ = writeln!(source, "state \"{}\" as S0", label(0, columns));
+    let _ = writeln!(source, "state \"{}\" as S0", label(0, columns, letters));
     source.push_str("[*] --> S0\n");
-    let _ = writeln!(source, "S0 --> G : {}", label(1, columns));
+    let _ = writeln!(source, "S0 --> G : {}", label(1, columns, letters));
     source.push_str("state G {\n");
     for index in 0..inner {
         let _ = writeln!(
             source,
             "state \"{}\" as T{index}",
-            label(index + 1, columns)
+            label(index + 1, columns, letters)
         );
     }
     for (from, to) in shape.lines(inner, caps.edges.saturating_sub(2)) {
-        let _ = writeln!(source, "T{from} --> T{to} : {}", label(from + to, columns));
+        let _ = writeln!(
+            source,
+            "T{from} --> T{to} : {}",
+            label(from + to, columns, letters)
+        );
     }
     source.push_str("}\n");
     source
@@ -614,12 +682,12 @@ fn composite(caps: Caps, shape: Shape, columns: usize) -> String {
 /// An entity-relationship diagram with as many entities as `shape` sets out
 /// and every relationship its caps hold, each entity with two attributes and
 /// each relationship labelled.
-fn entities(caps: Caps, shape: Shape, columns: usize) -> String {
+fn entities(caps: Caps, shape: Shape, letters: Letters, columns: usize) -> String {
     let kinds = ["||--o{", "||--|{", "}o--o{", "|o--||"];
     let boxes = shape.boxes(caps.nodes);
     let mut source = String::from("erDiagram\n");
     for index in 0..boxes {
-        let named = label(index, columns).replace(' ', "_");
+        let named = label(index, columns, letters).replace(' ', "_");
         let _ = writeln!(source, "E{index} {{\nstring {named}\nint id\n}}");
     }
     for ((from, to), kind) in shape
@@ -630,7 +698,7 @@ fn entities(caps: Caps, shape: Shape, columns: usize) -> String {
         let _ = writeln!(
             source,
             "E{from} {kind} E{to} : \"{}\"",
-            label(from + to, columns)
+            label(from + to, columns, letters)
         );
     }
     source
@@ -638,19 +706,27 @@ fn entities(caps: Caps, shape: Shape, columns: usize) -> String {
 
 /// A sequence diagram with as many participants as `shape` sets out, each
 /// declared with a label, and every message its caps hold, each labelled.
-fn sequence(caps: Caps, shape: Shape, columns: usize) -> String {
+fn sequence(caps: Caps, shape: Shape, letters: Letters, columns: usize) -> String {
     let arrows = ["->>", "-->>", "->", "-->"];
     let participants = shape.boxes(caps.nodes);
     let mut source = String::from("sequenceDiagram\n");
     for index in 0..participants {
-        let _ = writeln!(source, "participant P{index} as {}", label(index, columns));
+        let _ = writeln!(
+            source,
+            "participant P{index} as {}",
+            label(index, columns, letters)
+        );
     }
     for ((from, to), arrow) in shape
         .lines(participants, caps.edges)
         .into_iter()
         .zip(arrows.iter().cycle())
     {
-        let _ = writeln!(source, "P{from}{arrow}P{to}: {}", label(from + to, columns));
+        let _ = writeln!(
+            source,
+            "P{from}{arrow}P{to}: {}",
+            label(from + to, columns, letters)
+        );
     }
     source
 }
@@ -659,7 +735,7 @@ fn sequence(caps: Caps, shape: Shape, columns: usize) -> String {
 /// `shape` spreads them and one where it keeps them few, each task two days
 /// long and starting on its own day within [`GANTT_DAYS`], each section and
 /// task named.
-fn gantt(caps: Caps, shape: Shape, columns: usize) -> String {
+fn gantt(caps: Caps, shape: Shape, letters: Letters, columns: usize) -> String {
     let sections = match shape {
         Shape::Spread => FEW,
         Shape::Few => 1,
@@ -668,7 +744,7 @@ fn gantt(caps: Caps, shape: Shape, columns: usize) -> String {
     let mut source = String::from("gantt\ndateFormat YYYY-MM-DD\n");
     for index in 0..tasks {
         if index % tasks.div_ceil(sections).max(1) == 0 {
-            let _ = writeln!(source, "section {}", label(index, columns));
+            let _ = writeln!(source, "section {}", label(index, columns, letters));
         }
         let day = index * 2 % GANTT_DAYS;
         let (month, date) = if day < 31 {
@@ -679,7 +755,7 @@ fn gantt(caps: Caps, shape: Shape, columns: usize) -> String {
         let _ = writeln!(
             source,
             "{} :2026-{month:02}-{date:02}, 2d",
-            label(index + 1, columns)
+            label(index + 1, columns, letters)
         );
     }
     source
@@ -689,38 +765,48 @@ fn gantt(caps: Caps, shape: Shape, columns: usize) -> String {
 /// branch `shape` sets out a commit on it with a tag and one on `main`, then a
 /// merge of each, then commits on `main` to the cap; each commit's id and tag
 /// as long as `columns`.
-fn git_graph(caps: Caps, shape: Shape, columns: usize) -> String {
+fn git_graph(caps: Caps, shape: Shape, letters: Letters, columns: usize) -> String {
     let branches = shape.boxes(caps.edges.saturating_add(1)).saturating_sub(1);
     let mut source = String::from("gitGraph\n");
     let mut commits = 0;
-    commit(&mut source, &mut commits, columns, false);
+    let named = |at: usize| label(at, columns, letters);
+    commit(&mut source, &mut commits, named, false);
     for branch in 0..branches {
         let _ = writeln!(source, "branch b{branch}");
-        commit(&mut source, &mut commits, columns, true);
+        commit(&mut source, &mut commits, named, true);
         source.push_str("checkout main\n");
-        commit(&mut source, &mut commits, columns, false);
+        commit(&mut source, &mut commits, named, false);
     }
     for branch in 0..branches {
         let _ = writeln!(source, "merge b{branch}");
     }
     for _ in commits.saturating_add(branches)..caps.nodes {
-        commit(&mut source, &mut commits, columns, false);
+        commit(&mut source, &mut commits, named, false);
     }
     source
 }
 
 /// One commit of a git graph written to `source`, its id the next of
-/// `commits` and as long as `columns`, with a tag as long where `tagged`.
-fn commit(source: &mut String, commits: &mut usize, columns: usize, tagged: bool) {
-    let _ = write!(source, "commit id: \"{}\"", label(*commits, columns));
+/// `commits` as `label` writes it, with a tag `label` writes where `tagged`.
+fn commit(source: &mut String, commits: &mut usize, label: impl Fn(usize) -> String, tagged: bool) {
+    let _ = write!(source, "commit id: \"{}\"", label(*commits));
     if tagged {
-        let _ = write!(source, " tag: \"{}\"", label(*commits + 1, columns));
+        let _ = write!(source, " tag: \"{}\"", label(*commits + 1));
     }
     source.push('\n');
     *commits += 1;
 }
 
+/// Every case, in the order its readings are reported.
 fn cases() -> Vec<Case> {
+    let mut cases = blocks();
+    cases.extend(diagrams());
+    cases.extend(pictures());
+    cases
+}
+
+/// The changes and formulas a drawer lays out at their caps.
+fn blocks() -> Vec<Case> {
     vec![
         Case {
             name: "one file at the caps",
@@ -794,18 +880,30 @@ fn cases() -> Vec<Case> {
             input: Input::Span(continued_fraction(DEEPEST_SPAN)),
             rooms: FORMULA_ROOMS,
         },
+    ]
+}
+
+/// The diagrams of each kind laid out as text at their caps.
+fn diagrams() -> Vec<Case> {
+    vec![
         Case {
             name: "a flowchart at its caps",
             input: Input::Diagram(diagram_at_the_caps(
                 Caps::FLOWCHART,
                 Shape::Spread,
+                Letters::Mixed,
                 flowchart,
             )),
             rooms: DIAGRAM_ROOMS,
         },
         Case {
             name: "the costliest flowchart inside its caps",
-            input: Input::Diagram(diagram_at_the_caps(Caps::FLOWCHART, Shape::Few, flowchart)),
+            input: Input::Diagram(diagram_at_the_caps(
+                Caps::FLOWCHART,
+                Shape::Few,
+                Letters::Mixed,
+                flowchart,
+            )),
             rooms: DIAGRAM_ROOMS,
         },
         Case {
@@ -815,17 +913,32 @@ fn cases() -> Vec<Case> {
         },
         Case {
             name: "a state diagram at its caps",
-            input: Input::Diagram(diagram_at_the_caps(Caps::STATE, Shape::Spread, states)),
+            input: Input::Diagram(diagram_at_the_caps(
+                Caps::STATE,
+                Shape::Spread,
+                Letters::Mixed,
+                states,
+            )),
             rooms: DIAGRAM_ROOMS,
         },
         Case {
             name: "the costliest state diagram inside its caps",
-            input: Input::Diagram(diagram_at_the_caps(Caps::STATE, Shape::Few, states)),
+            input: Input::Diagram(diagram_at_the_caps(
+                Caps::STATE,
+                Shape::Few,
+                Letters::Mixed,
+                states,
+            )),
             rooms: DIAGRAM_ROOMS,
         },
         Case {
             name: "the costliest composite state inside its caps",
-            input: Input::Diagram(diagram_at_the_caps(Caps::STATE, Shape::Few, composite)),
+            input: Input::Diagram(diagram_at_the_caps(
+                Caps::STATE,
+                Shape::Few,
+                Letters::Mixed,
+                composite,
+            )),
             rooms: DIAGRAM_ROOMS,
         },
         Case {
@@ -835,32 +948,62 @@ fn cases() -> Vec<Case> {
         },
         Case {
             name: "an er diagram at its caps",
-            input: Input::Diagram(diagram_at_the_caps(Caps::ENTITIES, Shape::Spread, entities)),
+            input: Input::Diagram(diagram_at_the_caps(
+                Caps::ENTITIES,
+                Shape::Spread,
+                Letters::Mixed,
+                entities,
+            )),
             rooms: DIAGRAM_ROOMS,
         },
         Case {
             name: "the costliest er diagram inside its caps",
-            input: Input::Diagram(diagram_at_the_caps(Caps::ENTITIES, Shape::Few, entities)),
+            input: Input::Diagram(diagram_at_the_caps(
+                Caps::ENTITIES,
+                Shape::Few,
+                Letters::Mixed,
+                entities,
+            )),
             rooms: DIAGRAM_ROOMS,
         },
         Case {
             name: "a sequence diagram at its caps",
-            input: Input::Diagram(diagram_at_the_caps(Caps::SEQUENCE, Shape::Spread, sequence)),
+            input: Input::Diagram(diagram_at_the_caps(
+                Caps::SEQUENCE,
+                Shape::Spread,
+                Letters::Mixed,
+                sequence,
+            )),
             rooms: DIAGRAM_ROOMS,
         },
         Case {
             name: "a sequence diagram's messages among few participants",
-            input: Input::Diagram(diagram_at_the_caps(Caps::SEQUENCE, Shape::Few, sequence)),
+            input: Input::Diagram(diagram_at_the_caps(
+                Caps::SEQUENCE,
+                Shape::Few,
+                Letters::Mixed,
+                sequence,
+            )),
             rooms: DIAGRAM_ROOMS,
         },
         Case {
             name: "a gantt at its caps in four sections",
-            input: Input::Diagram(diagram_at_the_caps(Caps::GANTT, Shape::Spread, gantt)),
+            input: Input::Diagram(diagram_at_the_caps(
+                Caps::GANTT,
+                Shape::Spread,
+                Letters::Mixed,
+                gantt,
+            )),
             rooms: DIAGRAM_ROOMS,
         },
         Case {
             name: "a gantt at its caps in one section",
-            input: Input::Diagram(diagram_at_the_caps(Caps::GANTT, Shape::Few, gantt)),
+            input: Input::Diagram(diagram_at_the_caps(
+                Caps::GANTT,
+                Shape::Few,
+                Letters::Mixed,
+                gantt,
+            )),
             rooms: DIAGRAM_ROOMS,
         },
         Case {
@@ -868,16 +1011,203 @@ fn cases() -> Vec<Case> {
             input: Input::Diagram(diagram_at_the_caps(
                 Caps::GIT_GRAPH,
                 Shape::Spread,
+                Letters::Mixed,
                 git_graph,
             )),
             rooms: DIAGRAM_ROOMS,
         },
         Case {
             name: "a git graph at its caps on few branches",
-            input: Input::Diagram(diagram_at_the_caps(Caps::GIT_GRAPH, Shape::Few, git_graph)),
+            input: Input::Diagram(diagram_at_the_caps(
+                Caps::GIT_GRAPH,
+                Shape::Few,
+                Letters::Mixed,
+                git_graph,
+            )),
             rooms: DIAGRAM_ROOMS,
         },
     ]
+}
+
+/// The costliest picture of each kind: laid out, rasterised and encoded.
+fn pictures() -> Vec<Case> {
+    vec![
+        Case {
+            name: "a flowchart's picture at its caps",
+            input: Input::Picture(diagram_at_the_caps(
+                Caps::FLOWCHART,
+                Shape::Spread,
+                Letters::Latin,
+                flowchart,
+            )),
+            rooms: PICTURE_ROOMS,
+        },
+        Case {
+            name: "a state diagram's picture at its caps",
+            input: Input::Picture(diagram_at_the_caps(
+                Caps::STATE,
+                Shape::Spread,
+                Letters::Latin,
+                states,
+            )),
+            rooms: PICTURE_ROOMS,
+        },
+        Case {
+            name: "an er diagram's picture at its caps",
+            input: Input::Picture(diagram_at_the_caps(
+                Caps::ENTITIES,
+                Shape::Spread,
+                Letters::Latin,
+                entities,
+            )),
+            rooms: PICTURE_ROOMS,
+        },
+        Case {
+            name: "a sequence diagram's picture at its caps",
+            input: Input::Picture(diagram_at_the_caps(
+                Caps::SEQUENCE,
+                Shape::Spread,
+                Letters::Latin,
+                sequence,
+            )),
+            rooms: PICTURE_ROOMS,
+        },
+        Case {
+            name: "a gantt's picture at its caps",
+            input: Input::Picture(diagram_at_the_caps(
+                Caps::GANTT,
+                Shape::Spread,
+                Letters::Latin,
+                gantt,
+            )),
+            rooms: PICTURE_ROOMS,
+        },
+        Case {
+            name: "a git graph's picture at its caps",
+            input: Input::Picture(diagram_at_the_caps(
+                Caps::GIT_GRAPH,
+                Shape::Spread,
+                Letters::Latin,
+                git_graph,
+            )),
+            rooms: PICTURE_ROOMS,
+        },
+    ]
+}
+
+/// The slot after `slot` in the order they are declared, so that every
+/// slot's ink can be walked: a slot added is a case here before this probe
+/// compiles, and goes where it is declared.
+fn after(slot: Slot) -> Option<Slot> {
+    match slot {
+        Slot::Plain => Some(Slot::Accent),
+        Slot::Accent => Some(Slot::Strong),
+        Slot::Strong => Some(Slot::Bold),
+        Slot::Bold => Some(Slot::Pointed),
+        Slot::Pointed => Some(Slot::Quiet),
+        Slot::Quiet => Some(Slot::Cut),
+        Slot::Cut => Some(Slot::Link),
+        Slot::Link => Some(Slot::Emphasis),
+        Slot::Emphasis => Some(Slot::BoldEmphasis),
+        Slot::BoldEmphasis => Some(Slot::Struck),
+        Slot::Struck => Some(Slot::Code),
+        Slot::Code => Some(Slot::AllowEdits),
+        Slot::AllowEdits => Some(Slot::FullAccess),
+        Slot::FullAccess => Some(Slot::Doing),
+        Slot::Doing => Some(Slot::DoingMark),
+        Slot::DoingMark => Some(Slot::Done),
+        Slot::Done => Some(Slot::DoneMark),
+        Slot::DoneMark => Some(Slot::Trouble),
+        Slot::Trouble => Some(Slot::Removed),
+        Slot::Removed => Some(Slot::RemovedNumber),
+        Slot::RemovedNumber => Some(Slot::Added),
+        Slot::Added => Some(Slot::AddedNumber),
+        Slot::AddedNumber => Some(Slot::Prompt),
+        Slot::Prompt => Some(Slot::PromptMark),
+        Slot::PromptMark => Some(Slot::Comment),
+        Slot::Comment => Some(Slot::Keyword),
+        Slot::Keyword => Some(Slot::Str),
+        Slot::Str => Some(Slot::Number),
+        Slot::Number => Some(Slot::Name),
+        Slot::Name => Some(Slot::Operator),
+        Slot::Operator => Some(Slot::Path),
+        Slot::Path => Some(Slot::Revision),
+        Slot::Revision => Some(Slot::Figure),
+        Slot::Figure => Some(Slot::Heading),
+        Slot::Heading => Some(Slot::Bullet),
+        Slot::Bullet => Some(Slot::Ordinal),
+        Slot::Ordinal => Some(Slot::Quote),
+        Slot::Quote => Some(Slot::ArgumentPath),
+        Slot::ArgumentPath => Some(Slot::ArgumentAddress),
+        Slot::ArgumentAddress => Some(Slot::ArgumentCommand),
+        Slot::ArgumentCommand => Some(Slot::RemovedWord),
+        Slot::RemovedWord => Some(Slot::AddedWord),
+        Slot::AddedWord => Some(Slot::RemovedCount),
+        Slot::RemovedCount => Some(Slot::AddedCount),
+        Slot::AddedCount => None,
+    }
+}
+
+/// Every slot's class with an ink of its own, as a theme hands a picture its
+/// inks: a style sheet of every class is what a picture is rasterised under.
+fn inks() -> Vec<(&'static str, [u8; 3])> {
+    let mut inks = Vec::new();
+    let mut slot = Some(Slot::Plain);
+    while let Some(at) = slot {
+        let shade = u8::try_from(inks.len() * 5 % 256).unwrap_or(0);
+        inks.push((at.class(), [shade, 128, 255 - shade]));
+        slot = after(at);
+    }
+    inks
+}
+
+/// The value of `name` on the outermost element of `svg`, as a number.
+fn attribute(svg: &str, name: &str) -> Option<u64> {
+    let opened = svg.find('>')?;
+    let head = svg.get(..opened)?;
+    let key = format!(" {name}=\"");
+    let start = head.find(&key)? + key.len();
+    let rest = head.get(start..)?;
+    rest.get(..rest.find('"')?)?.parse().ok()
+}
+
+/// The widest a picture `width` by `height` across may be rasterised at:
+/// the most pixels, at its proportions and with the height rounded up as the
+/// rasteriser rounds it, that [`MOST_DECODED`] holds.
+fn widest(width: u64, height: u64) -> Option<u32> {
+    let most = u64::try_from(MOST_DECODED).ok()? / 4;
+    let held = |across: u64| {
+        across.saturating_mul((across.saturating_mul(height)).div_ceil(width.max(1))) <= most
+    };
+    let (mut low, mut high) = (1_u64, most);
+    while low < high {
+        let middle = high - (high - low) / 2;
+        if held(middle) {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+    u32::try_from(low).ok()
+}
+
+/// `text` drawn as a picture in `room`: laid out, rasterised in every slot's
+/// ink as wide as [`widest`] allows, and encoded as a PNG; the PNG's bytes,
+/// or why it was not made.
+fn picture(text: &str, room: &Room) -> Result<usize, String> {
+    let svg = Diagrams
+        .picture(text, room)
+        .map_err(|refused| format!("drawer: {refused:?}"))?;
+    let svg = svg.as_str();
+    let across = attribute(svg, "width")
+        .zip(attribute(svg, "height"))
+        .and_then(|(width, height)| widest(width, height))
+        .ok_or("drawer: no size")?;
+    let pixels = rasterise(svg.as_bytes(), across, &inks())
+        .map_err(|refused| format!("raster at {across} across: {refused:?}"))?;
+    png(&pixels)
+        .map(|encoded| encoded.len())
+        .map_err(|refused| format!("png: {refused:?}"))
 }
 
 /// One layout of `case` in `room`, with the rows it laid out.
@@ -896,13 +1226,18 @@ fn lay(case: &Case, room: &Room) -> Option<usize> {
             Err(Undrawn::TooWide) => Some(1),
             Err(_) => None,
         },
+        Input::Picture(text) => picture(text, room).ok(),
     }
 }
 
-/// What a reading that did not answer as its case says would have timed.
-fn misread(case: &Case) -> ProbeError {
-    match case.input {
+/// What a reading in `room` that did not answer as its case says would have
+/// timed.
+fn misread(case: &Case, room: &Room) -> ProbeError {
+    match &case.input {
         Input::Refused(_) => ProbeError::Drawn(case.name),
+        Input::Picture(text) => {
+            ProbeError::Unpictured(case.name, picture(text, room).err().unwrap_or_default())
+        }
         Input::Diff(_)
         | Input::Change(_)
         | Input::Formula(_)
@@ -922,14 +1257,14 @@ fn time(case: &Case) -> Result<Timed, ProbeError> {
     let mut readings = Vec::with_capacity(RUNS * 2 * case.rooms.len());
     for room in rooms {
         for _ in 0..WARM {
-            lay(case, &room).ok_or_else(|| misread(case))?;
+            lay(case, &room).ok_or_else(|| misread(case, &room))?;
         }
         for _ in 0..RUNS {
             let started = Instant::now();
             let rows = lay(case, &room);
             readings.push(started.elapsed());
             if rows.unwrap_or(0) == 0 {
-                return Err(misread(case));
+                return Err(misread(case, &room));
             }
         }
     }
@@ -957,11 +1292,20 @@ fn run() -> Result<bool, ProbeError> {
     let limit = limit()?;
     let timed = cases().iter().map(time).collect::<Result<Vec<_>, _>>()?;
 
+    let pictured: Vec<bool> = cases()
+        .iter()
+        .map(|case| matches!(case.input, Input::Picture(_)))
+        .collect();
     let mut worst = 0.0_f64;
+    let mut worst_picture = 0.0_f64;
     let mut evidence = String::new();
     for (index, case) in timed.iter().enumerate() {
         let p95 = case.at(0.95);
-        worst = worst.max(p95);
+        if pictured.get(index).copied().unwrap_or(false) {
+            worst_picture = worst_picture.max(p95);
+        } else {
+            worst = worst.max(p95);
+        }
         let _ = write!(
             evidence,
             " case{index}_p95={p95:.3} case{index}_median={:.3} case{index}_max={:.3}",
@@ -973,11 +1317,14 @@ fn run() -> Result<bool, ProbeError> {
     // `println!` is denied workspace-wide, so the reading goes out through a
     // write whose failure is handled rather than panicked on inside a probe.
     let mut line = String::new();
-    let _ = writeln!(line, "{worst:.3} ms {limit:.1}{evidence}");
+    let _ = writeln!(
+        line,
+        "{worst:.3} ms {limit:.1} picture_p95={worst_picture:.3} picture_limit={PICTURE_LIMIT:.1}{evidence}"
+    );
     io::stdout().write_all(line.as_bytes())?;
     io::stdout().flush()?;
 
-    let held = worst <= limit;
+    let held = worst <= limit && worst_picture <= PICTURE_LIMIT;
     if !held {
         let mut told = String::new();
         for case in &timed {
@@ -1018,13 +1365,13 @@ mod tests {
         let most = caps.label.unwrap_or(caps.bytes);
         (1..=most)
             .rev()
-            .find(|&columns| write(caps, shape, columns).len() <= caps.bytes)
+            .find(|&columns| write(caps, shape, Letters::Mixed, columns).len() <= caps.bytes)
     }
 
     /// Whether halving finds the columns a search a column at a time finds
     /// for `write` in `shape` at `caps`, and some.
     fn halved_alike(caps: Caps, shape: Shape, write: Write) {
-        let halved = widest_held(caps, shape, write);
+        let halved = widest_held(caps, shape, Letters::Mixed, write);
         assert!(halved.is_some(), "{shape:?} holds no label");
         assert_eq!(
             halved,
@@ -1093,5 +1440,58 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Every diagram a picture case times is made a picture by the drawer,
+    /// at a size whose widest raster the rasteriser's pixels hold: a refusal
+    /// would time the refusal, and one the rasteriser makes fails the probe.
+    #[test]
+    fn every_picture_timed_is_drawn_as_a_picture() {
+        let mut pictures = 0;
+        for case in cases() {
+            if let Input::Picture(text) = &case.input {
+                pictures += 1;
+                for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+                    for &columns in case.rooms {
+                        let svg = Diagrams.picture(text, &Room { columns, glyphs });
+                        let sized = svg.as_ref().ok().and_then(|svg| {
+                            let svg = svg.as_str();
+                            attribute(svg, "width").zip(attribute(svg, "height"))
+                        });
+                        assert!(
+                            sized.is_some_and(|(width, height)| widest(width, height).is_some()),
+                            "{} at {columns} in {glyphs:?}: {svg:?}\n{text}",
+                            case.name
+                        );
+                    }
+                }
+            }
+        }
+        assert_eq!(pictures, 6, "one picture for each kind");
+    }
+
+    /// The widest a picture is rasterised at keeps its pixels inside what the
+    /// rasteriser holds, and one more column would not.
+    #[test]
+    fn the_widest_raster_is_the_most_the_rasteriser_holds() {
+        let most = MOST_DECODED as u64 / 4;
+        for (width, height) in [(3216, 16), (3216, 4000), (8, 16), (1, 100_000)] {
+            let across = u64::from(widest(width, height).unwrap_or(0));
+            let pixels = |across: u64| across * (across * height).div_ceil(width);
+            assert!(pixels(across) <= most, "{width}x{height} at {across}");
+            assert!(pixels(across + 1) > most, "{width}x{height} at {across}");
+        }
+    }
+
+    /// Every slot's class is an ink a picture is rasterised under, once.
+    #[test]
+    fn every_slot_is_an_ink_once() {
+        let inks = inks();
+        let mut classes: Vec<&str> = inks.iter().map(|(class, _)| *class).collect();
+        classes.sort_unstable();
+        classes.dedup();
+        assert_eq!(classes.len(), inks.len());
+        assert!(classes.contains(&Slot::Plain.class()));
+        assert!(classes.contains(&Slot::AddedCount.class()));
     }
 }

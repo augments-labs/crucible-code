@@ -1868,7 +1868,9 @@ fi
 # `crucible_tui_math` and `crucible_tui_mermaid` for the drawers whose worst
 # blocks it times, and `crucible_tui` for the contract those drawers are called
 # through and the room each is handed, so what it times is the call the drawing
-# thread makes. `bench-render-burst` names `crucible_tui_diff`,
+# thread makes; it names `crucible_raster` for the rasterising and encoding
+# a diagram's picture is timed through, so a picture's time is what drawing
+# it to pixels costs. `bench-render-burst` names `crucible_tui_diff`,
 # `crucible_tui_math` and `crucible_tui_mermaid` for the drawers it hands the
 # renderer it streams to, so the diff fences, formulas and diagrams of its burst
 # are timed drawn as a session draws them, and `bench-live-burst` names them for
@@ -1878,7 +1880,8 @@ fi
 # `bench-first-input-colour-silent` names `crucible_tui` in its test alone, for
 # the reply wait its budget is held to the sum of, and measures the built
 # binary like every other startup probe.
-probes='src/bin/bench-drawing.rs crucible_tui
+probes='src/bin/bench-drawing.rs crucible_raster
+src/bin/bench-drawing.rs crucible_tui
 src/bin/bench-drawing.rs crucible_tui_diff
 src/bin/bench-drawing.rs crucible_tui_math
 src/bin/bench-drawing.rs crucible_tui_mermaid
