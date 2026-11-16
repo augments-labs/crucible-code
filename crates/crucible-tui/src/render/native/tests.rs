@@ -3000,6 +3000,162 @@ fn a_native_answer_cut_anywhere_draws_the_footnotes_and_tags_the_whole_answer_dr
     }
 }
 
+#[test]
+fn a_native_hostile_reference_angle_or_www_address_writes_no_escape_nor_a_picture_cell() {
+    for answer in [
+        "[a]: https://x.test/\u{1b}]0;t\u{7}\nsee [a] and [a\u{1b}]0;t\u{7}][a]\n",
+        "<https://x.test/\u{1b}]8;;https://evil.invalid\u{1b}\\> and <a\u{1b}]0;t\u{7}@b.test>\n",
+        "www.x.test/\u{1b}]0;t\u{7} and www.\u{1b}_Gi=1;AAAA\u{1b}\\x.test and www.y.test\u{8}\u{85}\n",
+        "[a\u{1b}]0;t\u{7}]: https://x.test/a\nsee [a\u{1b}]0;t\u{7}] and [w\u{8}][a\u{1b}]0;t\u{7}]\n",
+        concat!(
+            "[\u{10eeee}\u{305}x]: https://x.test\n",
+            "see [words][\u{10eeee}\u{305}x]\n",
+        ),
+    ] {
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let window = Window::new(64, 12);
+            let mut render = native(&window);
+            render.images(crate::terminal::graphics::Capability::Graphics {
+                protocol: crate::terminal::graphics::Protocol::Kitty,
+                cell: crate::terminal::graphics::Cell {
+                    width: 9,
+                    height: 18,
+                },
+            });
+            render.draws(glyphs);
+            render.wears(colourful().addressing(true));
+            stands(&mut render);
+            render.stream(answer).unwrap();
+            render.settle().unwrap();
+            render.seal().unwrap();
+
+            // Each hyperlink sequence is taken out first: it may hold
+            // printable ASCII and nothing that ends it early.
+            let written = window.written();
+            let mut rest = written.as_str();
+            let mut kept = String::new();
+            while let Some(at) = rest.find("\u{1b}]8;") {
+                kept.push_str(&rest[..at]);
+                let after = &rest[at + 4..];
+                let end = after.find("\u{1b}\\").unwrap_or(after.len());
+                assert!(
+                    after[..end].bytes().all(|byte| byte.is_ascii_graphic()),
+                    "a link sequence carried {:?} for {answer:?}",
+                    &after[..end]
+                );
+                rest = &after[(end + 2).min(after.len())..];
+            }
+            kept.push_str(rest);
+
+            for hostile in [
+                "\u{1b}]", "\u{1b}P", "\u{1b}_", "\u{7}", "\u{8}", "\u{85}", "\u{9c}",
+            ] {
+                assert!(
+                    !kept.contains(hostile),
+                    "{hostile:?} reached the terminal for {answer:?} with {glyphs:?}"
+                );
+            }
+            assert!(
+                !kept.contains('\u{10eeee}'),
+                "a picture cell was placed for {answer:?} with {glyphs:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_native_hostile_forge_address_worded_link_or_image_writes_no_escape() {
+    for answer in [
+        "https://github.com/augments-labs/crucible-code/pull/1\u{1b}]0;t\u{7} and https://github.com/o/r/commit/abcdef1\u{9b}31m\n",
+        "[fix\u{1b}]0;t\u{7}](https://github.com/o/r/pull/12) and [x](https://github.com/o/r/pull/12\u{85})\n",
+        "[guide](https://example.com/\u{1b}]8;;https://evil.invalid\u{1b}\\/a/b) and [g](https://example.com/\u{202e}\u{200b}x/y/z)\n",
+        "![alt\u{1b}]0;t\u{7}](out/\u{1b}_Gi=1;AAAA\u{1b}\\shot.png) and ![a](https://x.test/\u{202e}gnp.exe\u{9c})\n",
+        "[write](mailto:a\u{1b}]0;t\u{7}@b.test) and [w](mailto:a@b.test\u{8}\u{9b}2J)\n",
+        "| a |\n|---|\n| [g](https://example.com/\u{1b}]0;t\u{7}/x) https://github.com/o/r/pull/3\u{85} |\n",
+    ] {
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let window = Window::new(64, 12);
+            let mut render = native(&window);
+            render.draws(glyphs);
+            render.wears(colourful().addressing(true));
+            render.counts(Some(crate::Forge::new(
+                "https://github.com",
+                "augments-labs/crucible-code",
+                "/issues/",
+            )));
+            stands(&mut render);
+            render.stream(answer).unwrap();
+            render.settle().unwrap();
+            render.seal().unwrap();
+
+            // Each hyperlink sequence is taken out first: it may hold
+            // printable ASCII and nothing that ends it early.
+            let written = window.written();
+            let mut rest = written.as_str();
+            let mut kept = String::new();
+            while let Some(at) = rest.find("\u{1b}]8;") {
+                kept.push_str(&rest[..at]);
+                let after = &rest[at + 4..];
+                let end = after.find("\u{1b}\\").unwrap_or(after.len());
+                assert!(
+                    after[..end].bytes().all(|byte| byte.is_ascii_graphic()),
+                    "a link sequence carried {:?} for {answer:?}",
+                    &after[..end]
+                );
+                rest = &after[(end + 2).min(after.len())..];
+            }
+            kept.push_str(rest);
+
+            for hostile in [
+                "\u{1b}]",
+                "\u{1b}P",
+                "\u{1b}_",
+                "\u{1b}[31",
+                "\u{1b}[2J",
+                "\u{7}",
+                "\u{8}",
+                "\u{85}",
+                "\u{9b}",
+                "\u{9c}",
+                "\u{202e}",
+                "\u{200b}",
+            ] {
+                assert!(
+                    !kept.contains(hostile),
+                    "{hostile:?} reached the terminal for {answer:?} with {glyphs:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_native_run_with_no_colour_in_it_keeps_every_link_and_image_as_the_model_wrote_it() {
+    let three = "https://github.com/augments-labs/crucible-code/pull/1324 \
+                 [the guide](https://example.com/docs/guide/intro) ![shot](out/shot.png)";
+    let window = Window::new(200, 12);
+    let mut render = native(&window);
+    render.counts(Some(crate::Forge::new(
+        "https://github.com",
+        "augments-labs/crucible-code",
+        "/issues/",
+    )));
+    stands(&mut render);
+    render.stream(three).unwrap();
+    render.settle().unwrap();
+    render.seal().unwrap();
+
+    let rows: Vec<String> = window
+        .all()
+        .into_iter()
+        .map(|row| row.trim_end().to_owned())
+        .collect();
+    assert!(rows.iter().any(|row| row == three), "{rows:#?}");
+    for shown in ["#1324", "(example.com", "[image"] {
+        assert!(!rows.iter().any(|row| row.contains(shown)), "{rows:#?}");
+    }
+}
+
 /// How many columns of blank stand in front of `row`'s first word.
 fn indent_of(row: &str) -> usize {
     row.len() - row.trim_start().len()
@@ -3574,4 +3730,332 @@ fn native_a_line_written_on_the_first_row_the_window_does_not_draw_leaves_the_cu
         (Some("| > typed"), 4),
         "{screen:#?}"
     );
+}
+
+#[test]
+fn a_native_entity_is_drawn_as_the_character_it_names_and_a_backslash_break_draws_no_backslash() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let rows = kept_natively(30, glyphs, &["a &amp; b &lt;c&gt; &#169; &#x41;\n"]);
+        assert!(rows.iter().any(|row| row == "a & b <c> © A"), "{rows:#?}");
+
+        let rows = kept_natively(30, glyphs, &["first line\\\nsecond line\n"]);
+        assert!(rows.iter().any(|row| row == "first line"), "{rows:#?}");
+        assert!(rows.iter().any(|row| row == "second line"), "{rows:#?}");
+        assert!(!rows.iter().any(|row| row.contains('\\')), "{rows:#?}");
+
+        let rows = kept_natively(30, glyphs, &["ends on it\\\n\nnext\n"]);
+        assert!(rows.iter().any(|row| row == "ends on it\\"), "{rows:#?}");
+    }
+}
+
+#[test]
+fn a_native_hostile_entity_writes_no_escape_nor_a_picture_cell_and_is_drawn_as_written() {
+    for answer in [
+        "&#27;[31mred&#27;[0m and &#27;]0;t&#7;\n",
+        "&#x1b; and &#x1B;]8;;https://evil.invalid&#x7;\n",
+        "&#x202E;gnirts and &#8238;\n",
+        "&#7; bell, &#0; nothing and &#x0; nothing\n",
+        "a &#x10EEEE; b and &#1109742; c\n",
+    ] {
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let window = Window::new(64, 12);
+            let mut render = native(&window);
+            render.images(crate::terminal::graphics::Capability::Graphics {
+                protocol: crate::terminal::graphics::Protocol::Kitty,
+                cell: crate::terminal::graphics::Cell {
+                    width: 9,
+                    height: 18,
+                },
+            });
+            render.draws(glyphs);
+            stands(&mut render);
+            render.stream(answer).unwrap();
+            render.settle().unwrap();
+            render.seal().unwrap();
+
+            let written = window.written();
+            for hostile in [
+                "\u{1b}]",
+                "\u{1b}[31",
+                "\u{1b}P",
+                "\u{1b}_",
+                "\u{7}",
+                "\u{8}",
+                "\u{85}",
+                "\u{9c}",
+                "\u{202e}",
+                "\u{0}",
+            ] {
+                assert!(
+                    !written.contains(hostile),
+                    "{hostile:?} reached the terminal for {answer:?} with {glyphs:?}"
+                );
+            }
+            assert!(
+                !written.contains('\u{10eeee}'),
+                "a picture cell was placed for {answer:?} with {glyphs:?}"
+            );
+        }
+    }
+    let rows = kept_natively(
+        64,
+        Glyphs::Unicode,
+        &["&#27;[31mred and &#x1b; and &#x202E;gnirts and &#7; and &#0;\n"],
+    )
+    .join("\n");
+    for words in ["&#27;[31m", "&#x1b;", "&#x202E;", "&#7;", "&#0;"] {
+        assert!(rows.contains(words), "{rows:?} lost {words:?}");
+    }
+}
+
+#[test]
+fn a_native_struck_phrase_wears_the_strike_and_a_path_stays_as_written() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let rows = kept_natively(80, glyphs, &["~one~ and ~/Projects and cd ~/a and ~/b\n"]);
+        assert!(
+            rows.iter()
+                .any(|row| row == "one and ~/Projects and cd ~/a and ~/b"),
+            "{glyphs:?}: {rows:#?}"
+        );
+
+        let rows = kept_natively(80, glyphs, &["between ~/a and ~/b\n"]);
+        assert!(
+            rows.iter().any(|row| row == "between ~/a and ~/b"),
+            "{glyphs:?}: {rows:#?}"
+        );
+
+        let window = Window::new(80, 12);
+        answered_natively_in(&window, glyphs, "~one~ and ~/Projects\n", None);
+        let worn = colourful().open(Slot::Struck);
+        let written = window.written();
+        assert!(
+            written.contains(&format!("{}one", worn.as_str())),
+            "{glyphs:?}: {written:?}"
+        );
+        assert!(
+            !written.contains(&format!("{}/Projects", worn.as_str())),
+            "{glyphs:?}: {written:?}"
+        );
+    }
+}
+
+#[test]
+fn a_native_run_under_three_markers_is_drawn_bold_and_italic_together() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let window = Window::new(80, 12);
+        let rows = answered_natively_in(&window, glyphs, "a ***both*** b\n", None);
+        assert!(
+            rows.iter().any(|row| row.trim_end() == "a both b"),
+            "{glyphs:?}: {rows:#?}"
+        );
+        let written = window.written();
+        assert!(
+            written.contains("\u{1b}[1;3mboth"),
+            "{glyphs:?}: {written:?}"
+        );
+    }
+}
+
+#[test]
+fn a_native_held_phrase_is_told_of_in_the_foot_and_joins_the_scrollback_once_settled() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let window = Window::new(64, 12);
+        let mut render = native(&window);
+        render.draws(glyphs);
+        render.wears(colourful());
+        stands(&mut render);
+        render.stream("look in ~/Projects").unwrap();
+
+        let rows = window.all();
+        assert!(
+            rows.iter().any(|row| row.trim_end() == "~/Projects"),
+            "{glyphs:?}: {rows:#?}"
+        );
+        assert!(
+            !window
+                .scrollback()
+                .iter()
+                .any(|row| row.contains("~/Projects")),
+            "{glyphs:?}: the held phrase reached the scrollback"
+        );
+
+        render.stream("\n\nnext\n").unwrap();
+        render.settle().unwrap();
+        stands(&mut render);
+        render.seal().unwrap();
+
+        let rows: Vec<String> = window
+            .all()
+            .into_iter()
+            .map(|row| row.trim_end().to_owned())
+            .collect();
+        assert!(
+            !rows.iter().any(|row| row == "~/Projects"),
+            "{glyphs:?}: {rows:#?}"
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|row| *row == "look in ~/Projects")
+                .count(),
+            1,
+            "{glyphs:?}: {rows:#?}"
+        );
+        assert!(
+            rows.iter().any(|row| row == "next"),
+            "{glyphs:?}: {rows:#?}"
+        );
+    }
+}
+
+// A fence drawn by the drawers the renderer was handed. The drawer and the
+// hostile fences are the full screen's, so both modes are held to one input.
+
+/// The rows `answer` comes to natively in `glyphs` in a window `columns`
+/// wide, with `drawers` handed to the renderer, and everything written.
+fn drawn_natively(
+    glyphs: Glyphs,
+    columns: usize,
+    answer: &str,
+    drawers: Option<crate::drawing::Drawers>,
+    resized: Option<usize>,
+) -> (Vec<String>, String) {
+    let window = Window::new(columns, 40);
+    let mut render = native(&window);
+    render.draws(glyphs);
+    render.wears(colourful().addressing(true));
+    if let Some(drawers) = drawers {
+        render.drawers(drawers);
+    }
+    stands(&mut render);
+    render.stream(answer).unwrap();
+    render.settle().unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+    if let Some(columns) = resized {
+        settles_at(&window, &mut render, columns, 40);
+    }
+    let (boxed, _) = boxed();
+    let boxed: Vec<String> = boxed.iter().map(Row::text).collect();
+    let rows = window
+        .all()
+        .into_iter()
+        .filter(|row| !row.trim().is_empty() && !boxed.contains(row))
+        .map(|row| row.trim_end().to_owned())
+        .collect();
+    (rows, window.written())
+}
+
+/// An answer with a change in a fence between two lines of prose.
+const CHANGE_FENCED: &str =
+    "Before.\n\n```diff\n--- a/x.rs\n+++ b/x.rs\n@@ -1 +1 @@\n-old\n+new\n```\n\nAfter.\n";
+
+#[test]
+fn a_native_fence_of_an_answer_is_drawn_by_the_drawer_the_renderer_was_handed() {
+    use super::super::tests::drawers::echoing;
+
+    for (glyphs, mark) in [(Glyphs::Unicode, "»"), (Glyphs::Ascii, ">")] {
+        let (rows, _) = drawn_natively(glyphs, 64, CHANGE_FENCED, Some(echoing()), None);
+        assert_eq!(
+            rows,
+            [
+                "Before.".to_owned(),
+                format!("{mark} --- a/x.rs"),
+                format!("{mark} +++ b/x.rs"),
+                format!("{mark} @@ -1 +1 @@"),
+                format!("{mark} -old"),
+                format!("{mark} +new"),
+                "After.".to_owned(),
+            ],
+            "{glyphs:?}"
+        );
+    }
+}
+
+#[test]
+fn a_native_drawn_fences_offer_of_a_key_stands_at_each_width_it_is_laid_out_for() {
+    use super::super::tests::drawers::offering;
+
+    // Ctrl+O lists the fence in this screen too, so the key is one that
+    // answers, in the window it was drawn in and in a narrower one.
+    for narrowed in [None, Some(40)] {
+        let (rows, _) = drawn_natively(
+            Glyphs::Unicode,
+            64,
+            CHANGE_FENCED,
+            Some(offering()),
+            narrowed,
+        );
+        assert_eq!(
+            rows,
+            ["Before.", "5 lines held · ctrl+o to expand", "After."],
+            "{narrowed:?}"
+        );
+    }
+}
+
+#[test]
+fn a_native_renderer_handed_no_drawer_draws_a_fence_exactly_as_it_was_written() {
+    let (untold, written) = drawn_natively(Glyphs::Unicode, 64, CHANGE_FENCED, None, None);
+    assert_eq!(
+        untold,
+        [
+            "Before.",
+            "┌─ diff",
+            "│ --- a/x.rs",
+            "│ +++ b/x.rs",
+            "│ @@ -1 +1 @@",
+            "│ -old",
+            "│ +new",
+            "└─",
+            "After.",
+        ]
+    );
+
+    // Handed a registry with nothing in it, it writes the same bytes.
+    let empty = Some(crate::drawing::Drawers::default());
+    let (rows, same) = drawn_natively(Glyphs::Unicode, 64, CHANGE_FENCED, empty, None);
+    assert_eq!(rows, untold);
+    assert_eq!(same, written);
+}
+
+#[test]
+fn a_native_drawn_fence_narrowed_is_the_fence_a_window_that_narrow_draws() {
+    use super::super::tests::drawers::echoing;
+
+    let answer = "```diff\n+a line a good deal longer than the narrow window is wide\n```\n";
+    let (fresh, _) = drawn_natively(Glyphs::Unicode, 24, answer, Some(echoing()), None);
+    let (narrowed, _) = drawn_natively(Glyphs::Unicode, 70, answer, Some(echoing()), Some(24));
+
+    // The room is the window's less the column the rail is spared.
+    assert_eq!(fresh, ["» +a line a good deal lo"]);
+    assert_eq!(narrowed, fresh);
+}
+
+#[test]
+fn a_native_hostile_path_or_line_in_a_drawn_fence_writes_no_escape() {
+    use super::super::tests::drawers::{HOSTILE_FENCES, OBEYED, echoing};
+
+    for answer in HOSTILE_FENCES {
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let (rows, written) = drawn_natively(glyphs, 64, answer, Some(echoing()), None);
+
+            // The drawer drew it, so what it was handed is what is on screen.
+            assert!(
+                rows.iter().any(|row| row.contains("@@ -1")),
+                "{answer:?} with {glyphs:?}: {rows:#?}"
+            );
+            assert!(
+                !rows
+                    .iter()
+                    .any(|row| row.contains("diff") || row.contains("patch")),
+                "{answer:?} with {glyphs:?}: {rows:#?}"
+            );
+            for hostile in OBEYED {
+                assert!(
+                    !written.contains(hostile),
+                    "{hostile:?} reached the terminal for {answer:?} with {glyphs:?}"
+                );
+            }
+        }
+    }
 }

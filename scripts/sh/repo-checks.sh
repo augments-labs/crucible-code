@@ -143,6 +143,73 @@ docs_only_case false scripts/sh/install.sh
 # A pull request that changes no file has nothing to say it is documentation.
 docs_only_case false
 
+section "the local gate runs its gates at once and reports them in order"
+# scripts/sh/check.sh runs a copy of itself here over stub gates. The
+# repository stub waits up to 10 s for the Python stub to start, and says it ran
+# alone if it never does, so the output differs when the two gates do not run
+# at once. On bash before 4.3 check.sh runs them one after the other, and the
+# stub, run by the same bash, does not wait. Each case gives exit statuses for
+# the Rust, repository and Python stubs, and the exit and output check.sh must
+# give: every gate's output in that order, then the failed ones by name. A
+# Python status of "interrupted" has its stub send itself Ctrl-C's signal, which
+# a gate started in the background ignores unless check.sh gives it back; the
+# stub then says it ran on, as the real gate would. That case is skipped, saying
+# so, when this gate itself started with Ctrl-C ignored, since every gate then
+# rightly ignores it.
+local_gate=$(mktemp -d)
+mkdir -p "$local_gate/scripts/sh"
+cp scripts/sh/check.sh "$local_gate/scripts/sh/"
+cat >"$local_gate/scripts/sh/rust-checks.sh" <<'STUB'
+#!/usr/bin/env bash
+echo rust
+exit "$RUST_EXIT"
+STUB
+cat >"$local_gate/scripts/sh/repo-checks.sh" <<'STUB'
+#!/usr/bin/env bash
+if ((BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1] >= 403)); then
+    for ((tries = 0; tries < 200; tries++)); do
+        [[ -e python-started ]] && break
+        sleep 0.05
+    done
+    [[ -e python-started ]] || echo "repository ran alone"
+fi
+echo repository
+exit "$REPO_EXIT"
+STUB
+cat >"$local_gate/scripts/sh/python-checks.sh" <<'STUB'
+#!/usr/bin/env bash
+: >python-started
+echo python
+echo python-warning >&2
+if [[ $PYTHON_EXIT == interrupted ]]; then
+    kill -INT $$
+    echo "python ran on after Ctrl-C"
+    exit 0
+fi
+exit "$PYTHON_EXIT"
+STUB
+chmod 755 "$local_gate"/scripts/sh/*.sh
+local_gate_case() {
+    local rust=$1 repo=$2 python=$3 want_exit=$4 want=$5 got code=0
+    rm -f "$local_gate/python-started"
+    got=$(RUST_EXIT=$rust REPO_EXIT=$repo PYTHON_EXIT=$python "$local_gate/scripts/sh/check.sh" 2>&1) || code=$?
+    if [[ $code != "$want_exit" || $got != "$want" ]]; then
+        printf '    FAIL check.sh with Rust %s, repository %s and Python %s exited %s, saying:\n%s\n' \
+            "$rust" "$repo" "$python" "$code" "$got"
+        failed=1
+    fi
+}
+local_gate_case 0 0 0 0 $'rust\nrepository\npython\npython-warning\n\nall deterministic gates passed'
+local_gate_case 1 0 1 1 $'rust\nrepository\npython\npython-warning\n\nFAILED gates:\n    Rust\n    Python'
+local_gate_case 0 1 0 1 $'rust\nrepository\npython\npython-warning\n\nFAILED gates:\n    repository'
+local_gate_case 1 1 1 1 $'rust\nrepository\npython\npython-warning\n\nFAILED gates:\n    Rust\n    repository\n    Python'
+if [[ $(bash -c 'kill -INT $$; echo survived' 2>/dev/null) == survived ]]; then
+    printf '    skip check.sh and Ctrl-C: this gate started with Ctrl-C ignored\n'
+else
+    local_gate_case 0 0 interrupted 1 $'rust\nrepository\npython\npython-warning\n\nFAILED gates:\n    Python'
+fi
+rm -rf "$local_gate"
+
 section "tracked source secrets"
 # Deliberately narrow signatures: each names a credential format whose prefix is
 # part of the provider's contract. Generic entropy and words such as `password`
@@ -880,9 +947,15 @@ fi
 #
 # A drawer is a crate that lays one kind of block out for the terminal. It
 # names `tui` alone, for the drawing contract it answers and the rows it
-# lays out, so `tui-diff tui` is the whole of what the diff drawer takes.
+# lays out, so `tui-diff tui` is the whole of what the diff drawer takes,
+# `tui-math tui` the whole of what the formula drawer takes, and
+# `tui-mermaid tui` the whole of what the diagram drawer takes.
 # `code tui-diff` ships: the command line draws a tool's change through the
 # drawer that draws a diff in an answer, so the two cannot drift apart.
+# `code tui-math` ships: the command line hands every renderer of a session
+# the formula drawer, so math in an answer is drawn as text.
+# `code tui-mermaid` ships: the command line hands every renderer of a
+# session the diagram drawer, so a mermaid fence in an answer is drawn as text.
 allowed='code app
 code attachments
 code auth
@@ -909,6 +982,8 @@ code storage
 code tools
 code tui
 code tui-diff
+code tui-math
+code tui-mermaid
 code types
 code workspace
 app agents
@@ -1027,6 +1102,8 @@ transport runtime
 transport sandbox
 transport types
 tui-diff tui
+tui-math tui
+tui-mermaid tui
 update http
 update privacy
 update runtime
@@ -1255,7 +1332,9 @@ done <<<"$sandbox_state"
 
 section "a drawer's test helpers stay out of a release"
 # `crucible-tui`'s `testing` feature carries the fit sweep's widths and rooms,
-# `dump` and the fit check, which a drawer crate's tests check a drawing with.
+# `dump` and the fit check, and the corpus of answers with the helpers that
+# read one through the reader, which a drawer crate's tests check a drawing
+# with.
 # What ships draws through the contract alone, so no table Cargo resolves for a
 # build that ships may turn the feature on: not a normal or build dependency,
 # under any target, not the workspace table a member inherits from, and not a
@@ -1324,6 +1403,8 @@ section "a drawer or raster crate reaches no network"
 # contract every drawer implements; it is allowed there and nowhere nearer, so
 # a crate that takes it itself, where its sockets would be one call away, fails.
 offline_crates='crucible-tui-diff
+crucible-tui-math
+crucible-tui-mermaid
 crucible-raster'
 network_clients=' async-io async-net async-std attohttpc curl curl-sys h2 h3 hyper hyper-util isahc native-tls openssl quinn reqwest rustls smol socket2 surf tokio tokio-tungstenite tungstenite ureq '
 graphs=0
@@ -1548,6 +1629,8 @@ removable=(
     tests/whole_screen/snapshots/whole_screen__agents__*.snap
     tests/whole_screen/snapshots/whole_screen__a_slash_{opens_the_command_list_above_the_box,typed_mid_turn_opens_the_command_list}.snap
     Cargo.toml Cargo.lock scripts/sh/repo-checks.sh
+    # The gate profile names the harness crate's test binaries; they go with the route.
+    .config/nextest.toml
     docs/providers/{agents,index,providers,content-use,network}.md
     docs/configuration/configuration.md docs/reference/cli.md
     docs/security/{index,sandboxing}.md docs/sessions/sessions.md
@@ -1775,14 +1858,24 @@ fi
 # lend the calls they time, so what they time includes handing the work to it,
 # `crucible_runtime` for the future their permission prompts answer with, and
 # `crucible_types` and `crucible_workspace` for the call they build and the
-# directory it reaches. `bench-drawing` names `crucible_tui_diff` for the
-# drawer whose worst block it times, and `crucible_tui` for the contract that
-# drawer is called through and the room it is handed, so what it times is the
-# call the drawing thread makes. `bench-first-input-colour-silent` names
-# `crucible_tui` in its test alone, for the reply wait its budget is held to
-# the sum of, and measures the built binary like every other startup probe.
+# directory it reaches. `bench-drawing` names `crucible_tui_diff`,
+# `crucible_tui_math` and `crucible_tui_mermaid` for the drawers whose worst
+# blocks it times, and `crucible_tui` for the contract those drawers are called
+# through and the room each is handed, so what it times is the call the drawing
+# thread makes. `bench-render-burst` names `crucible_tui_diff`,
+# `crucible_tui_math` and `crucible_tui_mermaid` for the drawers it hands the
+# renderer it streams to, so the diff fences, formulas and diagrams of its burst
+# are timed drawn as a session draws them, and `bench-live-burst` names them for
+# the drawers that draw the answers its band stands over, so a frame is timed
+# over a record that keeps a drawer's rows; each builds the drawers in its own
+# file, where this list reads what it names.
+# `bench-first-input-colour-silent` names `crucible_tui` in its test alone, for
+# the reply wait its budget is held to the sum of, and measures the built
+# binary like every other startup probe.
 probes='src/bin/bench-drawing.rs crucible_tui
 src/bin/bench-drawing.rs crucible_tui_diff
+src/bin/bench-drawing.rs crucible_tui_math
+src/bin/bench-drawing.rs crucible_tui_mermaid
 src/bin/bench-first-input-colour-silent.rs crucible_tui
 src/bin/bench-grep.rs crucible_builtins
 src/bin/bench-grep.rs crucible_runtime
@@ -1790,10 +1883,16 @@ src/bin/bench-grep.rs crucible_tools
 src/bin/bench-grep.rs crucible_types
 src/bin/bench-grep.rs crucible_workspace
 src/bin/bench-live-burst.rs crucible_tui
+src/bin/bench-live-burst.rs crucible_tui_diff
+src/bin/bench-live-burst.rs crucible_tui_math
+src/bin/bench-live-burst.rs crucible_tui_mermaid
 src/bin/bench-read-back.rs crucible_session
 src/bin/bench-read-back.rs crucible_types
 src/bin/bench-read-back.rs crucible_workspace
 src/bin/bench-render-burst.rs crucible_tui
+src/bin/bench-render-burst.rs crucible_tui_diff
+src/bin/bench-render-burst.rs crucible_tui_math
+src/bin/bench-render-burst.rs crucible_tui_mermaid
 src/bin/bench-session-rss.rs crucible_attachments
 src/bin/bench-session-rss.rs crucible_config
 src/bin/bench-session-rss-colour.rs crucible_attachments

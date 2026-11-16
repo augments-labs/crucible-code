@@ -26,7 +26,9 @@ its place and none of its text:
 ```
 
 With the ASCII glyph set the row reads `o drawing a table - 4 lines so far`.
-The row names a formula, a mermaid diagram or a diff the same way. It shows in
+The row names a formula, a mermaid diagram or a diff the same way, and a
+mermaid diagram by its kind once the fence's first line has arrived, as in
+`◇ drawing a mermaid flowchart · 3 lines so far`. It shows in
 both [`output.screen`](../configuration/configuration.md#output) modes, in the
 full screen while you are reading at the foot of the transcript, and the block
 takes its place once the block closes. In the full screen, crucible's own
@@ -90,22 +92,24 @@ Two blocks in one selection give both. A rule, and a heading with its rule,
 copy as they are drawn, the words and then the rule. In the native screen, or
 with <kbd>Shift</kbd> held while you drag, your terminal copies what it shows.
 In both screens <kbd>Ctrl+O</kbd> lists the source of each drawn block, newest
-first, after any cut results: see
+first, after any cut results, and then every
+[address drawn shorter](#the-address-after-a-links-words): see
 [Results cut short](../reference/keys.md#results-cut-short).
 
 ## Drawn again at every width
 
-A table, a rule and the rule under a heading are kept as the text the model
-wrote, beside the rows they were drawn as. When the window changes width, or
-you change the glyph set, each is laid out again from that text for the window
-it is in now, so a table drawn in a narrow window and then widened is the table
-a window that wide would have drawn. A change of theme repaints the same rows
+A table, a diff, a formula drawn as a block, a diagram, a rule and the rule
+under a heading are kept as the text the model wrote, beside the rows they were drawn as. When the window changes width,
+or you change the glyph set, each is laid out again from that text for the
+window it is in now, so a table drawn in a narrow window and then widened is
+the table a window that wide would have drawn, and a diff's grounds reach the
+new edge. A change of theme repaints the same rows
 in the new colours. In native mode this happens when the terminal's scrollback
 is written again, once the window has kept its new size.
 
-What the transcript keeps is bounded, and a table counts against that bound by
-both its text and its rows. When the oldest of the transcript is dropped, a
-table goes with its text. The [session log](sessions.md) still holds every
+What the transcript keeps is bounded, and a table or a diff counts against that
+bound by both its text and its rows. When the oldest of the transcript is
+dropped, a table or a diff goes with its text. The [session log](sessions.md) still holds every
 answer.
 
 ## Code blocks
@@ -143,6 +147,159 @@ line that wrapped copies as the one line it was written as, with no line break
 where it wrapped. In the native screen, or with <kbd>Shift</kbd> held while you
 drag, your terminal copies what it shows. When the window changes width the
 rows are cut again from the line.
+
+## Diffs
+
+A fence named `diff` or `patch` that holds a unified diff is drawn as the
+change it describes, in the box a tool's edit is shown in:
+
+```text
+╭─ src/parse.rs · Added 1 line, removed 1 line
+│   40 -     tree
+│   40 +     tree.finish()
+├─ README.md · Added 1 line
+│    1   # parse
+│    2 + A small parser.
+╰─
+```
+
+Each file of the diff opens with a row naming it and counting its lines, and
+everything said of the box under
+[What a change leaves on screen](../tools/files.md#what-a-change-leaves-on-screen)
+holds here: the grounds, the raised words, the colours of the file's language
+and the fold. A file of more than 32 rows is folded around a row such as
+`⋯  36 lines folded · ctrl+o to expand  ⋯`, and <kbd>Ctrl+O</kbd> lists the
+diff as the model wrote it, every line of it: see
+[The source of a table, formula, diagram or diff](#the-source-of-a-table-formula-diagram-or-diff).
+Where no key is read, in output sent to a file or a pipe and in the `/resume`
+preview of a session, the row keeps its count and names no key:
+`⋯  36 lines folded  ⋯`.
+
+A fence under either name that is not a unified diff is shown as written, in
+the frame of a [code block](#code-blocks). So is a diff past what a change
+holds, one that names more than 8 files or runs to 2048 lines or more, and its
+top edge says why: `┌─ diff · longer than this can hold · shown as written`.
+A fence is [held](#what-is-shown-as-written) for 16 KiB at most, so a diff
+longer than that is shown the same way.
+
+## Math
+
+TeX math in an answer is drawn as text, the way it reads on paper as nearly as
+a terminal's characters allow. A span in a line, between `$` and `$` or `\(`
+and `\)`, is drawn in its line: `$\alpha_i$` reads `αᵢ`, `$E = mc^2$` reads
+`E = mc²` and `$\frac{a}{b}$` reads `a/b`. Display math is
+[held until it closes](#blocks-held-until-they-close) and drawn in a frame
+named `math`, a fraction stacked over its rule, scripts raised where a script
+character exists, Greek letters and operators as their characters, and
+matrices and cases between their bracket pieces:
+
+```text
+┌─ math
+│            n(n+1)
+│ ∑ᵢ₌₁ⁿ i = ────────
+│              2
+└─
+```
+
+With the ASCII glyph set the frame, the rules, the bracket pieces and the minus
+sign are ASCII: `‖` is drawn as `||`, and `⟨` and `⟩` as `<` and `>`. The
+letters, the operators, the root sign and the raised scripts of the formula
+stay as they are. A formula holding a ceiling or a floor, which no ASCII
+character draws, is shown as written.
+
+A dollar is math only where it reads as one, so `$5 and $10`, `$HOME/$USER`,
+`$n$th` and `set $a,$b` stay as written. A dollar followed by a space, a tab, a
+comma or the end of its line opens nothing, two together in a line open
+nothing, and one with a space just inside it, or a letter, a digit or `_` just
+after it, closes nothing; `\$` is a dollar. A span not closed by the end of its
+line, a backtick, a `://` or 4 KiB is shown as written. In code, a key, a
+link's words and an address, a dollar is never math.
+
+A formula is drawn whole or not at all. One holding a command, an environment
+or a character crucible does not know, a whole document, a control or an
+invisible character, or more than crucible draws, is shown exactly as written.
+A display formula shown that way keeps its frame, and the frame's top edge says
+why where there is a reason to give, as in
+`┌─ math · not drawn as text · shown as written`. One wider than the window is
+`too wide to draw at this width`, and is drawn again once the window is wide
+enough: see [Drawn again at every width](#drawn-again-at-every-width).
+
+[`output.math`](../configuration/configuration.md#output) says how math is
+drawn. `image`, the default, draws a formula as a picture where one can be
+shown and as text everywhere else, which is everywhere for now; `text` draws
+it as text; `written` shows every formula exactly as the model wrote it, its
+markers included. A change in `/settings` takes effect at once: every display
+formula already drawn is laid out again in the new form, while a span already
+drawn in a line keeps the form it was drawn in and the next span is drawn in
+the new one. In native mode a display formula already written to the
+terminal's scrollback changes only when the scrollback is written again, once
+the window has been resized; see
+[What native mode cannot do](../configuration/configuration.md#what-native-mode-cannot-do).
+Output with no colour, including output that is not a terminal, keeps every
+formula as written.
+
+## Diagrams
+
+A mermaid diagram in an answer is drawn as text: its boxes, the lines between
+them and their labels, in a terminal's characters. Three kinds are drawn: a
+flowchart (`graph` or `flowchart`), a state diagram (`stateDiagram` or
+`stateDiagram-v2`) and an entity-relationship diagram (`erDiagram`). A diagram
+is [held until it closes](#blocks-held-until-they-close) and drawn in a frame
+that names its kind, here the state diagram `[*] --> Idle`,
+`Idle --> Running: start`, `Running --> [*]`:
+
+```text
+┌─ mermaid · state diagram
+│                                                ╭───────╮
+│ ╭─────╮       ╭──────╮  start╭─────────╮       │╭─────╮│
+│ (  ●  )──────▸│ Idle │──────▸│ Running │──────▸││  ●  ││
+│ ╰─────╯       ╰──────╯       ╰─────────╯       │╰─────╯│
+│                                                ╰───────╯
+└─
+```
+
+With the ASCII glyph set the frame, the boxes, the lines and the arrowheads are
+ASCII. A character a label was written with stays as it is, and a diagram that
+would need any other character that is not ASCII is shown as written.
+
+A diagram is drawn whole or not at all, and is shown exactly as written in its
+frame, whose top edge says why, when:
+
+- it is another kind, such as a class diagram, a sequence diagram, a gantt
+  chart or a pie chart, which the frame names, as in
+  `┌─ mermaid · pie · not drawn as text · shown as written`;
+- it is a flowchart with a group (`subgraph`) in it:
+  `┌─ mermaid · groups · not drawn as text · shown as written`;
+- it holds a statement crucible does not read, which is `not drawn as text`;
+- it is larger than crucible draws, which is `longer than this can hold`: a
+  flowchart with more than 16 boxes, 6 lines or 1024 bytes, or a label wider
+  than 16 columns; a state diagram with more than 16 states, 8 transitions or
+  1024 bytes, or a label wider than 12 columns; an entity-relationship diagram
+  with more than 48 entities, 64 relationships or 4096 bytes. These keep the
+  costliest diagram crucible draws inside the time one frame may take, and a
+  diagram's cost grows with its lines and the width of its labels, so a
+  flowchart allows fewer lines in exchange for longer labels;
+- drawn whole it is wider than the window, which is
+  `too wide to draw at this width`, and it is drawn again once the window is
+  wide enough: see [Drawn again at every width](#drawn-again-at-every-width).
+
+A statement that styles a diagram, links from it or acts on a click (`style`,
+`classDef`, `click`) is left out of the drawing, and no address in one is
+drawn or opened. A control or invisible character in a label, and a character
+boxes are drawn with, is left out of the label.
+
+[`output.diagrams`](../configuration/configuration.md#output) says how a
+diagram is drawn. `image`, the default, draws a diagram as a picture where one
+can be shown and as text everywhere else, which is everywhere for now; `text`
+draws it as text; `written` shows every diagram exactly as the model wrote it,
+in its fence. It is set apart from `output.math`, so either can be written
+while the other is drawn. A change in `/settings` takes effect at once: every
+diagram already drawn is laid out again in the new form. In native mode a
+diagram already written to the terminal's scrollback changes only when the
+scrollback is written again, once the window has been resized; see
+[What native mode cannot do](../configuration/configuration.md#what-native-mode-cannot-do).
+Output with no colour, including output that is not a terminal, keeps every
+diagram as written.
 
 ## Lists and quotes that wrap
 
@@ -208,6 +365,101 @@ however many spaces follow the colon: `¹ the source`. A note written
 before or after the reference that uses it takes the same number. In a quote
 or a list item, the brackets are a reference even where a colon follows them.
 
+## Reference links and addresses
+
+A line that is a label in brackets, a colon and one address, such as
+`[docs]: https://example.com/docs`, defines that label, and is drawn as the
+address, a link. A reference written after it, `[the docs][docs]`,
+`[the docs][]` or `[docs]`, is drawn as its words, a link to that address. A
+label is the same label in any letter case, as a footnote's is: `[Docs]` and
+`[docs]` are one. A label defined twice keeps its first address.
+
+Only a label defined above the reference ties up. A definition written after
+the reference, or none, leaves the brackets as written, so `[TODO]` and `arr[0]`
+stay as they are. An answer keeps 64 definitions, and 16 KiB of their labels
+and addresses; the 65th definition, or the one that would pass the 16 KiB,
+links nothing and is shown as written. That is far more than an answer defines,
+and a line is held for at most 4 KiB while it may be one. A definition with a
+title after its address, an address in angle brackets, or an address that is not
+spelled with a scheme such as `https://` is not read: the line is drawn as
+written. References and definitions are read where footnotes are, and shown as
+written in a heading, a table's cell and a block drawn as written.
+
+An address in angle brackets, `<https://example.com/a>`, `<http://example.com/a>`
+or `<name@example.com>`, is drawn without its brackets, a link to the address
+without them; an e-mail address links to `mailto:name@example.com`. One that
+holds a space or a control character, runs past 4 KiB, or stands in code, a key
+or a `<sub>` or `<sup>` run is shown as written. A word that begins `www.`, at
+the start of a line or after a space, an opening bracket or the mark of
+emphasis, is a link to the `https://` address that begins with it:
+`www.example.com` points to `https://www.example.com`. The address of every
+link is written as safe characters only, whatever a model put in it.
+
+## Pull requests, issues and commits
+
+An `https://` address on `github.com` or `gitlab.com`, or on the host of the
+repository you are in, that names one pull request, merge request, issue or
+commit is drawn as the reference people call it by, still a link to the whole
+address:
+
+| Address | In the repository you are in | Anywhere else |
+| --- | --- | --- |
+| `…/owner/repo/pull/1324` | `#1324` | `owner/repo#1324` |
+| `…/owner/repo/issues/1324` | `#1324` | `owner/repo#1324` |
+| `…/group/repo/-/merge_requests/12` | `!12` | `group/repo!12` |
+| `…/owner/repo/commit/58ed227aa01` | `58ed227` | `owner/repo@58ed227` |
+
+A number is at most 12 digits and a hash is 7 to 40 hexadecimal digits, of
+which the first 7 are drawn. On GitHub the repository is an owner and a name;
+on GitLab it may sit in subgroups, as in `group/sub/repo!3`. One trailing `/`
+is allowed. An address with anything after the item, such as a tab of the
+page, a query or an anchor, any other shape, or another host is an ordinary
+link. The same repository on another host is another repository, and is
+named in full.
+
+## The address after a link's words
+
+A link whose words are not its address is followed by a space and its quiet
+address in brackets, in the quiet grey: `[the guide](https://example.com/docs)`
+is drawn `the guide (example.com/docs)`. The address loses its scheme, or
+`mailto:`. One with a host, a `www.` address among them, keeps its host and
+first segment, and where anything follows them, a further segment, a query or
+an anchor, it ends in an ellipsis, `…`, or `...` in the ASCII glyph set:
+`[the guide](https://example.com/docs/guide)` is drawn
+`the guide (example.com/docs/…)`, and a query straight after the host is drawn
+`(example.com…)`. A path or an e-mail address is cut once it is wider than 24
+columns and keeps what fits. Nothing before the ellipsis is wider than 24
+columns, and a wide character that would cross that bound is left out. Words
+that link to a pull request, an issue or a commit are followed by its
+reference instead, as in `the fix (#1324)`, and words that are its reference
+already, such as `#1324`, have nothing after them. The quiet address is not a
+link, and a drag in the full screen copies the words without it.
+
+An image, `![the build passing](https://example.com/build.png)`, is drawn as
+the link `[image: the build passing]`, or `[image]` with no words, followed by
+its quiet address; nothing is fetched. A `!` before any other bracket is drawn
+as itself, and so is one after a backslash, which stays in front of it:
+`\![x](https://example.com/y.png)` is drawn `\!x (example.com/y.png)`. An
+address written as its own words, bare or between angle brackets, has nothing
+after it. In a table's cell a link
+is drawn as it is in prose, an address as its reference included, but with
+nothing after its words: the whole of it is in the table's source, and
+<kbd>Ctrl+O</kbd> lists it whenever it would list the same link in prose.
+
+A link in code, a key, a fence or a mermaid diagram is drawn as the model wrote
+it, one in a line of a diff is that line's text and links nothing, and one in
+display math is drawn as its words alone, as before. Every
+link and image in output with no colour, including output that is not a
+terminal, is written as the model wrote it.
+
+<kbd>Ctrl+O</kbd> lists the whole of every address drawn shorter than it was
+written, a reference or a quiet address cut with an ellipsis, newest first, each
+under the word `address`, after the cut results and the drawn blocks. A link in
+a table's cell is listed whenever the same link in prose would be. It
+keeps the newest 64; an older one is still in the
+[session log](sessions.md) as the answer wrote it. A bare number such as `#7`
+is not among them, since it was written that short.
+
 ## Tags
 
 Six HTML tags are read instead of drawn, in any letter case and with or
@@ -242,6 +494,83 @@ that `<br>`, `<details>` or `<summary>` is read on is never the first line of a
 table written without outer bars, nor the title of a heading underlined with
 `===` or `---`.
 
+## Line breaks and entities
+
+- **A backslash at the end of a line.** In a paragraph, a list item or a quote,
+  a `\` just before the line break breaks the line and is not drawn, once more
+  of the same paragraph follows. When the message ends there, a blank line comes
+  next, or the next line opens a block, the backslash is drawn as written and
+  the block opens as it would have. The lines that open a block are those led by
+  a heading mark, a bullet (`-`, `+` or `*`) or a quote mark and then a space; a
+  number with a `.` or `)` and then a space, a tab or the line's end; a fence; a
+  rule of three or more marks; `$$` or `\[` display math; `<details>` or
+  `<summary>`; and a row of bars with a delimiter row under it, which is a
+  table. A `-` or `=` under a line, and a delimiter row under a header that its
+  line break ends, make that line a heading or a table header, with the
+  backslash in it. A line that only starts like one is more of the paragraph,
+  and the backslash breaks it: a marker after a tab or with no space after it, a
+  number such as `1.5`, a row of bars with no delimiter row under it, a
+  delimiter row under a header when the answer ends there, which opens no table,
+  and a `-` under a list item. In code, a code span, a heading, display math and
+  a block drawn as written it is an ordinary character.
+- **Entities.** Outside code, `&name;` for the names below and every numeric
+  reference, `&#169;` or `&#xA9;` with up to seven digits, is drawn as the
+  character it names. What it names is text, never read again: `&lt;details&gt;`
+  opens nothing and `&#42;` leans on nothing. The names are `amp`, `lt`, `gt`,
+  `quot`, `apos`, `nbsp`, `copy`, `reg`, `trade`, `hellip`, `mdash`, `ndash`,
+  `lsquo`, `rsquo`, `ldquo`, `rdquo`, `laquo`, `raquo`, `bull`, `middot`, `deg`,
+  `plusmn`, `times`, `divide`, `micro`, `para`, `sect`, `euro`, `pound`, `yen`,
+  `cent`, `larr`, `rarr`, `uarr`, `darr`, `harr`, `rArr`, `lArr`, `hArr`, `ne`,
+  `le`, `ge`, `infin` and `check`, and case matters. Any other name, an entity
+  without its `;`, and one inside code, a key, display math or a block drawn as
+  written are drawn as written. Inside `<sub>` and `<sup>` it is decoded and
+  then drawn in the script, as far as the script has the character.
+- **An entity for a character a screen does not draw as itself.** A control
+  character, an escape, a bidirectional override or other format character,
+  zero, a surrogate and a value past the last character are drawn as written,
+  `&#27;[31m` and `&#x202E;` among them. No entity puts an escape on the
+  terminal.
+
+## Struck phrases and weight with emphasis
+
+- **One tilde on each side.** A phrase between two single tildes is struck
+  through, as one between two pairs is. A tilde opens a phrase when the
+  character after it is not a space, and is either a letter or a digit or comes
+  after a space, a punctuation mark or the start of the line. It closes the
+  phrase opened last and still open when the character before it is not a
+  space, and is either a letter or a digit or comes before a space, a
+  punctuation mark or the end of the line. Inside a word counts too. So `~one~`
+  strikes `one`, `takes 2~3 seconds, then 5~10` strikes `3 seconds, then 5`,
+  and `see ~/a~ here` strikes `/a`. A phrase may cross a line break inside one
+  paragraph. Two tildes and three or more read as they did before.
+- **A tilde with no closer is drawn as written.** `~/Projects`, `between ~/a
+  and ~/b` and `about ~5 minutes or ~10` keep every tilde. So does a tilde
+  whose only closer comes after the paragraph ends, or once 4 KiB of the answer
+  as written (the reader's `STRIKE_CAP`) has followed it, counted in bytes: a
+  phrase strikes only when what is written between its tildes is shorter than
+  that. When more than one tilde waits, the count runs from the oldest. A
+  paragraph ends at a blank line, a line that opens a block of its own, a
+  numbered item, a table, a block held until it closes, a line that turns out
+  to be a table's header or a heading's title, and the end of the message.
+- **Held until it settles.** What follows an opener is not drawn until its
+  closer arrives or one of the limits above is reached. Meanwhile the foot of
+  the transcript shows the last line of what is held, as it was written and
+  cut to the window's width, with any control character left out. It shows in
+  both [`output.screen`](../configuration/configuration.md#output) modes, is
+  never kept in the transcript or your terminal's scrollback, and gives way to
+  the phrase, struck or as written, once it settles.
+- **Where a tilde is never a marker.** In code, a key, a subscript or
+  superscript, a link's words and address, a bare address, after a backslash
+  (`\~`), and in a block drawn as written, a single tilde is a character.
+- **What a struck phrase looks like.** The strike is drawn over weight,
+  emphasis and a heading's look, and code, a link, a quote and a done task keep
+  theirs.
+- **Weight with emphasis.** A run that is both bold and italic, as in
+  `***both***`, the italic words of `**bold _italic_ bold**` or the bold words
+  of `*leant **and raised** again*`, is drawn bold and italic together, in
+  every theme and with either glyph set. Code and a strike are still drawn over
+  it.
+
 ## What is shown as written
 
 Some text is drawn exactly as the model wrote it, rather than as a block:
@@ -254,8 +583,13 @@ Some text is drawn exactly as the model wrote it, rather than as a block:
 - **A fence or display math the answer never closes.** It is drawn as
   written when the answer ends. A table the answer ends in is still drawn as
   a table: its last row is where it stops.
-- **Display math, mermaid diagrams and diffs.** They are held so they arrive
-  whole, and are then shown as written.
+- **A diagram crucible will not draw, and every diagram under `written`.**
+  See [Diagrams](#diagrams).
+- **A formula crucible will not draw, and every formula under `written`.**
+  See [Math](#math).
+- **A diff crucible will not draw as a change.** A fence named `diff` or
+  `patch` that is not a unified diff, and one past what a change holds: see
+  [Diffs](#diffs).
 - **A table without its outer bars.** A line such as `name | since` over a
   delimiter row such as `--|--` with the same number of cells is a table. Its
   rows are the lines after them up to the first blank line, or inside
@@ -281,6 +615,9 @@ Some text is drawn exactly as the model wrote it, rather than as a block:
 - **A footnote crucible will not number.** An empty label, `[^]`; one holding
   a space or a control character; one longer than 32 characters; a second note
   for a label that already has one; and a label first written after 64 others.
+- **A reference or definition crucible will not tie up.** A label with no
+  definition above it, a definition past the 64th or past 16 KiB, and a
+  definition line that holds more than its address.
 - **Any other tag.** A tag that is not one of the six, such as `<article>` or
   `<b>`, is shown as written, and so is one of the six whose `>` does not come
   on its line or within 64 characters of its `<`, as when a quoted value is

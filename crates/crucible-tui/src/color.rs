@@ -183,6 +183,9 @@ pub enum Slot {
     Link,
     /// A phrase the answer leant on rather than raised its voice for.
     Emphasis,
+    /// A phrase the answer both raised and leant on: weight and a slant
+    /// together, so neither of the two it was written with is lost.
+    BoldEmphasis,
     /// A phrase the answer wrote and then took back.
     Struck,
     /// A span of inline code: a command, a path, a name written in backticks.
@@ -309,6 +312,14 @@ pub enum Slot {
     /// A word a change put into a line in place of another: the added line's
     /// own ground and ink, in weight and with a line under it.
     AddedWord,
+    /// How many lines a change took out, where its summary counts them in
+    /// words: the removed side's hue in weight, and no ground.
+    ///
+    /// No ground because the count stands among plain words on the reader's
+    /// own row, where a ground would read as one more line of the change.
+    RemovedCount,
+    /// How many lines a change put in, as the removed count is.
+    AddedCount,
 }
 
 /// How many colours the transcript spends, and on which kinds of thing.
@@ -430,6 +441,19 @@ struct Tones {
     added_number: Ink,
     /// A word inside it that replaced another, as the removed one is.
     added_word: Ink,
+    /// How many lines a change took out, counted in its summary: the side's
+    /// hue in bold with no ground under it. Spelled out for the reason a link
+    /// is.
+    ///
+    /// The number's own hue where that clears the ground the table is for
+    /// with nothing under it. Dark is handed to a terminal that reported no
+    /// ground, so its counts are its trouble and its green, which clear a
+    /// light ground too; and at sixteen colours every table's are, since the
+    /// number there is white on a ground and would say neither side without
+    /// one.
+    removed_count: Ink,
+    /// How many it put in, as the removed count is.
+    added_count: Ink,
 }
 
 /// For a dark ground. Every value here is the one this project shipped before
@@ -527,6 +551,16 @@ const DARK: Tones = Tones {
         indexed: "\x1b[1;4;48;5;22;38;5;194m",
         basic: "\x1b[1;4;42;97m",
     },
+    removed_count: Ink {
+        exact: "\x1b[1;38;2;224;88;88m",
+        indexed: "\x1b[1;38;5;167m",
+        basic: "\x1b[1;91m",
+    },
+    added_count: Ink {
+        exact: "\x1b[1;38;2;53;145;90m",
+        indexed: "\x1b[1;38;5;65m",
+        basic: "\x1b[1;32m",
+    },
 };
 
 /// For a light ground.
@@ -619,6 +653,16 @@ const LIGHT: Tones = Tones {
         exact: "\x1b[1;4;48;2;223;245;229;38;2;13;61;32m",
         indexed: "\x1b[1;4;48;5;194;38;5;22m",
         basic: "\x1b[1;4;42;97m",
+    },
+    removed_count: Ink {
+        exact: "\x1b[1;38;2;143;27;35m",
+        indexed: "\x1b[1;38;5;52m",
+        basic: "\x1b[1;31m",
+    },
+    added_count: Ink {
+        exact: "\x1b[1;38;2;24;107;51m",
+        indexed: "\x1b[1;38;5;22m",
+        basic: "\x1b[1;32m",
     },
 };
 
@@ -719,6 +763,16 @@ const COLOURBLIND_DARK: Tones = Tones {
         indexed: "\x1b[1;4;48;5;18;38;5;153m",
         basic: "\x1b[1;4;44;97m",
     },
+    removed_count: Ink {
+        exact: "\x1b[1;38;2;255;180;107m",
+        indexed: "\x1b[1;38;5;223m",
+        basic: "\x1b[1;33m",
+    },
+    added_count: Ink {
+        exact: "\x1b[1;38;2;124;192;255m",
+        indexed: "\x1b[1;38;5;75m",
+        basic: "\x1b[1;34m",
+    },
 };
 
 /// The same swap, for a light ground.
@@ -802,6 +856,16 @@ const COLOURBLIND_LIGHT: Tones = Tones {
         exact: "\x1b[1;4;48;2;220;234;248;38;2;13;44;71m",
         indexed: "\x1b[1;4;48;5;189;38;5;18m",
         basic: "\x1b[1;4;44;97m",
+    },
+    removed_count: Ink {
+        exact: "\x1b[1;38;2;143;74;18m",
+        indexed: "\x1b[1;38;5;58m",
+        basic: "\x1b[1;33m",
+    },
+    added_count: Ink {
+        exact: "\x1b[1;38;2;23;82;136m",
+        indexed: "\x1b[1;38;5;18m",
+        basic: "\x1b[1;34m",
     },
 };
 
@@ -889,6 +953,16 @@ const ANSI: Tones = Tones {
         indexed: "\x1b[1;4;42;97m",
         basic: "\x1b[1;4;42;97m",
     },
+    removed_count: Ink {
+        exact: "\x1b[1;31m",
+        indexed: "\x1b[1;31m",
+        basic: "\x1b[1;31m",
+    },
+    added_count: Ink {
+        exact: "\x1b[1;32m",
+        indexed: "\x1b[1;32m",
+        basic: "\x1b[1;32m",
+    },
 };
 
 /// The exact accent moved from ink to ground, carrying contrasting text.
@@ -960,6 +1034,7 @@ impl Slot {
             Self::Cut => "Cut",
             Self::Link => "Link",
             Self::Emphasis => "Emphasis",
+            Self::BoldEmphasis => "BoldEmphasis",
             Self::Struck => "Struck",
             Self::Code => "Code",
             Self::AllowEdits => "AllowEdits",
@@ -993,6 +1068,8 @@ impl Slot {
             Self::ArgumentCommand => "ArgumentCommand",
             Self::RemovedWord => "RemovedWord",
             Self::AddedWord => "AddedWord",
+            Self::RemovedCount => "RemovedCount",
+            Self::AddedCount => "AddedCount",
         }
     }
 
@@ -1029,6 +1106,15 @@ impl Slot {
                 exact: "\x1b[3m",
                 indexed: "\x1b[3m",
                 basic: "\x1b[3m",
+            },
+            // Both of the attributes above, in one sequence, for the reason
+            // each is one: no colour to spend, and the same bytes at every
+            // rung. A terminal that has only one of the two still shows that
+            // one.
+            Self::BoldEmphasis => Ink {
+                exact: "\x1b[1;3m",
+                indexed: "\x1b[1;3m",
+                basic: "\x1b[1;3m",
             },
             // A line under the words, in the second colour: underline is what
             // a terminal has always meant a link by, and a colour of its own
@@ -1085,6 +1171,8 @@ impl Slot {
             Self::AddedNumber => tones.added_number,
             Self::RemovedWord => tones.removed_word,
             Self::AddedWord => tones.added_word,
+            Self::RemovedCount => tones.removed_count,
+            Self::AddedCount => tones.added_count,
             // The band, and the six a syntax theme owns. Nothing in any table
             // could have written any of them down: one is blended off the
             // reader's own ground and the rest come out of somebody else's

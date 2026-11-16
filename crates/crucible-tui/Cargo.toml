@@ -48,8 +48,9 @@ insta.workspace = true
 rustix = { workspace = true, features = ["pty", "termios"] }
 
 # What a drawer crate's tests check a drawing with: the fit sweep's widths and
-# rooms, `dump` and the fit check (`src/testing.rs`). Turned on only by a
-# dev-dependency, so no release build carries it; `scripts/sh/repo-checks.sh`
-# holds the manifests to that.
+# rooms, `dump` and the fit check, and the corpus of answers with the helpers
+# that read one through the reader with a drawer registered
+# (`src/testing.rs`). Turned on only by a dev-dependency, so no release build
+# carries it; `scripts/sh/repo-checks.sh` holds the manifests to that.
 [features]
 testing = []

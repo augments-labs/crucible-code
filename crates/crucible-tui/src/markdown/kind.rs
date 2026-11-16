@@ -370,7 +370,7 @@ fn kind(word: &str, lead: bool) -> Option<(usize, &str, Slot)> {
 }
 
 /// `1.` or `1)` opening a row: the number of an item in a list.
-fn ordinal(word: &str) -> bool {
+pub(super) fn ordinal(word: &str) -> bool {
     word.strip_suffix(['.', ')']).is_some_and(|digits| {
         (1..=9).contains(&digits.len()) && digits.bytes().all(|b| b.is_ascii_digit())
     })

@@ -16,3 +16,24 @@ package(crucible-sandbox-local)
 | (package(crucible-app) & binary(hosted_server))
 '''
 test-group = 'confined'
+
+# The gate runs the suite under this profile, with as many slots per processor
+# as it gives every test (`scripts/python/required-cases.py --gate-threads`),
+# so the tests that keep a processor busy run at most one per processor. The
+# packages and binaries below mostly wait on a child process, a socket or a
+# terminal rather than compute, so each of their tests holds one slot and they
+# fill the time the busy tests leave idle. A package not named here holds as
+# many slots as a busy test, so its tests run at most one per processor, as
+# before this profile, beside the waiting ones.
+[profile.gate]
+threads-required = 3
+
+[[profile.gate.overrides]]
+filter = '''
+package(crucible-builtins) | package(crucible-mcp) | package(crucible-sandbox-local) | package(crucible-auth)
+| package(crucible-provider) | package(crucible-runner) | package(crucible-extension) | package(crucible-update)
+| binary_id(crucible-app) | binary_id(crucible-app::hosted_server)
+| binary_id(crucible-external-harnesses::host) | binary_id(crucible-external-harnesses::antigravity)
+| binary_id(crucible-external-harnesses::claude) | binary_id(crucible-code::whole_screen)
+'''
+threads-required = 1

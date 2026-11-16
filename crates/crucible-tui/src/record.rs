@@ -33,8 +33,9 @@
 //! set, such as a tool's change, in a new glyph set too. A block of an
 //! answer is *drawn*: a table, a rule or the rule under a heading arrives as
 //! the source it was written as, which is kept beside what it was laid out as,
-//! and laid out again for a new width or a new glyph set; a new theme only
-//! paints the same rows in other colours. Both forms count against the
+//! and laid out again for a new width or a new glyph set, and for a new way
+//! of drawing its kind where a setting chooses one ([`Modes`]); a new theme
+//! only paints the same rows in other colours. Both forms count against the
 //! ceiling, and a drawn block that falls off the top takes its source with it.
 //! The source is lent, not copied: [`Record::source_of`] answers for a row and
 //! [`Record::sources`] walks the blocks, so what copies a block and what lists
@@ -54,8 +55,9 @@ use std::collections::VecDeque;
 use std::ops::Range;
 
 use crate::color::{Slot, Theme};
+use crate::drawing::{Drawers, Mode, Room};
 use crate::glyphs::Glyphs;
-use crate::markdown::{self, Block, Links};
+use crate::markdown::{self, Block, Kind, Links, Offers};
 use crate::row::Row;
 use crate::scroll_rail::Place;
 
@@ -86,6 +88,13 @@ const RETAINED_ROW_BYTES: usize = 80;
 /// are let go, so the oldest stretch of a very long session goes unmarked.
 const MOST_LANDMARKS: usize = 256;
 
+/// The most addresses drawn shorter than written that the record keeps whole.
+///
+/// The reader's own bound, so one answer's list and the record's are the same
+/// list: past it the oldest are let go, and an address that went is still in
+/// the session log as the answer wrote it.
+const MOST_SHORTENED: usize = markdown::SHORTENED_CAP;
+
 /// One line of the record, and whether a narrower window may re-fold it.
 enum Line {
     /// Text that was written as text. Folded at whatever the window is now.
@@ -114,7 +123,7 @@ enum Line {
 /// laid out as.
 ///
 /// Laid out for one width, glyph set and theme at a time, and laid out again
-/// when the first two change; the theme is part of what it was laid for only
+/// when the first two change or the mode its kind is drawn in does; the theme is part of what it was laid for only
 /// so that what is on screen can be told from what is wanted, since rows carry
 /// slots and a theme is the colours a slot is painted in.
 pub(crate) struct Drawn {
@@ -127,30 +136,102 @@ pub(crate) struct Drawn {
     weight: usize,
     /// The width, glyph set and theme the rows were laid out for.
     laid: (usize, Glyphs, Theme),
+    /// The modes the rows were drawn in.
+    modes: Modes,
     /// Edits made to the rows since, applied again at every layout.
     edits: Vec<fn(&mut [Row])>,
 }
 
+/// What a block of an answer is laid out by: the links its addresses fold by,
+/// the drawers its closed fences are drawn by, the mode each kind a setting
+/// chooses for is drawn in, and what becomes of a key their rows offer.
+#[derive(Clone, Copy)]
+struct By<'a> {
+    links: &'a Links,
+    drawers: &'a Drawers,
+    modes: Modes,
+    offers: Offers,
+}
+
+/// The mode each kind of block a setting chooses the drawing of is drawn in.
+///
+/// One field a kind, read through [`Modes::of`], whose match says which kinds
+/// a setting chooses for, so a kind a later setting draws is one field and one
+/// arm here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Modes {
+    /// Display math: between `$$`, `\[` or a named environment, or a math
+    /// fence.
+    pub(crate) math: Mode,
+    /// A diagram: a fence named `mermaid`.
+    pub(crate) diagrams: Mode,
+}
+
+impl Default for Modes {
+    /// The mode a setting left alone gives.
+    fn default() -> Self {
+        Self {
+            math: Mode::Image,
+            diagrams: Mode::Image,
+        }
+    }
+}
+
+impl Modes {
+    /// The mode a block of `kind` is drawn in; none for a kind no setting
+    /// chooses the drawing of.
+    const fn of(self, kind: Kind) -> Option<Mode> {
+        match kind {
+            Kind::DisplayMath => Some(self.math),
+            Kind::Mermaid => Some(self.diagrams),
+            Kind::Table | Kind::Rule | Kind::Heading(_) | Kind::Diff | Kind::Image => None,
+        }
+    }
+
+    /// Whether a block of `kind` is handed to its drawer at all: never in
+    /// [`Mode::Written`], which shows it as it was written. Until a picture
+    /// can be shown in its place, [`Mode::Image`] is drawn as text.
+    pub(crate) const fn draws(self, kind: Kind) -> bool {
+        match self.of(kind) {
+            Some(Mode::Written) => false,
+            Some(Mode::Text | Mode::Image) | None => true,
+        }
+    }
+}
+
 impl Drawn {
-    /// `block` laid out for `columns` in `glyphs` and `theme`, linking by
-    /// `links`.
-    fn new(block: Block, columns: usize, glyphs: Glyphs, theme: Theme, links: &Links) -> Self {
+    /// `block` laid out for `room` in `theme`, by what `by` holds.
+    fn new(block: Block, room: Room, theme: Theme, by: By<'_>) -> Self {
+        let Room { columns, glyphs } = room;
         let mut drawn = Self {
             block,
             rows: Vec::new(),
             prefix: None,
             weight: 0,
             laid: (columns, glyphs, theme),
+            modes: by.modes,
             edits: Vec::new(),
         };
-        drawn.lay(columns, glyphs, links);
+        drawn.lay(columns, glyphs, by);
         drawn
     }
 
-    /// Lays the block out again for `columns` in `glyphs`, linking by
-    /// `links`, with every edit and the prefix it was given since.
-    fn lay(&mut self, columns: usize, glyphs: Glyphs, links: &Links) {
-        let laid = markdown::lay(&self.block, columns, glyphs, links);
+    /// Lays the block out again for `columns` in `glyphs`, by what `by`
+    /// holds, with every edit and the prefix it was given since.
+    fn lay(&mut self, columns: usize, glyphs: Glyphs, by: By<'_>) {
+        let lay = match by.offers {
+            Offers::Stand => markdown::lay,
+            Offers::Withdrawn => markdown::lay_unoffered,
+        };
+        // A kind shown as written is handed to no drawer, which is how a
+        // block no drawer takes is laid out.
+        let none = Drawers::default();
+        let drawers = if by.modes.draws(self.block.kind) {
+            by.drawers
+        } else {
+            &none
+        };
+        let laid = lay(&self.block, columns, glyphs, by.links, drawers);
         let mut rows = responsive_rows(
             laid.iter()
                 .flat_map(|row| markdown::framed(row, columns).unwrap_or_else(|| row.fold(columns)))
@@ -167,6 +248,7 @@ impl Drawn {
         self.rows = rows;
         self.laid.0 = columns;
         self.laid.1 = glyphs;
+        self.modes = by.modes;
     }
 
     /// The block's source as line `line`, where its kind has one to read.
@@ -348,6 +430,14 @@ pub(crate) struct Record {
     /// to mark across a long transcript, not one allocation for every prompt
     /// in it.
     landmarks: VecDeque<usize>,
+    /// The whole of every address an answer was drawn with shorter than it was
+    /// written, newest last, each with the line it was drawn on, at most
+    /// [`MOST_SHORTENED`] of them and none twice.
+    ///
+    /// Beside the lines rather than in them, because what lists them reads
+    /// them whole and the rows hold them cut; let go of with the lines they
+    /// were drawn on.
+    shortened: VecDeque<(usize, Box<str>)>,
     /// The prompt a press on its rail mark last landed on, as one of
     /// [`Self::landmarks`].
     ///
@@ -401,6 +491,16 @@ pub(crate) struct Record {
     /// a drawn block is read again at every width and glyph set it is laid
     /// out for.
     links: Links,
+    /// What draws a closed fence of an answer in place of the fence as it was
+    /// written: kept here for the reason the links are, since a drawn block
+    /// asks its drawer again at every width and glyph set it is laid out for.
+    drawers: Drawers,
+    /// The mode each kind a setting chooses for is drawn in, for the reason
+    /// the drawers are kept.
+    modes: Modes,
+    /// What becomes of a key a drawer offers in the rows kept here: it
+    /// stands, unless what draws this record said no key is read there.
+    offers: Offers,
 }
 
 /// Where in the record a display row is: a line, and how far into it.
@@ -436,6 +536,7 @@ impl Record {
             following: true,
             opening: None,
             landmarks: VecDeque::new(),
+            shortened: VecDeque::new(),
             landed: None,
             parted_before: true,
             parting: None,
@@ -444,6 +545,9 @@ impl Record {
             sent: 0,
             began: 0,
             links: Links::default(),
+            drawers: Drawers::default(),
+            modes: Modes::default(),
+            offers: Offers::Stand,
         }
     }
 
@@ -458,6 +562,43 @@ impl Record {
     /// the new links the next time it is laid out.
     pub(crate) fn links_mut(&mut self) -> &mut Links {
         &mut self.links
+    }
+
+    /// What draws a closed fence of an answer.
+    pub(crate) fn drawers(&self) -> &Drawers {
+        &self.drawers
+    }
+
+    /// Hands this record the drawers a closed fence of an answer is drawn by,
+    /// and what becomes of a key their rows offer: `offers` is
+    /// [`Offers::Withdrawn`] where nothing reads a key from whoever is shown
+    /// these rows.
+    ///
+    /// Said at startup, before the first answer. A block already drawn asks
+    /// them the next time it is laid out.
+    pub(crate) fn draws_with(&mut self, drawers: Drawers, offers: Offers) {
+        self.drawers = drawers;
+        self.offers = offers;
+    }
+
+    /// What draws a closed `block` of an answer as it would be laid out here:
+    /// the drawers, or none where its kind is shown as written.
+    pub(crate) fn drawers_for(&self, block: &Block) -> Option<&Drawers> {
+        self.modes.draws(block.kind).then_some(&self.drawers)
+    }
+
+    /// Draws each kind a setting chooses for in the mode `modes` gives it.
+    ///
+    /// Said at startup and whenever the setting changes; a block already
+    /// drawn is laid out in it again by the next [`Self::relay`].
+    pub(crate) fn draws_in(&mut self, modes: Modes) {
+        self.modes = modes;
+    }
+
+    /// Whether a block of `kind` would be handed to its drawer here, rather
+    /// than shown as written.
+    pub(crate) const fn draws(&self, kind: Kind) -> bool {
+        self.modes.draws(kind)
     }
 
     /// Append streamed text, which flows.
@@ -480,6 +621,39 @@ impl Record {
         if !rest.is_empty() {
             self.extend(slot, rest, link);
         }
+    }
+
+    /// Append the quiet address the reader put after a link's words, which
+    /// flows with them and is left out of what a drag copies.
+    pub(crate) fn aside(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if let (true, Some(Line::Flowed(row))) = (self.open, self.lines.back_mut()) {
+            row.push_structural(Slot::Quiet, text);
+            self.remeasure();
+            return;
+        }
+
+        let mut row = Row::new();
+        row.push_structural(Slot::Quiet, text);
+        self.put(Line::Flowed(row));
+        self.open = true;
+    }
+
+    /// Keeps the whole of `address`, which the line being written drew
+    /// shorter, for [`Self::sources`] to list.
+    ///
+    /// Kept once: drawn again, it moves to the newest, which is where a
+    /// reader looking for it last saw it.
+    pub(crate) fn shortened(&mut self, address: &str) {
+        let line = self.lines().saturating_sub(1);
+        self.shortened.retain(|(_, kept)| **kept != *address);
+        self.shortened.push_back((line, address.into()));
+        while self.shortened.len() > MOST_SHORTENED {
+            self.shortened.pop_front();
+        }
+        self.forget_shortened();
     }
 
     /// Append rows a component laid out, which are set.
@@ -567,7 +741,17 @@ impl Record {
     /// A block that lays out as nothing is not kept.
     pub(crate) fn drawn(&mut self, block: Block, glyphs: Glyphs, theme: Theme) {
         self.end();
-        let drawn = Drawn::new(block, self.columns, glyphs, theme, &self.links);
+        let room = Room {
+            columns: self.columns,
+            glyphs,
+        };
+        let by = By {
+            links: &self.links,
+            drawers: &self.drawers,
+            modes: self.modes,
+            offers: self.offers,
+        };
+        let drawn = Drawn::new(block, room, theme, by);
         if !drawn.rows.is_empty() {
             self.put(Line::Drawn(drawn));
         }
@@ -577,7 +761,8 @@ impl Record {
     ///
     /// A block of an answer, and a responsive block drawn in a glyph set, is
     /// laid out again where the width or the glyph set it was laid for has
-    /// changed; the theme changes only the colours its rows are painted in,
+    /// changed, and a block of an answer where the mode its kind is drawn in
+    /// has; the theme changes only the colours its rows are painted in,
     /// which is the drawing's business. A new width is everything
     /// [`Self::resized`] does as well.
     pub(crate) fn relay(&mut self, columns: usize, glyphs: Glyphs, theme: Theme) {
@@ -598,19 +783,28 @@ impl Record {
         }
     }
 
-    /// Lays out again each drawn block not laid for `columns` in `glyphs`, and
-    /// answers whether any was.
+    /// Lays out again each drawn block not laid for `columns` in `glyphs`, or
+    /// in the mode its kind is drawn in now, and answers whether any was.
     fn relay_drawn(&mut self, columns: usize, glyphs: Glyphs) -> bool {
         let mut any = false;
+        let by = By {
+            links: &self.links,
+            drawers: &self.drawers,
+            modes: self.modes,
+            offers: self.offers,
+        };
         for line in &mut self.lines {
             let Line::Drawn(drawn) = line else {
                 continue;
             };
-            if (drawn.laid.0, drawn.laid.1) == (columns, glyphs) {
+            let kind = drawn.block.kind;
+            if (drawn.laid.0, drawn.laid.1) == (columns, glyphs)
+                && drawn.modes.of(kind) == self.modes.of(kind)
+            {
                 continue;
             }
             let was = drawn.weight;
-            drawn.lay(columns, glyphs, &self.links);
+            drawn.lay(columns, glyphs, by);
             self.weight = self.weight.saturating_sub(was).saturating_add(drawn.weight);
             any = true;
         }
@@ -771,6 +965,7 @@ impl Record {
             self.drop_oldest();
         }
         self.forget_landmarks();
+        self.forget_shortened();
     }
 
     /// Drops the oldest line held, counting it as gone.
@@ -789,6 +984,17 @@ impl Record {
     fn forget_landmarks(&mut self) {
         while self.landmarks.front().is_some_and(|line| *line < self.gone) {
             self.landmarks.pop_front();
+        }
+    }
+
+    /// Lets go of the addresses kept whole whose lines have gone.
+    fn forget_shortened(&mut self) {
+        while self
+            .shortened
+            .front()
+            .is_some_and(|(line, _)| *line < self.gone)
+        {
+            self.shortened.pop_front();
         }
     }
 
@@ -1136,15 +1342,30 @@ impl Record {
     }
 }
 
-/// A drawn block's source, borrowed from the record that keeps it.
+/// What an address drawn shorter than it was written is called where it is
+/// listed whole.
+pub(crate) const ADDRESS: &str = "address";
+
+/// A drawn block's source, or the whole of an address drawn shorter than it
+/// was written, borrowed from the record that keeps it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Source<'a> {
     /// The line it is held as, numbered as the record numbers its lines.
     pub line: usize,
-    /// What the block is called: `table`, `math`, `mermaid diagram`, `diff`.
+    /// What the block is called: `table`, `math`, `mermaid diagram`, `diff`;
+    /// or `address`, for an address drawn shorter than it was written.
     pub word: &'static str,
     /// The text it was written as.
     pub text: &'a str,
+}
+
+impl Source<'_> {
+    /// Whether this is an address drawn shorter, of which a line may hold
+    /// several, rather than a block, which is a line of its own.
+    #[must_use]
+    pub fn is_address(&self) -> bool {
+        self.word == ADDRESS
+    }
 }
 
 /// What native mode hands over to the terminal's own scrollback.
@@ -1170,16 +1391,48 @@ impl Record {
         }
     }
 
-    /// Every drawn block held that has a source to read, newest first.
+    /// Every drawn block held that has a source to read, newest first, and
+    /// then the whole of every address drawn shorter than it was written that
+    /// is still held, newest first, each called [`ADDRESS`].
     pub(crate) fn sources(&self) -> impl Iterator<Item = Source<'_>> + '_ {
-        self.lines
+        let blocks = self
+            .lines
             .iter()
             .enumerate()
             .rev()
             .filter_map(|(held, line)| match line {
                 Line::Drawn(drawn) => drawn.source(self.gone + held),
                 _ => None,
-            })
+            });
+        let addresses = self
+            .shortened
+            .iter()
+            .rev()
+            .filter(|(line, _)| *line >= self.gone)
+            .map(|(line, address)| Source {
+                line: *line,
+                word: ADDRESS,
+                text: address,
+            });
+        blocks.chain(addresses)
+    }
+
+    /// One past the line of the newest of [`Self::sources`], block or address,
+    /// and zero where there is none.
+    pub(crate) fn sourced(&self) -> usize {
+        let block = self
+            .sources()
+            .next()
+            .filter(|source| source.word != ADDRESS);
+        let address = self
+            .shortened
+            .back()
+            .filter(|(line, _)| *line >= self.gone)
+            .map(|(line, _)| *line);
+        block
+            .map(|source| source.line)
+            .max(address)
+            .map_or(0, |line| line.saturating_add(1))
     }
 
     /// The first line held that has not gone out, numbered as

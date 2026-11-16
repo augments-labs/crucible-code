@@ -1,22 +1,25 @@
 //! A change drawn as one box: a header per file, a row per line, and a close.
 //!
 //! ```text
-//! ╭─ src/parse.rs +3 −2
+//! ╭─ src/parse.rs · Added 3 lines, removed 2 lines
 //! │   10    let mut tree = Tree::new();
 //! │   11 -  for line in input.lines() {
 //! │   11 +  for (at, line) in input.lines().enumerate() {
 //! │  ⋯  26 lines between · fn parse  ⋯
-//! ├─ README.md +1
+//! ├─ README.md · Added 1 line
 //! │    2 +  A small parser.
 //! ╰─
 //! ```
 //!
-//! The header names the file and counts what moved; a count of nothing is
-//! left off. Each line is the number a reader would find it at, the sign that
-//! says which way it went, and the line. A line that moved is drawn on its
-//! change's ground carried to the last column, and the words that changed in
-//! it are raised on that ground: it wears its side's colour, never its
-//! language's. A line that did not move is on the reader's own ground,
+//! The header names the file and says in words what moved, each count in its
+//! side's colour; a side with no lines is left out, and so is a path the
+//! change does not name. Each line is the number a reader would find it at,
+//! the sign that says which way it went, and the line. A line that moved is
+//! drawn on its change's ground, unbroken from its number to one column short
+//! of the room, so every band of a change ends at the same column and none
+//! touches the edge of what it is drawn in; the words that changed in it are
+//! raised on that ground: it wears its side's colour, never its language's.
+//! A line that did not move is on the reader's own ground,
 //! coloured as its file's language when the path names one, so an edit with
 //! no line that did not move shows no language's colour at all. One
 //! change reads at most [`SYNTAX_LINES`] lines and [`SYNTAX_BYTES`] bytes for
@@ -24,24 +27,33 @@
 //! words; past either, the rest of its lines draw plain on their ground, so a
 //! change costs the same bounded time to lay out however much it holds. Lines
 //! the diff never held are one quiet row that counts them, and a file of more
-//! than [`FOLD`] rows draws its head and tail around a row that counts the
-//! lines of the file it hides. Files past what a change keeps are one quiet
-//! row before the close that counts them.
+//! than [`crate::FOLD`] rows draws its head and tail around a row that counts the
+//! lines of the file it hides and names the key that shows them. Files past
+//! what a change keeps are one quiet row before the close that counts them.
+//!
+//! [`Changes::written`] writes the same change out as plain text, every line
+//! it keeps and nothing folded, for what that key opens. Its words are the
+//! box's own: the header, the number and sign of a line, and each row that
+//! stands for lines or files are worded by the functions the rows are drawn
+//! from. [`unoffered`] takes the key back out of a fold's row once nothing
+//! answers it, and [`Changes`] takes it out of every row of a fence it drew
+//! for where no key is read, so the two rows read the same.
 //!
 //! The rows are laid out once for the room and then clipped to it: no more of
 //! a line is laid out than the room shows, a line cut short ends in the glyph
-//! set's ellipsis, and a header that
-//! cannot hold its path and its counts shortens the path from its start, then
-//! leaves the counts off, rather than cut a number in half.
+//! set's ellipsis in the last column the grounds take, on its own ground
+//! where it has one, and a header that cannot hold its path and its summary
+//! shortens the path from its start, then leaves the summary off, rather
+//! than cut it in half.
 
 use std::ops::Range;
 
 use crucible_tui::chrome::Undrawn;
-use crucible_tui::drawing::{Draws, Laid, Room};
+use crucible_tui::drawing::{Draws, EXPAND, Laid, Room};
 use crucible_tui::syntax::Syntax;
 use crucible_tui::{Glyphs, Row, Slot, clip, columns};
 
-use crate::change::{Change, FOLD, File, HEAD, Line, Side, TAIL};
+use crate::change::{Change, File, HEAD, Line, Side, TAIL};
 use crate::read::{NotADiff, read};
 use crate::words::{PAIRS, Raised, raised};
 
@@ -66,7 +78,7 @@ pub const SYNTAX_LINES: usize = 8;
 const TAB: &str = "    ";
 
 /// The fewest columns of a path a header shortens it to before it leaves its
-/// counts off instead.
+/// summary off instead.
 const FEWEST_PATH: usize = 4;
 
 /// What draws a change, as a fence's block and as a tool's edit.
@@ -88,6 +100,102 @@ impl Changes {
             narrow: None,
         }
     }
+
+    /// `change` written out as plain text, a line to a line and each ended.
+    ///
+    /// Each file is a line that names it and says what moved in it, worded as
+    /// its header is, and then every line the change keeps: its number, as
+    /// wide as the widest, its sign, and its text to its last blank. A row of
+    /// the box leaves the blanks a line ends in off; here they are written, so
+    /// two lines that differ only in them read differently, and a line that
+    /// holds nothing ends at its number or its sign. What stands in the box
+    /// for lines between two hunks, for lines and files the change does not
+    /// hold, and for a binary file stands here in the same words, between the
+    /// same marks in `glyphs`. Nothing is folded and nothing is cut to a room,
+    /// so this is what shows whole a change its box folded.
+    ///
+    /// It holds as much as the change does, which is bounded, and no control
+    /// character but the line ends it writes.
+    #[must_use]
+    pub fn written(&self, change: &Change, glyphs: Glyphs) -> String {
+        let widest = numbered(change);
+        let mut written = String::new();
+        let mut line = |text: &str| {
+            written.push_str(text);
+            written.push('\n');
+        };
+        for file in change.files() {
+            let name = named(file, glyphs).filter(|name| !name.is_empty());
+            let moved = summary(file, name.is_some(), glyphs)
+                .map(|row| row.text())
+                .unwrap_or_default();
+            match name {
+                Some(name) => line(&format!("{name}{moved}")),
+                None => line(moved.trim_start()),
+            }
+            for kept in file.lines() {
+                match kept {
+                    Line::Gap { lines, section } => {
+                        line(&standing(&parted(*lines, section.as_deref()), glyphs));
+                    }
+                    Line::Text { side, number, text } => {
+                        let gutter = gutter(*number, widest, *side);
+                        if text.is_empty() {
+                            // The column of a sign a line that stayed leaves
+                            // empty is this function's, and not the line's.
+                            line(gutter.trim_end());
+                        } else {
+                            line(&format!("{gutter} {}", spelled(text)));
+                        }
+                    }
+                }
+            }
+            if file.is_binary() {
+                line(&standing(BINARY, glyphs));
+            }
+            if file.dropped() > 0 {
+                line(&standing(&unshown(file.dropped(), "line"), glyphs));
+            }
+        }
+        if change.unshown() > 0 && !change.files().is_empty() {
+            line(&standing(&unshown(change.unshown(), "file"), glyphs));
+        }
+        written
+    }
+}
+
+/// Takes the key out of `row` where it is a fold's row offering its lines,
+/// leaving the count: `20 lines folded · ctrl+o to expand` then reads
+/// `20 lines folded`.
+///
+/// For a row already drawn whose lines the key no longer shows. A fold cut
+/// short inside its key by a narrow room loses what was left of the key; any
+/// other row is left as it is.
+pub fn unoffered(row: &mut Row) {
+    let counted = format!("{FOLDED}{OFFERING}");
+    let mut before = None;
+    let mut key = None;
+    for (at, (slot, text)) in row.spans().enumerate() {
+        let offers = slot == Slot::Cut && !text.is_empty() && EXPAND.starts_with(text);
+        if offers && before == Some(true) {
+            key = Some(at);
+            break;
+        }
+        before = Some(slot == Slot::Quiet && text.ends_with(&counted));
+    }
+    let Some(key) = key else {
+        return;
+    };
+    row.rewrite(|at, slot, text| {
+        if at == key {
+            None
+        } else if at + 1 == key {
+            let count = text.strip_suffix(OFFERING).unwrap_or(text);
+            Some((slot, count.to_owned()))
+        } else {
+            Some((slot, text.to_owned()))
+        }
+    });
 }
 
 impl Draws for Changes {
@@ -106,18 +214,23 @@ impl Draws for Changes {
         })?;
         Ok(self.draw(&change, room))
     }
+
+    fn unoffered(&self, rows: &mut [Row]) {
+        rows.iter_mut().for_each(unoffered);
+    }
 }
 
 /// One row as it is laid out before a room is known.
 enum Drawn {
-    /// A file's header: the corner, the name, and the counts.
+    /// A file's header: the corner, the name, and what moved in words, led
+    /// by what parts it from the name or the corner.
     Header {
         corner: String,
         name: Option<String>,
-        counts: Option<Row>,
+        summary: Option<Row>,
     },
-    /// Any other row, with the ground it is filled to the last column in and
-    /// the columns it would take with no limit on them.
+    /// Any other row, with the ground it is filled to [`edge`] in and the
+    /// columns it would take with no limit on them.
     Body {
         row: Row,
         ground: Option<Slot>,
@@ -134,11 +247,11 @@ impl Drawn {
             Self::Header {
                 corner,
                 name,
-                counts,
+                summary,
             } => {
                 columns(corner)
                     + name.as_deref().map_or(0, |name| 1 + columns(name))
-                    + counts.as_ref().map_or(0, |counts| 1 + counts.columns())
+                    + summary.as_ref().map_or(0, Row::columns)
             }
             Self::Body { columns, .. } | Self::Fitted { columns, .. } => *columns,
         }
@@ -149,32 +262,40 @@ impl Drawn {
             Self::Header {
                 corner,
                 name,
-                counts,
-            } => header(&corner, name.as_deref(), counts, room),
+                summary,
+            } => header(&corner, name.as_deref(), summary, room),
+            Self::Fitted { row, .. } => row,
             // A row known to fit is neither measured again nor cut; one
             // that does not is cut, and its ground then filled to what is
-            // left.
+            // left. A row on a ground has the room up to its edge.
             Self::Body {
                 row,
                 ground,
                 columns,
-            } if columns <= room.columns => {
+            } => {
+                let within = ground.map_or(room.columns, |_| edge(room));
                 let mut row = row;
-                if let Some(ground) = ground {
-                    row.push(ground, " ".repeat(room.columns - columns));
+                if let Some(short) = within.checked_sub(columns) {
+                    if let Some(ground) = ground {
+                        row.push(ground, " ".repeat(short));
+                    }
+                    return row;
                 }
-                row
-            }
-            Self::Fitted { row, .. } => row,
-            Self::Body { row, ground, .. } => {
-                let mut row = clipped(row, room, ground.unwrap_or(Slot::Quiet));
+                row = clipped(row, within, room.glyphs, ground.unwrap_or(Slot::Quiet));
                 if let Some(ground) = ground {
-                    row.fill(ground, room.columns);
+                    row.fill(ground, within);
                 }
                 row
             }
         }
     }
+}
+
+/// The column the ground of a line that moved ends at in `room`, and the one
+/// a line too long for the room is cut at: one short of the room, so no
+/// ground touches the edge of what the change is drawn in.
+const fn edge(room: &Room) -> usize {
+    room.columns.saturating_sub(1)
 }
 
 impl Drawn {
@@ -207,21 +328,17 @@ fn natural(change: &Change, room: &Room) -> Vec<Drawn> {
         } else {
             glyphs.joining().0
         };
+        let name = named(file, glyphs).filter(|name| !name.is_empty());
         drawn.push(Drawn::Header {
             corner: format!("{corner}{}", glyphs.horizontal()),
-            name: named(file, glyphs),
-            counts: counts(file, glyphs),
+            summary: summary(file, name.is_some(), glyphs),
+            name,
         });
         body(file, widest, room, &mut budget, &mut drawn);
     }
 
     if change.unshown() > 0 && !drawn.is_empty() {
-        let noun = if change.unshown() == 1 {
-            "file"
-        } else {
-            "files"
-        };
-        let row = quiet_row(&format!("{} {noun} not shown", change.unshown()), glyphs);
+        let row = quiet_row(&unshown(change.unshown(), "file"), glyphs);
         drawn.push(Drawn::body(row, None));
     }
     if !drawn.is_empty() {
@@ -259,7 +376,7 @@ fn body(file: &File, widest: usize, room: &Room, budget: &mut Budget, drawn: &mu
     let glyphs = room.glyphs;
     let lines = file.lines();
     let shown: Vec<bool> = (0..lines.len())
-        .map(|at| lines.len() <= FOLD || at < HEAD || at >= lines.len() - TAIL)
+        .map(|at| !file.folds() || at < HEAD || at >= lines.len() - TAIL)
         .collect();
     let raised = paired(lines, &shown, budget);
     // The last line that wears its language's colours: a line after it would
@@ -287,7 +404,7 @@ fn body(file: &File, widest: usize, room: &Room, budget: &mut Budget, drawn: &mu
         if coloured_to.is_none_or(|last| at > last) {
             lining.syntax = None;
         }
-        if lines.len() > FOLD && at == HEAD {
+        if file.folds() && at == HEAD {
             // The rows it hides may hold a gap, which is not a line of the
             // file; the count is of the lines a reader would be shown.
             let hidden = lines
@@ -314,12 +431,11 @@ fn body(file: &File, widest: usize, room: &Room, budget: &mut Budget, drawn: &mu
     }
 
     if file.is_binary() {
-        drawn.push(Drawn::body(quiet_row("binary, not drawn", glyphs), None));
+        drawn.push(Drawn::body(quiet_row(BINARY, glyphs), None));
     }
     if file.dropped() > 0 {
-        let lines = if file.dropped() == 1 { "line" } else { "lines" };
         drawn.push(Drawn::body(
-            quiet_row(&format!("{} {lines} not shown", file.dropped()), glyphs),
+            quiet_row(&unshown(file.dropped(), "line"), glyphs),
             None,
         ));
     }
@@ -334,19 +450,26 @@ impl Lining<'_> {
         text: &str,
         marks: Option<&[Range<usize>]>,
     ) -> Drawn {
-        let (ground, word, numbered, sign) = match side {
-            Side::Kept => (Slot::Plain, Slot::Plain, Slot::Quiet, ' '),
-            Side::Removed => (Slot::Removed, Slot::RemovedWord, Slot::RemovedNumber, '-'),
-            Side::Added => (Slot::Added, Slot::AddedWord, Slot::AddedNumber, '+'),
+        let (ground, word, numbered) = match side {
+            Side::Kept => (Slot::Plain, Slot::Plain, Slot::Quiet),
+            Side::Removed => (Slot::Removed, Slot::RemovedWord, Slot::RemovedNumber),
+            Side::Added => (Slot::Added, Slot::AddedWord, Slot::AddedNumber),
         };
         let text = flattened(text);
-        let widest = self.widest;
+        let gutter = gutter(number, self.widest, side);
 
+        // The cell after the sign is the number's on a line that moved, so
+        // the ground runs from the number into the line with no cell of the
+        // reader's own ground between them.
         let mut row = Row::new()
             .then_structural(Slot::Quiet, self.room.glyphs.vertical())
-            .then(Slot::Plain, " ")
-            .then(numbered, format!(" {number:>widest$} {sign}"))
             .then(Slot::Plain, " ");
+        if side == Side::Kept {
+            row.push(numbered, format!(" {gutter}"));
+            row.push(Slot::Plain, " ");
+        } else {
+            row.push(numbered, format!(" {gutter} "));
+        }
         let prefix = row.columns();
         let columns = prefix + columns(&text);
 
@@ -358,23 +481,28 @@ impl Lining<'_> {
             Side::Kept | Side::Added => self.coloured(&text, side),
         };
 
-        // No more of the line is laid out than the room shows. A line too
-        // long for it is cut here, after the number before it, and ends in
-        // the ellipsis as any row cut to the room does, so a line longer than
-        // the room costs no more than one as wide as it. Where the number
-        // itself does not fit, the line is cut to the room and the row is cut
-        // as a whole later.
-        let room = self.room.columns;
+        // No more of the line is laid out than the room shows up to its
+        // edge. A line too long for it is cut here, after the number before
+        // it, and ends in the ellipsis in the last column before the edge,
+        // so a line longer than the room costs no more than one as wide as
+        // it; `cut` is the columns a wide character that did not fit left
+        // over before the mark. Where the number itself does not fit, the
+        // line is cut to the edge and the row is cut as a whole at that same
+        // edge: here where the line did not move, and where its ground is
+        // filled where it did.
+        let edge = edge(self.room);
         let more = self.room.glyphs.ellipsis();
-        let (shown, cut) = if columns <= room {
-            (text.len(), false)
-        } else if let Some(left) = room
+        let (shown, cut) = if columns <= edge {
+            (text.len(), None)
+        } else if let Some(left) = edge
             .checked_sub(crucible_tui::columns(more))
             .filter(|&left| left > 0 && left >= prefix)
         {
-            (clip(&text, left - prefix).len(), true)
+            let kept = clip(&text, left - prefix);
+            let over = (left - prefix).saturating_sub(crucible_tui::columns(kept));
+            (kept.len(), Some(over))
         } else {
-            (clip(&text, room).len(), false)
+            (clip(&text, edge).len(), None)
         };
         match (coloured, marks) {
             (Some(runs), _) => {
@@ -401,13 +529,20 @@ impl Lining<'_> {
             (None, None) => row.push(ground, text.get(..shown).unwrap_or_default()),
         }
 
-        if cut {
-            if side == Side::Kept {
-                row.push(Slot::Quiet, more);
+        if let Some(over) = cut {
+            row.push(ground, " ".repeat(over));
+            let mark = if side == Side::Kept {
+                Slot::Quiet
             } else {
-                row.push(ground, more);
-                row.fill(ground, room);
-            }
+                ground
+            };
+            row.push(mark, more);
+            return Drawn::Fitted { row, columns };
+        }
+        // A row on no ground is otherwise given the whole room, which is
+        // one column more than the lines that moved around it take.
+        if side == Side::Kept && columns > edge {
+            let row = clipped(row, edge, self.room.glyphs, Slot::Quiet);
             return Drawn::Fitted { row, columns };
         }
         Drawn::Body {
@@ -507,6 +642,18 @@ fn numbered(change: &Change) -> usize {
         .map_or(NUMBER, |widest| widest.to_string().len().max(NUMBER))
 }
 
+/// The number a line is found at, as wide as the `widest`, and the sign that
+/// says which way it went: what a row draws before a line and what a change
+/// written out writes before it.
+fn gutter(number: usize, widest: usize, side: Side) -> String {
+    let sign = match side {
+        Side::Kept => ' ',
+        Side::Removed => '-',
+        Side::Added => '+',
+    };
+    format!("{number:>widest$} {sign}")
+}
+
 /// What a header calls the file: its path, or where it was and where it is
 /// for a rename.
 fn named(file: &File, glyphs: Glyphs) -> Option<String> {
@@ -522,24 +669,36 @@ fn named(file: &File, glyphs: Glyphs) -> Option<String> {
     }
 }
 
-/// The counts a header carries: what was added, then what was removed, each
-/// only where it is more than nothing.
-fn counts(file: &File, glyphs: Glyphs) -> Option<Row> {
-    let minus = match glyphs {
-        Glyphs::Unicode => "−",
-        Glyphs::Ascii => "-",
+/// What moved in `file`, in words, led by what parts it from what the
+/// header holds before it: a quiet dot after a name, a space after the corner
+/// alone.
+///
+/// Each count is in its side's count slot and the words around it are in the
+/// reader's own ink. A side with no lines is left out, so the side that then
+/// leads takes the capital; where nothing moved there is no summary at all.
+fn summary(file: &File, named: bool, glyphs: Glyphs) -> Option<Row> {
+    let mut row = if named {
+        Row::new().then(Slot::Quiet, format!(" {} ", glyphs.dot()))
+    } else {
+        Row::new().then(Slot::Plain, " ")
     };
-    let mut row = Row::new();
-    if file.added() > 0 {
-        row.push(Slot::AddedNumber, format!("+{}", file.added()));
-    }
-    if file.removed() > 0 {
-        if !row.is_empty() {
-            row.push(Slot::Plain, " ");
+    match (file.added(), file.removed()) {
+        (0, 0) => return None,
+        (0, removed) => count(&mut row, "Removed ", Slot::RemovedCount, removed),
+        (added, 0) => count(&mut row, "Added ", Slot::AddedCount, added),
+        (added, removed) => {
+            count(&mut row, "Added ", Slot::AddedCount, added);
+            count(&mut row, ", removed ", Slot::RemovedCount, removed);
         }
-        row.push(Slot::RemovedNumber, format!("{minus}{}", file.removed()));
     }
-    (!row.is_empty()).then_some(row)
+    Some(row)
+}
+
+/// `word`, then a number of lines with the number in `slot`.
+fn count(row: &mut Row, word: &str, slot: Slot, lines: usize) {
+    row.push(Slot::Plain, word);
+    row.push(slot, lines.to_string());
+    row.push(Slot::Plain, if lines == 1 { " line" } else { " lines" });
 }
 
 /// The language a path's lines are coloured as: its extension, or its name
@@ -553,26 +712,24 @@ fn language(path: &str) -> Option<&str> {
 }
 
 /// The header, fitted to the room.
-fn header(corner: &str, name: Option<&str>, counts: Option<Row>, room: &Room) -> Row {
+fn header(corner: &str, name: Option<&str>, summary: Option<Row>, room: &Room) -> Row {
     let width = room.columns;
     let mut row = Row::new().then_structural(Slot::Quiet, corner);
     let spent = columns(corner);
     let name_columns = name.map_or(0, columns);
-    let counts_columns = counts.as_ref().map_or(0, Row::columns);
-    let full = spent
-        + name.map_or(0, |_| 1 + name_columns)
-        + counts.as_ref().map_or(0, |_| 1 + counts_columns);
+    let summary_columns = summary.as_ref().map_or(0, Row::columns);
+    let full = spent + name.map_or(0, |_| 1 + name_columns) + summary_columns;
 
-    let (name, counts) = if full <= width {
-        (name.map(str::to_owned), counts)
+    let (name, summary) = if full <= width {
+        (name.map(str::to_owned), summary)
     } else {
         let beside = width
             .saturating_sub(spent + 1)
-            .saturating_sub(1 + counts_columns);
+            .saturating_sub(summary_columns);
         let fewest = columns(room.glyphs.ellipsis()) + FEWEST_PATH;
         match name {
-            Some(name) if counts.is_some() && beside >= fewest => {
-                (Some(shortened(name, beside, room.glyphs)), counts)
+            Some(name) if summary.is_some() && beside >= fewest => {
+                (Some(shortened(name, beside, room.glyphs)), summary)
             }
             Some(name) => (
                 Some(shortened(
@@ -582,7 +739,7 @@ fn header(corner: &str, name: Option<&str>, counts: Option<Row>, room: &Room) ->
                 )),
                 None,
             ),
-            None => (None, counts.filter(|_| spent + 1 + counts_columns <= width)),
+            None => (None, None),
         }
     };
 
@@ -590,8 +747,8 @@ fn header(corner: &str, name: Option<&str>, counts: Option<Row>, room: &Room) ->
         row.push(Slot::Plain, " ");
         row.push(Slot::Path, name);
     }
-    if let Some(counts) = counts {
-        row = row.then(Slot::Plain, " ").join(counts);
+    if let Some(summary) = summary {
+        row = row.join(summary);
     }
     row.clipped(width)
 }
@@ -623,45 +780,85 @@ fn shortened(name: &str, room: usize, glyphs: Glyphs) -> String {
     format!("{more}{}", name.get(from..).unwrap_or_default())
 }
 
-/// `row` cut to the room, ending in the ellipsis in `slot` where it was cut
-/// and the room has space for one.
-fn clipped(row: Row, room: &Room, slot: Slot) -> Row {
-    if row.columns() <= room.columns {
+/// `row` cut to `room` columns, ending in the ellipsis in `slot` where it was
+/// cut and there is space for one.
+fn clipped(row: Row, room: usize, glyphs: Glyphs, slot: Slot) -> Row {
+    if row.columns() <= room {
         return row;
     }
-    let more = room.glyphs.ellipsis();
-    match room.columns.checked_sub(columns(more)) {
+    let more = glyphs.ellipsis();
+    match room.checked_sub(columns(more)) {
         Some(left) if left > 0 => {
             let mut cut = row.clipped(left);
             cut.push(slot, more);
             cut
         }
-        _ => row.clipped(room.columns),
+        _ => row.clipped(room),
     }
+}
+
+/// What a file that holds no lines to draw says in place of them.
+const BINARY: &str = "binary, not drawn";
+
+/// The word a fold's row says of the lines it counts.
+const FOLDED: &str = "folded";
+
+/// What parts a fold's count from the key that shows the lines it counts.
+const OFFERING: &str = " · ";
+
+/// `count` of `noun`: one line, or two lines.
+fn some(count: usize, noun: &str) -> String {
+    if count == 1 {
+        format!("{count} {noun}")
+    } else {
+        format!("{count} {noun}s")
+    }
+}
+
+/// What is said of `count` lines or files a change does not hold.
+fn unshown(count: usize, noun: &str) -> String {
+    format!("{} not shown", some(count, noun))
+}
+
+/// What is said of the lines between two hunks, with the section they sit in
+/// where the diff named one.
+fn parted(lines: usize, section: Option<&str>) -> String {
+    let section = section.map_or_else(String::new, |section| format!(" · {}", flattened(section)));
+    format!("{} between{section}", some(lines, "line"))
+}
+
+/// `what` between the two marks that say it stands for lines.
+fn standing(what: &str, glyphs: Glyphs) -> String {
+    let mark = elided(glyphs);
+    format!("{mark}  {what}  {mark}")
 }
 
 /// A quiet row inside the box saying `what`, between two marks that say it
 /// stands for lines.
 fn quiet_row(what: &str, glyphs: Glyphs) -> Row {
-    let mark = elided(glyphs);
     Row::new()
         .then_structural(Slot::Quiet, glyphs.vertical())
-        .then(Slot::Quiet, format!("  {mark}  {what}  {mark}"))
+        .then(Slot::Quiet, format!("  {}", standing(what, glyphs)))
 }
 
 /// The row that counts the lines between two hunks, with the section they
 /// sit in where the diff named one.
 fn between(lines: usize, section: Option<&str>, glyphs: Glyphs) -> Row {
-    let noun = if lines == 1 { "line" } else { "lines" };
-    let section = section.map_or_else(String::new, |section| format!(" · {}", flattened(section)));
-    quiet_row(&format!("{lines} {noun} between{section}"), glyphs)
+    quiet_row(&parted(lines, section), glyphs)
 }
 
-/// The row that stands for the lines a fold hides, counting them. Nothing
-/// shows them yet, so it names no key.
+/// The row that stands for the lines a fold hides, counting them and naming
+/// the key that shows them, in the slot every offer to show more is made in.
 fn folded(lines: usize, glyphs: Glyphs) -> Row {
-    let noun = if lines == 1 { "line" } else { "lines" };
-    quiet_row(&format!("{lines} {noun} folded"), glyphs)
+    let mark = elided(glyphs);
+    Row::new()
+        .then_structural(Slot::Quiet, glyphs.vertical())
+        .then(
+            Slot::Quiet,
+            format!("  {mark}  {} {FOLDED}{OFFERING}", some(lines, "line")),
+        )
+        .then(Slot::Cut, EXPAND)
+        .then(Slot::Quiet, format!("  {mark}"))
 }
 
 /// The mark that stands for lines not drawn.
@@ -672,11 +869,16 @@ const fn elided(glyphs: Glyphs) -> &'static str {
     }
 }
 
-/// A line as it is drawn: its end trimmed, a tab as [`TAB`], and any other
-/// control character a space.
+/// A line as it is drawn: its end trimmed, and the rest as [`spelled`].
 fn flattened(text: &str) -> String {
+    spelled(text.trim_end())
+}
+
+/// `text` with a tab as [`TAB`] and any other control character a space, and
+/// nothing taken off either end of it.
+fn spelled(text: &str) -> String {
     let mut line = String::with_capacity(text.len());
-    for character in text.trim_end().chars() {
+    for character in text.chars() {
         match character {
             '\t' => line.push_str(TAB),
             control if control.is_control() => line.push(' '),

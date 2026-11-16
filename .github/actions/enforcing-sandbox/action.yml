@@ -13,21 +13,36 @@ runs:
   using: composite
   steps:
     # The backend needs Bubblewrap 0.11.0 for temporary overlays, and Ubuntu
-    # 24.04 packages 0.9.0, so the Ubuntu 25.04 package is installed from
-    # Launchpad's permanent archive and checked against a pinned digest. It
-    # depends only on glibc 2.38, libcap2 and libselinux1, all present here.
+    # 24.04 packages 0.9.0, so the Ubuntu 25.04 package is installed and
+    # checked against a pinned digest. It depends only on glibc 2.38, libcap2
+    # and libselinux1, all present here. It is taken from the Ubuntu archive's
+    # pool, then from old-releases, where the pool's files move once their
+    # release is retired, then from Launchpad, which once failed to resolve
+    # from runners and so is tried last. Any failure moves on to the next
+    # source, and whichever answers must match the digest. A new version
+    # changes the file name and both digests together.
     - name: bubblewrap 0.11, for the enforcing sandbox tests
       shell: bash
       run: |
         arch=$(dpkg --print-architecture)
         case "$arch" in
-          amd64) digest=2d9dbcd473771ce18448f1d45e9107cdb28bb3325d171bb4145d79b0df6f3df6 ;;
-          arm64) digest=a45e9a6089607db4deca1adee606f8e616ec3770db23aa01ddc4952c7248a18a ;;
+          amd64) digest=2d9dbcd473771ce18448f1d45e9107cdb28bb3325d171bb4145d79b0df6f3df6
+                 pool=https://archive.ubuntu.com/ubuntu ;;
+          arm64) digest=a45e9a6089607db4deca1adee606f8e616ec3770db23aa01ddc4952c7248a18a
+                 pool=https://ports.ubuntu.com/ubuntu-ports ;;
           *) echo "No pinned Bubblewrap package for $arch" >&2; exit 1 ;;
         esac
         deb="$RUNNER_TEMP/bubblewrap.deb"
-        url="https://launchpad.net/ubuntu/+archive/primary/+files/bubblewrap_0.11.0-2_${arch}.deb"
-        curl --fail --silent --show-error --location --retry 3 --output "$deb" "$url"
+        file="bubblewrap_0.11.0-2_${arch}.deb"
+        for url in "$pool/pool/main/b/bubblewrap/$file" \
+          "https://old-releases.ubuntu.com/ubuntu/pool/main/b/bubblewrap/$file" \
+          "https://launchpad.net/ubuntu/+archive/primary/+files/$file"; do
+          if curl --fail --silent --show-error --location --retry 3 --connect-timeout 20 \
+            --output "$deb" "$url"; then
+            break
+          fi
+          rm -f "$deb"
+        done
         echo "$digest  $deb" | sha256sum --check
         sudo dpkg --install "$deb"
         bwrap --version

@@ -16,6 +16,12 @@
 //! the blocks are those drawn when the view opened, and a click on a row that
 //! offered one result stands that result alone.
 //!
+//! After the blocks it stands the whole of each address the transcript drew
+//! shorter than it was written, newest first, under the word `address`: a
+//! forge's address drawn as its reference, and a quiet address cut short. They
+//! are lent and laid out as the blocks are, and a reference the answer wrote
+//! short itself is not one of them.
+//!
 //! It stands rather than being written into the transcript for the reason
 //! nothing else standing here is written down: the results are already in the
 //! record as the rows that could not fit them, and committing the text a second
@@ -170,20 +176,27 @@ impl View {
     }
 }
 
-/// How many rows the source of each block comes to at one width.
+/// How many rows the source of each block, and each address drawn shorter,
+/// comes to at one width.
 ///
 /// Counted once for each width and kept, as a held result is by the store,
-/// because a block's source is lent by the record and so has no place of its
-/// own to keep a count beside. Keyed by the line it is held as, which names one
-/// block for as long as the view stands: lines are renumbered only when the
-/// width changes, and a frame at another width drops all of it. The length of
-/// the source beside the line in the key does not tell blocks apart.
+/// because a source is lent by the record and so has no place of its own to
+/// keep a count beside. Kept against what names each one for as long as the
+/// view stands: a block by the line it is held as, since it is a line of its
+/// own, and an address by its line and the address itself, since one line may
+/// have drawn several. Lines are renumbered only when the width changes, and a
+/// frame at another width drops all of it. The length of a block's source
+/// beside its line does not tell blocks apart.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Counted {
     /// The width every count here is for.
     columns: usize,
     /// Rows, for the block held as this line with this many bytes of source.
     rows: HashMap<(usize, usize), usize>,
+    /// Rows, for this address drawn shorter on this line: no more of them than
+    /// the record keeps, so looked through rather than hashed, which would
+    /// copy the address to ask after it.
+    addresses: Vec<(usize, Box<str>, usize)>,
 }
 
 impl Counted {
@@ -191,12 +204,25 @@ impl Counted {
     fn of(&mut self, source: &Source<'_>, columns: usize, count: impl FnOnce() -> usize) -> usize {
         if self.columns != columns {
             self.rows.clear();
+            self.addresses.clear();
             self.columns = columns;
         }
-        *self
-            .rows
-            .entry((source.line, source.text.len()))
-            .or_insert_with(count)
+        if !source.is_address() {
+            return *self
+                .rows
+                .entry((source.line, source.text.len()))
+                .or_insert_with(count);
+        }
+        if let Some((_, _, rows)) = self
+            .addresses
+            .iter()
+            .find(|(line, address, _)| *line == source.line && **address == *source.text)
+        {
+            return *rows;
+        }
+        let rows = count();
+        self.addresses.push((source.line, source.text.into(), rows));
+        rows
     }
 }
 
@@ -256,12 +282,13 @@ impl Standing {
         true
     }
 
-    /// Opens the view over everything cut so far, and the blocks drawn up to
-    /// the line `blocks` is one past.
+    /// Opens the view over everything cut so far, and the blocks and
+    /// shortened addresses drawn up to the line `blocks` is one past.
     ///
-    /// Nothing opens where nothing was cut and nothing was drawn as a block.
-    /// The key is offered by the rows that were cut, and by the blocks whose
-    /// sources are in the view, so a session with none of them has made no
+    /// Nothing opens where nothing was cut and nothing was drawn as a block
+    /// or shorter than its address. The key is offered by the rows that were
+    /// cut, and by the blocks and addresses whose sources are in the view, so
+    /// a session with none of them has made no
     /// offer, and a frame put up in answer to a press nobody meant is one that
     /// took the prompt away for no reason.
     pub(super) fn open(&mut self, kept: &Kept, blocks: usize) {

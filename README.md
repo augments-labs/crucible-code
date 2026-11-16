@@ -52,13 +52,17 @@ A local release-profile run on September 8, 2026 produced:
 | First input rendered, p95 | 2.1 ms | ≤ 60 ms |
 | `--help` and `--version` exit, p95 | 0.7 ms | ≤ 12 ms |
 | Session picker with a deep history preview, p95 | 2.1 ms | ≤ 20 ms |
-| Peak RSS across the memory stress fixtures | 25.7 MiB | ≤ 35 MiB |
+| Peak RSS across the memory stress fixtures | 25.7 MiB | ≤ 35 MiB with colour off, ≤ 42 MiB with colour on |
 
 Measured on Linux x86-64, Intel Core i9-10900K, with Rust 1.97.1 and a local
 fixture provider. The 20-turn conversation alone peaked at 12.7 MiB RSS; the
-larger figure includes retained-history and image pressure. These are local
-workload measurements, not a promise for every machine or session. Rendering
-probes also enforce sustained throughput and pacing budgets.
+larger figure includes retained-history and image pressure. The colour-on budget
+is the higher one because a session that reads code compiles each language's
+patterns and keeps them, about 5 MiB for one language: in a run of November 12,
+2026 on the same processor and toolchain, a colour-on session that reads Rust
+peaked at 40.0 MiB. These are local workload measurements, not a promise for
+every machine or session. Rendering probes also enforce sustained throughput and
+pacing budgets.
 
 Tool output and retained terminal records have explicit limits. Resuming streams
 visible history from disk a message batch at a time; it does not build another

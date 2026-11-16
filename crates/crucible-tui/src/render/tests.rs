@@ -3722,8 +3722,14 @@ fn a_rule_narrowed_is_still_one_row() {
     );
 }
 
+mod diagrams;
+pub(super) mod drawers;
+mod escapes;
 mod headings;
+mod links;
+mod math;
 mod notes;
+mod strikes;
 mod writing;
 
 /// The words of an item that wraps at thirty columns, three rows or more.

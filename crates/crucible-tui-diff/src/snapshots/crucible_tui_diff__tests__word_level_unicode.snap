@@ -2,9 +2,9 @@
 source: crates/crucible-tui-diff/src/tests.rs
 expression: "dump(&drawn(&change, 64, UNICODE), 64)"
 ---
-<Quiet>╭─</> <Path>src/parse.rs</> <AddedNumber>+1</> <RemovedNumber>−1</>                                           
+<Quiet>╭─</> <Path>src/parse.rs</><Quiet> · </>Added <AddedCount>1</> line, removed <RemovedCount>1</> line                  
 <Quiet>│</> <Quiet>   7  </> <Keyword>let</> width <Operator>=</> <Number>8</>;                                         
-<Quiet>│</> <RemovedNumber>   8 -</> <Removed>let height = </><RemovedWord>columns</><Removed> / 2;</><Removed>                              </>
-<Quiet>│</> <AddedNumber>   8 +</> <Added>let height = </><AddedWord>rows</><Added> / 2;</><Added>                                 </>
+<Quiet>│</> <RemovedNumber>   8 - </><Removed>let height = </><RemovedWord>columns</><Removed> / 2;</><Removed>                             </> 
+<Quiet>│</> <AddedNumber>   8 + </><Added>let height = </><AddedWord>rows</><Added> / 2;</><Added>                                </> 
 <Quiet>│</> <Quiet>   9  </> <Keyword>let</> depth <Operator>=</> <Number>1</>;                                         
 <Quiet>╰─</>

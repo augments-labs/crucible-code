@@ -1159,10 +1159,9 @@ fn an_agent_s_edit_is_drawn_as_the_change_it_made() {
             "{mode} draws the edit as a call row\n{picture}"
         );
         assert!(
-            picture
-                .lines()
-                .any(|line| line.contains("\u{256D}\u{2500}") && line.contains("+1 \u{2212}1")),
-            "{mode} counts the change on the header of the box under its call\n{picture}"
+            picture.lines().any(|line| line.contains("\u{256D}\u{2500}")
+                && line.contains("Added 1 line, removed 1 line")),
+            "{mode} says the change on the header of the box under its call\n{picture}"
         );
         for (mark, changed) in [("4 -", 'a'), ("4 +", 'b')] {
             assert!(
@@ -1260,9 +1259,8 @@ fn a_resumed_agent_session_draws_the_agent_s_calls_as_they_were_drawn() {
         );
         assert!(
             row(&format!("Edit({})", claude::EDITED))
-                && picture
-                    .lines()
-                    .any(|line| line.contains("\u{256D}\u{2500}") && line.contains("+1 \u{2212}1")),
+                && picture.lines().any(|line| line.contains("\u{256D}\u{2500}")
+                    && line.contains("Added 1 line, removed 1 line")),
             "{mode} draws the agent's edit and its change again\n{picture}"
         );
         assert!(

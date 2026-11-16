@@ -12,6 +12,10 @@
 //! The prompt mark is readiness, not the reading. Once it arrives the probe
 //! sends one section-sign key through the terminal and stops only when that
 //! character comes back in a frame.
+//!
+//! Every launch sleeps through the wait, so the windows are taken at once with
+//! their starts spread across it, and a batch takes one window's wall clock
+//! rather than nine's.
 
 #[allow(dead_code)]
 mod startup;
@@ -36,6 +40,14 @@ const LIMIT: f64 = 2060.0;
 /// colour is held to on a shared runner, whose stalls land on the startup
 /// around the wait as they do on the answered one.
 const SHARED_RUNNER_LIMIT: f64 = 2250.0;
+
+/// The reply wait every launch here sits through, which the windows are
+/// spread across so that their starts rarely coincide.
+///
+/// `crucible_tui::graphics::Deadline::STARTUP.reply`, written out because the
+/// probe measures the built binary and names its crates in the test alone,
+/// which fails when the two part.
+const REPLY_WAIT: Duration = Duration::from_secs(2);
 
 fn report(elapsed: f64, limit: f64) -> Result<(), io::Error> {
     // `println!` is denied workspace-wide, so the reading goes out through a
@@ -75,7 +87,9 @@ fn main() -> ExitCode {
     };
     let budget = Duration::from_secs_f64(limit / 1000.0);
 
-    let readings = match startup::best(budget, || startup::coloured_input(Answering::Never)) {
+    let readings = match startup::best(budget, || {
+        startup::coloured_input_at_once(Answering::Never, REPLY_WAIT)
+    }) {
         Ok(readings) => readings,
         Err(problem) => {
             let _ = explain(&problem);
@@ -105,7 +119,35 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{LIMIT, SHARED_RUNNER_LIMIT};
+    use super::startup::Scratch;
+    use super::{LIMIT, REPLY_WAIT, SHARED_RUNNER_LIMIT};
+
+    #[test]
+    fn each_window_launches_from_a_home_of_its_own() {
+        // Planted here rather than beside `Scratch`, which every startup probe
+        // compiles and tests: this is the one probe that takes windows at once.
+        let first = Scratch::in_window("\u{00a7}", 0).expect("a home");
+        let second = Scratch::in_window("\u{00a7}", 1).expect("a home");
+
+        assert_ne!(
+            first.path(),
+            second.path(),
+            "two windows taken at once share a home, so one restores the other's \
+             fixture under a running child and the first dropped removes both"
+        );
+    }
+
+    #[test]
+    fn the_windows_are_spread_across_the_startup_reply_wait() {
+        let reply = crucible_tui::graphics::Deadline::STARTUP.reply;
+
+        assert_eq!(
+            REPLY_WAIT, reply,
+            "the probe spreads its windows across {REPLY_WAIT:?}, but a start waits \
+             {reply:?} for a silent terminal, so the launches of one window land on \
+             another's"
+        );
+    }
 
     /// The answered probe's limit `name`, as its source declares it.
     fn answered(name: &str) -> f64 {

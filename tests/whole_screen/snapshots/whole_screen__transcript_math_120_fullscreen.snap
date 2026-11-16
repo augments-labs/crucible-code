@@ -20,7 +20,7 @@ expression: window.picture()
 |                                                                                                                        |
 |› show me the corpus                                                                                                    |
 |                                                                                                                        |
-|Inline math may be written \( \alpha_i \) or as $E = mc^2$ in the middle of a sentence.                                 |
+|Inline math may be written αᵢ or as E = mc² in the middle of a sentence.                                                |
 |                                                                                                                        |
 |The dollar fixture lines stay exactly as written:                                                                       |
 |                                                                                                                        |
@@ -42,36 +42,36 @@ expression: window.picture()
 |                                                                                                                        |
 |A display formula:                                                                                                      |
 |                                                                                                                        |
-|$$                                                                                                                      |
-|\sum_{i=1}^{n} i = \frac{n(n+1)}{2}                                                                                     |
-|$$                                                                                                                      |
+|┌─ math                                                                                                                 |
+|│            n(n+1)                                                                                                     |
+|│ ∑ᵢ₌₁ⁿ i = ────────                                                                                                    |
+|│              2                                                                                                        |
+|└─                                                                                                                      |
 |                                                                                                                        |
 |A bracketed display:                                                                                                    |
 |                                                                                                                        |
-|[                                                                                                                       |
-|\int_0^1 x^2 \, dx = \frac{1}{3}                                                                                        |
-|\]                                                                                                                      |
+|┌─ math                                                                                                                 |
+|│              1                                                                                                        |
+|│ ∫₀¹ x² dx = ───                                                                                                       |
+|│              3                                                                                                        |
+|└─                                                                                                                      |
 |                                                                                                                        |
 |An aligned one:                                                                                                         |
 |                                                                                                                        |
-|\begin{align}                                                                                                           |
-|a &= b + c \                                                                                                            |
-|d &= e + f                                                                                                              |
-|\end{align}                                                                                                             |
+|┌─ math                                                                                                                 |
+|│ a = b + c                                                                                                             |
+|│ d = e + f                                                                                                             |
+|└─                                                                                                                      |
 |                                                                                                                        |
 |A math fence:                                                                                                           |
 |                                                                                                                        |
 |┌─ math                                                                                                                 |
-|│ x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}                                                                                |
+|│      −b ± √(b² − 4ac)                                                                                                 |
+|│ x = ──────────────────                                                                                                |
+|│             2a                                                                                                        |
 |└─                                                                                                                      |
 |                                                                                                                        |
 |The corpus ends here.                                                                                                   |
-|                                                                                                                        |
-|                                                                                                                        |
-|                                                                                                                        |
-|                                                                                                                        |
-|                                                                                                                        |
-|                                                                                                                        |
 |                                                                                                                        |
 |                                                                                                                        |
 |                                                                                                                        |

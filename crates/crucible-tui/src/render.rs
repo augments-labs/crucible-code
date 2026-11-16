@@ -39,12 +39,13 @@
 use crate::bands::{Bands, Wants};
 use crate::clipboard;
 use crate::color::{Palette, Slot, Theme};
+use crate::drawing::{Drawers, Mode};
 use crate::escape::Escapes;
 use crate::files::Files;
 use crate::forge::Forge;
 use crate::glyphs::Glyphs;
-use crate::markdown::{self, Block, Markdown, Said};
-use crate::record::{Record, Source};
+use crate::markdown::{self, Block, Markdown, Offers, Said};
+use crate::record::{Modes, Record, Source};
 use crate::row::Row;
 use crate::scroll_rail::{self, ScrollRail};
 use crate::select::{self, Place, Taken, View};
@@ -446,6 +447,14 @@ pub struct Renderer<T: Terminal> {
     /// about the terminal rather than about the answer. Unicode until
     /// [`Renderer::draws`] says otherwise.
     glyphs: Glyphs,
+    /// How math in an answer is drawn: [`Mode::Image`], the mode a setting
+    /// left alone gives, until the setting says otherwise. A renderer handed
+    /// no drawer shows every formula as written whatever it holds.
+    math: Mode,
+    /// How a diagram in an answer is drawn, apart from math and as it is:
+    /// [`Mode::Image`] until a setting says otherwise. A renderer handed no
+    /// drawer shows every diagram as written whatever it holds.
+    diagrams: Mode,
     /// Whether the transcript gives up its rightmost column to the scroll
     /// rail, where the window can spare one.
     ///
@@ -549,6 +558,8 @@ impl<T: Terminal> Renderer<T> {
             arriving: Arriving::Nothing,
             palette: Palette::plain(),
             glyphs: Glyphs::default(),
+            math: Mode::Image,
+            diagrams: Mode::Image,
             rails: false,
             grip: None,
             notch: NOTCH,
@@ -923,7 +934,11 @@ impl<T: Terminal> Renderer<T> {
     /// transcript band: while a block is held, for as long as the reader is at
     /// the foot to see it, in a band with a row to put it in.
     fn holds_row(&self, bands: &Bands) -> bool {
-        self.markdown.holding().is_some() && self.record.following() && !bands.transcript.is_empty()
+        (self.markdown.holding().is_some()
+            || self.markdown.holds_a_phrase()
+            || self.markdown.holds_a_span())
+            && self.record.following()
+            && !bands.transcript.is_empty()
     }
 
     /// How many of the transcript band's rows the record is shown in: the
@@ -1240,6 +1255,58 @@ impl<T: Terminal> Renderer<T> {
         self.painted.forget();
     }
 
+    /// Tells this renderer how math in an answer is drawn.
+    ///
+    /// Said at startup, and again whenever the reader changes the setting, as
+    /// [`Self::draws`] is and for its reasons: the reader is told rather than
+    /// replaced, so the next span of math is drawn in `mode`, and display math
+    /// already written is laid out again in it now, since the record keeps the
+    /// source it was written as. A span already said keeps what it was drawn
+    /// as, as every other run of prose does. Until a picture can be shown in
+    /// its place, [`Mode::Image`] draws math as [`Mode::Text`] does.
+    pub fn math(&mut self, mode: Mode) {
+        self.math = mode;
+        self.markdown.maths(mode);
+        self.record.draws_in(Modes {
+            math: mode,
+            diagrams: self.diagrams,
+        });
+        self.record
+            .relay(self.folds(), self.glyphs, self.palette.theme());
+        self.painted.forget();
+    }
+
+    /// How math in an answer is drawn.
+    #[must_use]
+    pub const fn math_mode(&self) -> Mode {
+        self.math
+    }
+
+    /// Tells this renderer how a diagram in an answer is drawn.
+    ///
+    /// Said as [`Self::math`] is, and for its reasons: a diagram already
+    /// written is laid out again in `mode` now, and math is left drawn as it
+    /// was. Under [`Mode::Written`] the live foot names a diagram still
+    /// arriving by its fence rather than by its drawer, since it will not be
+    /// drawn. Until a picture can be shown in its place, [`Mode::Image`] draws
+    /// a diagram as [`Mode::Text`] does.
+    pub fn diagrams(&mut self, mode: Mode) {
+        self.diagrams = mode;
+        self.record.draws_in(Modes {
+            math: self.math,
+            diagrams: mode,
+        });
+        self.record
+            .relay(self.folds(), self.glyphs, self.palette.theme());
+        self.painted.forget();
+    }
+
+    /// How a diagram in an answer is drawn.
+    #[must_use]
+    pub const fn diagrams_mode(&self) -> Mode {
+        self.diagrams
+    }
+
     /// Tells this renderer which repository the answer's bare numbers count
     /// against.
     ///
@@ -1262,10 +1329,29 @@ impl<T: Terminal> Renderer<T> {
         self.markdown = self.reader();
     }
 
+    /// Hands this renderer the drawers a closed fence of an answer is drawn
+    /// by, each asked for the fences whose name it takes.
+    ///
+    /// Said once, at startup, for the reason [`Renderer::counts`] is. A
+    /// renderer handed none draws every fence as it was written. Where output
+    /// is redirected no key is read, so a drawer takes any key it offers out
+    /// of the rows it draws: of what is written, and of what is kept.
+    pub fn drawers(&mut self, drawers: Drawers) {
+        let offers = if self.terminal.is_terminal() {
+            Offers::Stand
+        } else {
+            Offers::Withdrawn
+        };
+        self.record.draws_with(drawers, offers);
+        self.markdown = self.reader();
+    }
+
     /// A reader for the next message, drawing, counting and opening the way
     /// this renderer was told to.
     fn reader(&self) -> Markdown {
-        Markdown::new(self.glyphs).linking(self.record.links())
+        Markdown::new(self.glyphs)
+            .linking(self.record.links())
+            .drawing(self.record.drawers(), self.math)
     }
 
     /// Marks the next record line as the start of a prompt.
@@ -1313,11 +1399,14 @@ impl<T: Terminal> Renderer<T> {
     }
 
     /// The source of every block drawn in the transcript that has one to read
-    /// whole, newest first, lent from the record that holds it.
+    /// whole, newest first, lent from the record that holds it; then the
+    /// whole of every address an answer was drawn with shorter than it was
+    /// written, newest first.
     ///
     /// A table, display math, a diagram or a diff; not a rule, which draws all
-    /// there is of it. The record is the only copy, so what lists these reads
-    /// it where it stands.
+    /// there is of it. An address cut short in its quiet form, or drawn as a
+    /// forge's reference; not a reference the answer wrote short itself. The
+    /// record is the only copy, so what lists these reads it where it stands.
     pub fn sources(&self) -> impl Iterator<Item = Source<'_>> + '_ {
         self.record.sources()
     }
@@ -1327,10 +1416,7 @@ impl<T: Terminal> Renderer<T> {
     /// so that blocks drawn after it do not slide in under a reader.
     #[must_use]
     pub fn sourced(&self) -> usize {
-        self.record
-            .sources()
-            .next()
-            .map_or(0, |source| source.line.saturating_add(1))
+        self.record.sourced()
     }
 
     /// How many rows one wheel notch moves in any scrollable view.
@@ -1450,10 +1536,13 @@ impl<T: Terminal> Renderer<T> {
     }
 
     /// Reads a line that may still be the header of a table or the title of a
-    /// heading as the prose it was said to be, for a call that is about to end
-    /// the line it is on.
+    /// heading as the prose it was said to be, and settles a phrase or a span
+    /// of math it holds, for a call that is about to end the line it is on.
     fn undoubted(&mut self) -> Result<(), TerminalError> {
-        if !self.markdown.in_doubt() {
+        if !self.markdown.in_doubt()
+            && !self.markdown.holds_a_phrase()
+            && !self.markdown.holds_a_span()
+        {
             return Ok(());
         }
 
@@ -2609,15 +2698,29 @@ impl<T: Terminal> Renderer<T> {
         self.written_out(false)
     }
 
-    /// The row that tells of a block the reader is holding, drawn `columns`
-    /// wide; `None` while nothing is held.
+    /// What the drawer that takes the fence being held says it is, once the
+    /// fence's first line has ended; `None` where no drawer says, and where
+    /// the setting for what is `held` shows it as written.
+    fn told(&self, held: markdown::Held) -> Option<&'static str> {
+        if !self.record.draws(held.kind()) {
+            return None;
+        }
+        let (fence, first) = self.markdown.opened()?;
+        self.record.drawers().for_name(fence)?.label(fence, first)
+    }
+
+    /// The row that tells of a block the reader is holding, or shows the
+    /// phrase it holds after a single tilde or the span of math it holds,
+    /// drawn `columns` wide; `None` while nothing is held.
     ///
-    /// Shown in place of the block until it closes, in both screen modes: the
-    /// block itself is not drawn until it can be drawn whole.
+    /// Shown in place of what is held until it settles, in both screen modes:
+    /// none of it is drawn until it can be drawn as it will stand.
     fn holding(&self, columns: usize) -> Option<Row> {
         self.markdown
             .holding()
-            .map(|holding| holding.row(columns, self.glyphs))
+            .map(|holding| holding.named(self.told(holding.held), columns, self.glyphs))
+            .or_else(|| self.markdown.striking(columns))
+            .or_else(|| self.markdown.spanning(columns))
     }
 
     /// One frame.
@@ -2802,6 +2905,14 @@ impl<T: Terminal> Taking<'_, T> {
                 self.take(slot, text, link);
                 Ok(())
             }
+            Said::Aside(text) => {
+                self.aside(text);
+                Ok(())
+            }
+            Said::Shortened(address) => {
+                self.record.shortened(address);
+                Ok(())
+            }
             Said::Block(block) => self.block(block),
             Said::Retract => {
                 self.record.retract();
@@ -2827,11 +2938,18 @@ impl<T: Terminal> Taking<'_, T> {
             .collect();
 
         // A redirected run is written the block as it is laid out now, row by
-        // row: a file has one width, and it is this one.
+        // row: a file has one width, and it is this one. It reads no key, so
+        // a drawer offers none in what is written.
         if let Some(out) = &mut self.out {
             out.write(self.unwritten)?;
             self.unwritten.clear();
-            for row in markdown::lay(&block, self.columns, self.glyphs, self.record.links()) {
+            // As the record would lay it out: a kind shown as written is
+            // handed to no drawer.
+            let none = Drawers::default();
+            let drawers = self.record.drawers_for(&block).unwrap_or(&none);
+            let links = self.record.links();
+            let rows = markdown::lay_unoffered(&block, self.columns, self.glyphs, links, drawers);
+            for row in rows {
                 out.write(&row.text())?;
                 out.write("\n")?;
             }
@@ -2848,15 +2966,7 @@ impl<T: Terminal> Taking<'_, T> {
     /// palette, and a byte of a redirected run's output is one this program
     /// meant to write.
     fn take(&mut self, slot: Slot, text: &str, link: Option<&str>) {
-        let escapes = &mut *self.escapes;
-        self.free.clear();
-        // A format character goes with the escapes: it would reorder or hide
-        // the text around it in a terminal and in a file read in one later.
-        self.free.extend(
-            text.chars()
-                .filter(|character| !escapes.holds(*character) && !width::unshown(*character)),
-        );
-
+        self.clean(text);
         self.record.write(slot, self.free, link);
 
         // The address never reaches a redirected run. What that run is written
@@ -2865,6 +2975,30 @@ impl<T: Terminal> Taking<'_, T> {
         if self.out.is_some() {
             self.unwritten.push_str(self.free);
         }
+    }
+
+    /// Add the quiet address the reader put after a link's words, which a
+    /// drag does not copy: cleaned as a run is, since it is made of an
+    /// address a model chose.
+    fn aside(&mut self, text: &str) {
+        self.clean(text);
+        self.record.aside(self.free);
+        if self.out.is_some() {
+            self.unwritten.push_str(self.free);
+        }
+    }
+
+    /// `text` into [`Self::free`] with its escape bytes taken out.
+    ///
+    /// A format character goes with the escapes: it would reorder or hide the
+    /// text around it in a terminal and in a file read in one later.
+    fn clean(&mut self, text: &str) {
+        let escapes = &mut *self.escapes;
+        self.free.clear();
+        self.free.extend(
+            text.chars()
+                .filter(|character| !escapes.holds(*character) && !width::unshown(*character)),
+        );
     }
 }
 

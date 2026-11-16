@@ -55,16 +55,19 @@
 use std::borrow::Cow;
 use std::fmt;
 use std::path::Path;
+use std::sync::Arc;
 
 use crucible_builtins::Ended;
 use crucible_client_api::pending::Effect;
 use crucible_runner::{Breakdown, Event, TurnError, Turned};
 use crucible_tools::{Argument, Sensitivity, Summary, ToolOutput};
-use crucible_tui::drawing::{EXPAND, Room};
+use crucible_tui::drawing::{Drawers, EXPAND, Room};
 use crucible_tui::{
     Glyphs, Remaining, Renderer, Row, Slot, Terminal, TerminalError, clip, columns, cut, fold,
 };
 use crucible_tui_diff::{Changes, File, Side};
+use crucible_tui_math::Formulas;
+use crucible_tui_mermaid::Diagrams;
 use crucible_types::{
     Answer, Attachment, Change, Changed, Compacted, Compacting, Diff, Modality, Question,
     RecordedToolOutput, StopReason, ToolCall, ToolId,
@@ -1484,15 +1487,32 @@ pub(crate) fn came_back<T: Terminal>(
     // offered, and one held anyway would be an offer to show somebody what they
     // are already looking at.
     //
-    // Where the offer went is the block's first row, which is the one that names
-    // the key — the lines under it are a change, and a change is cut where it is
-    // built rather than here, so it offers nothing.
+    // A change offers on its box's first row where its call's line was cut,
+    // and on the row that counts its fold. The fold is asked of the change and
+    // not read off the rows: it is drawn again at every width, and a room too
+    // narrow for the key now is followed by one that names it.
+    let change = output
+        .diff
+        .as_ref()
+        .filter(|diff| !diff.is_empty())
+        .map(change_of);
+    let folded = change
+        .as_ref()
+        .is_some_and(|change| change.files().iter().any(File::folds));
     if details
+        || folded
         || rows
             .iter()
             .any(|row| row.kinds().any(|slot| slot == Slot::Cut))
     {
-        kept.finished(call, output.into_text(), at);
+        // What the key opens under a change is the change, every line the tool
+        // kept, in the words its box is drawn in; the sentence the model was
+        // sent says none of them.
+        let whole = match change {
+            Some(change) => Changes.written(&change, style.glyphs()).into_boxed_str(),
+            None => output.into_text(),
+        };
+        kept.finished(call, whole, at);
     } else {
         // Even when nothing needs retaining, the call and any live tail are
         // over. Leaving them would show a completed call as live.
@@ -1535,10 +1555,14 @@ pub(crate) fn withdraw<T: Terminal>(
 /// What [`finished`] and [`offer`] wrote for it goes: the key's name and the
 /// brackets it stood in, or the whole of a change's offer, which is a cut run
 /// of its own at the end of the row. A count of the lines the row could not
-/// show stays, because it is still true. What was cut stops wearing the slot that lights under the
-/// pointer and reads as the row around it.
+/// show stays, because it is still true, and so does the count on the row a
+/// change's box folds its middle into, which loses the key after it. What was
+/// cut stops wearing the slot that lights under the pointer and reads as the
+/// row around it.
 fn unoffered(rows: &mut [Row]) {
     for row in rows {
+        // The fold's row is the box's to word, so the box takes its key out.
+        crucible_tui_diff::unoffered(row);
         let spans: Vec<(Slot, String)> = row
             .spans()
             .map(|(slot, text)| (slot, text.to_owned()))
@@ -1662,8 +1686,9 @@ impl Shown {
 ///
 /// Zero for a call that changed a file. That result is drawn as the change
 /// itself and the block under the row is where its lines are; what the block
-/// could not fit was cut where the change was built rather than here, so there
-/// is nothing left over to offer.
+/// folds it counts on a row of its own, and what the tool never kept was cut
+/// where the change was built rather than here, so no line of the result is
+/// left over for this row to count.
 ///
 /// Restored previews follow the same rule. Legacy logs with counts alone also
 /// offer no expansion: the result text repeats the sentence in the header.
@@ -1717,41 +1742,68 @@ fn count(row: &mut Row, word: &str, lines: usize) {
     row.push(Slot::Quiet, if lines == 1 { " line" } else { " lines" });
 }
 
+/// The drawers every renderer of a session is handed: [`Changes`], which
+/// draws a `diff` or `patch` fence of an answer as the box [`block`] draws a
+/// call's change as, [`Formulas`], which draws math as text, and
+/// [`Diagrams`], which draws a `mermaid` fence as text.
+///
+/// One function, so the screen a session is read on and the preview of one
+/// nobody has picked up are handed the same drawers, and draw the same answer
+/// the same way.
+pub(crate) fn drawers() -> Drawers {
+    Drawers::default()
+        .with(Arc::new(Changes))
+        .with(Arc::new(Formulas))
+        .with(Arc::new(Diagrams))
+}
+
+/// The change a tool kept of one edit, as the box takes it: the one file it
+/// was made to.
+fn change_of(diff: &Diff) -> crucible_tui_diff::Change {
+    crucible_tui_diff::Change::new(vec![tool_file(diff)])
+}
+
 /// The change a call made, drawn as a box.
 ///
 /// Through [`Changes`], the one function a `diff` fence in an answer is drawn
-/// by too, so the two cannot drift: a header that counts what moved, the
-/// number each line is found at, the sign that says which way it went, and a
-/// ground carried to the last column under each line that moved. A change
-/// longer than the fold draws its start and its end around a row that counts
-/// the rest, and names no key, since nothing shows them yet; the lines the
-/// tool never kept are one quiet row under the ones it did.
+/// by too, so the two cannot drift: a header that says in words what moved,
+/// the number each line is found at, the sign that says which way it went, and
+/// a ground under each line that moved, carried to one column short of the
+/// window. A change longer than the fold draws its start and its end around a
+/// row that counts the rest and names the key that shows them, which
+/// [`came_back`] keeps the change written out for; the lines the tool never
+/// kept are one quiet row under the ones it did.
 ///
 /// Hung where the row under a call hangs, with a failure's cross in the call's
 /// own column. Clipped to the window rather than to the ceiling a result line
 /// is held to: that ceiling keeps one event to about one row, and these rows
 /// are the event. Where `details` says the call's own line was cut, the
-/// header offers the key that shows the whole of it.
+/// header offers the key that shows the whole of it, two columns after what
+/// it says, or makes no offer where the row has no room for its opening
+/// bracket and the start of the key's name.
 fn block(diff: &Diff, failed: bool, window: usize, glyphs: Glyphs, details: bool) -> Vec<Row> {
     let left = columns(glyphs.called()) + 1;
     let room = Room {
         columns: window.saturating_sub(left),
         glyphs,
     };
-    let mut rows = Changes
-        .draw(
-            &crucible_tui_diff::Change::new(vec![tool_file(diff)]),
-            &room,
-        )
-        .rows;
+    let mut rows = Changes.draw(&change_of(diff), &room).rows;
 
     if details && let Some(header) = rows.first_mut() {
+        // The lead is written here rather than handed to [`clipped`], which
+        // takes the space off both ends of what it is given.
+        let lead = "  ";
         let offer = clipped(
-            format!(" ({EXPAND})"),
-            room.columns.saturating_sub(header.columns()),
+            format!("({EXPAND})"),
+            room.columns
+                .saturating_sub(header.columns() + columns(lead)),
             glyphs,
         );
-        header.push(Slot::Cut, offer);
+        // Drawn only where [`unoffered`] will know it: a room that leaves the
+        // mark of a cut alone, or a bracket and the mark, names no key.
+        if change_offer(&offer) {
+            header.push(Slot::Cut, format!("{lead}{offer}"));
+        }
     }
 
     rows.into_iter()
