@@ -116,10 +116,16 @@ jobs:
       # this commit reached main. check.sh runs the suites through
       # cargo-nextest, the prebuilt one rust-ci.yml installs. Nothing here
       # restores a cache: a release is built from nothing another ref wrote.
-      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-nextest@0.9.146
       - uses: ./.github/actions/enforcing-sandbox
+      # The check that a drawer or raster crate reaches no network asks
+      # `cargo tree --offline` for each one's graph on every target, which
+      # needs every target's locked sources; building for this host fetches
+      # only its own.
+      - name: Populate the locked Cargo cache
+        run: cargo fetch --locked
       - run: scripts/sh/check.sh
         env:
           CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
@@ -177,7 +183,7 @@ jobs:
     env:
       VERSION: ${{ needs.gate.outputs.version }}
     container:
-      image: quay.io/centos/centos:stream9@sha256:99a7748660352b7d87e5689805ddafa6209d6019d0c5b642b5354656dff02be3
+      image: quay.io/centos/centos:stream9@sha256:280add9b43d478ff06de6ccc6285afa7f1d81d8a0ea0d63e292a2f87f1d5aedf
     defaults:
       run:
         shell: bash
@@ -437,7 +443,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
+      - uses: vmactions/freebsd-vm@811efaaac0668df8bfb8308c3ec997b5ab50037b # v1.6.0
         with:
           release: "14.4"
           usesh: true
@@ -939,7 +945,7 @@ jobs:
           sha256sum --check --strict mine
           rm mine
 
-      - uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
+      - uses: vmactions/freebsd-vm@811efaaac0668df8bfb8308c3ec997b5ab50037b # v1.6.0
         with:
           release: "14.4"
           usesh: true
@@ -1331,7 +1337,7 @@ jobs:
           sha256sum --check --strict mine
           rm mine
 
-      - uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
+      - uses: vmactions/freebsd-vm@811efaaac0668df8bfb8308c3ec997b5ab50037b # v1.6.0
         with:
           release: "14.4"
           usesh: true

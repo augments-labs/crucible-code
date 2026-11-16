@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
-version = "0.50.0"
+version = "0.51.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT"
@@ -136,9 +136,10 @@ thiserror = "=2.0.21"
 # Which words of a changed line changed: a diff over the line's words, so a
 # change draws the replaced word raised on both lines of its pair. `std` has no
 # sequence diff, and a longest-common-subsequence written here would be the
-# algorithm this is, without its bounds. Already in the graph under `insta`,
-# so this compiles the same version once; the default `text` feature only.
-similar = "=2.7.0"
+# algorithm this is, without its bounds. The default `text` feature only.
+# `insta`, a test dependency, still takes 2.x, so a test build compiles both
+# majors; the shipped binary holds this one alone.
+similar = "=3.2.1"
 
 # Asks the terminal what colour its own background is, over OSC 11, and reads
 # the answer. `std` has no timed read on a file descriptor and `crossterm` has
@@ -262,7 +263,7 @@ tokio-rustls = { version = "=0.26.6", default-features = false, features = ["rin
 # no system store, bundle or platform verifier is read, so a certificate is
 # trusted the same way on every machine. Named here for `crucible-http`, the one
 # crate that builds a client to verify a recipient.
-webpki-roots = "=1.0.11"
+webpki-roots = "=1.0.12"
 
 # JWT claims are base64url without padding. OpenAI subscription login needs the
 # selected ChatGPT account id from that bounded claim set; one decoder serves
@@ -285,7 +286,7 @@ getrandom = "=0.4.3"
 # one process. The version and variant bit layout, the monotonic tie-break
 # counter, and the timestamp recovery are format machinery this crate owns;
 # `std` cannot mint one and hand-rolling it would be a second partial codec.
-uuid = { version = "=1.29.0", features = ["v7"] }
+uuid = { version = "=1.29.2", features = ["v7"] }
 
 # SHA-256, wherever a one-way digest is needed. Browser OAuth uses RFC 7636
 # S256. Prompt-cache scope identity needs a digest of credential-owned material
@@ -320,7 +321,7 @@ blake2 = { version = "=0.11.0", default-features = false }
 # Only their readers are used: nothing is unpacked by `tar`'s own extraction,
 # which is why its extended-attribute support is left off. `flate2` is already
 # in the tree under image decoding, at this version.
-flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
+flate2 = { version = "=1.1.11", default-features = false, features = ["rust_backend"] }
 tar = { version = "=0.4.46", default-features = false }
 
 # A catalog agent's release may also be a bzip2-compressed tar. `std`
@@ -476,7 +477,7 @@ windows-sys = { version = "=0.61.2", features = [
 # its times in UTC, and says so. The provider crate takes it for the other
 # side of that hour: reading the RFC 3339 instant a vendor writes it as, which
 # `std` has no parser for.
-jiff = { version = "=0.2.39", default-features = false, features = [
+jiff = { version = "=0.2.42", default-features = false, features = [
     "std",
     "tz-system",
     "tzdb-zoneinfo",
@@ -694,8 +695,9 @@ crucible-session = { workspace = true, features = ["proof"] }
 # drive one by hand.
 crucible-runtime = { workspace = true, features = ["proof"] }
 # The application, with the accessor a test reads the runner behind a
-# conversation through for what no front end reads off it, and that chooses
-# the agents the binary can start from an environment variable. Dev-only for
+# conversation through for what no front end reads off it, that chooses the
+# agents the binary can start from an environment variable, and that wires a
+# questions handle as startup does. Dev-only for
 # the same reason as the two above.
 crucible-app = { workspace = true, features = ["proof"] }
 # The scripted stand-in for an installed agent, which the whole-screen captures

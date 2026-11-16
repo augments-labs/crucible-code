@@ -165,8 +165,8 @@ pub struct Question<'a> {
     pub answers: &'a [&'a str],
     /// Which answer the mark stands on.
     pub marked: usize,
-    /// The quiet row under the frame, naming the keys that are not on it.
-    pub footer: &'a str,
+    /// The keys the quiet row under the frame names, the ones not on it.
+    pub footer: &'a [&'a str],
 }
 
 impl Question<'_> {
@@ -302,11 +302,12 @@ impl Question<'_> {
         rows.push(Row::new().then(Slot::Accent, format!("{close}{bar}{closed}")));
         if spacing.footer {
             let room = columns.saturating_sub(SAID);
-            let keys = if cut && !self.more.is_empty() {
-                format!("{} {} {}", self.footer, glyphs.dot(), self.more)
-            } else {
-                self.footer.to_owned()
-            };
+            let parted = format!(" {} ", glyphs.dot());
+            let mut keys = self.footer.join(&parted);
+            if cut && !self.more.is_empty() {
+                keys.push_str(&parted);
+                keys.push_str(self.more);
+            }
             rows.push(said(SAID, Slot::Quiet, clip(&keys, room)));
         }
 

@@ -272,6 +272,7 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
             aside: &Aside::new(),
             queued: &mut Prompts::default(),
             keys: false,
+            docking: &mut Docking::default(),
         },
     )
     .expect("no keys to read");
@@ -295,11 +296,14 @@ fn the_box_is_drawn_around_the_line_with_the_mode_under_it() {
         &typed("hi"),
         Style::plain(),
         around(
-            &nothing(),
+            Above {
+                planning: &nothing(),
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
-            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -321,11 +325,14 @@ fn the_window_reading_is_in_the_box_once_and_takes_no_row_of_its_own() {
         &typed("hi"),
         Style::plain(),
         around(
-            &nothing(),
+            Above {
+                planning: &nothing(),
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &Opened::default(),
             &says,
             Recalled::default(),
-            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -346,11 +353,14 @@ fn a_window_with_room_for_one_of_them_keeps_the_mode_and_drops_the_keys() {
         &typed("hi"),
         Style::plain(),
         around(
-            &nothing(),
+            Above {
+                planning: &nothing(),
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
-            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -373,11 +383,14 @@ fn the_cursor_ends_up_where_the_line_was_typed_to() {
         &typed("hi"),
         Style::plain(),
         around(
-            &nothing(),
+            Above {
+                planning: &nothing(),
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
-            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -409,11 +422,14 @@ fn a_finished_line_is_left_in_the_record_and_the_box_is_taken_off() {
         &editor,
         Style::plain(),
         around(
-            &nothing(),
+            Above {
+                planning: &nothing(),
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
-            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -428,7 +444,7 @@ fn a_finished_line_is_left_in_the_record_and_the_box_is_taken_off() {
     )
     .expect("the line to be taken");
 
-    assert!(matches!(asked, Asked::Said(said) if said.said == "hi"));
+    assert!(matches!(asked, Asked::Said(said) if said.line == "hi"));
 
     // The box goes and the line stays: everything written after the box was on
     // screen is the record of it, with no border and no status row in it.
@@ -634,11 +650,14 @@ fn a_line_beginning_with_a_slash_opens_the_list_above_the_box() {
         &typed("/m"),
         Style::plain(),
         around(
-            &nothing(),
+            Above {
+                planning: &nothing(),
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &listing("/m"),
             &settled(Mode::Ask),
             Recalled::default(),
-            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -683,11 +702,14 @@ fn the_box_stays_where_it_was_while_the_list_is_open() {
             &typed("/m"),
             Style::plain(),
             around(
-                &nothing(),
+                Above {
+                    planning: &nothing(),
+                    queued: &Prompts::default(),
+                    docking: &Docking::default(),
+                },
                 opened,
                 &settled(Mode::Ask),
                 Recalled::default(),
-                &Prompts::default(),
             ),
         )
         .expect("the box to be drawn");
@@ -712,11 +734,14 @@ fn a_prompt_is_drawn_in_the_rows_the_box_has_always_been() {
         &typed("hi"),
         Style::plain(),
         around(
-            &nothing(),
+            Above {
+                planning: &nothing(),
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
-            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -739,11 +764,14 @@ fn the_offer_to_leave_is_drawn_under_the_mode_and_not_over_it() {
         &Editor::new(),
         Style::plain(),
         around(
-            &nothing(),
+            Above {
+                planning: &nothing(),
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &Opened::default(),
             &leaving(Mode::Ask),
             Recalled::default(),
-            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -972,7 +1000,7 @@ fn return_takes_the_row_the_list_is_pointing_at_and_not_the_letters_typed() {
     )
     .expect("the line to be taken");
 
-    assert!(matches!(asked, Asked::Said(said) if said.said == "/resume"));
+    assert!(matches!(asked, Asked::Said(said) if said.line == "/resume"));
 }
 
 #[test]
@@ -991,7 +1019,7 @@ fn a_line_that_is_no_command_is_taken_exactly_as_it_was_typed() {
     )
     .expect("the line to be taken");
 
-    assert!(matches!(asked, Asked::Said(said) if said.said == "what does /resume do"));
+    assert!(matches!(asked, Asked::Said(said) if said.line == "what does /resume do"));
 }
 
 #[test]
@@ -1101,7 +1129,7 @@ fn esc_closes_the_command_list_and_leaves_the_line_as_it_was_typed() {
         Style::plain(),
     )
     .expect("the line to be taken");
-    assert!(matches!(asked, Asked::Said(said) if said.said == "/resu"));
+    assert!(matches!(asked, Asked::Said(said) if said.line == "/resu"));
 }
 
 #[test]
@@ -1251,6 +1279,7 @@ fn a_running_turn_moves_its_latest_window_reading_into_the_prompt_border() {
             opened_list: &Opened::default(),
             history: Recalled::default(),
             queued: &Prompts::default(),
+            docking: &Docking::default(),
         },
         &says,
         Style::plain(),
@@ -1292,6 +1321,7 @@ fn a_running_turn_keeps_its_turn_start_window_reading_before_the_first_event() {
             opened_list: &Opened::default(),
             history: Recalled::default(),
             queued: &Prompts::default(),
+            docking: &Docking::default(),
         },
         &says,
         Style::plain(),
@@ -1372,11 +1402,14 @@ fn the_plan_stands_above_the_box_between_turns() {
         &typed("hi"),
         Style::plain(),
         around(
-            &planned(3),
+            Above {
+                planning: &planned(3),
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
-            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -1401,11 +1434,14 @@ fn the_list_a_slash_opened_takes_its_rows_before_the_plan_does() {
         &typed("hi"),
         Style::plain(),
         around(
-            &plan,
+            Above {
+                planning: &plan,
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
-            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -1416,11 +1452,14 @@ fn the_list_a_slash_opened_takes_its_rows_before_the_plan_does() {
         &typed("/m"),
         Style::plain(),
         around(
-            &plan,
+            Above {
+                planning: &plan,
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &listing("/m"),
             &settled(Mode::Ask),
             Recalled::default(),
-            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -1471,11 +1510,14 @@ fn a_large_paste_is_shown_compactly_but_copied_expanded() {
         &editor,
         Style::plain(),
         around(
-            &nothing(),
+            Above {
+                planning: &nothing(),
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
-            &Prompts::default(),
         ),
     )
     .expect("the compact paste to be drawn");
@@ -1511,11 +1553,14 @@ fn counted() -> (Renderer<Recording>, Says, usize, std::ops::Range<usize>) {
         &editor,
         Style::plain(),
         around(
-            &nothing(),
+            Above {
+                planning: &nothing(),
+                queued: &Prompts::default(),
+                docking: &Docking::default(),
+            },
             &Opened::default(),
             &says,
             Recalled::default(),
-            &Prompts::default(),
         ),
     )
     .unwrap();
@@ -1772,7 +1817,7 @@ fn a_hidden_leading_command_is_committed_and_sent_but_not_selected_locally() {
     let Asked::Said(said) = asked else {
         panic!("the pasted prompt to be said");
     };
-    let (said, local) = said.into_parts();
+    let (said, local, _) = said.into_parts();
 
     assert_eq!(said, source);
     assert!(!local, "hidden pasted source selected a local command");
@@ -1802,7 +1847,7 @@ fn a_visible_command_prefix_cannot_authorize_a_compact_pasted_argument() {
     let Asked::Said(said) = asked else {
         panic!("the command to be said");
     };
-    let (said, local) = said.into_parts();
+    let (said, local, _) = said.into_parts();
 
     assert_eq!(said, source);
     assert!(!local, "hidden pasted source selected a local command");
@@ -1828,7 +1873,7 @@ fn padded_compact_source_cannot_hide_a_full_access_local_command() {
     let Asked::Said(said) = asked else {
         panic!("the command to be said");
     };
-    let (said, local) = said.into_parts();
+    let (said, local, _) = said.into_parts();
 
     assert_eq!(said, source.replace('\t', "    "));
     assert!(!local, "compact source escalated the local permission mode");
@@ -1869,9 +1914,10 @@ fn nothing_having_ended_asks_for_no_turn() {
 
 #[test]
 fn a_command_that_ended_asks_for_the_turn_nobody_typed() {
-    let Some(Asked::Woke(said)) = woken(&[ended(1, Some(0))], &Aside::new()) else {
+    let Some(Asked::Woke(woke)) = woken(&[ended(1, Some(0))], &Aside::new()) else {
         panic!("an ending to ask for a turn");
     };
+    let (said, _) = woke.into_parts();
 
     // The number is how the model refers to it and how the panel lists it, the
     // command is what it was, and the exit is the half a reader cannot go back
@@ -1882,16 +1928,33 @@ fn a_command_that_ended_asks_for_the_turn_nobody_typed() {
 }
 
 #[test]
+fn a_turn_nobody_typed_is_the_applications_and_never_the_persons() {
+    // What wakes the model is made of what commands printed, so it is hostile
+    // to whoever reads it as somebody's request. Sent as the person's, it would
+    // be kept as their task and told back to the model as what they asked for.
+    let aside = Aside::new();
+    aside.say("crucible, not the developer: #1 finished".to_owned());
+
+    let Some(Asked::Woke(woke)) = woken(&[ended(2, Some(0))], &aside) else {
+        panic!("an ending to ask for a turn");
+    };
+
+    let (_, author) = woke.into_parts();
+    assert_eq!(author, Author::Application);
+}
+
+#[test]
 fn every_command_that_ended_is_in_the_one_turn_they_ask_for() {
     // Two servers falling over between one turn and the next is one turn about
     // both of them. A turn each would be the second one arriving after the
     // model had already answered about the first.
-    let Some(Asked::Woke(said)) = woken(
+    let Some(Asked::Woke(woke)) = woken(
         &[ended(1, Some(0)), ended(2, Some(2)), ended(3, None)],
         &Aside::new(),
     ) else {
         panic!("the endings to ask for a turn");
     };
+    let (said, _) = woke.into_parts();
 
     assert!(said.contains("#1"), "{said}");
     assert!(said.contains("exit status 2"), "{said}");
@@ -1907,9 +1970,10 @@ fn a_note_the_last_turn_never_took_still_asks_for_a_turn() {
     let aside = Aside::new();
     aside.say("crucible, not the developer: #1 finished".to_owned());
 
-    let Some(Asked::Woke(said)) = woken(&[], &aside) else {
+    let Some(Asked::Woke(woke)) = woken(&[], &aside) else {
         panic!("a note nobody took to ask for a turn");
     };
+    let (said, _) = woke.into_parts();
 
     assert!(said.contains("#1 finished"), "{said}");
     assert!(!aside.any(), "the note was taken, not copied");
@@ -1922,9 +1986,10 @@ fn a_note_and_an_ending_are_one_turn_rather_than_two() {
     let aside = Aside::new();
     aside.say("crucible, not the developer: #1 finished".to_owned());
 
-    let Some(Asked::Woke(said)) = woken(&[ended(2, Some(2))], &aside) else {
+    let Some(Asked::Woke(woke)) = woken(&[ended(2, Some(2))], &aside) else {
         panic!("both to ask for one turn");
     };
+    let (said, _) = woke.into_parts();
 
     assert!(said.contains("#1 finished"), "{said}");
     assert!(said.contains("exit status 2"), "{said}");
@@ -2236,16 +2301,21 @@ fn between_turns_the_queue_stands_over_the_plan_as_it_does_under_a_turn() {
 
     let rows: Vec<String> = over(
         around(
-            &plan,
+            Above {
+                planning: &plan,
+                queued: &queued,
+                docking: &Docking::default(),
+            },
             &Opened::default(),
             &says,
             Recalled::default(),
-            &queued,
         ),
         80,
         40,
+        0,
         Style::plain(),
     )
+    .0
     .iter()
     .map(Row::text)
     .collect();
@@ -2286,10 +2356,20 @@ fn the_queue_held_over_the_idle_box_fits_every_width_and_every_room() {
                 for columns in 1..=120 {
                     for room in [0, 1, 2, 3, 4, 5, 6, 8, 12, 24, 40] {
                         let says = settled(Mode::Ask);
-                        let rows = over(
-                            around(&plan, &open, &says, Recalled::default(), &queued),
+                        let (rows, _) = over(
+                            around(
+                                Above {
+                                    planning: &plan,
+                                    queued: &queued,
+                                    docking: &Docking::default(),
+                                },
+                                &open,
+                                &says,
+                                Recalled::default(),
+                            ),
                             columns,
                             room,
+                            0,
                             style,
                         );
 
@@ -2331,6 +2411,7 @@ fn queued_under_a_turn(rows: usize, list: &Opened) -> Footed {
             opened_list: list,
             history: Recalled::default(),
             queued: &queued,
+            docking: &Docking::default(),
         },
         &settled(Mode::Ask),
         Style::plain(),
@@ -2365,4 +2446,33 @@ fn the_route_s_row_names_the_model_an_agent_was_started_on() {
         "execution: work, model: opus"
     );
     assert_eq!(super::execution("work", None), "execution: work");
+}
+
+#[test]
+fn a_line_ctrl_s_sends_between_turns_is_sent_as_the_queues() {
+    // Held back on its way out, a line goes back where it came from. One that
+    // Ctrl+S sent from the queue is the queue's, and says so: sent as the
+    // box's, it would go back into the box over what the reader had typed
+    // there, and out of the queue it was waiting in.
+    let mut queued = Prompts::default();
+    for line in ["first", "second"] {
+        let mut editor = Editor::new();
+        editor.put(line);
+        assert_eq!(queued.accept(&mut editor), Retained::Accepted);
+    }
+    let mut renderer = Renderer::new(Recording::redirected(80, 24));
+
+    let asked = sent_now(&mut renderer, &mut queued, &mut unwalked(), Style::plain())
+        .expect("the line to be sent");
+
+    let sent = match asked {
+        Some(Asked::Said(said)) => Some(said.into_parts()),
+        _ => None,
+    };
+    assert_eq!(
+        sent,
+        Some(("first".to_owned(), false, Origin::Queue)),
+        "the line was not sent as the queue's"
+    );
+    assert_eq!(queued.waiting_all().collect::<Vec<_>>(), ["second"]);
 }

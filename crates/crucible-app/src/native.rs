@@ -505,7 +505,8 @@ impl<'n, 'r> Translating<'n, 'r> {
             | Reported::PlanLimits { .. }
             | Reported::Aged { .. }
             | Reported::Unread { .. }
-            | Reported::Steered { .. } => None,
+            | Reported::Steered { .. }
+            | Reported::Waiting { .. } => None,
         }
     }
 }

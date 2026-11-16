@@ -18,6 +18,42 @@ of a token.
 - **Go back**, or Escape, sends nothing and leaves your message in the prompt
   box.
 
+If the yes cannot be written into that file, nothing is sent either: crucible
+says why, then that your message is back in the prompt box, and the question is
+asked again at your next send.
+
+The note that starts a turn when a command left running
+[ends on its own](../tools/commands.md#when-one-ends-on-its-own) is asked about
+the same way. It is not your message, so going back drops it rather than
+putting it in the box, and whatever you had typed there stays. A window too
+short to ask in drops it too, and so does a yes that could not be written down.
+In each case the model is not told of that ending, and crucible says so. Going
+back ends with the first line below, and so does a yes that could not be written
+down, after a line saying why; a window too short ends with the second:
+
+```text
+nothing was sent; the model was not told the command ended
+! this route needs an answer first; nothing was sent, so the model was not told the command ended
+```
+
+The prompts you queued behind a turn are asked about the same way when they
+are about to go as the next turn, and so is one sent alone with Ctrl+S between
+turns. Going back keeps every one of them in the
+queue and leaves the prompt box as you left it; they go with the next prompt
+you send. A yes that could not be written down keeps them the same way, after
+a line saying why, and so does a window too short to ask in:
+
+```text
+nothing was sent; your queued messages go with the next prompt you send
+! this route needs an answer first; make the window taller, and your queue goes with your next prompt
+```
+
+Making room with `/compact`, or answering **Carry on from summary** when you
+pick up a large session, sends the conversation for its recap, and is asked
+about the same way. There is no message to send or keep: **Go back** sends
+nothing and leaves the conversation as it was, and so does a yes that could
+not be written down, after a line saying why.
+
 The same question is asked when you choose such a route in `/login`, or a
 model of one in `/model`, before the choice is taken. A yes given in `/login`
 is written down once the credential is stored; a sign-in that fails or is

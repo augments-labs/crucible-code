@@ -40,8 +40,9 @@ use super::{Terms, say};
 /// What escape leaves behind, in place of the listing it used to write.
 const LEFT: &str = "cancelled, no theme taken";
 
-/// The one key worth naming under the panel.
-const FOOTER: &str = "enter takes it · esc puts back the one in force";
+/// The keys worth naming under the panel, parted by the glyph set's dot when
+/// it is drawn.
+const FOOTER: &[&str] = &["enter takes it", "esc puts back the one in force"];
 
 /// The few words at the top saying what is being chosen.
 const TITLE: &str = "Theme";
@@ -450,6 +451,7 @@ fn previewing(was: Style, ground: Option<crucible_tui::Ground>, standing: &Stand
 /// where the list stops would draw a box around half of what is being chosen.
 fn laid(standing: &Standing, style: Style, columns: usize, room: usize) -> Vec<Row> {
     let glyphs = style.glyphs();
+    let footer = FOOTER.join(&format!(" {} ", glyphs.dot()));
     let mut rows = vec![
         Row::new().then(Slot::Accent, glyphs.horizontal().repeat(columns)),
         Row::new(),
@@ -497,7 +499,7 @@ fn laid(standing: &Standing, style: Style, columns: usize, room: usize) -> Vec<R
         rows.extend(ruleless(list));
         rows.extend(beneath);
         rows.push(Row::new());
-        rows.push(Row::new().then(Slot::Quiet, clip(FOOTER, columns)));
+        rows.push(Row::new().then(Slot::Quiet, clip(&footer, columns)));
         return rows;
     }
 
@@ -527,7 +529,7 @@ fn laid(standing: &Standing, style: Style, columns: usize, room: usize) -> Vec<R
     }
 
     rows.push(Row::new());
-    rows.push(Row::new().then(Slot::Quiet, clip(FOOTER, columns)));
+    rows.push(Row::new().then(Slot::Quiet, clip(&footer, columns)));
     rows
 }
 
@@ -550,7 +552,8 @@ fn axes(axis: Axis, glyphs: Glyphs) -> Row {
         );
     }
 
-    row.push(Slot::Quiet, "(← → )");
+    let (left, right) = glyphs.stepping();
+    row.push(Slot::Quiet, format!("({left} {right} )"));
     row
 }
 

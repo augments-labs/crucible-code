@@ -99,7 +99,7 @@ fn the_next_turn_is_asked_with_the_transcript_of_the_session_picked_up() {
 
     assert_eq!(
         scripted.asked(),
-        [7, 9],
+        [8, 10],
         "each session renders context once; the second also carries the earlier turn"
     );
     assert!(
@@ -157,8 +157,8 @@ fn a_session_picked_up_with_nothing_in_it_is_asked_at_turn_one_and_carries_nothi
 
     assert_eq!(
         scripted.asked(),
-        [7, 7],
-        "one prompt and six fresh sections each; no conversation crossed sessions"
+        [8, 8],
+        "one prompt and seven fresh sections each; no conversation crossed sessions"
     );
     assert_eq!(scripted.started(), [1, 1]);
 }

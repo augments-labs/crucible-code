@@ -41,7 +41,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crucible_context::{ContextSection, PermissionsSection, Room};
+use crucible_context::{ContextSection, PermissionsSection, Room, Task};
 use crucible_models::{
     Content, Delta, DeltaStream, Effort, PromptCacheAttempt, PromptCachePreparationError,
     PromptCachePricing, Provider, ProviderError, Request,
@@ -50,8 +50,8 @@ use crucible_runtime::{Aside, Cancel, Steer};
 use crucible_sandbox::SandboxAuditRegistry;
 use crucible_storage::{JournalStore, RunItem};
 use crucible_tools::{
-    Ask, Looking, Mode, Permission, Summary, ToolEntry, ToolError, ToolSnapshot, ToolWorker,
-    Toolset, ToolsetContext,
+    Ask, Deferred, Looking, Mode, Permission, Summary, ToolEntry, ToolError, ToolSnapshot,
+    ToolWorker, Toolset, ToolsetContext,
 };
 use crucible_types::{
     Attachment, Compacting, Message, Modalities, PlanWindows, PromptCacheEncoding, PromptCacheFact,
@@ -129,6 +129,17 @@ enum After {
     Stopped,
 }
 
+/// Who wrote the words a turn is over.
+///
+/// The person's words are their task and amend it; a note the application
+/// wrote is recorded and sent like any words, and never stands as what the
+/// person asked for.
+#[derive(Clone, Copy)]
+enum Speaker {
+    Person,
+    Application,
+}
+
 /// Provider-controlled work retained during one turn.
 #[derive(Default)]
 struct TurnBounds {
@@ -197,6 +208,24 @@ pub struct Runner {
     worker: Option<ToolWorker>,
     /// The speed asked for, and the speed the last answer was served at.
     pace: fast::Pace,
+    /// Where the questions the model asked without waiting are held, where
+    /// the wiring gave somewhere. Only the root run reads it.
+    deferred: Option<Deferred>,
+    /// The registry's revision when its waiting list was last reported, so a
+    /// pass that changed nothing reports nothing.
+    told: u64,
+    /// Whether the root run's first assembly has already looked for waiting
+    /// questions the session's log recorded, which happens once.
+    recalled: bool,
+    /// What the person asked for and every later instruction, kept for the
+    /// root run; `None` until this process first needs it, when it is read
+    /// back from what the session's log recorded.
+    task: Option<Task>,
+    /// Whether the transcript this runner was handed, by
+    /// [`Runner::resuming`] or [`Runner::pick_up`], held anything said to it:
+    /// then a log that recorded no task lost the request, rather than never
+    /// having one.
+    inherited_words: bool,
 }
 
 struct Tooling {
@@ -282,6 +311,11 @@ impl Runner {
             sandbox_audits: SandboxAuditRegistry::new(),
             worker: None,
             pace: fast::Pace::default(),
+            deferred: None,
+            told: 0,
+            recalled: false,
+            task: None,
+            inherited_words: false,
         };
         runner
             .state
@@ -323,6 +357,24 @@ impl Runner {
     #[must_use]
     pub fn lending(mut self, worker: ToolWorker) -> Self {
         self.worker = Some(worker);
+        self
+    }
+
+    /// Holds the questions the model asks without waiting in `held`, and
+    /// delivers each batch's answer once it is settled.
+    ///
+    /// `held` is the registry the tool registers on and a client settles
+    /// through. A runner given none tells the model once that any questions
+    /// a resumed session recorded as waiting have lapsed.
+    ///
+    /// `held` is a fresh registry or the one already holding this session's
+    /// batches: a resumed session's recorded batches come back only into an
+    /// empty one, and a registry holding another session's would keep ids
+    /// the log names for different batches.
+    #[must_use]
+    pub fn deferring(mut self, held: Deferred) -> Self {
+        self.told = held.revision();
+        self.deferred = Some(held);
         self
     }
 
@@ -406,6 +458,7 @@ impl Runner {
     pub fn resuming(mut self, transcript: Transcript) -> Self {
         self.state.forget_checked();
         self.state.turn = Self::counting(&transcript);
+        self.inherited_words = transcript.turns() > 0;
         self.state.transcript = transcript;
         let reading = self.admit_restricted();
         self.recount(reading);
@@ -471,10 +524,17 @@ impl Runner {
     /// is this process's count of the session it is on, and the one picked up
     /// kept no count of its own. The plan windows stay, since they belong to
     /// the credential, which has not changed.
+    ///
+    /// Questions asked without waiting belong to a session too: the registry
+    /// is emptied, and the session picked up brings back the ones it left
+    /// waiting. So does the person's task: what was said in the session left
+    /// is never restated in the one picked up, which reads its own from its
+    /// log.
     pub fn pick_up(&mut self, store: Arc<dyn JournalStore>, transcript: Transcript) {
         self.permission.forget();
         self.state.forget_checked();
         self.state.turn = Self::counting(&transcript);
+        self.inherited_words = transcript.turns() > 0;
         self.state.transcript = transcript;
         self.state.totals = Totals::new();
 
@@ -483,6 +543,17 @@ impl Runner {
         self.store = store;
         let reading = self.admit_restricted();
         self.recount(reading);
+        // The questions the session picked up left waiting come back at its
+        // first assembly, as they do for a session resumed at start. What the
+        // registry held belonged to the session left, and would otherwise be
+        // recorded as this one's.
+        if let Some(held) = &self.deferred {
+            held.clear();
+        }
+        self.recalled = false;
+        // The task is the session's too, and the one picked up has its own
+        // in its log: it is read back from there when next needed.
+        self.task = None;
     }
 
     /// The transcript so far.
@@ -983,6 +1054,9 @@ impl Runner {
 
     /// Takes one turn: the prompt, and the exchange until the model yields.
     ///
+    /// The prompt is the person's, so it amends their task; a note the
+    /// application wrote is taken by [`Runner::noted`] instead.
+    ///
     /// The run's cancel arrives cleared: [`Cancel::reset`] is the caller's to
     /// call, on the thread that reads the keyboard, before the thread this
     /// runs on exists. Clearing it here would clear a key pressed in between,
@@ -1048,7 +1122,22 @@ impl Runner {
         ask: &mut dyn Ask,
         run: &RunContext<'_>,
     ) -> Result<Turned, TurnError> {
-        let turned = self.invoking(prompt, attachments, ask, run).await;
+        self.saying((prompt, attachments, Speaker::Person), ask, run)
+            .await
+    }
+
+    /// The turn over `said`, for [`Runner::turn`] and [`Runner::noted`].
+    ///
+    /// # Errors
+    ///
+    /// [`TurnError`], exactly as [`Runner::turn`] describes.
+    async fn saying(
+        &mut self,
+        said: (&str, Box<[Attachment]>, Speaker),
+        ask: &mut dyn Ask,
+        run: &RunContext<'_>,
+    ) -> Result<Turned, TurnError> {
+        let turned = self.invoking(Some(said), ask, run).await;
 
         // The invocation ends where the caller gets an answer it can act on,
         // and what the input checks made of these words ends with it. A
@@ -1061,15 +1150,82 @@ impl Runner {
         turned
     }
 
-    /// The turn itself, for [`Runner::turn`] to end the invocation around.
+    /// [`Runner::turn`] over a note the application wrote rather than words
+    /// the person did, such as the one a front end wakes the model with when
+    /// commands left running end while nobody is typing.
+    ///
+    /// Everything is as a turn is, the input check included, except that the
+    /// note is never kept as the person's task: it is recorded and sent, and a
+    /// compaction that takes it leaves nothing of it to be restated as what the
+    /// person asked for. What it quotes may be what a command printed, which is
+    /// nobody's instruction.
+    ///
+    /// # Errors
+    ///
+    /// [`TurnError`], exactly as [`Runner::turn`] describes.
+    ///
+    /// # Panics
+    ///
+    /// Where [`Runner::turn`] does.
+    pub async fn noted(
+        &mut self,
+        note: &str,
+        attachments: Box<[Attachment]>,
+        ask: &mut dyn Ask,
+        run: &RunContext<'_>,
+    ) -> Result<Turned, TurnError> {
+        self.saying((note, attachments, Speaker::Application), ask, run)
+            .await
+    }
+
+    /// A turn with no words of its own, run to deliver the answers settled in
+    /// this runner's registry of questions asked without waiting (see
+    /// [`Runner::deferring`]) while no turn was running to take them.
+    ///
+    /// It is [`Runner::turn`] without the prompt: nothing the person typed is
+    /// recorded, so the turn's first request carries the delivered answers and
+    /// the model's own words before them. Each answer is put to the input
+    /// checks as it is delivered, as in any turn, and one refused ends the turn
+    /// [`Turned::Rejected`] or [`Turned::Undecided`] with its batch waiting
+    /// again and no [`Event::TurnFinished`]. Everything else is as a turn: it
+    /// is announced by the same events, held to the same policy, and returns
+    /// the same answer.
+    ///
+    /// With no answer settled and undelivered, or no registry, there is
+    /// nothing to say: it takes no pass, records nothing and reports nothing,
+    /// and returns a run that yielded having spent nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`TurnError`], exactly as [`Runner::turn`] describes.
+    ///
+    /// # Panics
+    ///
+    /// Where [`Runner::turn`] does.
+    pub async fn answering(
+        &mut self,
+        ask: &mut dyn Ask,
+        run: &RunContext<'_>,
+    ) -> Result<Turned, TurnError> {
+        if !self.undelivered(run.ancestry()) {
+            return Ok(Turned::Ran(RunResult::new(
+                run.run(),
+                StopReason::Yielded,
+                Spend::NONE,
+            )));
+        }
+        self.invoking(None, ask, run).await
+    }
+
+    /// The turn itself, for [`Runner::turn`] to end the invocation around and
+    /// [`Runner::answering`] to run with nothing `said`.
     ///
     /// # Errors
     ///
     /// [`TurnError`], exactly as [`Runner::turn`] describes.
     async fn invoking(
         &mut self,
-        prompt: &str,
-        attachments: Box<[Attachment]>,
+        said: Option<(&str, Box<[Attachment]>, Speaker)>,
         ask: &mut dyn Ask,
         run: &RunContext<'_>,
     ) -> Result<Turned, TurnError> {
@@ -1115,20 +1271,23 @@ impl Runner {
         // announced. A refusal here is a turn that never happened: nothing is
         // recorded, nothing is sent, and no pair of events tells the reader a
         // turn began. A check reaching no decision is not a refusal and does
-        // not say the prompt was rejected, because it did not say that.
-        match self.checking_input(prompt, run) {
-            Ok(Judged::Allowed) => {}
-            Ok(Judged::Rejected(rejection)) => {
-                return Ok(Turned::Rejected {
-                    rejection,
-                    stop: None,
-                });
-            }
-            Err(problem) => {
-                return Ok(Turned::Undecided {
-                    problem,
-                    stop: None,
-                });
+        // not say the prompt was rejected, because it did not say that. A
+        // turn with nothing said has no words to judge.
+        if let Some((prompt, _, _)) = &said {
+            match self.checking_input(prompt, run) {
+                Ok(Judged::Allowed) => {}
+                Ok(Judged::Rejected(rejection)) => {
+                    return Ok(Turned::Rejected {
+                        rejection,
+                        stop: None,
+                    });
+                }
+                Err(problem) => {
+                    return Ok(Turned::Undecided {
+                        problem,
+                        stop: None,
+                    });
+                }
             }
         }
 
@@ -1136,14 +1295,20 @@ impl Runner {
         events.post(Event::TurnStarted {
             turn: self.state.turn,
         });
-        self.record(
-            run.ancestry(),
-            Message::User {
-                text: prompt.into(),
-                attachments,
-            },
-        )
-        .await?;
+        if let Some((prompt, attachments, speaker)) = said {
+            match speaker {
+                Speaker::Person => self.amend(run.ancestry(), prompt),
+                Speaker::Application => {}
+            }
+            self.record(
+                run.ancestry(),
+                Message::User {
+                    text: prompt.into(),
+                    attachments,
+                },
+            )
+            .await?;
+        }
 
         // Posted from here rather than from either place the exchange ends, so
         // that a turn cannot acquire a second way to finish without one. The
@@ -1195,12 +1360,34 @@ impl Runner {
             return Ok(committed.clone());
         }
 
+        let decision = self.judging_input(prompt, run)?;
+        self.state.commit(prompt, decision.clone());
+        Ok(decision)
+    }
+
+    /// What this agent's input checks make of `said`, committing nothing.
+    ///
+    /// The checks themselves, for [`Runner::checking_input`] to commit about
+    /// an invocation's prompt, and asked as they stand of the person's other
+    /// words: what they said in each answer delivered to a question asked
+    /// without waiting, and each line typed while a turn ran. Those join a
+    /// turn already under way at a pass boundary, are taken once and never
+    /// retried, and so have no invocation of their own for a decision to be
+    /// committed to.
+    ///
+    /// # Errors
+    ///
+    /// [`GuardrailError`] where a check ran and could not reach a decision.
+    fn judging_input(&self, said: &str, run: &RunContext<'_>) -> Result<Judged, GuardrailError> {
+        if self.agent.input_guardrails().is_empty() {
+            return Ok(Judged::Allowed);
+        }
+
         // The definition the checks are read off is held for the length of the
         // pass, so a check cannot be handed a list that something replaced
         // while it was being walked.
         let agent = Arc::clone(&self.agent);
-        let context = AgentContext::new(run.run(), agent.id(), prompt);
-        let mut decision = Judged::Allowed;
+        let context = AgentContext::new(run.run(), agent.id(), said);
         for guard in agent.input_guardrails() {
             // The name is the one the check was declared under, never taken
             // from what it answered, whether it refused or could not say.
@@ -1210,15 +1397,10 @@ impl Runner {
                 .map_err(|unsure| guard.unanswered(unsure.problem()))?
             {
                 Decision::Allowed => {}
-                Decision::Rejected(why) => {
-                    decision = Judged::Rejected(guard.refused(&why));
-                    break;
-                }
+                Decision::Rejected(why) => return Ok(Judged::Rejected(guard.refused(&why))),
             }
         }
-
-        self.state.commit(prompt, decision.clone());
-        Ok(decision)
+        Ok(Judged::Allowed)
     }
 
     /// What this agent's output checks make of `candidate`.
@@ -1356,6 +1538,9 @@ impl Runner {
             }
             Err(problem) => Err(problem),
         };
+        // However the turn ended, the reader is not left looking at a
+        // question the turn already answered or missing one it asked.
+        self.report_waiting(run);
 
         let finished = match (ran, self.toolset.dispose(&toolsets).await) {
             (Ok(result), Ok(())) => Ok(result),

@@ -2,13 +2,15 @@
 //!
 //! The notice says when the plan comes back, and the lines typed behind the
 //! turn are the reader's to send once it has. Run as the next turn they would
-//! only stop again, or go to a vendor that has said the plan is spent.
+//! only stop again, or go to a vendor that has said the plan is spent. The
+//! next prompt the reader sends is the turn they were waiting for.
 
 use std::time::{Duration, SystemTime};
 
 use crucible_types::{Message, PlanWindows, Window, WindowReading};
 
 use crucible_app::Conversation;
+use crucible_client_api::Author;
 use crucible_tui::Recalled;
 
 use crate::cli::converse::queueing::{self, Offer};
@@ -74,6 +76,10 @@ struct Besides {
     /// Run once the prompts have, before the queue is asked for the next turn:
     /// work that ends some other way than the stop.
     after: Option<Work>,
+    /// Run once the queue was asked, where the loop asks the box for a line:
+    /// what the reader sends next, as a prompt typed there or a key pressed
+    /// over the panel gives it.
+    next: Option<fn(&mut Held<'_>) -> String>,
 }
 
 /// [`stopped_then`], with `besides` done around the prompts.
@@ -84,7 +90,11 @@ fn stopped_after<T>(
     besides: Besides,
     then: impl FnOnce(&Conversation, &mut Held<'_>, &Terms) -> T,
 ) -> (Stopped, T) {
-    let Besides { queued, after } = besides;
+    let Besides {
+        queued,
+        after,
+        next,
+    } = besides;
     let sample = Sample::new(name);
     let session =
         Arc::new(Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session"));
@@ -116,7 +126,7 @@ fn stopped_after<T>(
                 queued(&mut held, &terms);
             }
         }
-        let work = Work::Turn((*prompt).to_owned(), Box::default());
+        let work = Work::Turn((*prompt).to_owned(), Box::default(), Author::Person);
         let (back, leaving) =
             ran(conversation, &mut renderer, &terms, work, &mut held).expect("the turn to end");
         assert!(!leaving, "the session left");
@@ -137,6 +147,16 @@ fn stopped_after<T>(
         Style::plain(),
     )
     .expect("the queue to be asked");
+    let conversation = match next {
+        Some(next) => {
+            let work = Work::Turn(next(&mut held), Box::default(), Author::Person);
+            let (back, leaving) =
+                ran(conversation, &mut renderer, &terms, work, &mut held).expect("the turn to end");
+            assert!(!leaving, "the session left");
+            back
+        }
+        None => conversation,
+    };
     let then = then(&conversation, &mut held, &terms);
     drop(conversation);
 
@@ -215,6 +235,65 @@ fn plan_limit_hold_lets_go_once_the_next_work_ends_another_way() {
 }
 
 #[test]
+fn plan_limit_sends_the_held_line_with_the_next_prompt_the_reader_sends() {
+    // The stop leaves the line to the reader, and the prompt they send next
+    // is the turn it was waiting for: it goes with that turn, as a line queued
+    // under a running one does, and leaves the panel once the turn takes it.
+    // Left out of it, the line would wait unseen by that turn and run as the
+    // one after, and the keys the panel names over the turn would find it
+    // nowhere to take back or delete it from.
+    let (stopped, ()) = stopped_after(
+        "plan-limit-next-prompt",
+        None,
+        &["fix the build"],
+        Besides {
+            next: Some(|_| "try again".to_owned()),
+            ..Besides::default()
+        },
+        |_, _, _| (),
+    );
+
+    assert_eq!(
+        stopped.said,
+        vec![
+            Message::said("fix the build"),
+            Message::said("try again"),
+            Message::said(QUEUED),
+        ],
+        "the held line did not go with the next prompt"
+    );
+    assert!(stopped.waiting.is_empty(), "the line is still queued");
+}
+
+#[test]
+fn plan_limit_sends_the_highlighted_line_alone_and_holds_the_rest_behind_it() {
+    // Ctrl+S between turns sends the highlighted line as Ctrl+S under a turn
+    // does: alone. The lines behind it wait for that turn to end, rather than
+    // going with a turn the reader asked to be one line.
+    let (stopped, ()) = stopped_after(
+        "plan-limit-alone",
+        None,
+        &["fix the build"],
+        Besides {
+            next: Some(|held| {
+                let mut editor = typed("and the lint");
+                assert_eq!(held.queued.accept(&mut editor), Retained::Accepted);
+                held.queued.sent_alone().expect("a highlighted line")
+            }),
+            ..Besides::default()
+        },
+        |_, _, _| (),
+    );
+
+    assert_eq!(
+        stopped.said,
+        vec![Message::said("fix the build"), Message::said(QUEUED)],
+        "the line sent alone took the rest with it"
+    );
+    assert_eq!(stopped.waiting, vec!["and the lint".to_owned()]);
+}
+
+#[test]
 fn plan_limit_lets_go_of_a_queue_a_send_now_key_was_holding_back() {
     // Ctrl+S holds the queue back from the turn it stops and from the line it
     // sends alone. A used-up plan ends that turn with that line still queued,
@@ -233,6 +312,8 @@ fn plan_limit_lets_go_of_a_queue_a_send_now_key_was_holding_back() {
             ..Besides::default()
         },
         |_, held, terms| {
+            // The reader's next turn starting, which the lines are offered to.
+            held.queued.offered(&terms.steer);
             let offered = matches!(held.queued.offer(&terms.steer), Offer::Turn(_));
             drop(terms.steer.take());
             let mut editor = typed("and the lint");
@@ -265,11 +346,14 @@ fn idle(conversation: &Conversation, held: &Held<'_>) -> Vec<String> {
         &held.editor,
         Style::plain(),
         typing::around(
-            &held.planning,
+            typing::Above {
+                planning: &held.planning,
+                queued: &held.queued,
+                docking: &held.docking,
+            },
             &Opened::default(),
             &typing::saying(conversation.settled()),
             Recalled::default(),
-            &held.queued,
         ),
     )
     .expect("the box to be drawn");
@@ -279,10 +363,12 @@ fn idle(conversation: &Conversation, held: &Held<'_>) -> Vec<String> {
 
 #[test]
 fn plan_limit_stands_the_held_line_in_the_queue_panel_over_the_idle_prompt() {
-    // Held and unseen, the line would run behind whatever the reader sends
+    // Held and unseen, the line would go with whatever the reader sends
     // next without anything on screen having said it was still there. The
     // panel that names it while a turn runs names it here, with the same keys,
-    // and the box stays under it.
+    // and the box stays under it. Its title says only that the line waits:
+    // with no turn to stop, Ctrl+Enter is Enter, and an empty box sends
+    // nothing.
     let (_, rows) = stopped_then(
         "plan-limit-idle-box",
         None,
@@ -302,7 +388,7 @@ fn plan_limit_stands_the_held_line_in_the_queue_panel_over_the_idle_prompt() {
             &[
                 rule.clone(),
                 String::new(),
-                "1 queued \u{b7} ctrl+enter to send all now".to_owned(),
+                "1 queued \u{b7} waiting for the next turn".to_owned(),
                 String::new(),
                 format!("\u{203a} {QUEUED}"),
                 String::new(),

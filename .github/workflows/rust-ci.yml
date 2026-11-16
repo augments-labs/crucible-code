@@ -32,6 +32,18 @@ env:
 # the suite is chosen by hashing each test's name, so a test added lands in one
 # part without anyone listing it, and a section added to the Rust gate is run
 # by the job that names only what it leaves out.
+#
+# Only a push to dev or main, or a manual run, saves the Rust build caches
+# here; a pull request reads them and saves none. A pull request reads the
+# caches of the branch it merges into, and failing those main's. A push to a
+# feature branch builds nothing, so a manual run on one is what gives its pull
+# requests caches to read. The repository keeps 10 GB of caches in all,
+# dropping the least recently used: while every pull request saved its own
+# copy, those copies pushed out the ones on dev and most runs started from
+# nothing. A run saves only when no cache has its key yet, after a change to
+# the toolchain, a manifest, Cargo.lock or the build environment, or once the
+# one it had was evicted or went a week unread. The FreeBSD image is cached by
+# its own action, which saves it from whichever run misses it.
 jobs:
   linux-tests:
     name: Linux tests ${{ matrix.shard }}/4
@@ -49,10 +61,10 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: tests-ubuntu-latest
-          save-if: ${{ matrix.shard == 1 }}
+          save-if: ${{ github.event_name != 'pull_request' && matrix.shard == 1 }}
       # A prebuilt cargo-nextest, checked against its published checksum, in
       # seconds rather than the minutes building it would take.
-      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-nextest@0.9.146
 
@@ -96,6 +108,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: checks-ubuntu-latest
+          save-if: ${{ github.event_name != 'pull_request' }}
       - run: scripts/sh/rust-checks.sh --skip tests,examples,required
       - uses: ./.github/actions/check-clean-worktree
 
@@ -110,9 +123,11 @@ jobs:
       fail-fast: false
       # macOS Intel and Windows ARM64 are the slowest platforms to test, so a
       # pull request leaves them to the run on dev that follows its merge,
-      # and compiles for Windows ARM64 in the job below instead. Apple silicon
-      # runs its tests in one part: macOS machines are the ones a run queues
-      # longest for, and a second one costs more waiting than it saves.
+      # and compiles for Windows ARM64 in the job below instead. A Free, Pro
+      # or Team account runs at most five macOS jobs at once, across all its
+      # runs. A run on dev or main asks for five, so it tests Apple silicon in
+      # one part. A pull request tests it in two and asks for three, so two
+      # pull requests running together can wait for a macOS machine.
       matrix:
         include: >-
           ${{ fromJSON(inputs.all-platforms && '[
@@ -123,20 +138,40 @@ jobs:
           {"name": "Windows x86_64", "os": "windows-latest", "shard": 2, "shards": 2},
           {"name": "Windows ARM64", "os": "windows-11-arm", "shard": 1, "shards": 2},
           {"name": "Windows ARM64", "os": "windows-11-arm", "shard": 2, "shards": 2}]' || '[
-          {"name": "macOS Apple silicon", "os": "macos-26", "shard": 1, "shards": 1},
+          {"name": "macOS Apple silicon", "os": "macos-26", "shard": 1, "shards": 2},
+          {"name": "macOS Apple silicon", "os": "macos-26", "shard": 2, "shards": 2},
           {"name": "Windows x86_64", "os": "windows-latest", "shard": 1, "shards": 2},
           {"name": "Windows x86_64", "os": "windows-latest", "shard": 2, "shards": 2}]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The tests write their scratch files under TEMP, which a Windows runner
+      # keeps on C:. On windows-latest the runner's own temporary directory
+      # is on D:, beside the checkout, and the tests ran faster with TEMP
+      # there; on windows-11-arm both are on C:, so the step does not run.
+      # D: makes no short 8.3 names, so the folder is given one and TEMP
+      # names it by it, as RUNNER~1 does in the C: profile path. Tests that
+      # a path reached through a short name is resolved before use catch a
+      # path left unresolved only when TEMP holds one.
+      - if: ${{ runner.os == 'Windows' && runner.arch == 'X64' }}
+        name: Keep temporary files on the disk the checkout is on
+        shell: pwsh
+        run: |
+          $long = Join-Path $env:RUNNER_TEMP 'crucible-temporary-files'
+          New-Item -ItemType Directory $long | Out-Null
+          fsutil file setshortname $long CRUCIB~1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $short = Join-Path $env:RUNNER_TEMP 'CRUCIB~1'
+          "TEMP=$short" >> $env:GITHUB_ENV
+          "TMP=$short" >> $env:GITHUB_ENV
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: tests-${{ matrix.os }}
-          save-if: ${{ matrix.shard == 1 }}
+          save-if: ${{ github.event_name != 'pull_request' && matrix.shard == 1 }}
       # A prebuilt cargo-nextest, checked against its published checksum, in
       # seconds rather than the minutes building it would take.
-      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-nextest@0.9.146
       - if: ${{ runner.os == 'Windows' }}
@@ -149,10 +184,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       # On Windows, a common initialized MSYS parent prevents concurrent Git
       # Bash children from racing while creating their shared mount table
-      # (add_item EPERM). The documentation examples run beside the first part.
+      # (add_item EPERM). The tests run as the gate runs them, and the
+      # documentation examples run beside the first part.
       - shell: bash
         run: |
-          cargo nextest run --workspace --locked --no-fail-fast --partition hash:${{ matrix.shard }}/${{ matrix.shards }}
+          bash scripts/sh/rust-checks.sh --only tests --partition hash:${{ matrix.shard }}/${{ matrix.shards }}
           if [[ ${{ matrix.shard }} == 1 ]]; then cargo test --workspace --locked --doc; fi
         env:
           CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
@@ -202,6 +238,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: ${{ matrix.drill && 'checks-drill' || 'checks' }}-${{ matrix.os }}
+          save-if: ${{ github.event_name != 'pull_request' }}
       # First, so its steps meet the job as they would in the drill's own job,
       # and every check after it runs whatever it found.
       - if: ${{ matrix.drill }}
@@ -243,7 +280,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
+      - uses: vmactions/freebsd-vm@811efaaac0668df8bfb8308c3ec997b5ab50037b # v1.6.0
         with:
           release: "14.4"
           usesh: true
@@ -274,7 +311,10 @@ jobs:
 
   # Windows ARM64 cannot be cross-built from Linux, so a pull request that
   # leaves its tests to dev still compiles every target there. It starts from
-  # the cache the full run on dev saves.
+  # the cache the full checks save, and saves none: a manual run that leaves
+  # out the other platforms runs it too, and what it saved first under the key
+  # those checks use would be an exact hit for them, so they would never save
+  # their own.
   windows-arm64-build:
     name: Windows ARM64 build
     if: ${{ !inputs.all-platforms && !inputs.docs-only }}
@@ -287,6 +327,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: checks-windows-11-arm
+          save-if: false
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - uses: ./.github/actions/check-clean-worktree
 
@@ -312,6 +353,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
       - uses: ./.github/actions/rollback-drill
       # A check whose only value is as a check, like the drill's self-test.
       - uses: ./.github/actions/check-clean-worktree

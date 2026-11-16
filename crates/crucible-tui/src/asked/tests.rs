@@ -564,6 +564,45 @@ fn the_panel_is_the_same_height_whichever_answer_is_marked() {
 }
 
 #[test]
+fn the_specimen_box_is_drawn_in_the_glyphs_the_panel_was_given() {
+    // The box beside the answers and the one under them are drawn by different
+    // code, so every width is walked to reach both. A font with no box drawing
+    // shows a missing corner as a hole in the frame.
+    let answers = shapes();
+    let stops = stops();
+    let mut panel = asked(&answers, &stops);
+    panel.question = "You have no status line. Which one shall I set up here?";
+
+    let (mut beside, mut under) = (0, 0);
+    for columns in 20..=200 {
+        let rows = panel.within(columns, 40, Glyphs::Ascii).0;
+        let drawn = rows.iter().map(Row::text).collect::<Vec<_>>();
+        if !drawn.iter().any(|row| row.contains("› ...")) {
+            continue;
+        }
+        // Beside, the box opens on the first answer's row.
+        if drawn
+            .iter()
+            .any(|row| row.contains("Compact") && row.contains("+-"))
+        {
+            beside += 1;
+        } else {
+            under += 1;
+        }
+
+        assert!(
+            drawn
+                .iter()
+                .all(|row| !row.chars().any(|c| ('\u{2500}'..='\u{257f}').contains(&c))),
+            "at {columns} a box-drawing character was drawn: {drawn:#?}"
+        );
+    }
+
+    assert!(beside > 0, "no width drew the box beside the answers");
+    assert!(under > 0, "no width drew the box under the answers");
+}
+
+#[test]
 fn an_answer_with_nothing_to_show_still_draws_the_box_and_says_so() {
     // A block that vanished would move every row under it, which is the same
     // defect as the panel changing height.

@@ -43,8 +43,9 @@ const CHROME: usize = 6;
 /// What the heading says.
 const TITLE: &str = "Still running";
 
-/// The keys, in the order somebody reaches for them.
-const KEYS: &str = "esc to close · enter shows it · x stops it";
+/// The keys, in the order somebody reaches for them, parted by the glyph set's
+/// dot when the panel draws them.
+const KEYS: &[&str] = &["esc to close", "enter shows it", "x stops it"];
 
 /// And the same where the window has no room for all three.
 const CLOSE: &str = "esc to close";
@@ -135,7 +136,7 @@ impl Running<'_> {
         );
 
         rows.push(Row::new());
-        rows.push(Row::new().then(Slot::Quiet, footer(columns)));
+        rows.push(Row::new().then(Slot::Quiet, footer(columns, glyphs)));
 
         rows
     }
@@ -161,12 +162,13 @@ impl Command<'_> {
 }
 
 /// The row under the list, saying only what fits.
-fn footer(columns: usize) -> String {
-    if crate::width::columns(KEYS) > columns {
+fn footer(columns: usize, glyphs: Glyphs) -> String {
+    let keys = KEYS.join(&format!(" {} ", glyphs.dot()));
+    if crate::width::columns(&keys) > columns {
         return clip(CLOSE, columns).to_owned();
     }
 
-    KEYS.to_owned()
+    keys
 }
 
 /// How long a command has been running, in the units somebody reads it in.

@@ -178,7 +178,10 @@ pub enum Performed {
 /// asking, while that turn is stopped. Handed here they are refused by name and
 /// nothing is done: a decision that arrives as a command of its own finds
 /// nothing pending, whatever identity it names, and is refused as stale —
-/// here and at every other door, so a client reads one answer to it.
+/// here and at every other door, so a client reads one answer to it. An
+/// answer to questions held for later is refused as stale the same way: it is
+/// [`turn`](super::turn)'s, which delivers it, or [`answer`](super::answer)'s
+/// while a turn runs.
 ///
 /// The agent catalog commands are refused as [`ErrorCode::AgentsDoor`], here
 /// and at every other door: the agents door serves them, and no conversation
@@ -211,6 +214,9 @@ pub async fn perform(
         | Command::SignInAgent { .. } => Performed::Refused(ErrorCode::AgentsDoor.into()),
         // No turn is stopped here, so there is no action this could be about.
         Command::Decide(_) => Performed::Refused(ErrorCode::StaleDecision.into()),
+        // Nor is there a question here for an answer to name: a batch is
+        // answered where a turn can deliver it.
+        Command::Answer { .. } => Performed::Refused(ErrorCode::StaleQuestions.into()),
         Command::Clear => Performed::Cleared(clear(conversation, desk).await),
         Command::Resume(id) => Performed::Resumed(resume(conversation, desk, id).await),
         Command::SelectModel {
@@ -330,6 +336,8 @@ pub fn keep(request: &Request, desk: &Desk<'_>) -> Performed {
         }
         // No action is pending here either, whatever a turn elsewhere waits on.
         Command::Decide(_) => Performed::Refused(ErrorCode::StaleDecision.into()),
+        // Nor a question, whatever the registry a turn delivers from holds.
+        Command::Answer { .. } => Performed::Refused(ErrorCode::StaleQuestions.into()),
         // The agents door serves the install commands and no conversation is
         // part of it, so this door will never serve them: a client is told
         // which door does, not to come back.

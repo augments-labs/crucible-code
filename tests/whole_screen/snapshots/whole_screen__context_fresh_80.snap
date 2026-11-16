@@ -1,6 +1,5 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 3711
 expression: picture
 ---
 80x24 cursor 23,0 scrolled 0
@@ -21,10 +20,10 @@ expression: picture
 |                                                                                |
 |  ██ system prompt           1.0k     0.5%                                      |
 |  ██ project instructions       0       0%                                      |
-|  ██ tool schemas            3.8k     1.9%                                      |
+|  ██ tool schemas            3.9k     2.0%                                      |
 |  ██ MCP tool schemas           0       0%                                      |
 |  ██ messages                   0       0%                                      |
 |  ██ reserve                28.1k    14.1%                                      |
-|  ░░ free                  166.9k     100%                                      |
+|  ░░ free                  166.7k     100%                                      |
 |                                                                                |
 |esc to close                                                                    |

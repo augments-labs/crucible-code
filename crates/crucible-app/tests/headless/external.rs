@@ -52,6 +52,9 @@ use super::{Failed, Nobody, Script, Tree, saying};
 mod catalog_hold;
 #[path = "external/choosing.rs"]
 mod choosing;
+#[cfg(feature = "proof")]
+#[path = "external/deferring.rs"]
+mod deferring;
 #[path = "external/refusing.rs"]
 mod refusing;
 #[path = "external/routing.rs"]
@@ -605,7 +608,7 @@ fn a_turn_streams_and_is_counted_as_a_native_one_is() -> Result<(), Failed> {
     );
     let streamed: Vec<_> = events
         .iter()
-        .filter_map(|event| client::progress(Asking::every(), event, None))
+        .filter_map(|event| client::progress(Asking::every(), event, None, None))
         .collect();
     assert!(
         streamed.iter().any(
@@ -1965,7 +1968,7 @@ fn the_agent_s_tool_use_is_activity_and_a_stop_under_it_is_uncertain() -> Result
 
     let streamed: Vec<_> = posted(&reported)
         .iter()
-        .filter_map(|event| client::progress(Asking::every(), event, None))
+        .filter_map(|event| client::progress(Asking::every(), event, None, None))
         .collect();
     assert!(
         streamed.iter().any(|progress| matches!(
@@ -2034,7 +2037,7 @@ fn the_agent_s_calls_and_their_ends_reach_a_client_under_the_call_s_id() -> Resu
 
     let streamed: Vec<_> = posted(&reported)
         .iter()
-        .filter_map(|event| client::progress(Asking::every(), event, None))
+        .filter_map(|event| client::progress(Asking::every(), event, None, None))
         .collect();
     let activity: Vec<_> = streamed
         .iter()

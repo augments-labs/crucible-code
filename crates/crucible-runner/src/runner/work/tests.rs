@@ -180,6 +180,7 @@ fn what_a_tool_prints_while_it_runs_arrives_under_its_own_call() {
             | Event::Used { .. }
             | Event::PlanLimits { .. }
             | Event::Steered { .. }
+            | Event::Waiting { .. }
             | Event::Spent { .. }
             | Event::TurnFinished { .. }
             | Event::Failed { .. } => {}
@@ -1566,6 +1567,7 @@ fn every_call_reports_that_it_finished() {
             | Event::Used { .. }
             | Event::PlanLimits { .. }
             | Event::Steered { .. }
+            | Event::Waiting { .. }
             | Event::TurnFinished { .. }
             | Event::Spent { .. }
             | Event::Failed { .. }

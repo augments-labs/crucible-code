@@ -37,6 +37,7 @@ mod clipboard;
 mod color;
 #[cfg(test)]
 mod colour_rule;
+mod docked;
 pub mod drawing;
 #[cfg(any(test, feature = "testing"))]
 mod dump;
@@ -81,6 +82,10 @@ pub use asked::{Asked, Choice, Given, Stop, Writing};
 pub use asking::Question;
 pub use bar::{Bar, Fill, Part};
 pub use color::{Design, Palette, Sequence, Slot, Theme, Worn};
+pub use docked::{
+    Action, Batched, Chosen, Dock, Docked, Drafted, Editing, Focus, Member, Offer, Phase, Scrolled,
+    dock_keys,
+};
 pub use editor::{Editor, Key, Projection, Sending, Typed};
 pub use expanded::{Expanded, Shown};
 pub use files::{Files, Line};
@@ -110,7 +115,7 @@ pub use terminal::ground::asked;
 pub use terminal::keyboard::{Pasting, Spelling};
 pub use terminal::keys::{Characters, Pressed, characters, pressed, waiting};
 pub use terminal::mouse::Reporting;
-pub use terminal::raw::{Raw, RawError};
+pub use terminal::raw::{Raw, RawError, keyed};
 pub use terminal::screen::{Screen, ScreenError};
 #[cfg(unix)]
 pub use terminal::suspend::Suspend;
