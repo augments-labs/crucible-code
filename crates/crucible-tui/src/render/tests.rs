@@ -5279,9 +5279,16 @@ fn a_picture_moves_with_the_transcript_and_is_not_sent_again_for_it() {
     }
     let moved = drawn.take();
     let now = at(&moved).flatten();
-    assert!(now.is_some(), "the picture was not drawn where it went: {moved:?}");
+    assert!(
+        now.is_some(),
+        "the picture was not drawn where it went: {moved:?}"
+    );
     assert_ne!(was, now, "the picture stayed where it was");
-    assert!(commands(&moved).iter().all(|command| !command.starts_with("a=t")));
+    assert!(
+        commands(&moved)
+            .iter()
+            .all(|command| !command.starts_with("a=t"))
+    );
 }
 
 #[test]
@@ -5296,7 +5303,10 @@ fn a_picture_scrolled_back_into_view_is_sent_where_the_terminal_lost_it() {
     drawn.take();
 
     drawn.repaint().unwrap();
-    assert!(commands(&drawn.take()).is_empty(), "a picture out of view was sent");
+    assert!(
+        commands(&drawn.take()).is_empty(),
+        "a picture out of view was sent"
+    );
 
     drawn.scrolled(-40).unwrap();
     let back = drawn.take();
@@ -5343,9 +5353,11 @@ fn a_theme_changed_draws_the_picture_again_in_its_colours() {
     drawn.answer(DIAGRAM);
     drawn.take();
 
-    drawn.render.wears(Palette::resolve(true, Theme::Light, None, &|name| {
-        (name == "COLORTERM").then(|| "truecolor".to_owned())
-    }));
+    drawn
+        .render
+        .wears(Palette::resolve(true, Theme::Light, None, &|name| {
+            (name == "COLORTERM").then(|| "truecolor".to_owned())
+        }));
     drawn.commit("after the change").unwrap();
     let after = drawn.take();
 

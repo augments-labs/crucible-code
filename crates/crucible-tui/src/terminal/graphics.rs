@@ -799,16 +799,14 @@ pub(crate) const PLACEHOLDER: char = '\u{10EEEE}';
 /// The marks that name a placeholder cell's row and column of its picture,
 /// the first naming 0: Kitty's own table, as its protocol gives it.
 pub(crate) const DIACRITICS: [char; 64] = [
-    '\u{0305}', '\u{030D}', '\u{030E}', '\u{0310}', '\u{0312}', '\u{033D}', '\u{033E}',
-    '\u{033F}', '\u{0346}', '\u{034A}', '\u{034B}', '\u{034C}', '\u{0350}', '\u{0351}',
-    '\u{0352}', '\u{0357}', '\u{035B}', '\u{0363}', '\u{0364}', '\u{0365}', '\u{0366}',
-    '\u{0367}', '\u{0368}', '\u{0369}', '\u{036A}', '\u{036B}', '\u{036C}', '\u{036D}',
-    '\u{036E}', '\u{036F}', '\u{0483}', '\u{0484}', '\u{0485}', '\u{0486}', '\u{0487}',
-    '\u{0592}', '\u{0593}', '\u{0594}', '\u{0595}', '\u{0597}', '\u{0598}', '\u{0599}',
-    '\u{059C}', '\u{059D}', '\u{059E}', '\u{059F}', '\u{05A0}', '\u{05A1}', '\u{05A8}',
-    '\u{05A9}', '\u{05AB}', '\u{05AC}', '\u{05AF}', '\u{05C4}', '\u{0610}', '\u{0611}',
-    '\u{0612}', '\u{0613}', '\u{0614}', '\u{0615}', '\u{0616}', '\u{0617}', '\u{0657}',
-    '\u{0658}',
+    '\u{0305}', '\u{030D}', '\u{030E}', '\u{0310}', '\u{0312}', '\u{033D}', '\u{033E}', '\u{033F}',
+    '\u{0346}', '\u{034A}', '\u{034B}', '\u{034C}', '\u{0350}', '\u{0351}', '\u{0352}', '\u{0357}',
+    '\u{035B}', '\u{0363}', '\u{0364}', '\u{0365}', '\u{0366}', '\u{0367}', '\u{0368}', '\u{0369}',
+    '\u{036A}', '\u{036B}', '\u{036C}', '\u{036D}', '\u{036E}', '\u{036F}', '\u{0483}', '\u{0484}',
+    '\u{0485}', '\u{0486}', '\u{0487}', '\u{0592}', '\u{0593}', '\u{0594}', '\u{0595}', '\u{0597}',
+    '\u{0598}', '\u{0599}', '\u{059C}', '\u{059D}', '\u{059E}', '\u{059F}', '\u{05A0}', '\u{05A1}',
+    '\u{05A8}', '\u{05A9}', '\u{05AB}', '\u{05AC}', '\u{05AF}', '\u{05C4}', '\u{0610}', '\u{0611}',
+    '\u{0612}', '\u{0613}', '\u{0614}', '\u{0615}', '\u{0616}', '\u{0617}', '\u{0657}', '\u{0658}',
 ];
 
 /// The most bytes of graphics commands one frame writes, wrappers included:
@@ -1022,7 +1020,12 @@ pub(crate) fn placed(into: &mut String, id: u32, row: u16, column: u16, across: 
     use std::fmt::Write as _;
 
     let [_, red, green, blue] = id.to_be_bytes();
-    let mark = |at: u16| DIACRITICS.get(usize::from(at)).copied().unwrap_or(DIACRITICS[0]);
+    let mark = |at: u16| {
+        DIACRITICS
+            .get(usize::from(at))
+            .copied()
+            .unwrap_or(DIACRITICS[0])
+    };
     let _ = write!(into, "\x1b[38;2;{red};{green};{blue}m");
     if across > 0 {
         into.push(PLACEHOLDER);

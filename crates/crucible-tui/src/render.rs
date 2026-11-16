@@ -2879,8 +2879,7 @@ impl<T: Terminal> Renderer<T> {
 
         self.commands.clear();
         let record = &self.record;
-        self.sent
-            .write(|id| record.payload(id), &mut self.commands);
+        self.sent.write(|id| record.payload(id), &mut self.commands);
         self.painted.graphics(&self.commands);
 
         let (row, column) = self.parked(&bands);

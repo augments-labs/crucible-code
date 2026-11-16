@@ -416,7 +416,9 @@ impl Row {
 
     /// The number of every picture the row stands in cells of.
     pub(crate) fn pictures(&self) -> impl Iterator<Item = u32> + '_ {
-        self.0.iter().filter_map(|span| span.image.map(|image| image.id))
+        self.0
+            .iter()
+            .filter_map(|span| span.image.map(|image| image.id))
     }
 
     /// What the row says, with no colour in it.
@@ -550,13 +552,7 @@ impl Row {
             // the colour is what names the picture; elsewhere they are the
             // spaces they are.
             if let Some(image) = span.image.filter(|_| palette.writes_color()) {
-                graphics::placed(
-                    painted,
-                    image.id,
-                    image.row,
-                    image.column,
-                    span.text.len(),
-                );
+                graphics::placed(painted, image.id, image.row, image.column, span.text.len());
                 continue;
             }
 
