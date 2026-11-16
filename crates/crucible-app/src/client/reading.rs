@@ -17,9 +17,11 @@ use crucible_models::{Effort, Served, Speed};
 use crucible_runner::{Breakdown, Category, Event, PlanLimitStop, SessionCost, Totals, TurnError};
 use crucible_tools::{Argument, Mode};
 use crucible_types::{
-    CostAmount, LimitGroup, ModelGroup, ModelKey, PlanWindows, Scope, StopReason, Used, Utc, Window,
+    Batch, CostAmount, LimitGroup, ModelGroup, ModelKey, PlanWindows, Scope, StopReason, Used, Utc,
+    Window,
 };
 
+use super::answering::Questions;
 use crate::providers::CredentialSource;
 use crate::switching::Retained;
 use crate::{Conversation, providers};
@@ -129,13 +131,40 @@ pub fn billing(conversation: &Conversation) -> api::Billing {
 /// Nothing, for a client that did not ask for [`Capability::Progress`]: this is
 /// the one place progress is handed to a client, so it is where that is held.
 /// Called by a consumer with no terminal — today the one the headless tests
-/// drive; the terminal draws a turn from the runner's events as they stand.
+/// drive — and by the terminal for what waits for an answer alone: it draws a
+/// turn from the runner's events as they stand, takes a
+/// [`Progress::Waiting`] from here only as the word that what waits changed,
+/// and reads the era and the set from its handle itself.
+///
+/// What waits for the person's answer is the exception to the progress hold.
+/// It goes to a client that claimed [`Capability::Questions`], whether or not
+/// it asked for progress, because that client is the one answering it, and to
+/// no other.
+/// Each question is shown in the shape a blocking question is put. The
+/// registry bounds every text a batch holds, restored ones included, below the
+/// words a client is handed, so none is cut on its way here.
+///
+/// The report is read as a signal and not for what it carries: the era and
+/// the set are read together from `questions`, the handle the front end
+/// supplied, so a report posted in one session and converted after the
+/// conversation has moved to another shows the other's era with the other's
+/// batches, never the first's batches under the second's era. With no handle
+/// nothing is reported, since nothing could be answered.
 #[must_use]
 pub fn progress(
     capabilities: Capabilities,
     event: &Event,
     serving: Option<&str>,
+    questions: Option<&Questions>,
 ) -> Option<Progress> {
+    if let Event::Waiting { .. } = event {
+        let questions = questions.filter(|_| capabilities.has(Capability::Questions))?;
+        let (era, batches) = questions.waiting();
+        return Some(Progress::Waiting {
+            era,
+            batches: batches.iter().map(waiting).collect(),
+        });
+    }
     if !capabilities.has(Capability::Progress) {
         return None;
     }
@@ -219,8 +248,22 @@ pub fn progress(
         | Event::Wrote { .. }
         | Event::Aged { .. }
         | Event::Unread { .. }
-        | Event::Steered { .. } => return None,
+        | Event::Steered { .. }
+        // Answered above, under the capability that is told it.
+        | Event::Waiting { .. } => return None,
     })
+}
+
+/// One waiting batch, as a client is told it.
+fn waiting(batch: &Batch) -> api::Waiting {
+    api::Waiting {
+        id: batch.id(),
+        questions: batch
+            .questions()
+            .iter()
+            .map(super::deciding::shown)
+            .collect(),
+    }
 }
 
 /// What kind of thing a call's summary names, in the contract's words.

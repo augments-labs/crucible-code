@@ -261,6 +261,7 @@ fn a_call_is_announced_before_it_runs_with_what_it_is_about() {
             | Event::Used { .. }
             | Event::PlanLimits { .. }
             | Event::Steered { .. }
+            | Event::Waiting { .. }
             | Event::TurnFinished { .. }
             | Event::Spent { .. }
             | Event::Failed { .. } => None,
@@ -306,6 +307,7 @@ fn a_call_is_announced_with_its_execution_capabilities() {
         | Event::Used { .. }
         | Event::PlanLimits { .. }
         | Event::Steered { .. }
+        | Event::Waiting { .. }
         | Event::TurnFinished { .. }
         | Event::Spent { .. }
         | Event::Failed { .. } => None,
@@ -465,6 +467,7 @@ fn a_diff_reaches_the_reader_and_stops_before_the_transcript() {
             | Event::Used { .. }
             | Event::PlanLimits { .. }
             | Event::Steered { .. }
+            | Event::Waiting { .. }
             | Event::TurnFinished { .. }
             | Event::Spent { .. }
             | Event::Failed { .. } => None,

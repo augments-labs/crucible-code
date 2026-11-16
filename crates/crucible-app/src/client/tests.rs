@@ -18,6 +18,7 @@ use crucible_types::{Answer, Question, ToolArgs, ToolCall, ToolId};
 
 use super::deciding::{Confirmation, Deciding, Front, Shown, confirmed, questions, settle, warned};
 use super::reading::progress;
+use super::turning::ends_short;
 use crate::content_use::WARNED;
 
 /// What a scripted front end says next about whatever it is put.
@@ -297,6 +298,32 @@ fn the_recommended_answer_is_put_marked_and_under_its_own_name() {
 }
 
 #[test]
+fn the_rows_an_answer_shows_are_put_with_it_in_order() {
+    let asking = vec![Question::new(
+        "Layout",
+        "Which layout?",
+        [
+            Answer::new("Table").showing(["| a | b |", "| 1 | 2 |"]),
+            Answer::new("List"),
+        ],
+    )];
+    let mut front = Scripted::saying([Reply::Answers(1)]);
+
+    crucible_runtime::answered!(questions(Capabilities::every(), &mut front, &asking))
+        .expect("a question that fits");
+
+    let Some(Pending::Questions { questions, .. }) = front.put.first() else {
+        panic!("the question was never put: {:?}", front.put);
+    };
+    let rows: Vec<Vec<&str>> = questions
+        .iter()
+        .flat_map(|asked| &asked.choices)
+        .map(|choice| choice.shows.iter().map(Text::as_str).collect())
+        .collect();
+    assert_eq!(rows, [vec!["| a | b |", "| 1 | 2 |"], vec![]]);
+}
+
+#[test]
 fn a_question_that_cannot_be_put_whole_is_not_put_short() {
     // An answer that was not offered cannot be chosen, and a name that was cut
     // is not the name the asker reads back: either way what was shown is not
@@ -321,6 +348,18 @@ fn a_question_that_cannot_be_put_whole_is_not_put_short() {
         crucible_runtime::answered!(questions(Capabilities::every(), &mut front, &named)).is_none()
     );
     assert!(front.put.is_empty(), "put with an answer's name cut");
+
+    let rows = vec!["row"; ITEMS + 1];
+    let shown = vec![Question::new(
+        "Colour",
+        "Which colour?",
+        [Answer::new("yes").showing(rows), Answer::new("no")],
+    )];
+    let mut front = Scripted::saying([Reply::Answers(1)]);
+    assert!(
+        crucible_runtime::answered!(questions(Capabilities::every(), &mut front, &shown)).is_none()
+    );
+    assert!(front.put.is_empty(), "put with an answer's rows left out");
 
     let full = (0..ITEMS).map(|number| Answer::new(format!("answer {number}")));
     let fitting = vec![Question::new("Colour", "Which colour?", full)];
@@ -664,19 +703,207 @@ fn a_front_end_that_never_fits_its_answer_is_asked_a_few_times_and_then_no_more(
 }
 
 #[test]
+fn every_text_a_waiting_batch_may_hold_is_carried_to_a_client_whole() {
+    // The registry bounds each text it holds, on register and restore alike,
+    // below the words a client is handed, so no name of a waiting batch is cut
+    // for a client and every answer stays one it can choose.
+    use crucible_tools::{MOST_HEADING_BYTES, MOST_TEXT_BYTES};
+    const { assert!(MOST_HEADING_BYTES <= TEXT_BYTES && MOST_TEXT_BYTES <= TEXT_BYTES) };
+    let long = "a".repeat(MOST_TEXT_BYTES);
+    let held = super::Questions::new();
+    held.held()
+        .register(vec![Question::new(
+            "H".repeat(MOST_HEADING_BYTES),
+            "q".repeat(MOST_TEXT_BYTES),
+            [
+                Answer::new(long.as_str()).saying(long.as_str()),
+                Answer::new("Rust"),
+            ],
+        )])
+        .expect("the registry holds it");
+    let waiting = crucible_runner::Event::Waiting { batches: vec![] };
+
+    let Some(Progress::Waiting { batches, .. }) = progress(
+        Capabilities::none().with(Capability::Questions),
+        &waiting,
+        None,
+        Some(&held),
+    ) else {
+        panic!("no waiting set was shown");
+    };
+    let [batch] = batches.as_slice() else {
+        panic!("{batches:?}");
+    };
+    let [question] = batch.questions.as_slice() else {
+        panic!("{batch:?}");
+    };
+    let names: Vec<(bool, &str)> = question
+        .choices
+        .iter()
+        .map(|choice| (choice.name.truncated(), choice.name.as_str()))
+        .collect();
+    assert_eq!(names, [(false, long.as_str()), (false, "Rust")]);
+    assert!(!question.asks.truncated() && !question.heading.truncated());
+    let says = question.choices.first().map(|choice| &choice.says);
+    assert!(says.is_some_and(|says| !says.truncated() && says.as_str() == long));
+}
+
+#[test]
+fn the_most_a_waiting_set_may_hold_crosses_to_a_client_whole_with_every_row_it_shows() {
+    // The registry's ceilings, each at its most at once, so the report a
+    // client is sent never runs into the frame's: the frame's ceiling bounds
+    // each list and not how many rows a choice shows, and these do.
+    use crucible_tools::{MOST_ANSWERS, MOST_HELD, MOST_HELD_BYTES, MOST_QUESTIONS, MOST_SHOWS};
+    const { assert!(MOST_ANSWERS <= ITEMS && MOST_SHOWS <= ITEMS) };
+    let rows = MOST_HELD * MOST_QUESTIONS * MOST_ANSWERS * MOST_SHOWS;
+    // Each row as long as the batches' text together allows, less the names
+    // that tell the answers apart.
+    let row = "r".repeat(MOST_HELD_BYTES / rows - 1);
+    let held = super::Questions::new();
+    for _ in 0..MOST_HELD {
+        let question = |at: usize| {
+            Question::new(
+                "H",
+                format!("q{at}"),
+                (0..MOST_ANSWERS).map(|answer| {
+                    Answer::new(format!("{at}{answer}")).showing(vec![row.as_str(); MOST_SHOWS])
+                }),
+            )
+        };
+        held.held()
+            .register((0..MOST_QUESTIONS).map(question).collect())
+            .expect("the registry holds it");
+    }
+    let waiting = crucible_runner::Event::Waiting { batches: vec![] };
+
+    let shown = progress(
+        Capabilities::none().with(Capability::Questions),
+        &waiting,
+        None,
+        Some(&held),
+    );
+    let Some(shown @ Progress::Waiting { batches, .. }) = &shown else {
+        panic!("no waiting set was shown: {shown:?}");
+    };
+    let carried: usize = batches
+        .iter()
+        .flat_map(|batch| &batch.questions)
+        .flat_map(|asked| &asked.choices)
+        .map(|choice| choice.shows.len())
+        .sum();
+    assert_eq!(carried, rows);
+    let frame = shown.encode().expect("the fullest set fits a frame");
+    assert_eq!(&Progress::decode(&frame).expect("it reads back"), shown);
+}
+
+#[test]
+fn a_session_that_records_nothing_is_a_stint_equal_to_no_other_itself_after_clear_included() {
+    use crucible_client_api::Era;
+
+    let (held, other) = (super::Questions::new(), super::Questions::new());
+    let (first, _) = held.waiting();
+    let (beside, _) = other.waiting();
+    assert!(matches!(first, Era::Stint(_)), "{first:?}");
+    assert_ne!(first, beside);
+
+    // What `/clear` does to the handle on its way to a session that records
+    // nothing either.
+    held.moved(None);
+
+    let (cleared, _) = held.waiting();
+    assert!(matches!(cleared, Era::Stint(_)), "{cleared:?}");
+    assert_ne!(cleared, first);
+    assert_ne!(cleared, beside);
+}
+
+#[test]
+fn a_refused_claim_leaves_the_holders_claim_set() {
+    // A refusal must not undo the claim it lost to: if it did, the next
+    // claim would succeed while the first holder still holds the handle.
+    let questions = super::Questions::new();
+    let hold = questions
+        .clone()
+        .claim(None)
+        .expect("the first claim is taken");
+    for attempt in 1..=3 {
+        assert!(
+            questions.clone().claim(None).is_none(),
+            "claim {attempt} after the holder's was taken while the holder lives"
+        );
+    }
+    drop(hold);
+    assert!(
+        questions.clone().claim(None).is_some(),
+        "the handle stayed claimed after its holder let go"
+    );
+}
+
+#[test]
+fn moving_the_questions_empties_what_waits_in_the_step_that_sets_the_era() {
+    use crucible_client_api::Era;
+    use crucible_types::SessionId;
+
+    // The runner empties the registry again when it picks a session up, but
+    // only after the swap; a report read between the two would pair the
+    // session left's batches with the incoming era unless this step emptied
+    // them under the same lock.
+    let held = super::Questions::new();
+    held.held()
+        .register(vec![Question::new(
+            "Language",
+            "Which language?",
+            [Answer::new("Rust"), Answer::new("Python")],
+        )])
+        .expect("the registry holds it");
+    let incoming = SessionId::new();
+
+    held.moved(Some(&incoming));
+
+    let (era, waiting) = held.waiting();
+    assert_eq!(era, Era::Session(incoming));
+    assert!(waiting.is_empty(), "{waiting:?}");
+}
+
+#[test]
+fn a_turn_cut_short_or_yielding_is_followed_by_one_delivering_and_a_stopped_one_is_not() {
+    use crucible_types::StopReason;
+
+    let ended = ends_short;
+
+    // Yielded: an answer settled after the runner's last look, as the turn
+    // was ending, which no provider script can time.
+    for stop in [
+        StopReason::Yielded,
+        StopReason::OutOfTokens,
+        StopReason::Filtered,
+        StopReason::Paused,
+        StopReason::Unknown,
+    ] {
+        assert!(ended(stop), "{stop:?}");
+    }
+    for stop in [
+        StopReason::Cancelled,
+        StopReason::WindowExceeded,
+        StopReason::WantsTools,
+    ] {
+        assert!(!ended(stop), "{stop:?}");
+    }
+}
+
+#[test]
 fn a_client_that_never_asked_for_progress_is_handed_none() {
     let retrying = crucible_runner::Event::Retrying;
 
     assert_eq!(
-        progress(Capabilities::every(), &retrying, None),
+        progress(Capabilities::every(), &retrying, None, None),
         Some(Progress::Retrying)
     );
 
     let without = Capabilities::none()
         .with(Capability::Permissions)
         .with(Capability::Questions);
-    assert_eq!(progress(without, &retrying, None), None);
-    assert_eq!(progress(Capabilities::none(), &retrying, None), None);
+    assert_eq!(progress(without, &retrying, None, None), None);
+    assert_eq!(progress(Capabilities::none(), &retrying, None, None), None);
 }
 
 #[test]
@@ -696,7 +923,7 @@ fn a_requested_call_says_which_of_the_four_kinds_its_argument_is() {
         };
         assert!(
             matches!(
-                progress(Capabilities::every(), &requested, None),
+                progress(Capabilities::every(), &requested, None, None),
                 Some(Progress::ToolRequested { summary_kind, .. }) if summary_kind == kind
             ),
             "{argument:?}"
@@ -852,10 +1079,13 @@ fn a_refusal_of_fast_is_retrying_only_where_the_request_went_again() {
     };
 
     assert_eq!(
-        progress(Capabilities::every(), &refused(true), None),
+        progress(Capabilities::every(), &refused(true), None, None),
         Some(Progress::Retrying)
     );
-    assert_eq!(progress(Capabilities::every(), &refused(false), None), None);
+    assert_eq!(
+        progress(Capabilities::every(), &refused(false), None, None),
+        None
+    );
 }
 
 /// A turn ended on a used-up plan, the weekly window's reset `at` where known.
@@ -886,7 +1116,7 @@ fn plan_limit_reaches_a_client_by_its_code_with_the_window_and_the_reset_in_utc(
     };
 
     assert_eq!(
-        progress(Capabilities::every(), &failed, None),
+        progress(Capabilities::every(), &failed, None, None),
         Some(Progress::Failed(crucible_client_api::Problem {
             code: ErrorCode::PlanLimit,
             message: crucible_client_api::Text::cut(
@@ -904,7 +1134,7 @@ fn plan_limit_with_no_reset_says_so_in_crucibles_words_alone() {
     };
 
     assert_eq!(
-        progress(Capabilities::every(), &failed, None),
+        progress(Capabilities::every(), &failed, None, None),
         Some(Progress::Failed(crucible_client_api::Problem {
             code: ErrorCode::PlanLimit,
             message: crucible_client_api::Text::cut(
@@ -1084,11 +1314,13 @@ fn nothing_a_client_says_settles_an_install_confirmation_a_conversation_never_ra
                 name: Text::cut("Install"),
                 says: Text::cut(""),
                 recommended: true,
+                shows: Vec::new(),
             },
             Choice {
                 name: Text::cut("Leave it"),
                 says: Text::cut(""),
                 recommended: false,
+                shows: Vec::new(),
             },
         ],
     };

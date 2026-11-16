@@ -2,8 +2,11 @@
 //! box.
 //!
 //! The panel stands whenever anything is waiting — under a running turn, and
-//! between turns while a used-up plan holds the lines it stopped in front of —
-//! and it is the same panel in both places. There is nothing to open. Up and
+//! between turns while a used-up plan holds the lines it stopped in front of,
+//! or the content-use question held them back — and it is the same panel in
+//! both places, but for its title: under a turn it names the key that stops
+//! the turn to send them, and between turns, where that key is Return, it
+//! says they wait for the next turn. There is nothing to open. Up and
 //! down walk the highlight once the line in the box has no row to reach and no
 //! list is standing, Ctrl+E takes the highlighted line back into the box to be
 //! edited or sent sooner, and Ctrl+X deletes it. The highlight stays at the
@@ -32,6 +35,7 @@
 use std::collections::VecDeque;
 
 use crucible_app::Conversation;
+use crucible_client_api::Author;
 use crucible_runtime::Steer;
 use crucible_tui::{Editor, Renderer, Row, Slot, Terminal, Typed, fold};
 
@@ -78,30 +82,52 @@ pub(super) struct Prompts {
     at: usize,
     /// Whether the last Ctrl+E found no room in the box, until the next key.
     refused: bool,
-    /// Whether the lines wait behind the running turn instead of being on
-    /// offer to it.
+    /// Which turns the lines are on offer to: see [`Standing`] for what holds
+    /// them back from one, or leaves them to the reader. Back on offer when the
+    /// queue is next taken whole, or empties, or the reader's next turn is
+    /// offered them.
+    standing: Standing,
+    /// Whether the next turn is the oldest line alone, as Ctrl+S sent it.
+    ///
+    /// Cleared once that turn is taken, and when that line leaves the front
+    /// any other way: the reader who deletes it or takes it back before the
+    /// turn stops has chosen nothing else to go alone.
+    alone: bool,
+}
+
+/// Which turns the waiting lines are on offer to.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Standing {
+    /// To the running turn, through the steer it reads, and to the next turn
+    /// taken from the queue.
+    #[default]
+    Offered,
+    /// To no running turn: they wait behind it.
     ///
     /// Set by a key that stops the turn to send them, so that the turn it is
     /// stopping takes none of them on its way out, and kept under the turn
-    /// Ctrl+S sends, which is that one line alone. Cleared when the queue is
-    /// next taken whole, or empties, or a used-up plan leaves it to the reader
-    /// between turns.
-    held: bool,
-    /// Whether the next turn is the oldest line alone, as Ctrl+S sent it.
+    /// Ctrl+S sends, which is that one line alone; Ctrl+S between turns sets it
+    /// for the same reason.
+    Held,
+    /// To the next turn the reader sends, and to nothing that runs before it.
     ///
-    /// Cleared with [`Prompts::held`], and when that line leaves the front any
-    /// other way: the reader who deletes it or takes it back before the turn
-    /// stops has chosen nothing else to go alone.
-    alone: bool,
+    /// Set where a used-up plan leaves the lines to the reader between turns,
+    /// and where the content-use question held back the turn taken from them
+    /// (see [`Prompts::kept`]). That turn is offered them as it starts (see
+    /// [`Prompts::offered`]); a turn the application starts on its own, or
+    /// room made for the window, is not the one they wait for, and is offered
+    /// none of them.
+    Loose,
 }
 
 /// Where the lines the panel names are besides the panel, which is what
 /// deleting one or taking it back has to reach.
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Offer<'a> {
-    /// Nowhere the turn can reach: between turns, or under a turn that a key
-    /// sending the queue now holds the lines back from (see
-    /// [`Prompts::offer`]). The panel holds the only copy.
+    /// Nowhere the turn can reach: between turns, under a turn that a key
+    /// sending the queue now holds the lines back from, or under one the
+    /// reader did not send while the lines are left to the next one they do
+    /// (see [`Prompts::offer`]). The panel holds the only copy.
     Nowhere,
     /// Under a turn that is not held back from: on offer to it as well,
     /// through the steer it reads.
@@ -191,7 +217,7 @@ impl Prompts {
         self.at = self.at.min(self.lines.len().saturating_sub(1));
         if self.lines.is_empty() {
             self.refused = false;
-            self.held = false;
+            self.standing = Standing::Offered;
             self.alone = false;
         }
 
@@ -298,12 +324,12 @@ impl Prompts {
 
     /// Where the lines are besides the panel under a running turn: on offer to
     /// it through `steer`, or nowhere while a key that sent them now holds
-    /// them back from it.
+    /// them back from it, or while they are left to a turn the reader has not
+    /// sent yet.
     pub(super) fn offer<'a>(&self, steer: &'a Steer) -> Offer<'a> {
-        if self.held {
-            Offer::Nowhere
-        } else {
-            Offer::Turn(steer)
+        match self.standing {
+            Standing::Offered => Offer::Turn(steer),
+            Standing::Held | Standing::Loose => Offer::Nowhere,
         }
     }
 
@@ -356,6 +382,41 @@ impl Prompts {
         true
     }
 
+    /// Takes the highlighted line out of the queue to be the next turn alone,
+    /// sent between turns, where the lines were left to the reader.
+    ///
+    /// What Ctrl+S does under a turn, with no turn to stop: the rest are held
+    /// back from the turn this line starts, and taken whole once it is over.
+    /// `None` where nothing is highlighted.
+    pub(super) fn sent_alone(&mut self) -> Option<String> {
+        let line = self.drop(self.at)?;
+        if !self.lines.is_empty() {
+            self.standing = Standing::Held;
+        }
+        Some(line)
+    }
+
+    /// Offers every line to the turn the reader is starting, where a used-up
+    /// plan or a held-back turn left them to the reader.
+    ///
+    /// The next turn they send is the one the lines were waiting for, and it
+    /// takes them as the turn they were queued under would have: at its first
+    /// pass boundary, each as the line it was typed as, leaving the panel as
+    /// the turn says it took each. Until then the steer holds them as well as
+    /// the panel, so the keys reach them there as they do under any turn.
+    /// Offered any later, they would wait unseen by that turn and run as the
+    /// one after it.
+    pub(super) fn offered(&mut self, steer: &Steer) {
+        if self.standing != Standing::Loose {
+            return;
+        }
+        self.standing = Standing::Offered;
+        drop(steer.take());
+        for line in &self.lines {
+            steer.say(line.clone());
+        }
+    }
+
     /// Takes every line back off the running turn's offer and keeps them off
     /// it, so the turn a key is stopping takes none of them on its way out.
     ///
@@ -363,14 +424,39 @@ impl Prompts {
     /// leaves the panel when the turn says so.
     fn hold(&mut self, steer: &Steer) {
         drop(steer.take());
-        self.held = true;
+        self.standing = Standing::Held;
+    }
+
+    /// Puts `line`, the turn the content-use question held back, at the front,
+    /// and leaves every line to the reader's next prompt, as a used-up plan
+    /// does.
+    ///
+    /// The front is where it was taken from, or, for a line Ctrl+S sent alone,
+    /// where Ctrl+S puts the line it sends under a turn: next.
+    ///
+    /// Lost, each answer of no would be one more line the reader did not send
+    /// and did not get back. The steer is emptied of what the held-back turn
+    /// offered, so a turn that runs first takes none of it. The files `line`
+    /// named go as a line behind a prompt does: offered with the reader's
+    /// next prompt, it names none of its own.
+    pub(super) fn kept(&mut self, line: &str, steer: &Steer) {
+        drop(steer.take());
+        self.bytes = self.bytes.saturating_add(line.len());
+        self.lines.push_front(line.to_owned());
+        self.at = 0;
+        self.alone = false;
+        self.standing = Standing::Loose;
     }
 
     /// Leaves every line to the reader between turns: on offer to the next
-    /// turn they send, and none of them to go alone.
+    /// turn they send (see [`Prompts::offered`]), and none of them to go alone.
     fn let_go(&mut self) {
-        self.held = false;
         self.alone = false;
+        self.standing = if self.lines.is_empty() {
+            Standing::Offered
+        } else {
+            Standing::Loose
+        };
     }
 
     /// Clears what the panel said about a line the box had no room for, and
@@ -394,6 +480,10 @@ impl Prompts {
 /// The lines behind the prompt go through the steer rather than into it,
 /// because joining them would put a message in the transcript nobody wrote.
 /// Each reaches it as the line it was typed as; what they share is the turn.
+/// They stay in the panel, as a line queued under a running turn does, and
+/// leave it as the turn says it took each: one an input check refuses ends the
+/// turn there, and the lines behind it are still the reader's, sent as the
+/// next turn as soon as this one is over, as lines queued under it would be.
 ///
 /// The one exception is a line Ctrl+S sent: it is the turn alone, and the rest
 /// stay queued and held back from it, to be taken whole after it.
@@ -404,11 +494,15 @@ pub(super) fn batched(queued: &mut Prompts, steer: &Steer) -> Option<String> {
         return queued.pop();
     }
 
-    queued.held = false;
+    queued.standing = Standing::Offered;
     let said = queued.pop()?;
 
-    while let Some(behind) = queued.pop() {
-        steer.say(behind);
+    // What the steer still holds was offered to a turn that ended before it
+    // took it, and the panel holds it too: offered again beside the panel's,
+    // it would go twice, or beside itself as this turn's prompt.
+    drop(steer.take());
+    for behind in &queued.lines {
+        steer.say(behind.clone());
     }
 
     Some(said)
@@ -424,12 +518,18 @@ pub(super) fn batched(queued: &mut Prompts, steer: &Steer) -> Option<String> {
 ///
 /// Not after work that stopped on a used-up plan: the lines stay queued for
 /// the reader, who can take them back or send a prompt, because the plan
-/// they would be sent to is spent until its reset. Nothing a key that sent
-/// them now set holds past that stop: the turn it was for is over, and kept, it
-/// would hold the lines back from the next turn the reader sends.
+/// they would be sent to is spent until its reset. Nor after the queue's own
+/// turn the content-use question held back (see [`Prompts::kept`]): taken
+/// again at once, it would be asked about again before the reader could do
+/// anything else. The prompt the reader sends takes the lines with it, as
+/// [`Prompts::offered`] says, and other work that ends some other way lets
+/// them go to be taken here again. Nothing a key that sent them now set holds
+/// past that stop: the turn it was for is over, and kept, it would hold the
+/// lines back from the next turn the reader sends.
 ///
-/// `None` beside the conversation where nothing was waiting or a used-up plan
-/// is holding it, and otherwise whether the session is leaving, as [`ran`] says it.
+/// `None` beside the conversation where nothing was waiting or the lines are
+/// left to the reader, and otherwise whether the session is leaving, as [`ran`]
+/// says it.
 pub(super) fn taken<T: Terminal>(
     conversation: Conversation,
     renderer: &mut Renderer<T>,
@@ -437,7 +537,7 @@ pub(super) fn taken<T: Terminal>(
     held: &mut Held<'_>,
     style: Style,
 ) -> Result<(Conversation, Option<bool>), Fatal> {
-    if held.used_up {
+    if held.left_to_reader {
         held.queued.let_go();
         return Ok((conversation, None));
     }
@@ -459,6 +559,8 @@ pub(super) fn taken<T: Terminal>(
     };
     draw::queued(renderer, &said, style)?;
 
+    // Only the person queues a line, so what it names is theirs to attach.
+    let author = Author::Person;
     let imported = attaching::imported(held);
     let attached = attaching::beside(
         renderer,
@@ -467,10 +569,11 @@ pub(super) fn taken<T: Terminal>(
         attaching::Sent {
             prompt: &said,
             images: &held.images,
+            author,
         },
         style,
     )?;
-    let work = Work::Turn(said, attached);
+    let work = Work::Queued(said, attached);
     let (back, leaving) = ran(conversation, renderer, terms, work, held)?;
     Ok((back, Some(leaving)))
 }
@@ -491,12 +594,29 @@ pub(super) struct Reading<'a> {
     pub(super) steer: &'a Steer,
 }
 
+/// Where the queue's panel stands, which decides what its title says about
+/// sending the lines.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Stands {
+    /// Under a running turn, which Ctrl+Enter stops to send every line now.
+    UnderTurn,
+    /// Over the box between turns, where Ctrl+Enter is Enter and an empty box
+    /// sends nothing. The lines wait for the next turn: the turn a prompt the
+    /// reader sends starts takes them with it, and work the application starts
+    /// on its own, or room made for the window, takes none of them but lets
+    /// them go once it ends other than on a used-up plan, as [`taken`] says.
+    /// The title promises no more than that they wait.
+    BetweenTurns,
+}
+
 /// The panel naming the prompts waiting, as it stands over the box.
 ///
 /// The shape every other panel has: a rule, a title, the lines, and a footer
-/// naming every key that works. The title says how many are waiting and the
-/// key that sends them all, because the count is the one fact that cannot go:
-/// three are named at most, and the rest are only in the number. The
+/// naming every key that works. The title says how many are waiting and what
+/// sends them all, because the count is the one fact that cannot go: three
+/// are named at most, and the rest are only in the number. Under a turn that
+/// is the key that stops it to send them; between turns, where the same key
+/// is Enter, it is that they wait for the next turn, which `stands` says. The
 /// highlighted line leads with the mark a line is typed after and is drawn in
 /// the accent, so a key's target is never a guess; the rest stand two columns
 /// in under it. Each line is cut to a row: the panel is a list of what is
@@ -510,7 +630,13 @@ pub(super) struct Reading<'a> {
 /// down to one, and below that draws nothing — the queue is still the queue,
 /// and its turn will say each line. No rows at all where nothing is waiting,
 /// or where the window is too narrow to put any of a line beside its mark.
-pub(super) fn panel(queue: &Prompts, columns: usize, room: usize, style: Style) -> Vec<Row> {
+pub(super) fn panel(
+    queue: &Prompts,
+    stands: Stands,
+    columns: usize,
+    room: usize,
+    style: Style,
+) -> Vec<Row> {
     let count = queue.waiting_count();
     if count == 0 || columns <= MARKED {
         return Vec::new();
@@ -521,7 +647,13 @@ pub(super) fn panel(queue: &Prompts, columns: usize, room: usize, style: Style) 
 
     let title = Row::new()
         .then(Slot::Strong, format!("{count} queued"))
-        .then(Slot::Quiet, format!(" {dot} ctrl+enter to send all now"));
+        .then(
+            Slot::Quiet,
+            match stands {
+                Stands::UnderTurn => format!(" {dot} ctrl+enter to send all now"),
+                Stands::BetweenTurns => format!(" {dot} waiting for the next turn"),
+            },
+        );
 
     // Beside the title where the row holds both, since it is about the line
     // under the highlight and not a line of its own; under it where the row

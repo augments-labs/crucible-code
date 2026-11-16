@@ -1059,6 +1059,44 @@ fn leaving_first<L, T>(
     })
 }
 
+/// Settles what pictures are drawn with, before raw mode and the first frame,
+/// so what the terminal answers while the exchange waits, a first cursor
+/// position too late to decide anything included, is read before any key is;
+/// what it says later than every wait is left to the key reader, as
+/// `crucible_tui::graphics` says. Only a terminal on both sides is asked, and
+/// only where the configuration and the support table allow; what the input
+/// was is kept, so `/settings` draws by the same rule.
+fn settle_pictures<T: crucible_tui::Terminal>(
+    terms: &converse::Terms,
+    renderer: &mut Renderer<T>,
+    settings: &Settings,
+    from: &dyn Fn(&str) -> Option<String>,
+) {
+    terms
+        .style
+        .set(terms.style().reading_from(io::stdin().is_terminal()));
+    let picturing_on = picturing(
+        settings.images(),
+        settings,
+        renderer.is_terminal() && terms.style().input_terminal(),
+        graphics::Passthrough::Unknown,
+    );
+    let platform = terms.style().platform();
+    let passthrough = graphics::passthrough(from, platform, picturing_on);
+    terms.style.set(terms.style().passing(passthrough));
+    renderer.images(graphics::confirm(
+        graphics::select(
+            from,
+            platform,
+            graphics::Setting {
+                passthrough,
+                ..picturing_on
+            },
+        ),
+        graphics::Deadline::STARTUP,
+    ));
+}
+
 /// Builds everything, then hands over to the loop.
 fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), Fatal> {
     let here = std::env::current_dir().map_err(Fatal::Here)?;
@@ -1279,37 +1317,9 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         workspace: workspace.clone(),
     };
 
-    // What pictures are drawn with, settled here: after the background question,
-    // so the two exchanges never interleave on the wire, and before raw mode and
-    // the first frame, so what the terminal answers while the exchange waits,
-    // a first cursor position too late to decide anything included, is read
-    // before any key is; what it says later than every wait is left to the key
-    // reader, as `crucible_tui::graphics` says. Only a terminal on both sides is
-    // asked, and only where the configuration and the support table allow;
-    // what the input was is kept, so `/settings` draws by the same rule.
-    terms
-        .style
-        .set(terms.style().reading_from(io::stdin().is_terminal()));
-    let picturing_on = picturing(
-        settings.images(),
-        &settings,
-        renderer.is_terminal() && terms.style().input_terminal(),
-        graphics::Passthrough::Unknown,
-    );
-    let platform = terms.style().platform();
-    let passthrough = graphics::passthrough(&from, platform, picturing_on);
-    terms.style.set(terms.style().passing(passthrough));
-    renderer.images(graphics::confirm(
-        graphics::select(
-            &from,
-            platform,
-            graphics::Setting {
-                passthrough,
-                ..picturing_on
-            },
-        ),
-        graphics::Deadline::STARTUP,
-    ));
+    // After the background question, so the two exchanges never interleave on
+    // the wire, and before raw mode and the first frame.
+    settle_pictures(&terms, &mut renderer, &settings, &from);
 
     // Said once, now that the style is settled. It is what decides whether the
     // markers in the model's markdown are read or left where they are.
@@ -1405,7 +1415,11 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // the same generation. A registration committed after this point is for the
     // next reader to see, not for a runner already built.
     let catalogue = terms.providers.snapshot();
+    // Settled by the same rule that decides whether keys are read as they are
+    // pressed: a screen with its input from a pipe has nobody to answer on it.
+    let keyed = crucible_tui::keyed();
     let conversation = assemble(&Startup {
+        questions: dock_questions(keyed),
         services,
         leaving,
         providers: &catalogue,
@@ -1424,7 +1438,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         plan: &plan,
         asking: std::sync::Arc::new(putting.clone()),
         hosting: &cli.with_mcp,
-        terminal: renderer.is_terminal(),
+        terminal: keyed,
         from: &from,
         stored: &keys,
         subscriptions: &subscriptions,
@@ -1450,6 +1464,16 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     draw::parting(&mut renderer, &outcome?, terms.style())?;
 
     Ok(())
+}
+
+/// Where the model's questions asked without waiting are held for the dock
+/// over the box, which reads them back through the conversation.
+///
+/// Nothing unless the session is a terminal at both ends: with no keys there
+/// is no dock to answer from, and a run given no registry and nobody at the
+/// keys is not offered the tool for asking at all.
+fn dock_questions(keyed: bool) -> Option<crucible_app::client::Questions> {
+    keyed.then(crucible_app::client::Questions::new)
 }
 
 /// What is asked again once the first frame is on the screen, or nothing where

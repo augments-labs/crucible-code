@@ -2,7 +2,7 @@
   "harness": {
     "tests/whole_screen/screen.rs": "cacfa04961bbd83b9cb4e1663b13743ff01fb41ee80d7d213180f6bbfa1f7fc1",
     "tests/whole_screen/vendor.rs": "e0a073bccef228848c35dc9968f2ba4e34e6911d22f9996de65d287053b76d60",
-    "tests/whole_screen/watched.rs": "26d6a4e63a6be6f0295b77a60fd5764a467ab3d3be1bcd168a2fb36758d4b433"
+    "tests/whole_screen/watched.rs": "133b21120427028ca8429b51269ee80df231e8026245470cc3678053a9d52ce1"
   },
   "captures": [
     {
@@ -200,7 +200,7 @@
       "opened": [
         "Watched::open(\"commands\", 80, 24)"
       ],
-      "sha256": "135bccfdb4393a3888e59c8ad926bee52f95df668f13ba840b4f4979aead59e3"
+      "sha256": "4e754d8a79cb88155c728671d9c3322815065caa2e64e7f42752d022be31be22"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_slash_typed_mid_turn_opens_the_command_list.snap",
@@ -209,7 +209,7 @@
         "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"list-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "df5d23c5349415433f8650fd63a1ee320bd7647a33dde2a1d6e06700fba32270"
+      "sha256": "4d1642b3532b7a509e8469561605bd237b4ba2c55793aa2a9f412a7e6bdcb964"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_take_back_the_box_has_no_room_for_says_so_beside_the_title.snap",
@@ -999,7 +999,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(&format!(\"context-fresh-{columns}\"), columns, 24, &vendor)"
       ],
-      "sha256": "56a4d6a6767da92a26146e108b1b4dd8409f2eb3d30ac94a76316d0e2f574c77"
+      "sha256": "d7ce23edeba9b88478704d26b07096d097294ec52ded5401d180392f23c232e9"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__context_fresh_80.snap",
@@ -1008,7 +1008,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(&format!(\"context-fresh-{columns}\"), columns, 24, &vendor)"
       ],
-      "sha256": "65d2ef34dcaa8783a1c4ad220b69c92e086109c16c0ab15f420df75eb1b877f1"
+      "sha256": "2961a809cec0aae1813fbf35069767353b41405b1034e9f53eeadca6f1d172e0"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__context_long_80.snap",
@@ -1017,7 +1017,7 @@
         "Vendor::answering_each(&[&a_long_answer(), &again])",
         "Watched::answering(case, columns, rows, &vendor)"
       ],
-      "sha256": "ea3f2cbf2b6e808d4e549d0f4024c29fa21e84d8d2f6ea1c3c3600ee47498d0c"
+      "sha256": "f97daaf48a955e6468e2b0a5b2bba6175ae04518ab0571b2b20b76b663831124"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__context_mid_turn_80.snap",
@@ -1026,7 +1026,7 @@
         "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"context-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "73c8d291c6c1108b770cf13117fe8641ad39a85b9cb0c573bd0919f08eff0a9e"
+      "sha256": "6183f492c1c42016ed10787c6ad1f80a8420342ad1f314b1eecdc253702e09cc"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__context_short_40.snap",
@@ -1035,7 +1035,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(\"context-short-40\", 40, 12, &vendor)"
       ],
-      "sha256": "f2b744d8a3b0dd8daa6ffc4ba3b3ab3d388adf63668f56bdb3f61a6434715d38"
+      "sha256": "c2f90802226f5cea4e0a8fd717f843bc565dbca9872a8b337b967c1b456d9bba"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_a_shows_every_project_and_says_where_each_session_is.snap",
@@ -1168,6 +1168,266 @@
         "Watched::launched( \"reach-worktrees\", 80, 24, &watched::Launch { document: reaching::DOCUMENT, env: &[], args: &[], home: Some(&planted.earlier), }, )"
       ],
       "sha256": "99608da292540e58be00cbc9a8dbf3e0f48ca3b45aa7bba782b6396cd31664f3"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__accepted_fullscreen.snap",
+      "case": "a_batch_submitted_under_a_running_turn_is_accepted_and_goes_once_delivered",
+      "opened": [
+        "Vendor::calling_then_holding(\"ask_user\", LATER, HELD)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "5ec1e2fa647e8e265543502bf2163ebab73e4b09debed7bde48a69f5fb85d623"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__accepted_native.snap",
+      "case": "a_batch_submitted_under_a_running_turn_is_accepted_and_goes_once_delivered",
+      "opened": [
+        "Vendor::calling_then_holding(\"ask_user\", LATER, HELD)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "ecd31b1e5179b5a36c9f92e78d0db0be0c0bd6214950853b3166d56e01f2f4f5"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__blocking_fullscreen.snap",
+      "case": "a_blocking_ask_still_stands_where_the_prompt_was",
+      "opened": [
+        "Vendor::calling_then_holding(\"ask_user\", NOW, HELD)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "e8c2aec2e0483bdff1e19b80c079e693db60d3b8b97d544354b8eec4a5f98130"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__blocking_native.snap",
+      "case": "a_blocking_ask_still_stands_where_the_prompt_was",
+      "opened": [
+        "Vendor::calling_then_holding(\"ask_user\", NOW, HELD)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "0375274e5af02bb99689306501a2740364b075f19e56f44213e62039e6e05741"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__closed_row_fullscreen.snap",
+      "case": "a_deferred_batch_shows_the_closed_row_while_the_turn_draws_on",
+      "opened": [
+        "Vendor::calling_then_holding(\"ask_user\", LATER, HELD)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "b7477d4c90f7e14ca0ab3c7be0756470c8a1aa9bb7cca3531a9799999125c245"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__closed_row_native.snap",
+      "case": "a_deferred_batch_shows_the_closed_row_while_the_turn_draws_on",
+      "opened": [
+        "Vendor::calling_then_holding(\"ask_user\", LATER, HELD)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "b8c3c2528ed8c321606f3a4f6f0d0cc4558fd4974e8d70213d1cc4a7501e774e"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__cramped_fullscreen.snap",
+      "case": "the_open_dock_fits_a_resized_window_and_one_too_small_for_it",
+      "opened": [
+        "Vendor::calling(\"ask_user\", LATER, ENDED)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "2ef689f0c2fbc1257ef1a9400c7c7d4ddf2c35618d8dfa62c700855c5bd65c81"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__cramped_native.snap",
+      "case": "the_open_dock_fits_a_resized_window_and_one_too_small_for_it",
+      "opened": [
+        "Vendor::calling(\"ask_user\", LATER, ENDED)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "80253a8bc0258f31148a02069e80677f9387f79c7a320bc0fc9471bc383082d1"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__declined_fullscreen.snap",
+      "case": "a_declined_question_is_sent_declined_alone_though_it_had_a_draft",
+      "opened": [
+        "Vendor::calling_then_holding_long(\"ask_user\", LATER, HELD)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "ff415b464fd1c3685260fbf95c0af35be5ad83229600bff363f54c5208341cf3"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__declined_native.snap",
+      "case": "a_declined_question_is_sent_declined_alone_though_it_had_a_draft",
+      "opened": [
+        "Vendor::calling_then_holding_long(\"ask_user\", LATER, HELD)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "6debf65eed86688d51bbf1a0dfe9744b016986956b911b6ddab5adab61eddae8"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__marked_fullscreen.snap",
+      "case": "an_arrow_past_the_window_brings_the_mark_back_and_a_new_question_opens_at_its_top",
+      "opened": [
+        "Vendor::calling_then_holding_long(\"ask_user\", MANY, HELD)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "0c76133c7eb93416732539fbb1ff179f88cfe0eda2ce0b98ac09d62f8d6f8f77"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__marked_native.snap",
+      "case": "an_arrow_past_the_window_brings_the_mark_back_and_a_new_question_opens_at_its_top",
+      "opened": [
+        "Vendor::calling_then_holding_long(\"ask_user\", MANY, HELD)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "71f074f150f3f52921c0093ecfbbf6dc092f59910843526de30aa87c51e849a6"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__mixed_review_fullscreen.snap",
+      "case": "several_answers_a_written_answer_and_a_note_are_sent_together",
+      "opened": [
+        "Vendor::calling_then_holding_long(\"ask_user\", MIXED, HELD)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "c005b1ac5c41b1defe915f3d27df3f9a6de96f80e03975c9f43c897a216e7296"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__mixed_review_native.snap",
+      "case": "several_answers_a_written_answer_and_a_note_are_sent_together",
+      "opened": [
+        "Vendor::calling_then_holding_long(\"ask_user\", MIXED, HELD)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "b96d6b3b49abe7583a753abf604692d43d2f2636f63b9b33f6080c2700697d3f"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__narrow_fullscreen.snap",
+      "case": "the_open_dock_fits_a_resized_window_and_one_too_small_for_it",
+      "opened": [
+        "Vendor::calling(\"ask_user\", LATER, ENDED)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "ea2c384e36c4d0893decd6f88c5c3d46242eebb1487259cc0141c9d491c89502"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__narrow_native.snap",
+      "case": "the_open_dock_fits_a_resized_window_and_one_too_small_for_it",
+      "opened": [
+        "Vendor::calling(\"ask_user\", LATER, ENDED)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "b1f5a5dacdeca0a29469eb0214edda7bb5616f6cdb73d396084cbeca10055e63"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__opened_fullscreen.snap",
+      "case": "questions_opens_the_dock_and_tab_walks_to_the_composer_and_back_with_drafts_kept",
+      "opened": [
+        "Vendor::calling_then_holding_long(\"ask_user\", LATER, HELD)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "35b4aecdc8794198eda19b1f4b05e050866b98e6141cbc24828b497e9455d3e8"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__opened_native.snap",
+      "case": "questions_opens_the_dock_and_tab_walks_to_the_composer_and_back_with_drafts_kept",
+      "opened": [
+        "Vendor::calling_then_holding_long(\"ask_user\", LATER, HELD)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "996ae2f700068e21b2567692c77c46e4238b680418eb203d03553658240ce435"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__refused_fullscreen.snap",
+      "case": "a_refused_submission_keeps_the_draft_and_offers_retry",
+      "opened": [
+        "Vendor::calling(\"ask_user\", MANY, ENDED)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "abb39f57c74a43fa0dcbe8aadca23b93893d9922e0fe545d5a4bb46d1f25b535"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__refused_native.snap",
+      "case": "a_refused_submission_keeps_the_draft_and_offers_retry",
+      "opened": [
+        "Vendor::calling(\"ask_user\", MANY, ENDED)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "745cc001c81c1b03176496177ad119b1b06bf078964d32f82b22b7ab8db4ca1e"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__reopened_fullscreen.snap",
+      "case": "escape_leaves_the_editor_then_closes_the_dock_and_neither_declines",
+      "opened": [
+        "Vendor::calling_then_holding_long(\"ask_user\", LATER, HELD)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "d25715eb5f65102d00e5d6d0d29c9d3199d5d8ca00a21f59edd6c344525800d2"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__reopened_native.snap",
+      "case": "escape_leaves_the_editor_then_closes_the_dock_and_neither_declines",
+      "opened": [
+        "Vendor::calling_then_holding_long(\"ask_user\", LATER, HELD)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "9a3e78a2360a1d02763da2ee78ece115ef68a45810afa8fe57dc18a5b604b178"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__review_fullscreen.snap",
+      "case": "a_batch_submitted_under_a_running_turn_is_accepted_and_goes_once_delivered",
+      "opened": [
+        "Vendor::calling_then_holding(\"ask_user\", LATER, HELD)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "faadaf303f531ca2fea694a347a3938e74a32dcccb79b90a82dd3e75f8beb238"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__review_native.snap",
+      "case": "a_batch_submitted_under_a_running_turn_is_accepted_and_goes_once_delivered",
+      "opened": [
+        "Vendor::calling_then_holding(\"ask_user\", LATER, HELD)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "058d65ac46529dd8fb06cce9f5e16545f35ff8dd3d4a6b460c5c0f0aba1e0007"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__tall_top_fullscreen.snap",
+      "case": "a_note_taller_than_the_window_pages_with_the_question_in_reach",
+      "opened": [
+        "Vendor::calling_then_holding_long(\"ask_user\", LATER, HELD)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "e3841553e6fc6c1b27bad9216480ffbef32d4202ea949f4fec4a2093e7c430d0"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__docking__tall_top_native.snap",
+      "case": "a_note_taller_than_the_window_pages_with_the_question_in_reach",
+      "opened": [
+        "Vendor::calling_then_holding_long(\"ask_user\", LATER, HELD)",
+        "Watched::native(case, columns, rows, vendor)",
+        "Watched::answering(case, columns, rows, vendor)"
+      ],
+      "sha256": "d9464cdfd08dee7edc46bb17f949d748a09b016361de13718f82bbf096058b0d"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__enter_on_another_projects_session_says_how_to_resume_it_there.snap",
@@ -1543,7 +1803,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::native(\"native-context-fresh\", 80, 24, &vendor)"
       ],
-      "sha256": "4860be28fbc8631baa6caeaafc607c186e56567eeb39dfd4ec8bfad6eaab7805"
+      "sha256": "5d377d5934a5a02a13bac5d95d3065439f18a8e7b6c7bf2e7d32c995678ddfc6"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__ctrl_b_opens_the_running_list_during_a_turn_in_native_mode.snap",
@@ -1594,7 +1854,7 @@
       "opened": [
         "Watched::allowing_drawn( &format!(\"native-queue-sent-{named}-{columns}\"), (columns, 48), &vendor, \"bash(*)\", (glyphs, \"native\"), )"
       ],
-      "sha256": "db0cc01b879b07f15a89f66562895eae0b181454354c991903e187bc732b6db7"
+      "sha256": "3a5afacbef67a38e6c0edd5c4bda60584f45b9040b5d34362434fb2e18af5c0f"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__native_queue_sent_all_now_in_unicode_at_80.snap",
@@ -1602,7 +1862,7 @@
       "opened": [
         "Watched::allowing_drawn( &format!(\"native-queue-sent-{named}-{columns}\"), (columns, 48), &vendor, \"bash(*)\", (glyphs, \"native\"), )"
       ],
-      "sha256": "8b64b668d9e1ee570c31ccf5ab8a0cc7681104c34a6f56c075f4dbace6d0b1cd"
+      "sha256": "c05de4dd92ae0b11538c74c1eb5062c5e0b34c88d71adb70603318c89f7e8a78"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__native_queue_sent_highlighted_now_in_ascii_at_40.snap",
@@ -1693,7 +1953,7 @@
         "Vendor::answering(&crate::a_long_answer())",
         "Watched::native(case, 80, 24, vendor)"
       ],
-      "sha256": "851e96c9bc31a8a6dd4e9293df694b2f4b3e4f8e621c6b35bd340e487d3345aa"
+      "sha256": "11c3eaebca9c173a682efbbe9423f48ac2ceb8f59c466ca03771bacee95e2ef7"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__theme_takes_at_most_half_the_window_in_native_mode.snap",

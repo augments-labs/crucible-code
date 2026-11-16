@@ -21,7 +21,7 @@ use std::time::SystemTime;
 
 use crucible_app::Settled;
 use crucible_session::Session;
-use crucible_tui::{Offered, Panel, Renderer, Terminal};
+use crucible_tui::{Glyphs, Offered, Panel, Renderer, Terminal};
 use crucible_types::Compacting;
 
 use crate::cli::Fatal;
@@ -51,8 +51,14 @@ const RECAP_IS: &str = "one request now, and every request after it is smaller";
 const WHOLE_IS: &str = "all of it goes back to the model, on every turn from here";
 const NEVER_IS: &str = "written down; sessions are carried whole from now on";
 
-/// The key row at the foot.
-const KEYS: &str = "enter to choose · esc to carry it whole";
+/// The keys the row at the foot names.
+const KEYS: &[&str] = &["enter to choose", "esc to carry it whole"];
+
+/// [`KEYS`] parted by the glyph set's dot, so a terminal that cannot draw
+/// U+00B7 is never sent it.
+fn footer_keys(glyphs: Glyphs) -> String {
+    KEYS.join(&format!(" {} ", glyphs.dot()))
+}
 
 /// The sentence under the title: how much, from when, and what it costs.
 ///
@@ -119,6 +125,7 @@ pub(super) fn asked<T: Terminal>(
 
     let style = terms.style();
     let said = sentence(carrying, session);
+    let footer = footer_keys(style.glyphs());
     let shown = [
         Offered {
             name: RECAP,
@@ -141,7 +148,7 @@ pub(super) fn asked<T: Terminal>(
         told: &[],
         shown: &shown,
         chosen: 0,
-        footer: KEYS,
+        footer: &footer,
     };
 
     // Left rather than answered means carried whole, which is the answer that
@@ -166,7 +173,7 @@ fn stop<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) {
 
 #[cfg(test)]
 mod tests {
-    use crucible_tui::{Glyphs, Row};
+    use crucible_tui::Row;
 
     use super::*;
 
@@ -196,7 +203,7 @@ mod tests {
             told: &[],
             shown: &shown,
             chosen: 0,
-            footer: KEYS,
+            footer: &footer_keys(Glyphs::Unicode),
         }
         .within(columns, 24, Glyphs::Unicode)
         .iter()
@@ -206,11 +213,26 @@ mod tests {
     }
 
     #[test]
+    fn the_keys_are_parted_with_the_glyph_sets_own_dot() {
+        // Handed to the panel whole, so the dot in it is the one this side
+        // chose: a terminal drawn without Unicode is not sent U+00B7.
+        assert_eq!(
+            footer_keys(Glyphs::Ascii),
+            "enter to choose - esc to carry it whole"
+        );
+        assert_eq!(
+            footer_keys(Glyphs::Unicode),
+            "enter to choose · esc to carry it whole"
+        );
+    }
+
+    #[test]
     fn the_panel_says_the_cost_the_three_answers_and_the_keys() {
         let panel = drawn(80);
         println!("\n{panel}");
 
-        for wanted in [TITLE, RECAP, WHOLE, NEVER, KEYS, "340k carried"] {
+        let keys = footer_keys(Glyphs::Unicode);
+        for wanted in [TITLE, RECAP, WHOLE, NEVER, &keys, "340k carried"] {
             assert!(panel.contains(wanted), "missing {wanted:?} in:\n{panel}");
         }
     }

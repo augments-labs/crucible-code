@@ -1,0 +1,23 @@
+---
+source: tests/whole_screen/docking.rs
+expression: still(&window)
+---
+60x18 cursor 15,4 scrolled 0
+|                                                           │|
+|* running (#s · ↓ 4 · esc to interrupt)                    │|
+|                                                           ●|
+|                                                            |
+|╭──────────────────────────────────────────────────────────╮|
+|│  □ 1 question waiting                                    │|
+|│  › □ Language                                            │|
+|│  Which language?                                         │|
+|│  › 1. ( ) Rust                                           │|
+|│    2. ( ) Python                                         │|
+|│    3. ( ) Write your own answer                          │|
+|╰──────────────────────────────────────────────────────────╯|
+|  pgup pgdn to see more                                     |
+|                                             99% window left|
+|╭──────────────────────────────────────────────────────────╮|
+|│ ›                                                        │|
+|╰──────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)   anthropic · claude-test-1|

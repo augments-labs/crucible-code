@@ -16,7 +16,7 @@
 //! a session that ends says where the rest of it went.
 
 use std::fmt;
-use std::io::{self, IsTerminal, Write as _};
+use std::io::{self, Write as _};
 
 /// Take the alternate screen, turn autowrap off, and put the cursor at the top
 /// of it.
@@ -72,7 +72,7 @@ impl Screen {
     ///
     /// [`ScreenError::Take`] if the sequence could not be written.
     pub fn take() -> Result<Option<Self>, ScreenError> {
-        if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        if !super::raw::keyed() {
             return Ok(None);
         }
 

@@ -22,11 +22,16 @@ fn contexts(transcript: &Transcript) -> Vec<&Fragment> {
 fn static_context_is_assembled_once_in_stable_order_and_charged_before_fullness() {
     let mut scripted = Scripted::new(Script::new(Vec::new()), Tools::new(), Verdict::Allow);
     let before = scripted.runner.state.load;
-    let ancestry = Ancestry::new();
+    let run = scripted.runner.starting(
+        &scripted.events,
+        &scripted.cancel,
+        &scripted.steer,
+        &scripted.aside,
+    );
 
     scripted
         .runner
-        .assemble_context(ancestry)
+        .assemble_context(&run)
         .awaited()
         .expect("the first context");
 
@@ -74,7 +79,7 @@ fn static_context_is_assembled_once_in_stable_order_and_charged_before_fullness(
     let charged = scripted.runner.state.load.tokens();
     scripted
         .runner
-        .assemble_context(ancestry)
+        .assemble_context(&run)
         .awaited()
         .expect("unchanged context");
 
@@ -102,7 +107,9 @@ fn static_context_is_assembled_once_in_stable_order_and_charged_before_fullness(
             "environment",
             "model",
             "permissions",
+            "questions",
             "skills",
+            "task",
             "tools",
             "workspace",
         ],
@@ -125,7 +132,7 @@ fn a_compaction_that_removes_context_forces_a_full_render_on_the_next_pass() {
     };
     scripted.turn("first").expect("a first turn");
     scripted.turn("second").expect("a second turn");
-    assert_eq!(contexts(scripted.runner.state.transcript()).len(), 6);
+    assert_eq!(contexts(scripted.runner.state.transcript()).len(), 7);
 
     let room = scripted.compacting().expect("a structured compaction");
     let Room::Made(compacted) = room else {
@@ -160,7 +167,7 @@ fn a_compaction_that_removes_context_forces_a_full_render_on_the_next_pass() {
 
     scripted.turn("third").expect("the turn after compaction");
     let rendered = contexts(scripted.runner.state.transcript());
-    assert_eq!(rendered.len(), 6);
+    assert_eq!(rendered.len(), 7);
     let workspace = rendered
         .iter()
         .find(|fragment| fragment.section() == WorkspaceSection::ID)
@@ -189,7 +196,7 @@ fn a_pre_context_session_supersedes_every_unknown_section_on_its_first_pass() {
 
     let sent = scripted.sent.lock().unwrap();
     let first = &sent.first().expect("the first upgraded request").context;
-    assert_eq!(first.len(), 6);
+    assert_eq!(first.len(), 7);
     assert!(
         first
             .iter()
@@ -337,14 +344,14 @@ fn a_first_telling_whose_state_was_never_written_is_restated_whole_on_resume() {
         .expect("the first telling's state was recorded");
     assert_eq!(
         told_before(&store, lost).len(),
-        6,
+        7,
         "the first telling's words were not recorded before its state"
     );
 
     let sent = resumed_context(&store.cut_short(lost));
 
     let texts = sent.iter().map(Fragment::text).collect::<Vec<_>>();
-    assert_eq!(sent.len(), 6, "{texts:?}");
+    assert_eq!(sent.len(), 7, "{texts:?}");
     for fragment in &sent {
         let id = fragment.section();
         assert!(

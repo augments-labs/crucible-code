@@ -8,9 +8,10 @@ ask until a rule or a mode answers for you. Two of them leave your machine:
 appear only where the session has something to answer them. Four change nothing
 outside crucible: `bash_output` says what a command left running has printed so
 far; `todo_write` puts down the plan, and you read it above the prompt;
-`ask_user` puts a question to you and waits; and `tool_search` finds the tools
-that are not in the list, because some are held back until they are asked for,
-which keeps a session from paying for schemas it never uses.
+`ask_user` puts a question to you, and waits for the answer or carries on
+until you send it; and `tool_search` finds the tools that are not in the list,
+because some are held back until they are asked for, which keeps a session
+from paying for schemas it never uses.
 
 - [What they all hold themselves to](tools.md)
 - [Reading and changing a file](files.md): `read`, `edit`, `write`

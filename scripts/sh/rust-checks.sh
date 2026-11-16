@@ -197,10 +197,9 @@ nextest_processors() {
 # names the tests that share state and so wait for each other, and its gate
 # profile says how many slots each test holds. The run has that many slots per
 # processor, so the tests that keep a processor busy run at most one per
-# processor and the tests that mostly wait fill the time they leave; the few
-# that assert crucible-raster refused work within 100 ms hold every slot, so
-# they run alone. It runs no documentation example, so rustdoc's own harness
-# runs those in the next section.
+# processor and the tests that mostly wait fill the time they leave. It runs
+# no documentation example, so rustdoc's own harness runs those in the next
+# section.
 check_tests() {
     section "tests"
     local processors threads

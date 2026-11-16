@@ -1,0 +1,14 @@
+---
+source: tests/whole_screen/docking.rs
+expression: still(&window)
+---
+80x9 cursor 7,4 scrollback 22
+|› /questions                                                                    |
+|                                                                                |
+|                                                                                |
+|□ 1 question waiting · Language · /questions                                    |
+|                                                                                |
+|                                                                 99% window left|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|

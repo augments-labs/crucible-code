@@ -85,8 +85,8 @@ NEXTEST = ".config/nextest.toml"
 GATE_PROFILE = "gate"
 # The slots an override of that profile gives a test it runs with no other.
 ALONE = "num-test-threads"
-# The wall-clock bound crucible-raster's refusal tests assert, which a test
-# beside them that keeps a processor busy can make them miss.
+# The name a test's wall-clock bound goes by, which a test beside it that keeps
+# a processor busy can make it miss.
 TIMED = re.compile(r"\bSOON_REFUSED\b")
 
 PLATFORM = {"linux": "linux", "darwin": "macos", "win32": "windows"}.get(
@@ -538,12 +538,9 @@ def self_test():
                 )
                 return 1
         lone = alone(NEXTEST)
-        gradient = "a_gradient_costs_its_pixels_and_its_stops_together"
         for test, expected in (
-            (("crucible-raster", "crucible_raster", f"tests::{gradient}"), True),
-            (("crucible-raster", "hostile", "a_file_refused_for_its_work_is_refused_before_the_work_is_done"), True),
-            (("crucible-raster", "crucible_raster", f"tests::{gradient}_twice"), False),
-            (("crucible-builtins", "crucible_builtins", f"tests::{gradient}"), False),
+            (("crucible-raster", "crucible_raster", "tests::a_gradient_costs_its_pixels_and_its_stops_together"), False),
+            (("crucible-raster", "crucible_raster", "tests::a_file_refused_for_its_work_is_refused_before_the_work_is_done"), False),
         ):
             if lone(*test) != expected:
                 verb = "missed" if expected else "also picked"

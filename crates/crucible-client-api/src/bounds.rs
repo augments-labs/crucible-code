@@ -44,10 +44,10 @@ pub const ITEMS: usize = 128;
 
 /// How many lists and objects deep a frame may nest.
 ///
-/// At least twice what the deepest value here needs, so that a frame of
-/// nothing but opening brackets is refused after this many rather than
-/// recursed into.
-pub const DEPTH: usize = 16;
+/// At least twice what the deepest value here needs, the rows a waiting
+/// question's answer shows, so that a frame of nothing but opening brackets is
+/// refused after this many rather than recursed into.
+pub const DEPTH: usize = 18;
 
 /// The most values one frame may hold, counting every list, object, string,
 /// number, flag and null in it.
@@ -59,6 +59,13 @@ pub const DEPTH: usize = 16;
 /// texts of three — and a question marks at most one choice as recommended,
 /// which adds a flag to that one alone. Eight apiece leaves room for that flag,
 /// the questions around the choices and the snapshot around those.
+///
+/// The rows an answer shows are the one thing this does not make room for:
+/// each list of them is bounded by [`ITEMS`] alone, so a value whose every
+/// choice shows a full list passes each list's bound and is refused whole here,
+/// as [`ErrorCode::TooLarge`], written or read.
+/// Only a question carries rows, and the application's question tool holds so
+/// few that the most it can leave waiting crosses with every row in it.
 pub const VALUES: usize = ITEMS * ITEMS * 8;
 
 /// A short word that identifies something: a provider, a model, a theme.

@@ -94,6 +94,8 @@ mod cache_operations;
 mod compaction;
 mod context;
 mod continuation;
+mod continuity;
+mod deferring;
 mod fast;
 mod guardrails;
 mod instructions;
@@ -398,6 +400,7 @@ impl Scripted {
                 | Event::Reported { .. }
                 | Event::FastRefused { .. }
                 | Event::Steered { .. }
+                | Event::Waiting { .. }
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
                 | Event::Failed { .. } => None,
@@ -432,6 +435,7 @@ impl Scripted {
                 | Event::Reported { .. }
                 | Event::FastRefused { .. }
                 | Event::Steered { .. }
+                | Event::Waiting { .. }
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
                 | Event::Failed { .. } => None,
@@ -464,6 +468,7 @@ impl Scripted {
                 | Event::Used { .. }
                 | Event::PlanLimits { .. }
                 | Event::Steered { .. }
+                | Event::Waiting { .. }
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
                 | Event::Failed { .. } => None,
@@ -508,6 +513,7 @@ impl Scripted {
                 | Event::Used { .. }
                 | Event::PlanLimits { .. }
                 | Event::Steered { .. }
+                | Event::Waiting { .. }
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
                 | Event::Failed { .. } => None,
@@ -542,6 +548,7 @@ impl Scripted {
                 | Event::Used { .. }
                 | Event::PlanLimits { .. }
                 | Event::Steered { .. }
+                | Event::Waiting { .. }
                 | Event::Spent { .. }
                 | Event::Failed { .. } => None,
             })
@@ -575,6 +582,7 @@ impl Scripted {
                 | Event::Used { .. }
                 | Event::PlanLimits { .. }
                 | Event::Steered { .. }
+                | Event::Waiting { .. }
                 | Event::TurnFinished { .. }
                 | Event::Failed { .. } => None,
             })
@@ -1225,8 +1233,8 @@ fn the_second_request_carries_the_first_pass_in_full() {
 
     assert_eq!(
         scripted.asked(),
-        [7, 9],
-        "the first request adds six sections; the second adds only call and result"
+        [8, 10],
+        "the first request adds seven sections; the second adds only call and result"
     );
 }
 

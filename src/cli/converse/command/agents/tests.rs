@@ -265,7 +265,7 @@ fn the_closing_lines_say_more_are_offered_and_that_the_catalog_was_not_refreshed
 /// What `printed` says of `listing` on a window `columns` wide, a row each.
 fn said(listing: &Listing, columns: usize) -> Vec<String> {
     let mut renderer = Renderer::new(crucible_tui::Recording::new(columns, 24));
-    printed(&mut renderer, listing).expect("the terminal to be written");
+    printed(&mut renderer, listing, Glyphs::Unicode).expect("the terminal to be written");
     renderer.terminal().picture().said()
 }
 
@@ -467,4 +467,37 @@ fn every_state_of_the_list_fits_every_window_it_is_given() {
             }
         }
     }
+}
+
+#[test]
+fn the_keys_and_the_printed_lines_are_parted_with_the_glyph_sets_own_dot() {
+    // A terminal set to ASCII glyphs is not sent U+00B7, on the panel or on
+    // the lines printed where there is no room for it.
+    for (glyphs, takes) in [
+        (Glyphs::Ascii, "Enter to open - Esc to cancel"),
+        (Glyphs::Unicode, "Enter to open · Esc to cancel"),
+    ] {
+        let mut listing = three();
+        let rows: Vec<String> = listing
+            .laid(80, 24, glyphs)
+            .0
+            .iter()
+            .map(Row::text)
+            .collect();
+        assert!(rows.iter().any(|row| row.contains(takes)), "{rows:?}");
+    }
+
+    let listing = Listing::new(
+        vec![listed("goose", &["1.0.0"], "Apache-2.0", &[])],
+        false,
+        None,
+        None,
+    );
+    let mut renderer = Renderer::new(crucible_tui::Recording::new(80, 24));
+    printed(&mut renderer, &listing, Glyphs::Ascii).expect("the terminal to be written");
+    let rows = renderer.terminal().picture().said();
+    assert_eq!(
+        rows.first().map(String::as_str),
+        Some("goose 1.0.0 - Apache-2.0 - not installed")
+    );
 }

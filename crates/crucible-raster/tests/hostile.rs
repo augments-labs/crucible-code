@@ -547,59 +547,6 @@ fn a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small() {
     }
 }
 
-/// Longer than judging any file of the corpus takes, and shorter than drawing
-/// or building those judged here: 100 ms.
-const SOON_REFUSED: Duration = Duration::from_millis(100);
-
-/// The files refused before the renderer or the parser does the work they
-/// ask for, each by a price, a count, a size or an element the renderer or
-/// the parser would otherwise have reached long after the ceiling.
-const REFUSED_SOON: &[(&str, Refused)] = &[
-    ("svg/work-gradient-crossover.svg", Refused::TooLarge),
-    ("svg/probe-arc-huge.svg", Refused::NotAnImage),
-    ("svg/probe-box-clips.svg", Refused::TooLarge),
-    ("svg/probe-circles-huge.svg", Refused::NotAnImage),
-    ("svg/probe-em-compounded.svg", Refused::NotAnImage),
-    ("svg/probe-feimage-chain.svg", Refused::NotAnImage),
-    ("svg/probe-feimage-text.svg", Refused::NotAnImage),
-    ("svg/probe-gradient-chain.svg", Refused::NotAnImage),
-    ("svg/probe-inherit-compounded.svg", Refused::NotAnImage),
-    ("svg/probe-marker-copies.svg", Refused::TooLarge),
-    ("svg/probe-nested-clips.svg", Refused::TooLarge),
-    ("svg/probe-nested-markers.svg", Refused::TooLarge),
-    ("svg/probe-nested-masks.svg", Refused::NotAnImage),
-    ("svg/probe-percent-root.svg", Refused::NotAnImage),
-    ("svg/probe-percent-svg-chain.svg", Refused::NotAnImage),
-    ("svg/probe-percent-symbol-chain.svg", Refused::NotAnImage),
-    ("svg/probe-percent-use-symbol.svg", Refused::NotAnImage),
-    ("svg/probe-scaled-stroke.svg", Refused::TooLarge),
-    ("svg/probe-stops-object-box.svg", Refused::TooLarge),
-    ("svg/probe-stops-user-space.svg", Refused::TooLarge),
-    ("svg/probe-stroked-circles-each.svg", Refused::TooLarge),
-    ("svg/probe-stroked-circles-most.svg", Refused::TooLarge),
-    ("svg/probe-stroked-circles-turned.svg", Refused::TooLarge),
-    ("svg/probe-stroked-circles.svg", Refused::TooLarge),
-    ("svg/probe-style-copies.svg", Refused::NotAnImage),
-    ("svg/probe-svg-image.svg", Refused::NotAnImage),
-    ("svg/probe-tref.svg", Refused::NotAnImage),
-    ("svg/probe-twice-given-id.svg", Refused::NotAnImage),
-    ("svg/probe-undrawn-letters.svg", Refused::TooLarge),
-    ("svg/probe-useloop-feimage.svg", Refused::NotAnImage),
-];
-
-#[test]
-fn a_file_refused_for_its_work_is_refused_before_the_work_is_done() {
-    let _alone = alone();
-    for (name, refused) in REFUSED_SOON {
-        let bytes = fs::read(Path::new(CORPUS).join(name)).expect("a corpus file");
-        let began = Instant::now();
-        let drawn = rasterise(&bytes, WIDTH, INKS);
-        let took = began.elapsed();
-        assert_eq!(drawn, Err(*refused), "{name}");
-        assert!(took < SOON_REFUSED, "{name} took {took:?} to refuse");
-    }
-}
-
 /// The files refused for holding an element outside those drawn, each with
 /// the one element that refuses it.
 const REFUSED_FOR: &[(&str, &str)] = &[

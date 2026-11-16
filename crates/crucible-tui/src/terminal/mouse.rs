@@ -46,7 +46,7 @@
 
 use std::cell::Cell;
 use std::fmt;
-use std::io::{self, IsTerminal, Write as _};
+use std::io::{self, Write as _};
 
 use super::raw::RawError;
 
@@ -96,7 +96,7 @@ impl Reporting {
     ///
     /// [`RawError::Enter`] if the sequence could not be written.
     pub fn on() -> Result<Option<Self>, RawError> {
-        if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        if !super::raw::keyed() {
             return Ok(None);
         }
 

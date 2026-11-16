@@ -1,11 +1,13 @@
 //! What a call is asked about, and what a key does to the panel asking it.
 
 use crucible_tools::{Account, Command, Sensitivity, Target, Verdict};
-use crucible_tui::{Key, Pressed};
+use crucible_tui::{Glyphs, Key, Pressed};
 use crucible_types::{ToolArgs, ToolCall, ToolId};
 
 use super::region::{Ended, Moved};
-use super::{ANSWERS, Answered, CANCEL, EXPLAIN, HIDE, Standing, Words, answered, footer, moving};
+use super::{
+    ANSWERS, Answered, CANCEL, EXPLAIN, HIDE, Standing, Words, answered, footer, more, moving,
+};
 
 /// A call by the name a tool answers to on the wire.
 fn call(name: &str) -> ToolCall {
@@ -413,4 +415,11 @@ fn a_command_that_will_not_outlive_its_turn_says_nothing_about_it() {
         "{:?}",
         words.statement
     );
+}
+
+#[test]
+fn the_word_that_there_is_more_carries_the_glyph_sets_arrows() {
+    // Under the ASCII set the arrows would draw as boxes.
+    assert_eq!(more(Glyphs::Ascii), "^v to see more");
+    assert_eq!(more(Glyphs::Unicode), "↑↓ to see more");
 }

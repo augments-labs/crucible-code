@@ -3,12 +3,21 @@
 //! Most of what a model does not know it can find out by reading. What it
 //! cannot read is which of several shapes somebody wants, and guessing there is
 //! how a turn's whole output turns out to be about the wrong thing. So this
-//! tool stops and asks, and the answer comes back inside the same call rather
-//! than as a paragraph the person has to reply to in prose.
+//! tool stops and asks, and by default the answer comes back inside the same
+//! call rather than as a paragraph the person has to reply to in prose.
+//!
+//! **A call may choose not to wait.** With `mode` set to deferred the questions
+//! are held by [`crucible_tools::Deferred`], and the call returns at once with
+//! the id they are held as; the answer reaches the model later, as a message
+//! from the person. Nowhere to hold them, or no room left, is a refusal the
+//! model can correct and never a quiet fall back to waiting: a model that chose
+//! not to wait has work lined up behind the call, and blocking would stall the
+//! very turn that asked not to be.
 //!
 //! **It changes nothing and reaches nothing.** No file is touched, no process
-//! is started and nothing leaves the machine, so there is no target to name and
-//! nothing a rule could usefully be written about. It carries a read-only
+//! is started and nothing leaves the machine; a call that does not wait leaves
+//! its questions only in the session's own registry. So there is no target to
+//! name and nothing a rule could usefully be written about. It carries a read-only
 //! sensitivity over a target that resolves to nothing, which is the answer
 //! [`crate::ToolSearch`] carries for the same reason.
 //!
@@ -33,8 +42,9 @@ use std::sync::{Arc, LazyLock};
 
 use crucible_runtime::BoxFuture;
 use crucible_tools::{
-    Approved, DescribeTool, Put, Sensitivity, Summary, Target, Tool, ToolContext, ToolError,
-    ToolOutput,
+    Approved, Deferred, DescribeTool, FEWEST_ANSWERS, MOST_ANSWERS, MOST_HEADING_BYTES,
+    MOST_QUESTIONS, MOST_SHOWS, MOST_TEXT_BYTES, Put, Sensitivity, Summary, Target, Tool,
+    ToolContext, ToolError, ToolOutput, is_one_line,
 };
 use crucible_types::{Answer, Answered, Question, ToolArgs};
 
@@ -58,61 +68,42 @@ const ANSWER: &str = "answer";
 const SAYS: &str = "says";
 const SHOWS: &str = "shows";
 const RECOMMENDED: &str = "recommended";
+const MODE: &str = "mode";
 
-/// How many questions one call may put.
-///
-/// Four is already more than anybody wants to answer in a row before the work
-/// carries on. Past it the call has stopped being a question and become a form,
-/// which is a thing to write in the prompt rather than to put on a panel.
-const MOST_QUESTIONS: usize = 4;
+/// The two ways a call can wait for its answer, spelled as the model sends them.
+const BLOCKING: &str = "blocking";
+const DEFERRED: &str = "deferred";
+/// Both, as the schema offers them and the parse accepts them.
+const MODES: &[&str] = &[BLOCKING, DEFERRED];
 
-/// How many answers one question may offer, and how few.
-///
-/// Eight is where a numbered list stops being read and starts being scanned.
-/// Two is the floor because a question offering one answer is not a question —
-/// it is a statement with a key to press, and the model wanting that should say
-/// it in its reply. The two this program adds are not counted: they are the way
-/// out rather than answers to what was asked.
-const MOST_ANSWERS: usize = 8;
-const FEWEST_ANSWERS: usize = 2;
-
-/// How long a heading may be, in bytes.
-///
-/// Every heading is drawn on one row across the top of the panel, so what
-/// bounds this is not what a heading needs but what the row can hold: four of
-/// them at eighty columns leaves about fifteen each, marks and gaps included.
-/// Past this the row gives way to a count, and a heading nobody ever sees is a
-/// heading the model spent tokens on for nothing.
-const HEADING_SHORT: usize = 24;
-
-/// How many rows of a specimen one answer may carry.
-///
-/// The panel draws this many and no more, so a call that sent more would be
-/// writing rows nobody will ever see.
-const MOST_SHOWS: usize = 10;
-
-/// How long an answer, its one-line meaning or a row of a specimen may be, in
-/// bytes.
-///
-/// The same length a question gets: an answer is folded across the panel the
-/// way the question above it is, so what bounds it is the reader's patience
-/// rather than a row — and a specimen row past the panel's width is clipped,
-/// which its own description says.
-const SHORT: usize = 500;
-
-/// How long a question may be, in bytes.
-const LONG: usize = 500;
+// How many questions one call may put, how many answers each may offer, how
+// many rows a specimen may show and how long each text may be are
+// `crucible_tools`'s: a question that waits for its answer is held there to the
+// same bounds, so what this accepts is what may wait.
+//
+// Four questions is already more than anybody wants to answer in a row before
+// the work carries on. Past it the call has stopped being a question and become
+// a form, which is a thing to write in the prompt rather than to put on a
+// panel. Eight answers is where a numbered list stops being read and starts
+// being scanned. Two is the floor because a question offering one answer is
+// not a question — it is a statement with a key to press, and the model wanting
+// that should say it in its reply. The two this program adds are not counted:
+// they are the way out rather than answers to what was asked. And the panel
+// draws ten rows of a specimen and no more, so a call that sent more would be
+// writing rows nobody will ever see.
 
 /// The root `description` is the tool's own; everything below it describes the
 /// arguments. Every bound is spelled by the constant the code refuses with,
 /// so the sentence the model reads cannot drift from the refusal it meets.
 static SCHEMA: LazyLock<String> = LazyLock::new(|| {
     Schema {
-        about: "Asks the person at the keyboard to choose, and waits. Use it when the work forks \
-                on what only they can settle and a wrong guess would waste the turn; not for what \
-                reading the workspace would show or to confirm what they said. Ask once, with \
-                every question the fork needs."
-            .into(),
+        about: format!(
+            "Asks the person at the keyboard to choose, and waits. Use it when the work forks \
+             on what only they can settle and a wrong guess would waste the turn; not for what \
+             reading the workspace would show or to confirm what they said. Ask once, with every \
+             question the fork needs. Set {MODE} to {DEFERRED} when the answer is needed later \
+             and there is work to do that does not depend on it."
+        ),
         fields: vec![Field {
             name: QUESTIONS,
             about: format!(
@@ -125,8 +116,8 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
                     Field {
                         name: HEADING,
                         about: format!(
-                            "Two or three words naming the question, in one row with the others. \
-                             At most {HEADING_SHORT} bytes."
+                            "Two or three words on one line, naming the question beside the \
+                             others. At most {MOST_HEADING_BYTES} bytes."
                         ),
                         needed: true,
                         shape: Shape::Text,
@@ -134,7 +125,7 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
                     Field {
                         name: QUESTION,
                         about: format!(
-                            "The question, written to be answered. At most {LONG} bytes."
+                            "The question, written to be answered. At most {MOST_TEXT_BYTES} bytes."
                         ),
                         needed: true,
                         shape: Shape::Text,
@@ -159,16 +150,16 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
                                 Field {
                                     name: ANSWER,
                                     about: format!(
-                                        "The answer's name, in a few words. At most {SHORT} \
-                                         bytes."
+                                        "The answer's name: a few words on one line. At most \
+                                         {MOST_TEXT_BYTES} bytes."
                                     ),
                                     needed: true,
                                     shape: Shape::Text,
                                 },
                                 Field {
                                     name: SAYS,
-                                    about: "One line on what choosing it means, where the name \
-                                            does not say it."
+                                    about: "What choosing it means, where the name does not say \
+                                            it."
                                         .into(),
                                     needed: false,
                                     shape: Shape::Text,
@@ -186,7 +177,8 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
                                     about: format!(
                                         "For an answer that is a shape, such as a layout, a \
                                          format or a line of output: its rows, drawn as given \
-                                         under it. At most {MOST_SHOWS} rows of {SHORT} bytes."
+                                         under it. At most {MOST_SHOWS} rows of \
+                                         {MOST_TEXT_BYTES} bytes."
                                     ),
                                     needed: false,
                                     shape: Shape::List {
@@ -204,6 +196,14 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
                 fewest: Some(1),
                 most: Some(MOST_QUESTIONS),
             },
+        }, Field {
+            name: MODE,
+            about: format!(
+                "{DEFERRED} returns an id at once, and the answer arrives later as a message \
+                 from the person. Defaults to {BLOCKING}."
+            ),
+            needed: false,
+            shape: Shape::Choice(MODES),
         }],
     }
     .text()
@@ -212,21 +212,56 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
 /// Puts questions to whoever is at the keyboard.
 pub struct AskUser {
     put: Arc<dyn Put>,
+    /// Where a call that does not wait leaves its questions, where anything
+    /// was given to hold them.
+    held: Option<Deferred>,
 }
 
 impl AskUser {
-    /// A tool that asks through `put`.
+    /// A tool that asks through `put`, and refuses a call that will not wait.
     #[must_use]
     pub fn new(put: Arc<dyn Put>) -> Self {
-        Self { put }
+        Self { put, held: None }
     }
+
+    /// The same tool, holding a call that will not wait in `held` until it is
+    /// answered.
+    #[must_use]
+    pub fn deferring(self, held: Deferred) -> Self {
+        Self {
+            held: Some(held),
+            ..self
+        }
+    }
+
+    /// How the call waits for its answer, refused where it asks not to and
+    /// there is nowhere to hold the questions.
+    fn mode<'a>(&'a self, args: &Args) -> Result<Mode<'a>, ToolError> {
+        match args.choice(MODE, BLOCKING, MODES)? {
+            DEFERRED => self.held.as_ref().map(Mode::Deferred).ok_or_else(|| {
+                args.wrong(format!(
+                    "nothing in this session can hold a question for later, so {MODE} {DEFERRED} \
+                     is not available; ask with {MODE} {BLOCKING}, or in your reply"
+                ))
+            }),
+            _ => Ok(Mode::Blocking),
+        }
+    }
+}
+
+/// How one call waits for its answer.
+enum Mode<'a> {
+    /// In the call, through [`Put`].
+    Blocking,
+    /// Later: the questions wait here, and the call returns at once.
+    Deferred(&'a Deferred),
 }
 
 impl std::fmt::Debug for AskUser {
     /// Written by hand because what it holds is a trait object this crate does
     /// not own, the way `crucible-tools` writes one for `dyn Tool`. There is
-    /// nothing to redact: the questions arrive with the call and are never held
-    /// here.
+    /// nothing to redact: the questions arrive with the call, and the ones that
+    /// wait are held by the registry rather than here.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("AskUser")
     }
@@ -245,12 +280,14 @@ impl DescribeTool for AskUser {
 impl Tool for AskUser {
     fn validate(&self, args: &ToolArgs) -> Result<(), ToolError> {
         let args = Args::parse(NAME, args)?;
-        questions(&args).map(drop)
+        questions(&args)?;
+        self.mode(&args).map(drop)
     }
 
     /// Reads nothing and reaches nothing. It puts words on the screen and waits
-    /// for a key, so there is no target to name and nothing a rule could
-    /// usefully be written about.
+    /// for a key, or leaves them in the session's registry to be answered later,
+    /// so there is no target to name and nothing a rule could usefully be
+    /// written about.
     fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
         Sensitivity::ReadOnly {
             target: Target::pathless(),
@@ -284,13 +321,28 @@ impl Tool for AskUser {
             let args = Args::parse(NAME, approved.args())?;
             let asked = questions(&args)?;
 
-            let Some(given) = self.put.put(&asked).await else {
-                return Ok(ToolOutput::ok(
-                    "Nobody answered. Ask in the prompt instead, in your own words.",
-                ));
-            };
+            match self.mode(&args)? {
+                Mode::Blocking => {
+                    let Some(given) = self.put.put(&asked).await else {
+                        return Ok(ToolOutput::ok(
+                            "Nobody answered. Ask in the prompt instead, in your own words.",
+                        ));
+                    };
 
-            Ok(ToolOutput::ok(said(&asked, &given)))
+                    Ok(ToolOutput::ok(said(&asked, &given)))
+                }
+                Mode::Deferred(held) => {
+                    let id = held.register(asked).map_err(|full| {
+                        args.wrong(format!("{full}; ask with {MODE} {BLOCKING} instead"))
+                    })?;
+
+                    Ok(ToolOutput::ok(format!(
+                        "Asked as {id}, without waiting. The answer will come later, as a \
+                         message from the person. Until then carry on only with work that does \
+                         not depend on it, and do not ask the same thing again."
+                    )))
+                }
+            }
         })
     }
 }
@@ -298,7 +350,7 @@ impl Tool for AskUser {
 /// Every question a call asked for, refused where it asked for something this
 /// cannot draw.
 fn questions(args: &Args) -> Result<Vec<Question>, ToolError> {
-    args.only(&[QUESTIONS])?;
+    args.only(&[QUESTIONS, MODE])?;
 
     let Some(written) = args.list(QUESTIONS)? else {
         return Err(args.wrong(format!("{QUESTIONS} is required and must be a list")));
@@ -331,8 +383,8 @@ fn questions(args: &Args) -> Result<Vec<Question>, ToolError> {
 fn question(args: &Args) -> Result<Question, ToolError> {
     args.only(&[HEADING, QUESTION, SEVERAL, ANSWERS])?;
 
-    let heading = bounded(args, HEADING, args.text(HEADING)?, HEADING_SHORT)?;
-    let asked = bounded(args, QUESTION, args.text(QUESTION)?, LONG)?;
+    let heading = label(args, HEADING, args.text(HEADING)?, MOST_HEADING_BYTES)?;
+    let asked = bounded(args, QUESTION, args.text(QUESTION)?, MOST_TEXT_BYTES)?;
 
     let Some(written) = args.list(ANSWERS)? else {
         return Err(args.wrong(format!("{ANSWERS} is required and must be a list")));
@@ -387,11 +439,11 @@ fn question(args: &Args) -> Result<Question, ToolError> {
 fn answer(args: &Args) -> Result<Answer, ToolError> {
     args.only(&[ANSWER, SAYS, SHOWS, RECOMMENDED])?;
 
-    let name = bounded(args, ANSWER, args.text(ANSWER)?, SHORT)?;
+    let name = label(args, ANSWER, args.text(ANSWER)?, MOST_TEXT_BYTES)?;
     let mut answer = Answer::new(name);
 
     if let Some(says) = args.optional_text(SAYS)? {
-        answer = answer.saying(bounded(args, SAYS, says, SHORT)?);
+        answer = answer.saying(bounded(args, SAYS, says, MOST_TEXT_BYTES)?);
     }
 
     if args.flag(RECOMMENDED, false)? {
@@ -407,7 +459,7 @@ fn answer(args: &Args) -> Result<Answer, ToolError> {
             )));
         }
         for row in &shows {
-            bounded(args, SHOWS, row, SHORT)?;
+            bounded(args, SHOWS, row, MOST_TEXT_BYTES)?;
         }
         answer = answer.showing(shows);
     }
@@ -421,15 +473,34 @@ fn answer(args: &Args) -> Result<Answer, ToolError> {
 /// request pays for and what a panel has to lay out, and the first of those is
 /// counted in bytes.
 ///
-/// Length and nothing else. Whether a field may be blank is already answered
-/// where it is read — a heading and a question are required and a blank one is
-/// a missing one, while **a blank row of a specimen is a blank line in what the
+/// Length and nothing else; whether a label stays on its line is [`label`]'s.
+/// Whether a field may be blank is already answered where it is read — a
+/// heading and a question are required and a blank one is a missing one, while
+/// **a blank row of a specimen is a blank line in what the
 /// answer would look like**, which is a row somebody wrote on purpose.
 fn bounded<'a>(args: &Args, field: &str, text: &'a str, most: usize) -> Result<&'a str, ToolError> {
     if text.len() > most {
         return Err(args.wrong(format!(
             "{field} is {} bytes, and at most {most} are allowed",
             text.len()
+        )));
+    }
+
+    Ok(text)
+}
+
+/// `text`, bounded as [`bounded`] bounds it, or a refusal where it breaks its
+/// line or holds a control character.
+///
+/// For a heading and an answer, which the answer is said under as labels, each
+/// on a line of its own: one carrying a line of its own could read there as
+/// something the person wrote. A question and what an answer says or shows
+/// are not labels, and may break their lines.
+fn label<'a>(args: &Args, field: &str, text: &'a str, most: usize) -> Result<&'a str, ToolError> {
+    let text = bounded(args, field, text, most)?;
+    if !is_one_line(text) {
+        return Err(args.wrong(format!(
+            "{field} must stay on one line, with no line break or control character"
         )));
     }
 
@@ -455,7 +526,10 @@ fn repeated<'a>(every: impl Iterator<Item = &'a str>) -> Option<&'a str> {
 /// The question is repeated rather than referred to by number, because the
 /// answer is read in a transcript where the call's own arguments are not on
 /// screen — a line saying *3 → Rust* would need the reader to go and find what
-/// three was.
+/// three was. It is read back on one line, whatever line breaks it holds: one
+/// line per question is what lets the model tell which words are an answer,
+/// and a question written to carry a line shaped like one would otherwise read
+/// back as an answer nobody gave.
 fn said(asked: &[Question], given: &[Answered]) -> String {
     let mut text = String::new();
 
@@ -467,7 +541,8 @@ fn said(asked: &[Question], given: &[Answered]) -> String {
             chosen.join(", ")
         };
 
-        let _ = writeln!(text, "{} → {chosen}", question.question());
+        let asked = flattened(question.question());
+        let _ = writeln!(text, "{asked} → {chosen}");
         if !answered.note().is_empty() {
             let _ = writeln!(text, "    they added: {}", answered.note());
         }
@@ -485,4 +560,17 @@ fn said(asked: &[Question], given: &[Answered]) -> String {
     }
 
     text
+}
+
+/// `text` on one line, each character that would break it read as a space.
+fn flattened(text: &str) -> String {
+    text.chars()
+        .map(|one| {
+            if is_one_line(one.encode_utf8(&mut [0; 4])) {
+                one
+            } else {
+                ' '
+            }
+        })
+        .collect()
 }

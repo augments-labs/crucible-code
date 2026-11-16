@@ -163,6 +163,19 @@ pub struct Startup<'a> {
     /// plan is: whoever answers holds the other end, and nothing here has to
     /// know whether that is a terminal.
     pub asking: Arc<dyn Put>,
+    /// The handle on the model's questions asked without waiting, through
+    /// which the front end reads what waits and answers it: it keeps a clone,
+    /// as it keeps a turn's `Cancel`, and answers through
+    /// [`crate::client::answer`] and [`crate::client::turn`]. `None` offers
+    /// the model no such questions, and the question tool refuses one.
+    ///
+    /// The conversation built here is the handle's one holder: a handle
+    /// another conversation still holds fails the start with
+    /// [`AppError::QuestionsHeld`], and one whose holder was dropped, or
+    /// whose start failed, can be given to the next. Holding it empties it onto the session
+    /// the conversation opens, and a session resumed at start brings its own
+    /// waiting questions back into it.
+    pub questions: Option<crate::client::Questions>,
     /// Which MCP servers written down under `mcp.servers` this run hosts, by
     /// name and in the order the command line gave them. Empty is the ordinary
     /// run: a configuration file lists servers somebody could start, and this
@@ -387,6 +400,12 @@ fn assembled(startup: &Startup<'_>, agents: &'static Registry) -> Result<Convers
             None => runner,
         }
     });
+    // The root runner delivers what the front end settles; one it starts
+    // asks through the root's tool. Before the route below is opened, so the
+    // era moves onto that route's session with everything else.
+    if let Some(questions) = startup.questions.clone() {
+        conversation = conversation.holding(questions)?;
+    }
     recorded(&mut conversation, &runtime);
     // The runs of the route the conversation opens on, and the steps on every
     // other agent, are made together: a step on an agent the conversation is
@@ -1881,11 +1900,17 @@ fn tools(
     // moment is the only thing it exists for — a tool nobody can find when they
     // need it is a tool that is not there.
     //
-    // And only where somebody is at a keyboard. A redirected run has nobody to
+    // And only where somebody can answer: at a keyboard, or a front end that
+    // holds questions for later. A redirected run with neither has nobody to
     // ask, so the schema would be spent saying there is no one here — the same
     // argument the search below makes about a session that defers nothing.
-    if terminal {
-        tools.add_builtin(AskUser::new(Arc::clone(asking)))?;
+    // Holding questions for later is no keyboard: a question that waits for
+    // its answer is answered there as it is wherever nobody can be asked.
+    let asker = AskUser::new(Arc::clone(asking));
+    match &startup.questions {
+        Some(questions) => tools.add_builtin(questions.asking(asker))?,
+        None if terminal => tools.add_builtin(asker)?,
+        None => {}
     }
 
     // Last, and only where there is anything to find. A search that can only
