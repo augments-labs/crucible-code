@@ -27,8 +27,8 @@
 //!   has no glyph for most of the world's scripts, so a row whose text holds
 //!   a letter outside [`PICTURE_LETTERS`] refuses the picture and the diagram
 //!   keeps its text drawing, which the terminal's own fonts draw.
-//! - **Bounded.** The picture is refused past [`Svg::MOST`] bytes, checked as
-//!   each row is written and once more whole.
+//! - **Bounded.** The picture is refused past [`Svg::MOST`] bytes: its text is
+//!   checked as each row is written, and the whole picture once it is.
 
 use std::fmt::Write as _;
 
