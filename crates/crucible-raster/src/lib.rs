@@ -208,7 +208,7 @@ pub fn decode(bytes: &[u8]) -> Result<Pixels, Refused> {
 ///
 /// What the drawing would hold and compute is counted before it is drawn: a
 /// drawing that would hold more than [`MOST_DECODED`] bytes of pixmaps at once,
-/// or ask for more work than the renderer does in 20 ms, is refused, and so is
+/// or ask for more work than the renderer does in 45 ms, is refused, and so is
 /// a stroke whose outline reaches more than a million pixels from the origin,
 /// which the renderer outlines at a quarter pixel however long it is.
 ///
@@ -456,7 +456,7 @@ enum Walk {
 
 /// The most time the copies [`copying`] counts may take the tree parser to
 /// make: 16 ms, so that with the rest of the tree a picture is built within
-/// the 20 ms the dearest drawing takes.
+/// the 45 ms the dearest drawing takes.
 const MOST_COPYING_NS: u64 = 16_000_000;
 
 /// The time the tree parser takes to make a copy of one element, without what

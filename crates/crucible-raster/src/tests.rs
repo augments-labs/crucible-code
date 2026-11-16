@@ -1030,22 +1030,23 @@ fn turbulent(count: u32, across: u32, down: u32) -> String {
 #[test]
 fn filter_work_is_refused_one_row_past_its_ceiling() {
     let _alone = alone();
-    // The rectangle is painted too, at 100 pixels to 6.25 steps: 139 rows of
-    // 10 octaves are 139 000 steps and 869 of paint, which is within the
-    // ceiling, and 140 rows are 140 000 and 875, which is not.
-    let at = turbulent(1, 100, 139);
+    // The rectangle is painted too, at 100 pixels to 6.25 steps: 318 rows of
+    // 10 octaves are 318 000 steps and 1 988 of paint, which is within the
+    // ceiling, and 319 rows are 319 000 and 1 994, which is not.
+    let at = turbulent(1, 100, 318);
     assert!(rasterise(at.as_bytes(), 100, &[]).is_ok());
-    let past = turbulent(1, 100, 140);
+    let past = turbulent(1, 100, 319);
     assert_eq!(rasterise(past.as_bytes(), 100, &[]), Err(Refused::TooLarge));
 }
 
 #[test]
 fn filter_work_is_added_up_over_the_whole_drawing() {
     let _alone = alone();
-    // Each rectangle is 80 000 steps and passes alone; two are past the ceiling.
-    let one = turbulent(1, 100, 80);
+    // Each rectangle is 170 000 steps and passes alone; two are past the
+    // ceiling.
+    let one = turbulent(1, 100, 170);
     assert!(rasterise(one.as_bytes(), 100, &[]).is_ok());
-    let two = turbulent(2, 100, 80);
+    let two = turbulent(2, 100, 170);
     assert_eq!(rasterise(two.as_bytes(), 200, &[]), Err(Refused::TooLarge));
 }
 
@@ -1075,14 +1076,14 @@ fn a_merge_is_counted_by_the_inputs_it_draws() {
     // The renderer draws the whole region once for every input of a merge, and
     // the inputs are limited only by the size of the file. A region of 100
     // pixels is 100 steps for each, and 20 more for the rectangle painted:
-    // 1 399 inputs are 139 920 steps, and one more is past the ceiling.
+    // 3 199 inputs are 319 920 steps, and one more is past the ceiling.
     let merged = |inputs: usize| {
         let nodes = r#"<feMergeNode in="SourceGraphic"/>"#.repeat(inputs);
         filtered(&format!("<feMerge>{nodes}</feMerge>"), 1, 10, 10)
     };
-    assert!(rasterise(merged(1_399).as_bytes(), 10, &[]).is_ok());
+    assert!(rasterise(merged(3_199).as_bytes(), 10, &[]).is_ok());
     assert_eq!(
-        rasterise(merged(1_400).as_bytes(), 10, &[]),
+        rasterise(merged(3_200).as_bytes(), 10, &[]),
         Err(Refused::TooLarge)
     );
     // A merge with no input at all is still one step, not none.
@@ -1102,21 +1103,21 @@ fn covered(count: usize, shape: &str) -> String {
 #[test]
 fn a_shape_is_counted_by_the_pixels_it_covers_inside_the_canvas() {
     let _alone = alone();
-    // One hundred and sixty shapes of 875 steps are 140 000 steps, and one
-    // more is past it.
+    // Three hundred and sixty-five shapes of 875 steps are 319 375 steps, and
+    // one more is past it.
     let page = r#"<rect width="100" height="140"/>"#;
-    assert!(rasterise(covered(160, page).as_bytes(), 100, &[]).is_ok());
+    assert!(rasterise(covered(365, page).as_bytes(), 100, &[]).is_ok());
     assert_eq!(
-        rasterise(covered(161, page).as_bytes(), 100, &[]),
+        rasterise(covered(366, page).as_bytes(), 100, &[]),
         Err(Refused::TooLarge)
     );
     // Only what is on the canvas counts: a shape far larger than the page
     // covers the same 14 000 pixels, and the ceiling is reached at the same
     // shape.
     let beyond = r#"<rect x="-5000" y="-5000" width="10000" height="10000"/>"#;
-    assert!(rasterise(covered(160, beyond).as_bytes(), 100, &[]).is_ok());
+    assert!(rasterise(covered(365, beyond).as_bytes(), 100, &[]).is_ok());
     assert_eq!(
-        rasterise(covered(161, beyond).as_bytes(), 100, &[]),
+        rasterise(covered(366, beyond).as_bytes(), 100, &[]),
         Err(Refused::TooLarge)
     );
     // A shape off the canvas covers nothing, and costs only what any shape
@@ -1137,17 +1138,17 @@ fn a_stroke_and_a_fill_are_counted_apart() {
     let _alone = alone();
     // A stroke with no fill covers the pixels the stroke reaches.
     let stroked = r#"<path d="M0 70H100" fill="none" stroke="black" stroke-width="140"/>"#;
-    assert!(rasterise(covered(160, stroked).as_bytes(), 100, &[]).is_ok());
+    assert!(rasterise(covered(365, stroked).as_bytes(), 100, &[]).is_ok());
     assert_eq!(
-        rasterise(covered(161, stroked).as_bytes(), 100, &[]),
+        rasterise(covered(366, stroked).as_bytes(), 100, &[]),
         Err(Refused::TooLarge)
     );
-    // A shape with both is counted twice: eighty are 140 000 steps, and one
-    // more is not.
+    // A shape with both is counted twice: 182 are 318 500 steps, and one more
+    // is not.
     let both = r#"<rect width="100" height="140" stroke="black"/>"#;
-    assert!(rasterise(covered(80, both).as_bytes(), 100, &[]).is_ok());
+    assert!(rasterise(covered(182, both).as_bytes(), 100, &[]).is_ok());
     assert_eq!(
-        rasterise(covered(81, both).as_bytes(), 100, &[]),
+        rasterise(covered(183, both).as_bytes(), 100, &[]),
         Err(Refused::TooLarge)
     );
 }
@@ -1179,12 +1180,12 @@ fn a_dashed_stroke_is_counted_by_the_dashes_it_makes() {
     assert_eq!(work_of(&dashed("100", 2, "5")), Ok(10 * 2 * 40));
     // A stroke no wider than a pixel is the 8 steps and no more.
     assert_eq!(work_of(&dashed("100", 1, "5 5")), Ok(10 * 2 * 8));
-    // The line is counted whole, though most of it is off the canvas: 1 750
-    // periods are 140 000 steps, and one more is past the ceiling.
-    let at = dashed("17500", 2, "5 5");
-    assert_eq!(work_of(&at), Ok(1_750 * 2 * 40));
+    // The line is counted whole, though most of it is off the canvas: 4 000
+    // periods are 320 000 steps, and one more is past the ceiling.
+    let at = dashed("40000", 2, "5 5");
+    assert_eq!(work_of(&at), Ok(4_000 * 2 * 40));
     assert!(rasterise(at.as_bytes(), 100, &[]).is_ok());
-    let past = dashed("17501", 2, "5 5");
+    let past = dashed("40001", 2, "5 5");
     assert_eq!(work_of(&past), Err(Refused::TooLarge));
     assert_eq!(rasterise(past.as_bytes(), 100, &[]), Err(Refused::TooLarge));
 }
@@ -1231,11 +1232,11 @@ fn a_path_in_a_clip_is_counted_by_the_pixels_it_fills() {
     let one = work_of(&clipped(1)).expect("one rectangle");
     let two = work_of(&clipped(2)).expect("two rectangles");
     assert_eq!(two - one, 625);
-    // So 223 rectangles in the clip and the one drawn are 140 000 steps, and
+    // So 511 rectangles in the clip and the one drawn are 320 000 steps, and
     // one more is past the ceiling.
-    assert!(rasterise(clipped(223).as_bytes(), 100, &[]).is_ok());
+    assert!(rasterise(clipped(511).as_bytes(), 100, &[]).is_ok());
     assert_eq!(
-        rasterise(clipped(224).as_bytes(), 100, &[]),
+        rasterise(clipped(512).as_bytes(), 100, &[]),
         Err(Refused::TooLarge)
     );
 }
@@ -1376,11 +1377,11 @@ fn a_path_is_counted_by_the_rows_each_segment_crosses() {
     // 140 ns, which is more than the 200 pixels it covers are worth.
     let one = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><path d="M0 0L1 100L2 0"/></svg>"#;
     assert_eq!(work_of(one), Ok(153));
-    // Ten thousand edges along one row are drawn, and two thousand that each
+    // Ten thousand edges along one row are drawn, and five thousand that each
     // cross a hundred rows are not, though they cover the same page.
     let flat = zigzag(10_000, 1);
     assert!(rasterise(flat.as_bytes(), 100, &[]).is_ok());
-    let tall = zigzag(2_000, 100);
+    let tall = zigzag(5_000, 100);
     assert_eq!(rasterise(tall.as_bytes(), 100, &[]), Err(Refused::TooLarge));
 }
 
@@ -1489,11 +1490,11 @@ fn a_gradient_costs_its_pixels_and_its_stops_together() {
     let _alone = alone();
     // Each paint of 32 stops over the 40 000 pixels of the page is 2 500
     // steps by its pixels and 2 500 by its stops; neither alone is past the
-    // ceiling for 52 of them, and together they are. Two stops are drawn.
-    let (drawn, reached) = refused_in_at(&painted(52, 32), 200);
+    // ceiling for 120 of them, and together they are. Two stops are drawn.
+    let (drawn, reached) = refused_in_at(&painted(120, 32), 200);
     assert_eq!(drawn, Err(Refused::TooLarge));
     assert_eq!(reached, Reached::Built, "drawn first");
-    assert!(rasterise(painted(52, 2).as_bytes(), 200, &[]).is_ok());
+    assert!(rasterise(painted(120, 2).as_bytes(), 200, &[]).is_ok());
 }
 
 /// What drawing `svg` `width` wide comes to, and how far it went to say so.
@@ -1547,15 +1548,15 @@ fn edges_of_a_stroke_crowded_along_a_row_are_counted_by_the_pixels_each_can_walk
     let _alone = alone();
     // The outline of a stroke has an edge each side of every segment, and
     // those of segments a fifth of a pixel apart walk the row over again as a
-    // fill's do: 7 000 across a row 1 414 wide are refused, before they are
-    // drawn, and 6 000 across one 1 212 wide are drawn.
-    let (wide, width) = crowded_stroke(7_000);
-    assert_eq!(width, 1_414);
+    // fill's do: 11 000 across a row 2 222 wide are refused, before they are
+    // drawn, and 10 000 across one 2 020 wide are drawn.
+    let (wide, width) = crowded_stroke(11_000);
+    assert_eq!(width, 2_222);
     let (drawn, reached) = refused_in_at(&wide, width);
     assert_eq!(drawn, Err(Refused::TooLarge));
     assert_eq!(reached, Reached::Built, "drawn first");
-    let (narrower, width) = crowded_stroke(6_000);
-    assert_eq!(width, 1_212);
+    let (narrower, width) = crowded_stroke(10_000);
+    assert_eq!(width, 2_020);
     assert!(rasterise(narrower.as_bytes(), width, &[]).is_ok());
 }
 
@@ -2254,13 +2255,13 @@ fn the_stops_of_a_gradient_in_its_shapes_units_are_counted_copied_for_each_shape
 fn every_stop_of_a_gradient_is_set_up_again_for_each_shape_it_paints() {
     let _alone = alone();
     // The renderer makes the stops of a gradient again for every shape it
-    // paints, however few pixels the shape reaches: two thousand shapes a pixel
-    // square of 400 stops are refused, and a thousand drawn.
-    let (drawn, reached) = refused_in_at(&used_graded_shapes(40, 50, 400, "userSpaceOnUse"), 100);
+    // paints, however few pixels the shape reaches: four thousand shapes a
+    // pixel square of 400 stops are refused, and three thousand drawn.
+    let (drawn, reached) = refused_in_at(&used_graded_shapes(40, 100, 400, "userSpaceOnUse"), 100);
     assert_eq!(drawn, Err(Refused::TooLarge), "stops set up");
     assert_eq!(reached, Reached::Built, "drawn first");
     let drawn = rasterise(
-        used_graded_shapes(40, 25, 400, "userSpaceOnUse").as_bytes(),
+        used_graded_shapes(40, 75, 400, "userSpaceOnUse").as_bytes(),
         100,
         &[],
     );
