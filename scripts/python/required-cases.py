@@ -85,8 +85,8 @@ NEXTEST = ".config/nextest.toml"
 GATE_PROFILE = "gate"
 # The slots an override of that profile gives a test it runs with no other.
 ALONE = "num-test-threads"
-# The wall-clock bound crucible-raster's refusal tests assert, which a test
-# beside them that keeps a processor busy can make them miss.
+# The name a test's wall-clock bound goes by, which a test beside it that keeps
+# a processor busy can make it miss.
 TIMED = re.compile(r"\bSOON_REFUSED\b")
 
 PLATFORM = {"linux": "linux", "darwin": "macos", "win32": "windows"}.get(
