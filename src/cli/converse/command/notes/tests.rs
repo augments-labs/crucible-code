@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 
 use crucible_client_api::bounds::{ITEMS, TEXT_BYTES};
 use crucible_client_api::{Name, Outcome, Response};
-use crucible_tui::{Glyphs, RECORDED, Renderer, Row};
+use crucible_tui::{Glyphs, RECORDED, Renderer, Row, Slot};
 
 use super::*;
 
@@ -191,7 +191,35 @@ fn squeezed(rows: &[Row]) -> String {
 
 #[test]
 fn the_whole_list_keeps_its_first_row_and_counts_what_it_left_out_at_every_width() {
-    let read = releases(CHANGELOG);
+    keeps_its_first_row_and_counts_what_it_left_out(CHANGELOG);
+}
+
+#[test]
+fn a_mark_the_words_of_a_release_quote_is_not_counted_as_a_release() {
+    // At three columns or fewer the words hang at the rail's own column, so a
+    // mark they quote opens a row as a release's mark does.
+    let quoting = CHANGELOG.replacen(
+        "\n## [0.",
+        "\n## [9.9.9] - 2099-01-02\n\n### Changed\n\n- **Rows such as `◇ drawing a table` and `◆ 9.9.9` are quoted.**\n\n## [0.",
+        1,
+    );
+
+    keeps_its_first_row_and_counts_what_it_left_out(&quoting);
+}
+
+/// Whether `row` is the head of a release told in full: it opens on the filled
+/// mark in the accent. The words of a release draw only an alert's sign in the
+/// accent, and never that mark.
+fn opens_a_release_told_in_full(row: &Row) -> bool {
+    row.spans()
+        .next()
+        .is_some_and(|(slot, text)| slot == Slot::Accent && text.starts_with('◆'))
+}
+
+/// Every release in `changelog`, listed at widths from one column up, keeps
+/// its first row in the record, and its closing row says what went.
+fn keeps_its_first_row_and_counts_what_it_left_out(changelog: &str) {
+    let read = releases(changelog);
     let older = read.len() - FULL;
 
     for columns in [1, 8, 40, 80] {
@@ -215,14 +243,22 @@ fn the_whole_list_keeps_its_first_row_and_counts_what_it_left_out_at_every_width
             kept.len()
         );
 
-        // What the closing row says went is what went.
+        // What the closing row says went is what went. A mark is counted only
+        // where no words can stand in for one: a release told in a row comes
+        // before the first told in full, and only a release told in full opens
+        // its row on the filled mark in the accent.
+        let first_told = rows
+            .iter()
+            .position(opens_a_release_told_in_full)
+            .unwrap_or(rows.len());
         let hollow = rows
             .iter()
+            .take(first_told)
             .filter(|row| row.text().starts_with('◇'))
             .count();
         let filled = rows
             .iter()
-            .filter(|row| row.text().starts_with('◆'))
+            .filter(|row| opens_a_release_told_in_full(row))
             .count();
         // A release told in full that had to be cut to a row is hollow too.
         let told = FULL - filled;
