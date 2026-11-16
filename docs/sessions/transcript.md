@@ -683,11 +683,10 @@ bound is refused rather than shrunk or cut:
   fill whose edges crowd together along a row, how far along the row each
   can walk; and for a gradient, its pixels times its stops, with every stop
   set up again for each shape it paints. Added up over the picture, these
-  are at most 140 000 steps. That is about what a drawing can finish in a
-  fiftieth of a second. A picture past it is refused before it is drawn, and
-  so is one with a stroke reaching more than a million pixels from the
-  corner of the picture, which takes far longer to outline than its size
-  says.
+  are at most 320 000 steps. That is about what a drawing can finish in 45
+  milliseconds. A picture past it is refused before it is drawn, and so is
+  one with a stroke reaching more than a million pixels from the corner of
+  the picture, which takes far longer to outline than its size says.
 - **What the copies in an SVG take.** A `<use>` copies what it names, and a
   copy can hold uses of its own, so a few hundred bytes can ask for millions
   of copies. A marker's content is copied at every vertex it is drawn on, a

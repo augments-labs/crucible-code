@@ -5,7 +5,7 @@
 use crucible_tui::chrome::Undrawn;
 use crucible_tui::drawing::{Draws, Room};
 use crucible_tui::testing::dump;
-use crucible_tui::{Glyphs, Row};
+use crucible_tui::{Glyphs, Row, Slot};
 
 use crate::{Caps, Diagrams, Kind, MOST_BYTES};
 
@@ -766,5 +766,321 @@ fn pictures_of_each_kind() {
             let rows = block(source, 80, glyphs).unwrap_or_default();
             insta::assert_snapshot!(format!("{name}_80_{set}"), dump(&rows, 80));
         }
+    }
+}
+
+/// What `block` draws inside its frame: each row after the frame's gutter.
+fn inner(source: &str, columns: usize, glyphs: Glyphs) -> Vec<String> {
+    let rows = texts(&block(source, columns, glyphs).unwrap_or_default());
+    let inside = rows.len().saturating_sub(1);
+    rows.get(1..inside)
+        .unwrap_or_default()
+        .iter()
+        .map(|row| row.chars().skip(2).collect())
+        .collect()
+}
+
+fn picture(source: &str, columns: usize, glyphs: Glyphs) -> Result<String, Undrawn> {
+    Diagrams
+        .picture(source, &Room { columns, glyphs })
+        .map(|svg| svg.as_str().to_owned())
+}
+
+/// Every value of `attribute` in `svg`, in order.
+fn values<'a>(svg: &'a str, attribute: &str) -> Vec<&'a str> {
+    let opening = format!(" {attribute}=\"");
+    svg.match_indices(&opening)
+        .filter_map(|(at, _)| {
+            let rest = svg.get(at + opening.len()..)?;
+            rest.get(..rest.find('"')?)
+        })
+        .collect()
+}
+
+/// The name of every element `svg` opens, in order.
+fn elements(svg: &str) -> Vec<&str> {
+    svg.match_indices('<')
+        .filter_map(|(at, _)| {
+            let rest = svg.get(at + 1..)?;
+            let end = rest.find(|character: char| {
+                character.is_whitespace() || character == '>' || character == '/'
+            })?;
+            rest.get(..end)
+        })
+        .filter(|name| !name.is_empty())
+        .collect()
+}
+
+/// The text `svg` writes, unescaped, at the cell each `<text>` starts in: a
+/// cell is eight units wide and sixteen high, with the baseline at twelve.
+fn lettered(svg: &str) -> Vec<String> {
+    let mut grid: Vec<Vec<char>> = Vec::new();
+    for (at, _) in svg.match_indices("<text ") {
+        let element = svg.get(at..).unwrap_or_default();
+        let element = element
+            .get(..element.find("</text>").unwrap_or(0))
+            .unwrap_or_default();
+        let number = |name: &str| -> usize {
+            values(element, name)
+                .first()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(usize::MAX)
+        };
+        let (column, row) = (number("x") / 8, (number("y").saturating_sub(12)) / 16);
+        let said = element
+            .get(element.find('>').unwrap_or(0) + 1..)
+            .unwrap_or_default();
+        let said = said
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+            .replace("&amp;", "&");
+        if grid.len() <= row {
+            grid.resize(row + 1, Vec::new());
+        }
+        if let Some(line) = grid.get_mut(row) {
+            for (offset, character) in said.chars().enumerate() {
+                if line.len() <= column + offset {
+                    line.resize(column + offset + 1, ' ');
+                }
+                if let Some(cell) = line.get_mut(column + offset) {
+                    *cell = character;
+                }
+            }
+        }
+    }
+    grid.into_iter()
+        .map(|line| line.into_iter().collect::<String>().trim_end().to_owned())
+        .collect()
+}
+
+/// Whether the picture draws `character` as a shape rather than writing it:
+/// the box drawing and block elements, the geometric shapes, and the
+/// chevron an arrow ends in.
+fn shaped(character: char) -> bool {
+    matches!(character, '\u{2500}'..='\u{25ff}' | '⟩')
+}
+
+#[test]
+fn a_picture_of_every_kind_writes_what_its_text_drawing_writes_where_it_writes_it() {
+    for (name, source, _) in KINDS {
+        let svg = picture(source, 80, UNICODE);
+        assert!(svg.is_ok(), "{name}: {svg:?}");
+        let svg = svg.unwrap_or_default();
+        let drawn: Vec<String> = inner(source, 80, UNICODE)
+            .iter()
+            .map(|row| {
+                row.chars()
+                    .map(|character| if shaped(character) { ' ' } else { character })
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect();
+        let mut said = lettered(&svg);
+        said.resize(drawn.len(), String::new());
+        assert_eq!(said, drawn, "{name}\n{svg}");
+    }
+}
+
+#[test]
+fn a_picture_is_its_layout_at_natural_size() {
+    for (name, source, _) in KINDS {
+        for glyphs in [UNICODE, ASCII] {
+            let svg = picture(source, 80, glyphs).unwrap_or_default();
+            let lines = inner(source, 80, glyphs);
+            let widest = lines.iter().map(|line| crucible_tui::columns(line)).max();
+            let rows = block(source, 80, glyphs).unwrap_or_default();
+            let natural = rows
+                .get(1..rows.len().saturating_sub(1))
+                .unwrap_or_default()
+                .iter()
+                .map(|row| row.columns().saturating_sub(2))
+                .max()
+                .unwrap_or(0);
+            assert!(widest <= Some(natural), "{name}");
+            let (width, height) = (natural * 8, lines.len() * 16);
+            assert!(
+                svg.starts_with(&format!(
+                    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\""
+                )),
+                "{name} {glyphs:?}: {}",
+                svg.get(..120).unwrap_or(&svg)
+            );
+            assert_eq!(
+                elements(&svg).iter().filter(|name| **name == "svg").count(),
+                1,
+                "{name}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_picture_inks_by_slot_class_and_never_by_colour() {
+    let classes = [Slot::Plain.class(), Slot::Quiet.class()];
+    for (name, source, _) in KINDS {
+        for glyphs in [UNICODE, ASCII] {
+            let svg = picture(source, 80, glyphs).unwrap_or_default();
+            assert!(!svg.is_empty(), "{name} {glyphs:?}");
+            for class in values(&svg, "class") {
+                assert!(classes.contains(&class), "{name} {glyphs:?}: class {class}");
+            }
+            for paint in values(&svg, "fill")
+                .into_iter()
+                .chain(values(&svg, "stroke"))
+            {
+                assert!(
+                    ["none", "currentColor"].contains(&paint),
+                    "{name} {glyphs:?}: paint {paint}"
+                );
+            }
+            let painted = elements(&svg)
+                .iter()
+                .filter(|name| ["path", "text"].contains(name))
+                .count();
+            assert_eq!(
+                values(&svg, "class").len(),
+                painted,
+                "{name} {glyphs:?}: an element painted with no class"
+            );
+            for colour in ["=\"#", "rgb(", "color=", "style", "opacity"] {
+                assert!(!svg.contains(colour), "{name} {glyphs:?}: {colour}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_picture_names_nothing_outside_itself() {
+    for (name, source, _) in KINDS {
+        for glyphs in [UNICODE, ASCII] {
+            let svg = picture(source, 80, glyphs).unwrap_or_default();
+            assert!(!svg.is_empty(), "{name} {glyphs:?}");
+            for element in elements(&svg) {
+                assert!(
+                    ["svg", "path", "text"].contains(&element),
+                    "{name} {glyphs:?}: <{element}>"
+                );
+            }
+            for reference in ["href", "url(", "<style", "<!", "<?"] {
+                assert!(!svg.contains(reference), "{name} {glyphs:?}: {reference}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_label_holding_markup_is_written_as_its_characters() {
+    let source = "sequenceDiagram\nA->>B: a < b & \"c\" > 'd'\n";
+    let svg = picture(source, 80, UNICODE);
+    assert!(svg.is_ok(), "{svg:?}");
+    let svg = svg.unwrap_or_default();
+    assert!(
+        svg.contains("a &lt; b &amp; &quot;c&quot; &gt; &apos;d&apos;"),
+        "{svg}"
+    );
+    assert!(!svg.contains("a < b"), "{svg}");
+    assert!(
+        lettered(&svg)
+            .iter()
+            .any(|row| row.contains("a < b & \"c\" > 'd'")),
+        "{svg}"
+    );
+}
+
+#[test]
+fn a_flowchart_picture_strokes_its_boxes_and_writes_its_labels() {
+    let svg = picture(FLOWCHART, 80, UNICODE).unwrap_or_default();
+    for label in ["Start", "Is it?", "OK", "Retry", "Yes", "No"] {
+        assert!(
+            svg.contains(&format!(">{label}</text>")),
+            "{label} in\n{svg}"
+        );
+    }
+    assert!(!svg.chars().any(shaped), "{svg}");
+    assert!(
+        values(&svg, "d").iter().any(|path| path.contains('H')),
+        "{svg}"
+    );
+    assert!(
+        values(&svg, "d").iter().any(|path| path.contains('V')),
+        "{svg}"
+    );
+    assert!(
+        values(&svg, "stroke-dasharray").len() == 1,
+        "the dotted line: {svg}"
+    );
+}
+
+#[test]
+fn a_sequence_picture_strokes_its_lifelines_dashed_and_writes_its_messages() {
+    let svg = picture(SEQUENCE, 80, UNICODE).unwrap_or_default();
+    for label in ["User", "Server", "request", "answer", "think"] {
+        assert!(
+            svg.contains(&format!(">{label}</text>")),
+            "{label} in\n{svg}"
+        );
+    }
+    assert!(!svg.chars().any(shaped), "{svg}");
+    assert_eq!(values(&svg, "stroke-dasharray").len(), 1, "{svg}");
+}
+
+#[test]
+fn a_picture_is_drawn_from_the_unicode_layout_whatever_the_glyph_set() {
+    for (name, source, _) in KINDS {
+        let unicode = picture(source, 80, UNICODE);
+        assert!(unicode.is_ok(), "{name}: {unicode:?}");
+        assert_eq!(picture(source, 80, ASCII), unicode, "{name}");
+    }
+}
+
+#[test]
+fn a_picture_is_refused_for_what_its_text_drawing_is_refused_for() {
+    let wide =
+        "graph LR\nA[first label] --> B[second label] --> C[third label] --> D[last label]\n";
+    let grouped = "flowchart TD\nsubgraph one\nA --> B\nend\n";
+    let past = format!("graph TD\n{}", "A --> B\n".repeat(MOST_BYTES));
+    for (source, columns) in [
+        (CLASS, 80),
+        (wide, 60),
+        (grouped, 80),
+        ("", 80),
+        ("graph TD\nA -->\n", 80),
+        (past.as_str(), 80),
+    ] {
+        let refused = block(source, columns, UNICODE).map(|_| ());
+        assert!(refused.is_err(), "{source}");
+        assert_eq!(
+            picture(source, columns, UNICODE).map(|_| ()),
+            refused,
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn a_label_holding_a_letter_the_picture_may_lack_keeps_the_diagram_text() {
+    let han = "graph LR\nA[漢字] --> B[ok]\n";
+    let latin = "graph LR\nA[Ĳ ÿ ž–“é”…] --> B[ok]\n";
+    for (source, glyphs) in [
+        (han, UNICODE),
+        (han, ASCII),
+        (latin, UNICODE),
+        (latin, ASCII),
+    ] {
+        assert!(block(source, 80, glyphs).is_ok(), "{source} {glyphs:?}");
+    }
+    for glyphs in [UNICODE, ASCII] {
+        assert_eq!(
+            picture(han, 80, glyphs).map(|_| ()),
+            Err(Undrawn::NotHere),
+            "{glyphs:?}"
+        );
+        let drawn = picture(latin, 80, glyphs);
+        assert!(drawn.is_ok(), "{glyphs:?}: {drawn:?}");
+        let drawn = drawn.unwrap_or_default();
+        assert!(drawn.contains("Ĳ ÿ ž–“é”…"), "{glyphs:?}: {drawn}");
     }
 }

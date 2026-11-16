@@ -208,7 +208,7 @@ pub fn decode(bytes: &[u8]) -> Result<Pixels, Refused> {
 ///
 /// What the drawing would hold and compute is counted before it is drawn: a
 /// drawing that would hold more than [`MOST_DECODED`] bytes of pixmaps at once,
-/// or ask for more work than the renderer does in 20 ms, is refused, and so is
+/// or ask for more work than the renderer does in 45 ms, is refused, and so is
 /// a stroke whose outline reaches more than a million pixels from the origin,
 /// which the renderer outlines at a quarter pixel however long it is.
 ///
@@ -456,7 +456,7 @@ enum Walk {
 
 /// The most time the copies [`copying`] counts may take the tree parser to
 /// make: 16 ms, so that with the rest of the tree a picture is built within
-/// the 20 ms the dearest drawing takes.
+/// the 45 ms the dearest drawing takes.
 const MOST_COPYING_NS: u64 = 16_000_000;
 
 /// The time the tree parser takes to make a copy of one element, without what
@@ -1382,6 +1382,44 @@ fn fonts() -> Arc<fontdb::Database> {
             Arc::new(database)
         })
         .clone()
+}
+
+/// Whether the one font any text is drawn in has a glyph for `letter`.
+///
+/// A letter it has none for is drawn as an empty box, so whatever lets text
+/// into a picture asks this, or holds what it lets in to agreeing with it.
+#[must_use]
+pub fn has_glyph(letter: char) -> bool {
+    // The letter is laid out as the tree parser lays out a picture's text, in
+    // the same font database; with no other font to fall back to, a letter
+    // the font lacks is laid out as its missing glyph, which is glyph zero.
+    // It stands between two letters the font has, because the parser lays out
+    // no text that draws nothing, and a space alone draws nothing.
+    let svg = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"><text xml:space=\"preserve\">A&#x{:x};A</text></svg>",
+        u32::from(letter)
+    );
+    let options = Options {
+        font_family: FONT_FAMILY.to_owned(),
+        fontdb: fonts(),
+        ..Options::default()
+    };
+    let Ok(tree) = Tree::from_str(&svg, &options) else {
+        return false;
+    };
+    let glyphs: Vec<u32> = tree
+        .root()
+        .children()
+        .iter()
+        .filter_map(|node| match node {
+            resvg::usvg::Node::Text(text) => Some(text),
+            _ => None,
+        })
+        .flat_map(|text| text.layouted())
+        .flat_map(|span| &span.positioned_glyphs)
+        .map(|glyph| glyph.id.0)
+        .collect();
+    glyphs.len() >= 3 && glyphs.iter().all(|id| *id != 0)
 }
 
 /// Encode pixels as a PNG file, which a terminal that draws PNG shows as it is.

@@ -69,7 +69,7 @@ readonly BUDGETS=(
     "grep|bench-grep|grep worst paired median within 1.25x the rg binary"
     "stream|bench-render-burst|rendered frames >= 30/s and sustained/opening pace >= 0.5"
     "live|bench-live-burst|turn-band redraws >= 30/s and sustained/opening pace >= 0.5"
-    "drawing|bench-drawing|a drawer's text layout at its caps <= 2 ms p95"
+    "drawing|bench-drawing|a drawer's text layout at its caps <= 2 ms p95 and its picture <= 30 ms p95"
 )
 
 readonly MODES=(startup tools mem grep stream live drawing)

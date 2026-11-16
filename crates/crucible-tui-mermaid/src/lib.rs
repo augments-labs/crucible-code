@@ -83,12 +83,20 @@
 //!   its own width whatever its room, and a gantt and a git graph are laid
 //!   out with none, a day of a gantt to a cell and a git graph's labels
 //!   whole, so each is drawn as it is or refused as too wide, never squeezed.
+//! - **A picture is the same layout.** [`Diagrams`] also draws a diagram as
+//!   an SVG picture, from the one layout its text drawing is drawn from
+//!   under the Unicode glyph set, whatever the set in force, and refused for
+//!   the same reasons: the characters lines, blocks and
+//!   arrowheads are drawn with become strokes and shapes, every other one is
+//!   written as text in the cell the text drawing puts it in, and every ink
+//!   is a slot's class, never a colour. Nothing here rasterises it.
 
 mod entities;
 mod flowchart;
 mod gantt;
 mod git_graph;
 mod lay;
+mod picture;
 mod scan;
 mod sequence;
 mod state;
@@ -98,9 +106,11 @@ mod fits;
 #[cfg(test)]
 mod tests;
 
+use std::ops::RangeInclusive;
+
 use crucible_tui::chrome::{Frame, Label, Undrawn};
-use crucible_tui::drawing::{Draws, Laid, Room};
-use crucible_tui::{Row, Slot, columns};
+use crucible_tui::drawing::{Draws, Laid, Room, Svg};
+use crucible_tui::{Glyphs, Row, Slot, columns};
 
 use lay::Unlaid;
 use scan::Refused;
@@ -201,6 +211,30 @@ const fn most_bytes(all: &[Caps]) -> usize {
     most
 }
 
+/// The letters a picture of a diagram writes; a diagram whose text holds any
+/// other is not drawn as a picture.
+///
+/// A picture is written in the one font whatever rasterises it carries, and
+/// a letter that font has no glyph for would be drawn as an empty box. The
+/// set is kept small enough to be sure of: printable ASCII, the printable
+/// Latin-1 letters and signs but the soft hyphen, Latin Extended-A, the
+/// dashes, curly quotes, bullet and ellipsis, the four arrows and the two
+/// comparisons a label or a gantt's dates are written with. The command line,
+/// which composes the drawers with the raster, holds its font to having a
+/// glyph for every one of them.
+pub const PICTURE_LETTERS: &[RangeInclusive<char>] = &[
+    ' '..='~',
+    '\u{a0}'..='\u{ac}',
+    '\u{ae}'..='\u{17f}',
+    '–'..='—',
+    '‘'..='’',
+    '“'..='”',
+    '•'..='•',
+    '…'..='…',
+    '←'..='↓',
+    '≤'..='≥',
+];
+
 /// A kind of Mermaid diagram drawn as text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -294,24 +328,13 @@ impl Draws for Diagrams {
     }
 
     fn block(&self, source: &str, room: &Room) -> Result<Laid, Undrawn> {
-        let scanned = scan::scan(source).map_err(|refused| match refused {
-            Refused::Empty => Undrawn::NotHere,
-            Refused::PastCap => Undrawn::PastCap,
-            Refused::Unread => Undrawn::NotText,
-            Refused::Unsupported(kind) => Undrawn::Unsupported(kind),
-            Refused::Grouped => Undrawn::Unsupported("groups"),
-        })?;
-        let inside = room.columns.saturating_sub(GUTTER);
-        let drawing = lay::lay(&scanned, inside, room.glyphs).map_err(|unlaid| match unlaid {
-            Unlaid::Unread => Undrawn::NotText,
-            Unlaid::TooWide => Undrawn::TooWide,
-        })?;
+        let (kind, drawing) = laid(source, room)?;
         let inner: Vec<Row> = drawing
             .lines
             .into_iter()
             .map(|line| Row::new().then(Slot::Plain, line))
             .collect();
-        let name = format!("mermaid {} {}", room.glyphs.dot(), scanned.kind.name());
+        let name = format!("mermaid {} {}", room.glyphs.dot(), kind.name());
         let frame = Frame {
             label: Label::new(&name, room.glyphs),
             refusal: None,
@@ -330,4 +353,34 @@ impl Draws for Diagrams {
             narrow: None,
         })
     }
+
+    fn picture(&self, source: &str, room: &Room) -> Result<Svg, Undrawn> {
+        // A picture is drawn from the Unicode layout whatever the glyph set:
+        // its lines become strokes, and no terminal font is asked for them.
+        let unicode = Room {
+            columns: room.columns,
+            glyphs: Glyphs::Unicode,
+        };
+        let (_, drawing) = laid(source, &unicode)?;
+        picture::picture(&drawing.lines, drawing.natural)
+    }
+}
+
+/// `source` read and laid out by the engine for `room`, inside the frame's
+/// gutter: the one layout the text drawing and the picture are both drawn
+/// from, refused alike.
+fn laid(source: &str, room: &Room) -> Result<(Kind, lay::Drawing), Undrawn> {
+    let scanned = scan::scan(source).map_err(|refused| match refused {
+        Refused::Empty => Undrawn::NotHere,
+        Refused::PastCap => Undrawn::PastCap,
+        Refused::Unread => Undrawn::NotText,
+        Refused::Unsupported(kind) => Undrawn::Unsupported(kind),
+        Refused::Grouped => Undrawn::Unsupported("groups"),
+    })?;
+    let inside = room.columns.saturating_sub(GUTTER);
+    let drawing = lay::lay(&scanned, inside, room.glyphs).map_err(|unlaid| match unlaid {
+        Unlaid::Unread => Undrawn::NotText,
+        Unlaid::TooWide => Undrawn::TooWide,
+    })?;
+    Ok((scanned.kind, drawing))
 }
