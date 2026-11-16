@@ -54,13 +54,14 @@
 //! the frame its room.
 //!
 //! A diagram is also drawn as a picture of the same layout, and a picture is
-//! made on the same thread: laid out, rasterised and encoded as a PNG. For each
-//! kind the costliest picture its caps hold is timed through all three, and a
-//! sequence diagram's also with its messages among four participants, every
-//! label in Latin letters, since a diagram holding a letter the picture's font
-//! lacks keeps its text drawing and is never rasterised, and each label as long
-//! as the caps leave room for, so a picture carries as many letters as the caps
-//! let in, and every letter is outlines the rasteriser draws. It is rasterised
+//! made on the same thread: laid out, rasterised and encoded as a PNG. Each
+//! kind's picture at its caps is timed through all three, a sequence
+//! diagram's, a gantt's and a git graph's in both shapes their text is timed
+//! in, every label in Latin letters, since a diagram holding a letter the
+//! picture's font lacks keeps its text drawing and is never rasterised, and
+//! each label as long as the caps leave room for, so a picture carries as many
+//! letters as the caps let in, and every letter is outlines the rasteriser
+//! draws. It is rasterised
 //! in every slot's ink, as a theme hands them, at the widest the most pixels a
 //! picture may hold allow for its proportions, in a window wide enough to draw
 //! it, since a picture is drawn at its own size whatever the room, and in both
@@ -1095,10 +1096,30 @@ fn pictures() -> Vec<Case> {
             rooms: PICTURE_ROOMS,
         },
         Case {
+            name: "a gantt's picture at its caps in one section",
+            input: Input::Picture(diagram_at_the_caps(
+                Caps::GANTT,
+                Shape::Few,
+                Letters::Latin,
+                gantt,
+            )),
+            rooms: PICTURE_ROOMS,
+        },
+        Case {
             name: "a git graph's picture at its caps",
             input: Input::Picture(diagram_at_the_caps(
                 Caps::GIT_GRAPH,
                 Shape::Spread,
+                Letters::Latin,
+                git_graph,
+            )),
+            rooms: PICTURE_ROOMS,
+        },
+        Case {
+            name: "a git graph's picture at its caps on few branches",
+            input: Input::Picture(diagram_at_the_caps(
+                Caps::GIT_GRAPH,
+                Shape::Few,
                 Letters::Latin,
                 git_graph,
             )),
@@ -1508,8 +1529,8 @@ mod tests {
             }
         }
         assert_eq!(
-            pictures, 7,
-            "one picture for each kind, and a sequence diagram's among few participants"
+            pictures, 9,
+            "one picture for each kind, and a sequence diagram's, a gantt's and a git graph's in their second shape"
         );
     }
 
