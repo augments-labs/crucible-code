@@ -71,9 +71,10 @@
 //!
 //! The reported number is the slowest text case's 95th percentile, with each
 //! case's median and its slowest reading kept as evidence, and the slowest
-//! picture's 95th percentile kept beside them with its limit. Every reading is one call,
-//! timed with the input already built: the reading is the drawer's, not the
-//! fixture's.
+//! picture's 95th percentile kept beside them with its limit; when the text
+//! holds and a picture does not, the picture's is reported with its limit and
+//! the text's is kept beside them. Every reading is one call, timed with the
+//! input already built: the reading is the drawer's, not the fixture's.
 
 use std::fmt::Write as _;
 use std::io::{self, Write as _};
@@ -1298,6 +1299,18 @@ fn limit() -> Result<f64, ProbeError> {
     }
 }
 
+/// The reading this run reports: the slowest text case's 95th percentile and
+/// `limit`, with the slowest picture's and [`PICTURE_LIMIT`] kept beside them;
+/// or, when the text holds and the picture does not, the picture's with the
+/// text's beside them, so the number a failure names is the one that failed.
+fn reading(text: f64, limit: f64, picture: f64) -> String {
+    if text <= limit && picture > PICTURE_LIMIT {
+        format!("{picture:.3} ms {PICTURE_LIMIT:.1} text_p95={text:.3} text_limit={limit:.1}")
+    } else {
+        format!("{text:.3} ms {limit:.1} picture_p95={picture:.3} picture_limit={PICTURE_LIMIT:.1}")
+    }
+}
+
 /// Measures every case, and says whether the slowest held.
 fn run() -> Result<bool, ProbeError> {
     let limit = limit()?;
@@ -1328,10 +1341,7 @@ fn run() -> Result<bool, ProbeError> {
     // `println!` is denied workspace-wide, so the reading goes out through a
     // write whose failure is handled rather than panicked on inside a probe.
     let mut line = String::new();
-    let _ = writeln!(
-        line,
-        "{worst:.3} ms {limit:.1} picture_p95={worst_picture:.3} picture_limit={PICTURE_LIMIT:.1}{evidence}"
-    );
+    let _ = writeln!(line, "{}{evidence}", reading(worst, limit, worst_picture));
     io::stdout().write_all(line.as_bytes())?;
     io::stdout().flush()?;
 
@@ -1369,6 +1379,25 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A picture over its limit is the reading reported, with the text's
+    /// reading kept beside it, so a failure names the number that failed;
+    /// otherwise the text's reading is reported, with the picture's beside it.
+    #[test]
+    fn a_picture_over_its_limit_is_the_reading_reported() {
+        assert_eq!(
+            reading(1.554, LIMIT, 85.734),
+            "85.734 ms 30.0 text_p95=1.554 text_limit=2.0"
+        );
+        assert_eq!(
+            reading(1.554, LIMIT, 25.462),
+            "1.554 ms 2.0 picture_p95=25.462 picture_limit=30.0"
+        );
+        assert_eq!(
+            reading(2.5, LIMIT, 25.462),
+            "2.500 ms 2.0 picture_p95=25.462 picture_limit=30.0"
+        );
+    }
 
     /// The columns a search a column at a time down from the most finds: the
     /// first whose source `caps.bytes` holds.
