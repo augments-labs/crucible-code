@@ -1,9 +1,9 @@
 ---
 source: tests/whole_screen/native.rs
-assertion_line: 972
+assertion_line: 1036
 expression: "crate::steadied_picture(&window.picture())"
 ---
-40x48 cursor 28,4 scrollback 0
+40x48 cursor 32,4 scrollback 0
 |CRUCIBLE                                |
 |/.../workspace                          |
 |                                        |
@@ -26,6 +26,10 @@ expression: "crate::steadied_picture(&window.picture())"
 |                                        |
 |                                        |
 |                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
 |It is started. That is all.             |
 |                                        |
 || writing (0s - esc to interrupt)       |
@@ -35,10 +39,6 @@ expression: "crate::steadied_picture(&window.picture())"
 || >                                    ||
 |+--------------------------------------+|
 |ask mode on    anthropic - claude-test-1|
-|                                        |
-|                                        |
-|                                        |
-|                                        |
 |                                        |
 |                                        |
 |                                        |

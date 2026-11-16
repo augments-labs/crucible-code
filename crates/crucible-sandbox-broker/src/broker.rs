@@ -42,7 +42,13 @@ fn run() -> Option<u8> {
     }
     let descriptor_argument = arguments.next()?;
     let descriptor = parse_descriptor(&descriptor_argument)?;
-    let (roots, exclusions, limits, network_flags) = parse_plan(&mut arguments)?;
+    let Plan {
+        roots,
+        exclusions,
+        limits,
+        network: network_flags,
+        attribute_writes_refused,
+    } = parse_plan(&mut arguments)?;
     let program = arguments.next()?;
     let workload_arguments = arguments.collect::<Vec<_>>();
 
@@ -66,7 +72,10 @@ fn run() -> Option<u8> {
     } else {
         None
     };
-    let Ok(filter) = binding::compile(network_flags.allow_local_binding) else {
+    let Ok(filter) = binding::compile(binding::Refusals {
+        listeners: !network_flags.allow_local_binding,
+        attribute_writes: attribute_writes_refused,
+    }) else {
         drop(network.take());
         return write_failure(&mut status_channel);
     };
@@ -204,13 +213,23 @@ fn close_inherited_except(status: RawFd) -> std::io::Result<()> {
     Ok(())
 }
 
-fn parse_plan(
-    arguments: &mut impl Iterator<Item = OsString>,
-) -> Option<(Vec<PathBuf>, Vec<PathBuf>, Limits, NetworkFlags)> {
+/// The plan the host writes before `--`.
+struct Plan {
+    roots: Vec<PathBuf>,
+    exclusions: Vec<PathBuf>,
+    limits: Limits,
+    network: NetworkFlags,
+    /// Whether the workload is refused extended-attribute writes, which the
+    /// host asks for under a disk ceiling.
+    attribute_writes_refused: bool,
+}
+
+fn parse_plan(arguments: &mut impl Iterator<Item = OsString>) -> Option<Plan> {
     let mut roots = Vec::new();
     let mut exclusions = Vec::new();
     let mut limits = Limits::default();
     let mut network = NetworkFlags::default();
+    let mut attribute_writes_refused = false;
     loop {
         let argument = arguments.next()?;
         match argument.to_str()? {
@@ -246,7 +265,18 @@ fn parse_plan(
             "--allow-local-binding" if !network.allow_local_binding => {
                 network.allow_local_binding = true;
             }
-            "--" => return Some((roots, exclusions, limits, network)),
+            "--refuse-xattr-writes" if !attribute_writes_refused => {
+                attribute_writes_refused = true;
+            }
+            "--" => {
+                return Some(Plan {
+                    roots,
+                    exclusions,
+                    limits,
+                    network,
+                    attribute_writes_refused,
+                });
+            }
             _ => return None,
         }
     }
@@ -395,9 +425,15 @@ mod tests {
             "--",
         ];
         let mut arguments = plan.iter().map(OsString::from);
-        let (roots, exclusions, limits, network) =
-            parse_plan(&mut arguments).expect("a readable plan");
+        let Plan {
+            roots,
+            exclusions,
+            limits,
+            network,
+            attribute_writes_refused,
+        } = parse_plan(&mut arguments).expect("a readable plan");
         assert!(roots.is_empty() && exclusions.is_empty());
+        assert!(!attribute_writes_refused);
         assert_eq!(limits.cpu_seconds, Some(3600));
         assert_eq!(limits.open_files, Some(4096));
         assert_eq!(limits.processes, Some(64));
@@ -424,6 +460,17 @@ mod tests {
             )
             .is_none()
         );
+        assert!(
+            parse_plan(
+                &mut ["--refuse-xattr-writes", "--refuse-xattr-writes", "--"]
+                    .iter()
+                    .map(OsString::from)
+            )
+            .is_none()
+        );
+        let refused = ["--allow-local-binding", "--refuse-xattr-writes", "--"];
+        let plan = parse_plan(&mut refused.iter().map(OsString::from)).expect("a readable plan");
+        assert!(plan.network.allow_local_binding && plan.attribute_writes_refused);
 
         // Zero would be a ceiling nothing can run under, and an unread flag
         // would be one the host believed it had set.

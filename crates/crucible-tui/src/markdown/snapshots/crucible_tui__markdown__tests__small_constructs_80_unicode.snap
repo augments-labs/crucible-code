@@ -1,0 +1,12 @@
+---
+source: crates/crucible-tui/src/markdown/tests.rs
+expression: "corpus_pictures::picture(SMALL_CONSTRUCTS, 80, Glyphs::Unicode)"
+---
+Crucible bounds every buffer it keeps¹ and draws nothing a model wrote as an    
+escape². Press <Code>Ctrl</>+<Code>O</> to see a cut result; H<Quiet>₂</>O and x<Quiet>²</> read as written.          
+                                                                                
+<Quiet>▸</> <Bold>Why the record is bounded</>                                                     
+<Quiet>  </>A store that grew with the session would spend the RSS budget.                
+                                                                                
+<Quiet>¹</><Quiet> CLAUDE.md, "Everything kept is bounded"</>                                       
+<Quiet>²</><Quiet> markdown.rs, the rule the reader opens with</>

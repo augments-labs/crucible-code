@@ -1,0 +1,11 @@
+---
+source: crates/crucible-tui/src/chrome.rs
+expression: "picture(PLAIN, 64, Glyphs::Ascii)"
+---
+A fence that names nothing:                                     
+                                                                
+<Quiet>+-</>                                                              
+<Quiet>| </><Quiet>plain block</>                                                   
+<Quiet>| </>                                                              
+<Quiet>| </><Quiet>after a blank line</>                                            
+<Quiet>+-</>

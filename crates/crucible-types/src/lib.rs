@@ -36,7 +36,7 @@ pub mod usage;
 pub mod version;
 
 pub use agent_key::{AGENT_KEY_BYTES, AgentKey, AgentKeyError};
-pub use ask::{Answer, Answered, Question};
+pub use ask::{Answer, Answered, Batch, Question, QuestionId, Reply};
 pub use cache::{
     CostAmount, MAX_PROMPT_CACHE_HANDLE_BYTES, MAX_PROMPT_CACHE_NAMESPACE_BYTES,
     MAX_PROMPT_CACHE_RESOURCE_WORD_BYTES, MAX_PROMPT_CACHE_RESOURCES,

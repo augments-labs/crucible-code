@@ -1,0 +1,12 @@
+---
+source: crates/crucible-tui-mermaid/src/tests.rs
+expression: "dump(&rows, 80)"
+---
+<Quiet>+- mermaid - state diagram</>                                                      
+<Quiet>| </>                                                                     +-------+
+<Quiet>| </>+-----+       +-------+     push    +--------+       +-------+       |+-----+|
+<Quiet>| </>(  *  )------>| Still |------------>| Moving |------>| Crash |------>||  *  ||
+<Quiet>| </>+-----+       +---^---+             +--------+       +-------+       |+-----+|
+<Quiet>| </>                  |                    stop                          +-------+
+<Quiet>| </>                  +----------------------+                                    
+<Quiet>+-</>

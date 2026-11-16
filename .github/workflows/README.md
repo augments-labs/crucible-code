@@ -18,14 +18,16 @@ decides, runs no macOS or Windows job at all: no test that runs only there
 reads a document, so its merge's push run covers them. Linux still runs every
 test, and `CI required` fails if the classifying job does.
 
-macOS machines are the ones a run waits longest for, so a macOS platform takes
-as few as it can: Apple silicon runs its tests in one job rather than in parts,
-and each macOS checks job runs that platform's rollback drill, through
-`.github/actions/rollback-drill`, instead of a drill job of its own.
+A Free, Pro or Team account runs at most five macOS jobs at once, across all
+its runs, so each macOS checks job runs that platform's rollback drill, through
+`.github/actions/rollback-drill`, instead of a drill job of its own. A run on
+`dev` or `main` asks for five, so it tests Apple silicon in one part. A pull
+request tests it in two and asks for three, so two pull requests running
+together can wait for a macOS machine.
 
 | Workflow | Owns |
 | --- | --- |
-| `rust-ci.yml` | Rust formatting on Linux; the tests in hashed parts, one machine each; all-feature linting, tests and rustdoc on supported CI platforms; install tests on macOS and in a FreeBSD guest, and the Windows installer's tests under Windows PowerShell 5.1 and PowerShell 7; the rollback drill and its self-test; which of the five platforms a run covers, through its `all-platforms` and `docs-only` inputs |
+| `rust-ci.yml` | Rust formatting on Linux; the tests in hashed parts, one machine each; the named required cases each platform's own run reconciles; all-feature linting, tests and rustdoc on supported CI platforms; install tests on macOS and in a FreeBSD guest, and the Windows installer's tests under Windows PowerShell 5.1 and PowerShell 7; the rollback drill and its self-test; which of the five platforms a run covers, through its `all-platforms` and `docs-only` inputs |
 | `repo-checks.yml` | Deterministic cross-file repository policy |
 | `python-ci.yml` | Python canary and campaign harness syntax, fixtures and report validation |
 | `dependency-policy.yml` | Blocking Cargo usage, license, source and ban policy |

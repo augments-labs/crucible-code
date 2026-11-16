@@ -47,9 +47,10 @@ tokio = { workspace = true, features = ["rt", "time"] }
 # spawned; the negated group id reaches the rest, and there is no call in `std`
 # that takes one. Unix targets only. `fs` is `access`, the kernel's own answer
 # to whether this process may execute a Bubblewrap it found, which a mode read
-# through `std` can only guess at.
+# through `std` can only guess at. `param` is the host's page size, which a
+# disk ceiling is rounded down to because tmpfs would round it up.
 [target.'cfg(unix)'.dependencies]
-rustix = { workspace = true, features = ["fs", "process"] }
+rustix = { workspace = true, features = ["fs", "param", "process"] }
 
 # A command's pipes, read and written asynchronously, are handed to the reactor
 # of the runtime polling them: `net` is the descriptor it watches and `rt` is

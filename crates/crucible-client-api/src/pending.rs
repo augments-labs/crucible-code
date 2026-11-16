@@ -160,6 +160,11 @@ pub struct Choice {
     /// `name` stays what is sent back to choose it, and only for the choice
     /// that is, so the others cost no value of the frame's ceiling.
     pub recommended: bool,
+    /// The rows showing what it would look like, in the order the question
+    /// wrote them, so a client can draw the specimen the terminal draws.
+    /// Empty where it shows none, and then it does not travel, so a choice
+    /// without one costs no value of the frame's ceiling.
+    pub shows: Vec<Text>,
 }
 
 /// One question a model put to the person.
@@ -419,6 +424,15 @@ impl Choice {
             .text("name", &self.name)
             .text("says", &self.says)
             .maybe("recommended", self.recommended.then_some(true))
+            .maybe(
+                "shows",
+                (!self.shows.is_empty()).then(|| {
+                    self.shows
+                        .iter()
+                        .map(crate::wire::written)
+                        .collect::<Vec<_>>()
+                }),
+            )
             .finish()
     }
 
@@ -432,6 +446,11 @@ impl Choice {
                 .map(|value| value.as_bool().ok_or(ErrorCode::Malformed))
                 .transpose()?
                 .unwrap_or(false),
+            shows: fields
+                .maybe_list("shows")?
+                .into_iter()
+                .map(crate::wire::text)
+                .collect::<Result<_, _>>()?,
         };
         fields.done()?;
         Ok(choice)
@@ -439,7 +458,9 @@ impl Choice {
 }
 
 impl Asked {
-    fn written(&self) -> Value {
+    /// Shared with the questions a turn left waiting, which cross in the same
+    /// shape as the questions a turn stops on.
+    pub(crate) fn written(&self) -> Value {
         Writing::new()
             .text("heading", &self.heading)
             .text("asks", &self.asks)
@@ -451,7 +472,7 @@ impl Asked {
             .finish()
     }
 
-    fn read(value: Value) -> Result<Self, Refusal> {
+    pub(crate) fn read(value: Value) -> Result<Self, Refusal> {
         let mut fields = Fields::of(value)?;
         let asked = Self {
             heading: fields.text("heading")?,
@@ -580,15 +601,7 @@ impl Decision {
                     "answers",
                     answers
                         .iter()
-                        .map(|picked| {
-                            Writing::new()
-                                .with(
-                                    "chosen",
-                                    picked.chosen.iter().map(Said::as_str).collect::<Vec<_>>(),
-                                )
-                                .with("note", picked.note.as_str())
-                                .finish()
-                        })
+                        .map(|picked| picked.written_into(Writing::new()).finish())
                         .collect::<Vec<_>>(),
                 )
             }
@@ -642,14 +655,32 @@ impl Decision {
 
 fn picked(value: Value) -> Result<Picked, Refusal> {
     let mut fields = Fields::of(value)?;
-    let picked = Picked {
-        chosen: fields
-            .list("chosen")?
-            .into_iter()
-            .map(|value| crate::wire::said(&value))
-            .collect::<Result<_, _>>()?,
-        note: fields.said("note")?,
-    };
+    let picked = Picked::taken(&mut fields)?;
     fields.done()?;
     Ok(picked)
+}
+
+impl Picked {
+    /// Its two fields, beside whatever `object` already holds: shared with an
+    /// answer to questions left waiting, whose replies carry them the same way.
+    pub(crate) fn written_into(&self, object: Writing) -> Writing {
+        object
+            .with(
+                "chosen",
+                self.chosen.iter().map(Said::as_str).collect::<Vec<_>>(),
+            )
+            .with("note", self.note.as_str())
+    }
+
+    /// Its two fields, taken out of `fields`.
+    pub(crate) fn taken(fields: &mut Fields) -> Result<Self, Refusal> {
+        Ok(Self {
+            chosen: fields
+                .list("chosen")?
+                .into_iter()
+                .map(|value| crate::wire::said(&value))
+                .collect::<Result<_, _>>()?,
+            note: fields.said("note")?,
+        })
+    }
 }

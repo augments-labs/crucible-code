@@ -1,0 +1,13 @@
+---
+source: crates/crucible-tui-mermaid/src/tests.rs
+expression: "dump(&rows, 80)"
+---
+<Quiet>+- mermaid - er diagram</>                                                         
+<Quiet>| </>                     places               contains                            
+<Quiet>| </>+-----------------+          +---------+            +-------------+           
+<Quiet>| </>|    CUSTOMER     +1--------*+  ORDER  +1----------++  LINE-ITEM  |           
+<Quiet>| </>+-----------------+          +---------+            +-------------+           
+<Quiet>| </>|  string name    |                                                           
+<Quiet>| </>|  string email   |                                                           
+<Quiet>| </>+-----------------+                                                           
+<Quiet>+-</>

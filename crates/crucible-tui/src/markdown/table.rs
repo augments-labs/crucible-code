@@ -9,21 +9,37 @@
 //! exists.
 //!
 //! Which makes the cap the point rather than a detail. A block held is a block
-//! not on screen, so what is gathered is bounded by [`MOST`] and by nothing
-//! else: past it the lines go out exactly as the model wrote them, which is what
-//! they would have done had this module never seen them.
-
+//! not on screen, so what is gathered is bounded by [`TABLE_CAP`] and by
+//! nothing else: past it the lines go out exactly as the model wrote them,
+//! which is what they would have done had this module never seen them.
+//!
+//! A table that closes is handed on by its source, and laid out from it again
+//! by [`Table::of`] whenever the width it has to fit changes.
+//!
+//! A table is written with its outer bars or without them. With them, the
+//! first bar of a line says a table may be here. Without them nothing says so
+//! until the delimiter row has arrived, so the caller reads the first line as
+//! the prose it may be and a table only watches a copy of it: a bare table is
+//! a header with at least two cells and a delimiter row with the same number
+//! of them, each line watched for no more than [`HEADER_CAP`]. The break of the
+//! header and what is written of the line under it are all that is held back,
+//! and they are given back to the caller to read as the prose they are whenever
+//! the second line stops being a delimiter row.
+//!
+//! The same watch serves a heading written as a line over a row of `=` or `-`,
+//! so it is kept on every paragraph line and not only on one of two cells or
+//! more. The line under a title is a delimiter row, an underline, or neither;
+//! a row of dashes under a line that is not a header of two cells or more is
+//! therefore an underline, and under one that is, with as many cells in the
+//! row, a delimiter row, since a table was there first.
+//!
 use crate::color::Slot;
+use crate::forge::Forge;
 use crate::glyphs::Glyphs;
 use crate::row::Row;
 use crate::width;
 
-/// How much of a block may be held before it is written out as itself.
-///
-/// A table is drawn only once the last of it has arrived, so this is the reader
-/// with nothing to show — enough for any table an answer sensibly contains, and
-/// an end to a wall of bars that is never going to stop.
-const MOST: usize = 8 * 1024;
+use super::{HEADER_CAP, Level, TABLE_CAP};
 
 /// What stands between one column and the next: a space, a bar, a space.
 const BETWEEN: usize = 3;
@@ -69,8 +85,27 @@ impl Sided {
 /// One cell, with its own markers already read.
 type Cell = Vec<(Slot, String)>;
 
-/// The lines of a block that opened with a bar, until one that does not.
-#[derive(Debug)]
+/// What a table written without outer bars makes of the next character.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Sight {
+    /// It belongs to the block, which goes on.
+    Keep,
+    /// It does not: the block is a table, and the blank line ended it.
+    Over,
+    /// The row it ends underlines the line above it: that line is the title of
+    /// a heading of this level, and neither is a table. Nothing is held back
+    /// to be read; the break that ended the row is spent.
+    Under(Level),
+    /// It is not a table after all, and what was held back is the caller's to
+    /// read ([`Table::held`]). The character is not in it.
+    Release,
+    /// The block has grown past [`TABLE_CAP`] and goes out as it was written.
+    Spill,
+}
+
+/// The lines of a block that opened with a bar, or that are a header and a
+/// delimiter row without one, until a line that is not its own.
+#[derive(Debug, Clone)]
 pub(super) struct Table {
     /// Every line so far, the bars included and the break not.
     lines: Vec<String>,
@@ -79,8 +114,15 @@ pub(super) struct Table {
     /// Whether the scan is at the start of a line, which is where a bar decides
     /// whether the block goes on.
     fresh: bool,
-    /// How much has been held, so [`MOST`] is an answer rather than a hope.
+    /// How much has been held, so [`TABLE_CAP`] is an answer rather than a
+    /// hope.
     held: usize,
+    /// Whether it opened without a bar, on a line that has to prove itself a
+    /// header.
+    bare: bool,
+    /// Whether the line above the one being read has two cells or more, which
+    /// is what a delimiter row under it needs.
+    tabular: bool,
 }
 
 impl Table {
@@ -91,7 +133,83 @@ impl Table {
             line: String::new(),
             fresh: false,
             held: 0,
+            bare: false,
+            tabular: false,
         }
+    }
+
+    /// One opened by a first character that is not a bar, which the caller is
+    /// still holding.
+    pub(super) fn bare() -> Self {
+        Self {
+            bare: true,
+            ..Self::opening()
+        }
+    }
+
+    /// The table `source` spells, as it stood once the last of it arrived.
+    pub(super) fn of(source: &str) -> Self {
+        let mut lines: Vec<String> = source.split('\n').map(str::to_owned).collect();
+        let line = lines.pop().unwrap_or_default();
+        Self {
+            lines,
+            line,
+            fresh: source.ends_with('\n'),
+            held: source.len(),
+            bare: false,
+            tabular: false,
+        }
+    }
+
+    /// The block as it was written, every break included.
+    pub(super) fn source(&self) -> String {
+        let mut source = String::with_capacity(self.held);
+        for line in &self.lines {
+            source.push_str(line);
+            source.push('\n');
+        }
+        source.push_str(&self.line);
+        source
+    }
+
+    /// Whether it opened without a bar.
+    pub(super) fn is_bare(&self) -> bool {
+        self.bare
+    }
+
+    /// Whether it is a header still waiting for the delimiter row that would
+    /// make it a table, which is a line of prose until it arrives.
+    pub(super) fn pending(&self) -> bool {
+        self.bare && self.lines.len() < 2
+    }
+
+    /// Whether it is still reading its first line, which the caller reads as
+    /// prose all the same and this only watches.
+    pub(super) fn mirrors(&self) -> bool {
+        self.bare && self.lines.is_empty()
+    }
+
+    /// How many lines of it are whole.
+    pub(super) fn lined(&self) -> usize {
+        self.lines.len()
+    }
+
+    /// What a header that did not turn out to be one held back: its break and
+    /// the start of the line under it, to be read as written. `None` while the
+    /// header is still arriving, which is all in the caller's hands.
+    pub(super) fn held(&self) -> Option<String> {
+        (!self.lines.is_empty()).then(|| format!("\n{}", self.line))
+    }
+
+    /// How many of its lines have begun, the one still arriving included.
+    pub(super) fn begun(&self) -> usize {
+        self.lines.len() + usize::from(!self.line.is_empty())
+    }
+
+    /// Whether it has the delimiter row that makes it a table, rather than
+    /// lines somebody wrote with bars in them.
+    pub(super) fn delimited(&self) -> bool {
+        self.lines.get(1).is_some_and(|line| delimits(line))
     }
 
     /// Whether the scan stands at the start of a line.
@@ -100,7 +218,8 @@ impl Table {
     }
 
     /// Takes `character` into the block. `false` says the block has grown past
-    /// [`MOST`]: it is not going to be a table, and the caller writes it out.
+    /// [`TABLE_CAP`]: it is not going to be a table, and the caller writes it
+    /// out.
     pub(super) fn takes(&mut self, character: char) -> bool {
         self.fresh = character == '\n';
 
@@ -111,7 +230,98 @@ impl Table {
         }
 
         self.held = self.held.saturating_add(character.len_utf8());
-        self.held <= MOST
+        self.held <= TABLE_CAP
+    }
+
+    /// Takes `character` into a block that opened without a bar, and says what
+    /// became of it.
+    ///
+    /// The first line is a title: any line of prose of no more than
+    /// [`HEADER_CAP`] bytes that is not the start of a block of another kind
+    /// (a marker, a fence, a rule, a number and a stop) and is not blank. The
+    /// line under it is a delimiter row if the first has at least two cells and
+    /// the row has as many, an underline if it is nothing but `=` or `-` and
+    /// the blanks around them, and otherwise neither. Both are decided as the
+    /// line ends, except that a row is refused the moment it holds a character
+    /// that neither has, and past the cap. The body of a table is every line
+    /// after them, up to the first blank one. The title's own characters are
+    /// also the caller's to read: this only watches them, and a `Keep` for them
+    /// says nothing about whether they were taken.
+    pub(super) fn sees(&mut self, character: char) -> Sight {
+        if self.lines.len() >= 2 {
+            if self.fresh && character == '\n' {
+                return Sight::Over;
+            }
+            return if self.takes(character) {
+                Sight::Keep
+            } else {
+                Sight::Spill
+            };
+        }
+
+        let ends = character == '\n';
+        if self.lines.is_empty() {
+            if ends {
+                if !titles(&self.line) {
+                    return Sight::Release;
+                }
+                self.tabular = celled(&self.line).len() >= 2;
+            } else {
+                if self.line.len() >= HEADER_CAP {
+                    return Sight::Release;
+                }
+                self.line.push(character);
+                let opens = opens_block(&self.line);
+                self.line.pop();
+                if opens {
+                    return Sight::Release;
+                }
+            }
+            self.takes(character);
+            return Sight::Keep;
+        }
+
+        if ends {
+            let delimited = self.tabular
+                && delimits(&self.line)
+                && self
+                    .lines
+                    .first()
+                    .is_some_and(|header| celled(&self.line).len() == celled(header).len());
+            if delimited {
+                self.takes(character);
+                return Sight::Keep;
+            }
+            return match underline(&self.line) {
+                Some(level) => Sight::Under(level),
+                None => Sight::Release,
+            };
+        }
+
+        self.line.push(character);
+        let kept = self.line.len() <= HEADER_CAP
+            && (underlines(&self.line)
+                || (self.tabular && matches!(character, '-' | ':' | '|' | ' ' | '\t')));
+        self.line.pop();
+        if !kept {
+            return Sight::Release;
+        }
+
+        self.takes(character);
+        Sight::Keep
+    }
+
+    /// The line a row of `=` or `-` stands under, as it was written, where
+    /// there is one.
+    pub(super) fn title(&self) -> Option<&str> {
+        self.lines.first().map(String::as_str)
+    }
+
+    /// The level of the heading the line under the title makes it, where that
+    /// line is whole and is nothing but an underline: what the end of a message
+    /// decides, being a break.
+    pub(super) fn underlined(&self) -> Option<Level> {
+        (self.lines.len() == 1).then(|| underline(&self.line))?
     }
 
     /// Whether what has arrived can still turn out to be a table.
@@ -144,10 +354,11 @@ impl Table {
     pub(super) fn laid(
         &self,
         glyphs: Glyphs,
+        forge: Option<&Forge>,
         room: usize,
         say: &mut dyn FnMut(Slot, &str, Option<&str>),
     ) {
-        let rows = self.rows(glyphs);
+        let rows = self.rows(glyphs, forge);
         let (Some(header), Some(delimiter)) = (rows.first(), self.lines.get(1)) else {
             self.spilt(say);
             return;
@@ -178,20 +389,42 @@ impl Table {
     }
 
     /// The rows that are drawn: every line but the delimiter, cut into cells and
-    /// read once each.
-    fn rows(&self, glyphs: Glyphs) -> Vec<Vec<Cell>> {
+    /// read once each, against the repository the answer's numbers count in.
+    fn rows(&self, glyphs: Glyphs, forge: Option<&Forge>) -> Vec<Vec<Cell>> {
+        self.drawn()
+            .map(|line| {
+                celled(line)
+                    .into_iter()
+                    .map(|cell| read(cell, glyphs, forge, &mut |_| {}))
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Tells `tell` the whole of every address the cells draw shorter than
+    /// written, in the order they are read: what the same links would tell in
+    /// a paragraph, since a cell is read by the reader a paragraph is.
+    pub(super) fn shortened(
+        &self,
+        glyphs: Glyphs,
+        forge: Option<&Forge>,
+        tell: &mut dyn FnMut(&str),
+    ) {
+        for line in self.drawn() {
+            for cell in celled(line) {
+                read(cell, glyphs, forge, &mut *tell);
+            }
+        }
+    }
+
+    /// Every line that is drawn as a row: all but the delimiter.
+    fn drawn(&self) -> impl Iterator<Item = &str> {
         self.lines
             .iter()
             .chain(std::iter::once(&self.line).filter(|line| !line.is_empty()))
             .enumerate()
             .filter(|(at, _)| *at != 1)
-            .map(|(_, line)| {
-                celled(line)
-                    .into_iter()
-                    .map(|cell| read(cell, glyphs))
-                    .collect()
-            })
-            .collect()
+            .map(|(_, line)| line.as_str())
     }
 }
 
@@ -206,6 +439,80 @@ fn delimits(line: &str) -> bool {
         && cells.iter().all(|cell| {
             cell.contains('-') && cell.chars().all(|character| matches!(character, '-' | ':'))
         })
+}
+
+/// Whether `line`, a whole first line, can be the title of a heading: it has
+/// something on it, and is not a rule.
+fn titles(line: &str) -> bool {
+    !line.trim().is_empty() && !rules(line)
+}
+
+/// Whether `line` is a row of three or more of one of the marks a rule is
+/// written with, and nothing else: what the reader draws across the room.
+fn rules(line: &str) -> bool {
+    let row = line.trim_start_matches(' ');
+    row.chars().next().is_some_and(|mark| {
+        matches!(mark, '-' | '*' | '_') && row.len() >= 3 && row.chars().all(|c| c == mark)
+    })
+}
+
+/// Whether `line`, as far as it has arrived, opens a block of another kind: a
+/// heading, a bullet, a quote, a fence or a numbered item. A paragraph line is
+/// none of those, and the line under it cannot underline anything.
+///
+/// Only the start of the line is read, and a line of prose is told at its first
+/// character.
+fn opens_block(line: &str) -> bool {
+    let row = line.trim_start_matches(' ');
+    if line.len() - row.len() > 3 {
+        return true;
+    }
+    let mut chars = row.chars();
+    match chars.next() {
+        Some('#') => row.trim_start_matches('#').starts_with(' '),
+        Some('-' | '+' | '*') => row.get(1..).is_some_and(|rest| rest.starts_with(' ')),
+        Some('>') => true,
+        Some('`') => row.starts_with("```"),
+        Some('~') => row.starts_with("~~~"),
+        Some('0'..='9') => {
+            let rest = row.trim_start_matches(|c: char| c.is_ascii_digit());
+            rest.starts_with(". ") || rest.starts_with(") ")
+        }
+        _ => false,
+    }
+}
+
+/// The level of the heading `line` underlines the line above it into, where it
+/// is whole: up to three spaces, one mark or more of `=` or of `-`, and then
+/// spaces and tabs.
+fn underline(line: &str) -> Option<Level> {
+    if !underlines(line) {
+        return None;
+    }
+    match line.trim_start_matches(' ').chars().next()? {
+        '=' => Some(Level::One),
+        '-' => Some(Level::Two),
+        _ => None,
+    }
+}
+
+/// Whether `line`, as far as it has arrived, can still be an underline.
+///
+/// Up to three spaces, then one mark repeated, then blanks that end it: a mark
+/// after a blank, or a second kind of mark, is not one.
+fn underlines(line: &str) -> bool {
+    let row = line.trim_start_matches(' ');
+    if line.len() - row.len() > 3 {
+        return false;
+    }
+    let Some(mark) = row.chars().next() else {
+        return true;
+    };
+    if !matches!(mark, '=' | '-') {
+        return false;
+    }
+    let marks = row.trim_start_matches(mark);
+    marks.chars().all(|c| matches!(c, ' ' | '\t'))
 }
 
 /// `line` cut into the cells its bars separate.
@@ -378,14 +685,27 @@ fn wide(cell: &Cell) -> usize {
 /// A whole scanner for one cell, because a cell is markdown and this is what
 /// reads markdown. It holds nothing across the call — a fence needs two lines
 /// and a cell is one — so the reader is made here, used once and dropped.
-fn read(cell: &str, glyphs: Glyphs) -> Cell {
-    let mut markdown = super::Markdown::new(glyphs);
+///
+/// Against the same `forge` as the paragraphs around it, so an address is
+/// drawn as the same reference in a cell as out of one. Only the run of a
+/// link is kept: the quiet address a paragraph sets after its words is left
+/// out, since a column has no room to spare for it, and the whole address
+/// stays in the table's source. The whole of an address drawn shorter is
+/// told to `told`, as the reader tells it.
+fn read(cell: &str, glyphs: Glyphs, forge: Option<&Forge>, told: &mut dyn FnMut(&str)) -> Cell {
+    let markdown = super::Markdown::new(glyphs).counting(forge.cloned());
     let mut runs = Cell::new();
 
-    markdown.read(cell, 0, &mut |slot, text, _| {
-        runs.push((slot, text.to_owned()));
-    });
-    markdown.finish(0, &mut |slot, text, _| runs.push((slot, text.to_owned())));
+    // As written: a cell holds no block, and one reader holding another's
+    // block back would leave the cell waiting on itself.
+    let mut markdown = markdown.as_written();
+    let mut keep = |said: super::Said<'_>| match said {
+        super::Said::Run { slot, text, .. } => runs.push((slot, text.to_owned())),
+        super::Said::Shortened(address) => told(address),
+        super::Said::Aside(_) | super::Said::Block(_) | super::Said::Retract => {}
+    };
+    markdown.read(cell, 0, &mut keep);
+    markdown.finish(0, &mut keep);
 
     runs
 }

@@ -6,7 +6,7 @@ use std::path::Path;
 use crucible_models::ProviderError;
 use crucible_runner::TurnError;
 use crucible_tools::{Argument, Command, Summary, Target};
-use crucible_tui::{Picture, Recording, Size};
+use crucible_tui::{Picture, Recording, ScreenMode, Size};
 use crucible_types::{
     Attachment, Change, Diff, Line, Modality, Question, ToolArgs, ToolId, TurnId,
 };
@@ -89,7 +89,7 @@ fn unicode() -> Glyphs {
 /// row takes its own marks off whatever that leaves.
 fn hung(output: &ToolOutput, window: usize, style: Style) -> String {
     let shown = Shown::live(output.clone());
-    finished(&shown, beyond(&shown), window, style, false)
+    finished_rows(&shown, window, style, false)
         .iter()
         .map(Row::text)
         .collect::<Vec<_>>()
@@ -1315,71 +1315,138 @@ fn changed() -> Diff {
 /// row is padded to is visible in the expected text rather than lost in space.
 const NARROW: usize = 48;
 
+/// The rows a call that made `diff` comes back as, in the plain style.
+fn boxed(diff: Diff, window: usize) -> Vec<Row> {
+    finished_rows(
+        &Shown::live(ToolOutput::ok("changed one.rs, 1 replacements").showing(diff)),
+        window,
+        Style::plain(),
+        false,
+    )
+}
+
+/// The text of each of `rows`, with the ground it is padded to the window with
+/// left off.
+fn texts(rows: &[Row]) -> Vec<String> {
+    rows.iter()
+        .map(|row| row.text().trim_end().to_owned())
+        .collect()
+}
+
 /// Where a block for a change at `number` starts, with the ground it is padded
 /// to the window with left off.
 fn starts(number: usize) -> String {
     let one = Diff::new([Line::new(number, Change::Removed, "old")]);
-    let rows = block(&one, 40, unicode());
-
-    rows.first()
-        .map(Row::text)
-        .unwrap_or_default()
-        .trim_end()
-        .to_owned()
+    texts(&boxed(one, 40)).get(1).cloned().unwrap_or_default()
 }
 
 #[test]
 fn the_lines_a_call_moved_are_drawn_where_the_file_puts_them() {
-    // The gutter is the number the reader would find the line at, the sign says
-    // which way it went, and what a line is indented by is left where it was --
-    // a block is read by comparing one row with the row above it, and where each
-    // of them starts is the first thing that comparison is made of.
-    let drawn: Vec<String> = block(&changed(), NARROW, unicode())
-        .iter()
-        .map(Row::text)
-        .collect();
-
+    // The box a `diff` fence is drawn in: a header that says what moved, the
+    // number the reader would find each line at, the sign that says which way
+    // it went, and what a line is indented by left where it was -- a block is
+    // read by comparing one row with the row above it, and where each of them
+    // starts is the first thing that comparison is made of.
     assert_eq!(
-        drawn,
+        texts(&boxed(changed(), NARROW)),
         [
-            "      303            digest=$(<artifact/digest)",
-            "      304            scripts/smoke.sh",
-            "      305    ",
-            "      306 -  # trend data                       ",
-            "      307 -  # trend data                       ",
-            "      308 -  # trend data                       ",
-            "      306 +  # what stops a tag                 ",
-            "      307 +  # what stops a tag                 ",
-            "      308 +  # what stops a tag                 ",
-            "      309    budgets:",
-            "      310      name: release budgets",
+            "  ╭─ Added 3 lines, removed 3 lines",
+            "  │  303           digest=$(<artifact/digest)",
+            "  │  304           scripts/smoke.sh",
+            "  │  305",
+            "  │  306 - # trend data",
+            "  │  307 - # trend data",
+            "  │  308 - # trend data",
+            "  │  306 + # what stops a tag",
+            "  │  307 + # what stops a tag",
+            "  │  308 + # what stops a tag",
+            "  │  309   budgets:",
+            "  │  310     name: release budgets",
+            "  ╰─",
         ]
     );
 }
 
 #[test]
-fn a_line_that_moved_is_carried_to_the_last_column_and_one_that_stayed_is_not() {
+fn a_line_that_moved_is_carried_one_column_short_of_the_edge_and_one_that_stayed_is_not() {
     // A block of colour is what the eye finds before it reads anything, and one
     // that stopped where its text stopped would have a ragged edge meaning
-    // nothing. The lines around it are on the reader's own ground, so the eye
-    // skips them on the way to the change -- which is what they are there for.
-    for row in block(&changed(), NARROW, unicode()) {
-        let moved = row.text().contains('-') || row.text().contains('+');
+    // nothing. It stops one column short of the window, so the edge it makes is
+    // the block's and not the terminal's. The lines around it are on the
+    // reader's own ground, so the eye skips them on the way to the change --
+    // which is what they are there for.
+    for row in boxed(changed(), NARROW) {
+        let moved = row.text().contains(" - ") || row.text().contains(" + ");
 
-        assert_eq!(row.columns() == NARROW, moved, "{:?}", row.text());
+        assert_eq!(row.columns() == NARROW - 1, moved, "{:?}", row.text());
     }
 }
 
 #[test]
-fn the_row_above_a_block_counts_the_change_rather_than_answering_the_model() {
+fn the_box_header_says_what_moved_rather_than_answering_the_model() {
     // Both are true of the same call and only one of them is about the file: the
     // model asked for a replacement and is told it was made; the reader is
-    // looking at what is in the file now.
+    // looking at what is in the file now. The box says it in its header, where
+    // a `diff` fence in an answer says it too.
     let output = ToolOutput::ok("changed one.rs, 1 replacements").showing(changed());
+    let said = hung(&output, WIDE, Style::plain());
 
     assert_eq!(
-        hung(&output, WIDE, Style::plain()),
-        "  ⎿ Added 3 lines, removed 3 lines"
+        said.lines().next(),
+        Some("  ╭─ Added 3 lines, removed 3 lines"),
+        "{said}"
+    );
+    assert!(!said.contains("replacements"), "{said}");
+    assert!(!said.contains('\u{23bf}'), "{said}");
+}
+
+#[test]
+fn a_tools_change_names_the_file_it_changed_on_the_box_header() {
+    let rows = boxed(
+        Diff::new([
+            Line::new(1, Change::Kept, "fn kept() {}"),
+            Line::new(2, Change::Removed, "let a = 1;"),
+            Line::new(2, Change::Added, "let a = 2;"),
+        ])
+        .in_file("src/a.rs"),
+        NARROW,
+    );
+
+    assert_eq!(
+        texts(&rows).first().map(String::as_str),
+        Some("  ╭─ src/a.rs · Added 1 line, removed 1 line")
+    );
+    // And its name says which language the lines that did not move are
+    // coloured as, as a fence's path does.
+    let kept = rows.get(1).expect("a kept row");
+    assert!(
+        kept.kinds().any(|slot| slot == Slot::Keyword),
+        "{:?}",
+        texts(&rows)
+    );
+}
+
+#[test]
+fn a_change_kept_before_it_named_its_file_opens_on_its_summary_without_colour() {
+    // What a session written before a change named its file gives back: the
+    // same box, with nothing to name and no language to colour it as.
+    let rows = boxed(
+        Diff::new([
+            Line::new(1, Change::Kept, "fn kept() {}"),
+            Line::new(2, Change::Added, "let a = 2;"),
+        ]),
+        NARROW,
+    );
+
+    assert_eq!(
+        texts(&rows).first().map(String::as_str),
+        Some("  ╭─ Added 1 line")
+    );
+    let kept = rows.get(1).expect("a kept row");
+    assert!(
+        kept.kinds().all(|slot| slot != Slot::Keyword),
+        "{:?}",
+        texts(&rows)
     );
 }
 
@@ -1388,22 +1455,105 @@ fn a_change_in_one_direction_only_says_the_one_thing_that_happened() {
     let one = |change| ToolOutput::ok("wrote it").showing(Diff::new([Line::new(1, change, "a")]));
     let said = |output| hung(&output, WIDE, Style::plain());
 
-    assert_eq!(said(one(Change::Added)), "  ⎿ Added 1 line");
-    assert_eq!(said(one(Change::Removed)), "  ⎿ Removed 1 line");
+    assert_eq!(
+        said(one(Change::Added)).lines().next(),
+        Some("  ╭─ Added 1 line")
+    );
+    assert_eq!(
+        said(one(Change::Removed)).lines().next(),
+        Some("  ╭─ Removed 1 line")
+    );
 }
 
 #[test]
-fn a_block_that_stopped_short_says_so_where_the_counts_are() {
+fn a_block_that_stopped_short_says_so_inside_the_box() {
     // A block that stopped without saying so reads as the whole of what happened.
-    // It is said beside the counts because those are the claim the reader is
-    // checking the block against.
+    // The header counts every line the call moved; the lines the tool never
+    // kept are one quiet row of the box, under the ones it did.
     let whole = (1..=Diff::LINES + 4).map(|at| Line::new(at, Change::Added, "line"));
-    let output = ToolOutput::ok("wrote it").showing(Diff::new(whole));
+    let rows = texts(&boxed(Diff::new(whole), WIDE));
 
-    let said = hung(&output, WIDE, Style::plain());
+    assert_eq!(
+        rows.first().map(String::as_str),
+        Some("  ╭─ Added 68 lines")
+    );
+    assert_eq!(
+        rows.iter().rev().nth(1).map(String::as_str),
+        Some("  │  ⋯  4 lines not shown  ⋯"),
+        "{rows:#?}"
+    );
+    assert!(rows.iter().all(|row| !row.contains("of them")), "{rows:#?}");
+}
 
-    assert!(said.contains("Added 68 lines"), "{said}");
-    assert!(said.contains("(4 of them not shown)"), "{said}");
+#[test]
+fn a_change_longer_than_the_fold_shows_its_start_and_end_and_counts_the_rest() {
+    // Sixty-four lines kept, so the box draws the first twenty-four and the
+    // last four around one row that counts the thirty-six between.
+    let whole = (1..=Diff::LINES).map(|at| Line::new(at, Change::Added, format!("line {at}")));
+    let rows = texts(&boxed(Diff::new(whole), WIDE));
+
+    let fold = "  │  ⋯  36 lines folded · ctrl+o to expand  ⋯";
+    assert_eq!(rows.get(25).map(String::as_str), Some(fold), "{rows:#?}");
+    assert_eq!(rows.get(24).map(String::as_str), Some("  │   24 + line 24"));
+    assert_eq!(rows.get(26).map(String::as_str), Some("  │   61 + line 61"));
+    assert_eq!(rows.len(), 1 + 24 + 1 + 4 + 1, "{rows:#?}");
+}
+
+#[test]
+fn the_words_that_changed_in_a_replaced_line_are_raised_on_both_sides() {
+    // One removed line paired with the added line that replaced it: the words
+    // that differ stand out on each side's ground, and the words they share
+    // do not.
+    let diff = Diff::new([
+        Line::new(5, Change::Removed, "let total = count + 1;"),
+        Line::new(5, Change::Added, "let total = count + 2;"),
+    ]);
+    let rows = boxed(diff, WIDE);
+
+    let raised = |slot: Slot| -> Vec<String> {
+        rows.iter()
+            .flat_map(Row::spans)
+            .filter(|(at, _)| *at == slot)
+            .map(|(_, text)| text.to_owned())
+            .collect()
+    };
+    assert_eq!(raised(Slot::RemovedWord), ["1"]);
+    assert_eq!(raised(Slot::AddedWord), ["2"]);
+}
+
+#[test]
+fn a_tools_change_and_the_same_change_as_a_fence_are_drawn_alike() {
+    // One look for both: the rows a call's change comes back as are the rows
+    // the fence that says the same change is drawn as, under the same indent.
+    let fence = "@@ -303,8 +303,8 @@\n         digest=$(<artifact/digest)\n         \
+                 scripts/smoke.sh\n \n-# trend data\n-# trend data\n-# trend data\n\
+                 +# what stops a tag\n+# what stops a tag\n+# what stops a tag\n budgets:\n   \
+                 name: release budgets\n";
+    let room = crucible_tui::drawing::Room {
+        columns: NARROW - 2,
+        glyphs: unicode(),
+    };
+    let read = crucible_tui_diff::read(fence).expect("the fence to read");
+    let drawn: Vec<Vec<(Slot, String)>> = crucible_tui_diff::Changes
+        .draw(&read, &room)
+        .rows
+        .iter()
+        .map(|row| {
+            std::iter::once((Slot::Plain, "  ".to_owned()))
+                .chain(row.spans().map(|(slot, text)| (slot, text.to_owned())))
+                .collect()
+        })
+        .collect();
+    let boxed: Vec<Vec<(Slot, String)>> = boxed(changed(), NARROW)
+        .iter()
+        .map(|row| {
+            row.spans()
+                .map(|(slot, text)| (slot, text.to_owned()))
+                .collect()
+        })
+        .collect();
+
+    assert_eq!(boxed, drawn);
 }
 
 #[test]
@@ -1411,20 +1561,26 @@ fn the_gutter_widens_for_a_long_file_and_never_narrows_below_three() {
     // Otherwise a change near the top of a file and one a thousand lines down
     // would start their text in different columns, and a reader comparing two
     // calls reads the shape of a block before its digits.
-    assert_eq!(starts(4), "        4 -  old");
-    assert_eq!(starts(12_345), "      12345 -  old");
+    assert_eq!(starts(4), "  │    4 - old");
+    assert_eq!(starts(12_345), "  │  12345 - old");
 }
 
 #[test]
 fn a_line_too_wide_for_the_window_is_cut_inside_it() {
-    // The ground is drawn to the last column, so a row that outgrew the window
-    // is one the terminal wraps itself -- a row the live tail never counted, and
-    // a cursor a row off on every frame after it.
+    // A row that outgrew the window is one the terminal wraps itself -- a row
+    // the live tail never counted, and a cursor a row off on every frame after
+    // it. It is cut where the grounds end, one column short of the window, and
+    // its last cell says there was more.
     let long = Diff::new([Line::new(9, Change::Added, "x".repeat(500))]);
+    let rows = boxed(long, 40);
 
-    for row in block(&long, 40, unicode()) {
-        assert_eq!(row.columns(), 40, "{:?}", row.text());
-    }
+    assert!(rows.iter().all(|row| row.columns() <= 40), "{rows:?}");
+    assert_eq!(rows.get(1).map(Row::columns), Some(39), "{rows:?}");
+    assert_eq!(
+        rows.get(1).and_then(|row| row.spans().last()),
+        Some((Slot::Added, "\u{2026}")),
+        "{rows:?}"
+    );
 }
 
 #[test]
@@ -1458,6 +1614,36 @@ fn a_change_is_laid_out_again_when_the_window_widens() {
         "{}",
         renderer.terminal().picture().row(1),
     );
+}
+
+#[test]
+fn a_change_is_laid_out_again_in_the_glyphs_the_reader_switches_to() {
+    // The box is drawn in the glyph set of the moment it is laid out, and a
+    // reader who switches sets is shown every change already on the screen in
+    // the set they chose rather than in two sets at once.
+    let output = ToolOutput::ok("changed one.rs, 1 replacements").showing(changed());
+    let mut renderer = Renderer::new(Resizing::new(NARROW, 20));
+    renderer.draws(Glyphs::Unicode);
+    came_back(
+        &mut renderer,
+        &mut Kept::default(),
+        &ToolId::new("a"),
+        Shown::live(output),
+        Style::plain(),
+    )
+    .expect("the change to draw");
+    assert!(
+        renderer.terminal().picture().row(0).starts_with("  ╭─"),
+        "{}",
+        renderer.terminal().picture().row(0)
+    );
+
+    renderer.draws(Glyphs::Ascii);
+    renderer.repaint().expect("the change to redraw");
+
+    let picture = renderer.terminal().picture();
+    assert!(picture.row(0).starts_with("  +-"), "{}", picture.row(0));
+    assert!(picture.row(1).starts_with("  |  303"), "{}", picture.row(1));
 }
 
 #[test]
@@ -1507,7 +1693,647 @@ fn a_call_that_changed_nothing_is_drawn_as_what_it_said() {
         hung(&output, WIDE, Style::plain()),
         "  ⎿ created one.rs, 0 lines"
     );
-    assert!(block(&Diff::new([]), 40, unicode()).is_empty());
+}
+
+#[test]
+fn a_session_that_kept_only_the_counts_still_says_them_on_one_row() {
+    // A log from before the lines were kept has a change's counts and nothing
+    // to draw in a box, so the row under the call says them as it always did.
+    let output = Shown::replayed(
+        RecordedToolOutput::ok("changed one.rs").counting(Changed::new(2, 1)),
+        None,
+    );
+
+    assert_eq!(
+        texts(&finished_rows(&output, WIDE, Style::plain(), false)),
+        ["  ⎿ Added 2 lines, removed 1 line"]
+    );
+}
+
+/// Every line a tool keeps of one change, each added and saying its number,
+/// in `src/one.rs`: more than the box draws without folding its middle.
+fn long_change() -> Diff {
+    Diff::new((1..=Diff::LINES).map(|at| Line::new(at, Change::Added, format!("line {at}"))))
+        .in_file("src/one.rs")
+}
+
+/// A call line too long for the room a heading is given, so the row under it
+/// offers the whole of it.
+fn cut_heading() -> String {
+    format!("Edit({}one.rs)", "deep/".repeat(40))
+}
+
+/// `diff` as a model writes the same change in an answer: a `diff` fence of
+/// the file the change names and one hunk under `hunk`.
+fn fence_of(diff: &Diff, hunk: &str) -> String {
+    let path = diff.path().unwrap_or_default();
+    let mut fence = format!("```diff\n--- a/{path}\n+++ b/{path}\n{hunk}\n");
+    for line in diff.lines() {
+        fence.push(match line.change() {
+            Change::Kept => ' ',
+            Change::Removed => '-',
+            Change::Added => '+',
+        });
+        fence.push_str(line.text());
+        fence.push('\n');
+    }
+    fence.push_str("```\n");
+    fence
+}
+
+/// Each row of `rows` as the slots and words it is drawn in.
+fn spans_of(rows: &[Row]) -> Vec<Vec<(Slot, String)>> {
+    rows.iter()
+        .map(|row| {
+            row.spans()
+                .map(|(slot, text)| (slot, text.to_owned()))
+                .collect()
+        })
+        .collect()
+}
+
+#[test]
+fn a_tools_change_and_the_fence_an_answer_says_it_in_are_drawn_as_the_same_rows() {
+    // One change, reaching the screen two ways: as what a call came back with,
+    // and as a `diff` fence the reader of an answer hands to the drawers a
+    // session's renderer is given. The rows are the same rows, in both glyph
+    // sets, folded or not, in the same room.
+    for (diff, hunk) in [
+        (changed().in_file("ci/release.yml"), "@@ -303,8 +303,8 @@"),
+        (long_change(), "@@ -0,0 +1,64 @@"),
+    ] {
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            for window in [NARROW, 80] {
+                let style = Style::drawn(glyphs);
+                let called =
+                    Shown::live(ToolOutput::ok("changed it, 1 replacements").showing(diff.clone()));
+                let hung = finished_rows(&called, window, style, false);
+                // A call's change hangs under its call, and a fence does not.
+                let indent = hung
+                    .first()
+                    .and_then(|row| row.spans().next())
+                    .map(|(_, pad)| pad.len())
+                    .unwrap_or_default();
+                let tool: Vec<Vec<(Slot, String)>> = spans_of(&hung)
+                    .into_iter()
+                    .map(|row| row.into_iter().skip(1).collect())
+                    .collect();
+
+                // An answer is read where there is colour to say it in.
+                let mut renderer = Renderer::new(Recording::new(window - indent, 120));
+                renderer.wears(Style::coloured().palette());
+                renderer.draws(glyphs);
+                renderer.drawers(drawers());
+                renderer
+                    .stream(&fence_of(&diff, hunk))
+                    .expect("the fence to draw");
+                renderer.settle().expect("the answer to end");
+                let fence = spans_of(&renderer.tail(120));
+
+                assert_eq!(indent, 2, "{glyphs:?} at {window}");
+                assert_eq!(
+                    renderer.transcript_columns(),
+                    window - indent,
+                    "{glyphs:?} at {window}: the two were not given the same room"
+                );
+                assert_eq!(tool, fence, "{:?} in {glyphs:?} at {window}", diff.path());
+            }
+        }
+    }
+}
+
+#[test]
+fn a_folded_fence_written_where_no_key_opens_it_is_the_tools_change_with_its_key_taken_out() {
+    // One folded change, twice where nothing is pressed: what a call came
+    // back with once its fold stops offering, and a `diff` fence of an answer
+    // in a run whose output is a file. The rows are the same rows, in what the
+    // run keeps and in what it writes, in both glyph sets and at every width,
+    // the ones too narrow for the whole key among them.
+    let diff = long_change();
+    for (glyphs, counted) in [
+        (Glyphs::Unicode, "│  ⋯  36 lines folded  ⋯"),
+        (Glyphs::Ascii, "|  ...  36 lines folded  ..."),
+    ] {
+        let mut named = 0;
+        for window in 3..=80 {
+            let called =
+                Shown::live(ToolOutput::ok("changed it, 1 replacements").showing(diff.clone()));
+            let mut hung = finished_rows(&called, window, Style::drawn(glyphs), false);
+            if hung.iter().any(|row| row.text().contains("ctrl")) {
+                named += 1;
+            }
+            hung.iter_mut().for_each(crucible_tui_diff::unoffered);
+            // A call's change hangs two columns under its call, and a fence
+            // does not.
+            let tool: Vec<Vec<(Slot, String)>> = spans_of(&hung)
+                .into_iter()
+                .map(|row| row.into_iter().skip(1).collect())
+                .collect();
+
+            let mut renderer = Renderer::new(Recording::redirected(window - 2, 120));
+            renderer.wears(Style::coloured().palette());
+            renderer.draws(glyphs);
+            renderer.drawers(drawers());
+            renderer
+                .stream(&fence_of(&diff, "@@ -0,0 +1,64 @@"))
+                .expect("the fence to be written");
+            renderer.settle().expect("the answer to end");
+            let kept = renderer.tail(120);
+            let written = renderer.terminal().written();
+
+            assert_eq!(tool, spans_of(&kept), "{glyphs:?} at {window}");
+            assert_eq!(
+                written.lines().map(str::trim_end).collect::<Vec<_>>(),
+                texts(&hung)
+                    .iter()
+                    .map(|row| row.trim_start())
+                    .collect::<Vec<_>>(),
+                "{glyphs:?} at {window}"
+            );
+            assert!(!written.contains("ctrl"), "{glyphs:?} at {window}");
+            // With room for the whole row, the row is the count between its
+            // marks. A narrower room cut it while it still named the key.
+            if window == 80 {
+                assert_eq!(
+                    written
+                        .lines()
+                        .filter(|line| line.contains("lines folded"))
+                        .collect::<Vec<_>>(),
+                    [counted],
+                    "{glyphs:?}"
+                );
+            }
+        }
+        assert!(named > 0, "{glyphs:?}: no width named the key on a call");
+    }
+}
+
+#[test]
+fn a_folded_fence_on_a_screen_names_the_key_that_lists_it_in_both_screen_modes() {
+    // Ctrl+O lists the source of a drawn fence on either screen, so the fold
+    // of one names the key there, on the slot that lights under the pointer,
+    // and the words reach the terminal.
+    for mode in [ScreenMode::Fullscreen, ScreenMode::Native] {
+        for (glyphs, offered) in [
+            (
+                Glyphs::Unicode,
+                "│  ⋯  36 lines folded · ctrl+o to expand  ⋯",
+            ),
+            (
+                Glyphs::Ascii,
+                "|  ...  36 lines folded · ctrl+o to expand  ...",
+            ),
+        ] {
+            let mut renderer = Renderer::drawing(Recording::new(80, 120), mode);
+            renderer.wears(Style::coloured().palette());
+            renderer.draws(glyphs);
+            renderer.drawers(drawers());
+            renderer
+                .stream(&fence_of(&long_change(), "@@ -0,0 +1,64 @@"))
+                .expect("the fence to draw");
+            renderer.settle().expect("the answer to end");
+
+            let kept = renderer.tail(120);
+            let folds: Vec<String> = texts(&kept)
+                .into_iter()
+                .filter(|row| row.contains("lines folded"))
+                .collect();
+            assert_eq!(folds, [offered], "{mode:?} in {glyphs:?}");
+            let lit: Vec<(Slot, &str)> = kept
+                .iter()
+                .flat_map(Row::spans)
+                .filter(|(slot, _)| *slot == Slot::Cut)
+                .collect();
+            assert_eq!(lit, [(Slot::Cut, EXPAND)], "{mode:?} in {glyphs:?}");
+            assert!(
+                renderer.terminal().written().contains(EXPAND),
+                "{mode:?} in {glyphs:?}: the key never reached the terminal"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_folded_change_offers_its_key_and_is_kept_written_out_with_every_line() {
+    // The fold counts what it hides and names the key that shows it, on the
+    // slot that lights under the pointer. What the key opens is the change
+    // written out: what moved, and every line the tool kept, the folded
+    // middle among them, whether the call has just answered or a session is
+    // being put back on the screen.
+    let rows = boxed(long_change(), WIDE);
+    let said = texts(&rows);
+    assert_eq!(
+        said.get(25).map(String::as_str),
+        Some("  │  ⋯  36 lines folded · ctrl+o to expand  ⋯"),
+        "{said:#?}"
+    );
+    let lit: Vec<(Slot, &str)> = rows
+        .iter()
+        .flat_map(Row::spans)
+        .filter(|(slot, _)| *slot == Slot::Cut)
+        .collect();
+    assert_eq!(lit, [(Slot::Cut, EXPAND)]);
+
+    let mut written = vec![String::from("src/one.rs · Added 64 lines\n")];
+    written.extend((1..=Diff::LINES).map(|at| format!("{at:>3} + line {at}\n")));
+    let written = written.concat();
+    for shown in [
+        Shown::live(ToolOutput::ok("changed one.rs, 1 replacements").showing(long_change())),
+        Shown::replayed(
+            RecordedToolOutput::ok("changed one.rs, 1 replacements"),
+            Some(long_change()),
+        ),
+    ] {
+        let mut renderer = Renderer::new(Resizing::new(WIDE, 60));
+        let mut kept = Kept::default();
+        let call = ToolId::new("a");
+        kept.calling(call.clone(), "Edit(src/one.rs)".to_owned());
+        came_back(&mut renderer, &mut kept, &call, shown, Style::plain())
+            .expect("the change to draw");
+
+        let held: Vec<(&str, &str, Option<usize>)> = kept
+            .newest()
+            .map(|whole| (whole.called(), whole.text(), whole.at()))
+            .collect();
+        assert_eq!(held, [("Edit(src/one.rs)", written.as_str(), Some(0))]);
+    }
+
+    // A change drawn whole, under a call line drawn whole, offers nothing and
+    // is not kept.
+    let mut renderer = Renderer::new(Resizing::new(WIDE, 60));
+    let mut kept = Kept::default();
+    let call = ToolId::new("a");
+    kept.calling(call.clone(), "Edit(src/one.rs)".to_owned());
+    came_back(
+        &mut renderer,
+        &mut kept,
+        &call,
+        Shown::live(ToolOutput::ok("changed one.rs, 1 replacements").showing(changed())),
+        Style::plain(),
+    )
+    .expect("the change to draw");
+    assert!(kept.is_empty(), "a change drawn whole was kept");
+}
+
+#[test]
+fn a_change_under_a_call_line_that_was_cut_is_kept_written_out_and_not_as_the_model_was_told() {
+    // The key on the box's header opens the call's whole line, and under it
+    // the change as the box says it, not the sentence the model was sent.
+    let mut renderer = Renderer::new(Resizing::new(80, 60));
+    let mut kept = Kept::default();
+    let call = ToolId::new("a");
+    kept.calling(call.clone(), cut_heading());
+    came_back(
+        &mut renderer,
+        &mut kept,
+        &call,
+        Shown::live(
+            ToolOutput::ok("changed one.rs, 1 replacements")
+                .showing(changed().in_file("ci/release.yml")),
+        ),
+        Style::plain(),
+    )
+    .expect("the change to draw");
+
+    let heading = cut_heading();
+    let held: Vec<(&str, &str)> = kept
+        .newest()
+        .map(|whole| (whole.called(), whole.text()))
+        .collect();
+    assert_eq!(
+        held,
+        [(
+            heading.as_str(),
+            "ci/release.yml · Added 3 lines, removed 3 lines\n\
+             303           digest=$(<artifact/digest)\n\
+             304           scripts/smoke.sh\n\
+             305\n\
+             306 - # trend data\n\
+             307 - # trend data\n\
+             308 - # trend data\n\
+             306 + # what stops a tag\n\
+             307 + # what stops a tag\n\
+             308 + # what stops a tag\n\
+             309   budgets:\n\
+             310     name: release budgets\n"
+        )]
+    );
+
+    // A log that kept the counts and no line has no change to write out: its
+    // row says the counts, and the key opens what the call answered.
+    let mut renderer = Renderer::new(Resizing::new(80, 60));
+    let mut kept = Kept::default();
+    kept.calling(call.clone(), cut_heading());
+    came_back(
+        &mut renderer,
+        &mut kept,
+        &call,
+        Shown::replayed(
+            RecordedToolOutput::ok("changed one.rs").counting(Changed::new(2, 1)),
+            None,
+        ),
+        Style::plain(),
+    )
+    .expect("the counts to draw");
+    let held: Vec<&str> = kept.newest().map(Whole::text).collect();
+    assert_eq!(held, ["changed one.rs"]);
+}
+
+#[test]
+fn a_fold_that_can_open_nothing_any_more_keeps_its_count_and_names_no_key_at_any_width() {
+    // The row keeps its place and what it counted, which is still true, and
+    // stops naming the key and lighting under the pointer, in whatever room it
+    // was drawn in.
+    let change = Shown::live(ToolOutput::ok("changed one.rs").showing(long_change()));
+    for (glyphs, counted) in [
+        (Glyphs::Unicode, "  │  ⋯  36 lines folded  ⋯"),
+        (Glyphs::Ascii, "  |  ...  36 lines folded  ..."),
+    ] {
+        let mut named = 0;
+        for width in 0..=80 {
+            let mut rows = finished_rows(&change, width, Style::drawn(glyphs), false);
+            if rows.iter().any(|row| row.text().contains(EXPAND)) {
+                named += 1;
+            }
+            unoffered(&mut rows);
+
+            for row in &rows {
+                assert!(
+                    row.kinds().all(|slot| slot != Slot::Cut),
+                    "{glyphs:?} at {width}: {row:?}"
+                );
+                assert!(
+                    !row.text().contains("ctrl"),
+                    "{glyphs:?} at {width}: {:?}",
+                    row.text()
+                );
+            }
+            if width == 80 {
+                assert_eq!(
+                    texts(&rows).get(25).map(String::as_str),
+                    Some(counted),
+                    "{glyphs:?}"
+                );
+            }
+        }
+        assert!(named > 0, "{glyphs:?}: no width named the key");
+    }
+}
+
+#[test]
+fn a_fold_drawn_too_narrow_to_name_its_key_is_kept_for_the_window_that_names_it() {
+    // The box is drawn again at every width. Where the window had no room for
+    // the key its fold names, a wider one names it, and there has to be
+    // something behind it by then.
+    let mut renderer = Renderer::new(Resizing::new(24, 60));
+    let mut kept = Kept::default();
+    let call = ToolId::new("a");
+    kept.calling(call.clone(), "Edit(a)".to_owned());
+    came_back(
+        &mut renderer,
+        &mut kept,
+        &call,
+        Shown::live(ToolOutput::ok("changed one.rs").showing(long_change())),
+        Style::plain(),
+    )
+    .expect("the change to draw");
+
+    let narrow = texts(&renderer.tail(60));
+    assert!(
+        narrow.iter().any(|row| row.contains("36 lines")),
+        "{narrow:#?}"
+    );
+    assert!(
+        narrow.iter().all(|row| !row.contains("ctrl")),
+        "{narrow:#?}"
+    );
+    let held: Vec<&str> = kept.newest().map(Whole::text).collect();
+    assert_eq!(held.len(), 1, "a folded change was not kept");
+    assert!(
+        held.first()
+            .is_some_and(|text| text.starts_with("src/one.rs · Added 64 lines\n  1 + line 1\n")),
+        "{held:?}"
+    );
+
+    renderer.terminal().resize(80, 60);
+    renderer.resized().expect("the change to reflow");
+    let wide = texts(&renderer.tail(60));
+    assert!(
+        wide.iter()
+            .any(|row| row == "  │  ⋯  36 lines folded · ctrl+o to expand  ⋯"),
+        "{wide:#?}"
+    );
+}
+
+#[test]
+fn the_longest_change_a_tool_keeps_is_held_written_out_whole() {
+    // Every line the tool keeps, each as long as it keeps one and every
+    // character of it a tab, which is written as the four columns it is drawn
+    // as, to the end of its line: the most a change comes to written out.
+    let long = "\t".repeat(Line::TEXT);
+    let widest = Diff::new((1..=Diff::LINES).map(|at| Line::new(at, Change::Added, long.clone())))
+        .in_file("src/one.rs");
+    let mut renderer = Renderer::new(Resizing::new(80, 60));
+    let mut kept = Kept::default();
+    let call = ToolId::new("a");
+    kept.calling(call.clone(), "Edit(src/one.rs)".to_owned());
+    came_back(
+        &mut renderer,
+        &mut kept,
+        &call,
+        Shown::live(ToolOutput::ok("changed one.rs").showing(widest)),
+        Style::plain(),
+    )
+    .expect("the change to draw");
+
+    let held: Vec<&str> = kept.newest().map(Whole::text).collect();
+    let text = held.first().copied().unwrap_or_default();
+    // A number, a sign, and the line, ended.
+    let line = "  1 + ".len() + 4 * Line::TEXT + "\n".len();
+    assert_eq!(
+        text.len(),
+        "src/one.rs · Added 64 lines\n".len() + Diff::LINES * line
+    );
+    let last = format!(" 64 + {}\n", " ".repeat(4 * Line::TEXT));
+    assert!(text.ends_with(&last), "the last line was cut");
+    assert!(!text.contains('\t'));
+}
+
+/// What `renderer`, drawing in `mode`, has on its screen, a row each.
+///
+/// A screen of its own is read as the picture it makes. The terminal's own
+/// buffer is read from the last frame drawn into it, which redraws the whole
+/// region: what follows the last erase, with every control sequence read past.
+fn on_screen(renderer: &Renderer<Recording>, mode: ScreenMode) -> Vec<String> {
+    match mode {
+        ScreenMode::Fullscreen => renderer
+            .terminal()
+            .picture()
+            .rows()
+            .iter()
+            .map(|row| row.trim_end().to_owned())
+            .collect(),
+        ScreenMode::Native => {
+            let written = renderer.terminal().written();
+            let drawn = written.rsplit("\x1b[J").next().unwrap_or_default();
+            let mut text = String::new();
+            let mut left = drawn.chars();
+            while let Some(character) = left.next() {
+                if character != '\x1b' {
+                    text.push(character);
+                    continue;
+                }
+                if left.next() == Some('[') {
+                    for byte in left.by_ref() {
+                        if ('@'..='~').contains(&byte) {
+                            break;
+                        }
+                    }
+                }
+            }
+            text.split("\r\n")
+                .map(|row| row.trim_end().to_owned())
+                .collect()
+        }
+    }
+}
+
+/// Draws the call `heading` names answering with `diff`, as a turn does, and
+/// then stands everything kept the way the key that expands does: newest
+/// first, each under its call's line, in the rows a view is given.
+fn expanded_over(
+    renderer: &mut Renderer<Recording>,
+    heading: &str,
+    diff: Diff,
+    style: Style,
+) -> Kept {
+    let mut kept = Kept::default();
+    let call = ToolId::new("a");
+    kept.calling(call.clone(), heading.to_owned());
+    returned(renderer, &line(heading), style).expect("the call line to draw");
+    came_back(
+        renderer,
+        &mut kept,
+        &call,
+        Shown::live(ToolOutput::ok("changed one.rs, 1 replacements").showing(diff)),
+        style,
+    )
+    .expect("the change to draw");
+
+    let shown: Vec<crucible_tui::Shown<'_>> = kept
+        .newest()
+        .map(|whole| crucible_tui::Shown {
+            called: whole.called(),
+            text: whole.text(),
+        })
+        .collect();
+    let rows = crucible_tui::Expanded {
+        shown: &shown,
+        from: 0,
+    }
+    .within(
+        renderer.columns(),
+        renderer.room().saturating_sub(1),
+        style.glyphs(),
+    );
+    renderer
+        .instead(&[], &rows, None, style.palette())
+        .expect("the view to stand");
+    kept
+}
+
+#[test]
+fn the_key_that_expands_shows_a_folded_change_under_its_call_with_every_line_on_either_screen() {
+    // The call's line, the row that parts it from what it answered, and the
+    // change written out.
+    let mut expected = vec![
+        "Edit(src/one.rs)".to_owned(),
+        String::new(),
+        "src/one.rs · Added 64 lines".to_owned(),
+    ];
+    expected.extend((1..=Diff::LINES).map(|at| format!("{at:>3} + line {at}")));
+
+    for mode in [ScreenMode::Fullscreen, ScreenMode::Native] {
+        let mut renderer = Renderer::drawing(Recording::new(80, 160), mode);
+        let kept = expanded_over(
+            &mut renderer,
+            "Edit(src/one.rs)",
+            long_change(),
+            Style::plain(),
+        );
+        assert_eq!(kept.newest().count(), 1, "{mode:?}");
+
+        let screen = on_screen(&renderer, mode);
+        let from = screen
+            .iter()
+            .position(|row| row == "Edit(src/one.rs)")
+            .unwrap_or_else(|| panic!("{mode:?}: no call line stands in {screen:#?}"));
+        assert_eq!(
+            screen.get(from..from + expected.len()),
+            Some(expected.as_slice()),
+            "{mode:?}: {screen:#?}"
+        );
+    }
+}
+
+#[test]
+fn a_hostile_change_stood_whole_by_the_key_writes_nothing_a_terminal_obeys_on_either_screen() {
+    // The path and the lines are a checked-out file's and a model's. Written
+    // out for the key, they are text like any result's: no escape, no control,
+    // and nothing that turns the row around or hides in it.
+    let hostile = Diff::new((1..=40).map(|at| {
+        Line::new(
+            at,
+            Change::Added,
+            format!(
+                "line {at} \u{1b}[2J\u{1b}]8;;http://127.0.0.1:9/\u{7}here\u{1b}]8;;\u{7} \
+                 \u{202e}txet\u{202c} \u{2066}x\u{2069} \u{200b}\u{feff}\u{9b}31m\u{8}"
+            ),
+        )
+    }))
+    .in_file("src/\u{1b}[31mred\u{1b}[0m\u{202e}sr.\u{9b}2J");
+
+    for mode in [ScreenMode::Fullscreen, ScreenMode::Native] {
+        let style = Style::coloured();
+        let mut renderer = Renderer::drawing(Recording::new(80, 120), mode);
+        renderer.wears(style.palette());
+        let kept = expanded_over(&mut renderer, "Edit(src/red.rs)", hostile.clone(), style);
+
+        // The change was kept and stood: its count and its last line are on
+        // the screen, under the call.
+        let held: Vec<&str> = kept.newest().map(Whole::text).collect();
+        assert!(
+            held.first()
+                .is_some_and(|text| text.contains("Added 40 lines")),
+            "{mode:?}: {held:?}"
+        );
+        let screen = on_screen(&renderer, mode);
+        assert!(
+            screen.iter().any(|row| row.contains(" 40 + line 40")),
+            "{mode:?}: {screen:#?}"
+        );
+
+        let written = renderer.terminal().written();
+        for obeyed in [
+            "\u{1b}]",
+            "\u{1b}[2J\u{1b}]",
+            "\u{1b}[31mred",
+            "\u{7}",
+            "\u{8}",
+            "\u{9b}",
+            "\u{202e}",
+            "\u{202c}",
+            "\u{2066}",
+            "\u{2069}",
+            "\u{200b}",
+            "\u{feff}",
+        ] {
+            assert!(
+                !written.contains(obeyed),
+                "{mode:?}: {obeyed:?} reached the terminal"
+            );
+        }
+    }
 }
 
 #[test]
@@ -2069,7 +2895,28 @@ fn an_answer_a_guardrail_refused_says_the_answer_was_what_it_refused() {
 }
 
 #[test]
-fn a_guardrail_that_could_not_decide_about_a_prompt_says_nothing_was_asked() {
+fn a_guardrail_that_refused_what_the_person_said_says_it_was_not_sent() {
+    // An input check judges a prompt, a line typed while the turn ran and an
+    // answer to a question asked without waiting alike, and the last two are
+    // refused after the turn has asked the model something. What is true of
+    // all three is that the person's words were never sent.
+    let written = refusal(&Turned::Rejected {
+        rejection: crucible_runner::Rejection::new("no-prod", "it names production"),
+        stop: None,
+    });
+
+    assert!(
+        written.contains(
+            "the guardrail `no-prod` refused what you said, and it was not sent: it names \
+             production"
+        ),
+        "{written}"
+    );
+    assert!(!written.contains("nothing was asked"), "{written}");
+}
+
+#[test]
+fn a_guardrail_that_could_not_decide_about_what_the_person_said_says_it_was_not_sent() {
     let written = refusal(&Turned::Undecided {
         problem: crucible_runner::GuardrailError::undecided("no-secrets", "its list is missing"),
         stop: None,
@@ -2077,10 +2924,12 @@ fn a_guardrail_that_could_not_decide_about_a_prompt_says_nothing_was_asked() {
 
     assert!(
         written.contains(
-            "the guardrail `no-secrets` could not decide: its list is missing, and nothing was asked"
+            "the guardrail `no-secrets` could not decide: its list is missing, so what you said \
+             was not sent"
         ),
         "{written}"
     );
+    assert!(!written.contains("nothing was asked"), "{written}");
 }
 
 #[test]
@@ -2199,6 +3048,50 @@ fn a_result_that_says_the_keys_name_is_not_taken_for_the_offer() {
 }
 
 #[test]
+fn a_change_whose_call_was_cut_offers_the_key_two_columns_after_its_summary() {
+    // The offer is not part of what the summary says, so it stands off from
+    // it: two columns, then the key in brackets, as quiet as a hint and on the
+    // slot that lights under the pointer.
+    let change = Shown::live(ToolOutput::ok("changed a.rs").showing(Diff::new([Line::new(
+        1,
+        Change::Added,
+        "a",
+    )])));
+    let rows = finished_rows(&change, WIDE, Style::plain(), true);
+    let header = rows.first().expect("the row the box opens on");
+
+    assert_eq!(header.text(), "  ╭─ Added 1 line  (ctrl+o to expand)");
+    assert_eq!(
+        header.spans().last(),
+        Some((Slot::Cut, "  (ctrl+o to expand)")),
+        "{header:?}"
+    );
+}
+
+#[test]
+fn a_change_with_no_room_for_its_offer_draws_no_empty_one() {
+    // Two columns of nothing in the slot that lights under the pointer would
+    // be an offer of nothing, and a row the summary filled has no room for more.
+    let change = Shown::live(ToolOutput::ok("changed a.rs").showing(Diff::new([Line::new(
+        1,
+        Change::Added,
+        "a",
+    )])));
+    for width in 0..=20 {
+        let rows = finished_rows(&change, width, Style::plain(), true);
+        let header = rows.first().expect("the row the box opens on");
+
+        assert!(header.columns() <= width.max(2), "{width}: {header:?}");
+        for (slot, text) in header.spans() {
+            assert!(
+                slot != Slot::Cut || !text.trim().is_empty(),
+                "{width}: {header:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_change_offer_clipped_to_the_room_it_had_is_still_taken_off() {
     let change = Shown::live(ToolOutput::ok("changed a.rs").showing(Diff::new([Line::new(
         1,
@@ -2212,7 +3105,7 @@ fn a_change_offer_clipped_to_the_room_it_had_is_still_taken_off() {
         let Some(offer) = rows
             .first()
             .and_then(|row| row.spans().last().map(|(_, text)| text.to_owned()))
-            .filter(|offer| offer.starts_with("(c") && !offer.ends_with(')'))
+            .filter(|offer| offer.starts_with("  (c") && !offer.ends_with(')'))
         else {
             continue;
         };
@@ -2233,6 +3126,67 @@ fn a_change_offer_clipped_to_the_room_it_had_is_still_taken_off() {
         clipped > 0,
         "no width clipped the offer; the test says nothing"
     );
+}
+
+#[test]
+fn a_change_offer_too_short_to_name_its_key_is_not_drawn() {
+    // One column after the lead holds the mark of a cut alone, and two hold a
+    // bracket and the mark. Neither names a key, so neither is an offer, and
+    // nothing would know to take it off the row again.
+    let change = Shown::live(ToolOutput::ok("changed a.rs").showing(Diff::new([Line::new(
+        1,
+        Change::Added,
+        "a",
+    )])));
+    for width in [20, 21] {
+        let rows = finished_rows(&change, width, Style::drawn(Glyphs::Unicode), true);
+        let header = rows.first().expect("the row the box opens on");
+
+        assert_eq!(header.text(), "  ╭─ Added 1 line", "{width}");
+        assert!(
+            header.kinds().all(|slot| slot != Slot::Cut),
+            "{width}: {header:?}"
+        );
+    }
+}
+
+#[test]
+fn whatever_a_change_offers_is_taken_off_whole_at_every_width() {
+    // What is drawn as an offer and what is known for one are the same
+    // question, so no room leaves a piece of an offer on a finished row.
+    let change = Shown::live(ToolOutput::ok("changed a.rs").showing(Diff::new([Line::new(
+        1,
+        Change::Added,
+        "a",
+    )])));
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let mut offered = 0;
+        for width in 0..=60 {
+            let bare = finished_rows(&change, width, Style::drawn(glyphs), false)
+                .first()
+                .map(Row::text)
+                .expect("the row the box opens on");
+            let mut rows = finished_rows(&change, width, Style::drawn(glyphs), true);
+            rows.truncate(1);
+            let drawn = rows.first().map(Row::text).expect("the row");
+            if drawn != bare {
+                offered += 1;
+            }
+            unoffered(&mut rows);
+            let row = rows.first().expect("the row");
+
+            assert_eq!(
+                row.text(),
+                bare,
+                "{glyphs:?} at {width}: {drawn:?} was not taken off"
+            );
+            assert!(
+                row.kinds().all(|slot| slot != Slot::Cut),
+                "{glyphs:?} at {width}: {row:?}"
+            );
+        }
+        assert!(offered > 0, "{glyphs:?}: no width made an offer");
+    }
 }
 
 // Where a result is held against the row it was written on. Its text is kept
@@ -2339,7 +3293,7 @@ fn the_transcript_follows_the_colour_rule() {
         "\u{25cf} Read",
         "ctrl+o",
         "wait_for_index",
-        "+  # what stops",
+        "+ # what stops",
         "\u{25cf} Read 3",
     ] {
         assert!(
@@ -2349,7 +3303,8 @@ fn the_transcript_follows_the_colour_rule() {
     }
 
     // One span of each level, in the slot the rule gives it: a call's mark is
-    // the reader's own foreground, an added line carries its meaning, the path
+    // the reader's own foreground, the words an added line changed carry its
+    // meaning, the path
     // in passing is the call's path, quiet unless a design says otherwise,
     // and what the model says is plain.
     let slot_of = |text: &str| {
@@ -2359,7 +3314,11 @@ fn the_transcript_follows_the_colour_rule() {
             .map(|(slot, _)| slot)
     };
     assert_eq!(slot_of("\u{25cf}"), Some(Slot::Plain), "a call's mark");
-    assert_eq!(slot_of("# what stops"), Some(Slot::Added), "an added line");
+    assert_eq!(
+        slot_of("what stops"),
+        Some(Slot::AddedWord),
+        "the words an added line changed"
+    );
     assert_eq!(
         slot_of("src/cli/converse/resume.rs"),
         Some(Slot::ArgumentPath),
@@ -2518,9 +3477,22 @@ fn a_tools_name_is_weight_rather_than_the_theme_colour() {
 }
 
 #[test]
-fn the_figures_of_a_count_are_weight_rather_than_the_theme_colour() {
-    // "Added 3 lines, removed 3 lines".
-    assert_eq!(ruled_slots("3"), [Slot::Bold, Slot::Bold]);
+fn the_figures_of_a_change_wear_its_sides_rather_than_the_theme_colour() {
+    // "Added 3 lines, removed 3 lines" in the header of the change's box, and
+    // in that row alone: a line's number down the side of the box is a figure
+    // of another kind.
+    let rows = ruled_turn(Style::coloured());
+    let opener = rows
+        .iter()
+        .find(|row| row.text().contains("\u{256d}\u{2500} "))
+        .expect("the row the change's box opens on");
+    let figures: Vec<Slot> = opener
+        .spans()
+        .filter(|(_, text)| *text == "3")
+        .map(|(slot, _)| slot)
+        .collect();
+
+    assert_eq!(figures, [Slot::AddedCount, Slot::RemovedCount]);
 }
 
 #[test]
@@ -2608,7 +3580,7 @@ fn with_colour_off_what_colour_draws_in_weight_reads_as_it_was_written() {
                 "| resume.rs | 3 |",
                 "",
                 "\u{25cf} Update(src/cli/converse/resume.rs)",
-                "  \u{23bf} Added 3 lines, removed 3 lines",
+                "  \u{256d}\u{2500} Added 3 lines, removed 3 lines",
             ]
             .map(String::from)[..]
         ),

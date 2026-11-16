@@ -1,0 +1,45 @@
+---
+source: crates/crucible-tui/src/markdown/corpus_pictures.rs
+expression: "pictured(\"mermaid_graphs\", 40, Glyphs::Ascii)"
+---
+A flow chart:                           
+                                        
+<Quiet>+- mermaid</>                              
+<Quiet>| </><Quiet>graph TD</>                              
+<Quiet>| </><Quiet>  A[Start] --> B{Ok?}</>                 
+<Quiet>| </><Quiet>  B -->|yes| C[Done]</>                  
+<Quiet>| </><Quiet>  B -->|no| A</>                         
+<Quiet>+-</>                                      
+                                        
+A state diagram:                        
+                                        
+<Quiet>+- mermaid</>                              
+<Quiet>| </><Quiet>stateDiagram</>                          
+<Quiet>| </><Quiet>  [*] --> Idle</>                        
+<Quiet>+-</>                                      
+                                        
+And the versioned spelling:             
+                                        
+<Quiet>+- mermaid</>                              
+<Quiet>| </><Quiet>stateDiagram-v2</>                       
+<Quiet>| </><Quiet>  [*] --> Idle</>                        
+<Quiet>| </><Quiet>  Idle --> Running: start</>             
+<Quiet>| </><Quiet>  Running --> [*]</>                     
+<Quiet>+-</>                                      
+                                        
+A class diagram:                        
+                                        
+<Quiet>+- mermaid</>                              
+<Quiet>| </><Quiet>classDiagram</>                          
+<Quiet>| </><Quiet>  class Reader</>                        
+<Quiet>| </><Quiet>  Reader : +read(delta)</>               
+<Quiet>+-</>                                      
+                                        
+An entity relationship diagram:         
+                                        
+<Quiet>+- mermaid</>                              
+<Quiet>| </><Quiet>erDiagram</>                             
+<Quiet>| </><Quiet>  ANSWER ||--o{ BLOCK : draws</>         
+<Quiet>+-</>                                      
+                                        
+The corpus ends here.

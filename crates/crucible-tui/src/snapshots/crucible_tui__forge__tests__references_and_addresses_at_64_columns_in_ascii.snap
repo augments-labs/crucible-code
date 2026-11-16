@@ -1,0 +1,18 @@
+---
+source: crates/crucible-tui/src/forge.rs
+expression: "references(crate::glyphs::Glyphs::Ascii)"
+---
+References, drawn short:                                        
+                                                                
+<Bullet>-</><Quiet> </>here: <Link>#1324</>                                                   
+<Bullet>-</><Quiet> </>elsewhere: <Link>someone/else#12</>                                    
+<Bullet>-</><Quiet> </>an issue: <Link>#7</>                                                  
+<Bullet>-</><Quiet> </>a commit: <Link>abcdef1</>                                             
+<Bullet>-</><Quiet> </>a link: <Link>the guide</><Quiet> (example.com/docs/...)</>                      
+<Bullet>-</><Quiet> </>an autolink: <Link>https://example.com/docs/guide/intro</>             
+<Bullet>-</><Quiet> </>an image: <Link>[image: the build passing]</><Quiet> (docs/images/build.png)</>  
+                                                                
+<Bold>what</><Quiet> </><Quiet> </><Quiet>|</><Quiet> </><Bold>where</><Quiet>    </>                                               
+<Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>+</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</>                                               
+fix<Quiet>  </><Quiet> </><Quiet>|</><Quiet> </><Link>the fix</><Quiet>  </>                                               
+guide<Quiet> </><Quiet>|</><Quiet> </><Link>the guide</>

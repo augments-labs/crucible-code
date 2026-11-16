@@ -570,6 +570,8 @@ fn a_change_leaves_the_lines_it_moved_behind_for_whoever_is_watching() {
         .collect();
 
     assert_eq!((diff.added(), diff.removed()), (1, 1));
+    // Named as the model asked for it, as the call row above it is.
+    assert_eq!(diff.path(), Some("show.rs"));
     assert_eq!(
         block,
         [

@@ -1,0 +1,13 @@
+---
+source: crates/crucible-tui/src/markdown/tests.rs
+expression: "corpus_pictures::picture(ATX_HEADINGS, 64, Glyphs::Ascii)"
+---
+<Heading>One</>                                                             
+<Quiet>=</><Quiet>=</><Quiet>=</>                                                             
+                                                                
+<Heading>Two</>                                                             
+<Quiet>-</><Quiet>-</><Quiet>-</>                                                             
+                                                                
+<Heading>Three</>                                                           
+                                                                
+A paragraph under them.

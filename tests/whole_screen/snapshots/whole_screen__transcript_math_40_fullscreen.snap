@@ -1,0 +1,68 @@
+---
+source: tests/whole_screen/main.rs
+expression: window.picture()
+---
+40x63 cursor 60,4 scrolled 0
+|                                       │|
+|› show me the corpus                   ┃|
+|                                       ●|
+|Inline math may be written αᵢ or as E =┃|
+|mc² in the middle of a sentence.       ┃|
+|                                       ┃|
+|The dollar fixture lines stay exactly  ┃|
+|as written:                            ┃|
+|                                       ┃|
+|It costs $5 and $10.                   ┃|
+|                                       ┃|
+|$5/$10 per seat                        ┃|
+|                                       ┃|
+|$20,000-$30,000 a year                 ┃|
+|                                       ┃|
+|Set $HOME before running.              ┃|
+|                                       ┃|
+|Run $browser then $deploy on it.       ┃|
+|                                       ┃|
+|echo $PATH and $1                      ┃|
+|                                       ┃|
+|copy it to $HOME/$USER first           ┃|
+|                                       ┃|
+|set $a,$b and $c                       ┃|
+|                                       ┃|
+|A display formula:                     ┃|
+|                                       ┃|
+|┌─ math                                ┃|
+|│            n(n+1)                    ┃|
+|│ ∑ᵢ₌₁ⁿ i = ────────                   ┃|
+|│              2                       ┃|
+|└─                                     ┃|
+|                                       ┃|
+|A bracketed display:                   ┃|
+|                                       ┃|
+|┌─ math                                ┃|
+|│              1                       ┃|
+|│ ∫₀¹ x² dx = ───                      ┃|
+|│              3                       ┃|
+|└─                                     ┃|
+|                                       ┃|
+|An aligned one:                        ┃|
+|                                       ┃|
+|┌─ math                                ┃|
+|│ a = b + c                            ┃|
+|│ d = e + f                            ┃|
+|└─                                     ┃|
+|                                       ┃|
+|A math fence:                          ┃|
+|                                       ┃|
+|┌─ math                                ┃|
+|│      −b ± √(b² − 4ac)                ┃|
+|│ x = ──────────────────               ┃|
+|│             2a                       ┃|
+|└─                                     ┃|
+|                                       ┃|
+|The corpus ends here.                  ┃|
+|                                        |
+|                         99% window left|
+|╭──────────────────────────────────────╮|
+|│ ›                                    │|
+|╰──────────────────────────────────────╯|
+|ask mode on    anthropic · claude-test-1|

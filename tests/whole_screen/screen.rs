@@ -1382,7 +1382,8 @@ impl Screen {
         self.column = column.min(self.columns);
     }
 
-    /// Reads `ESC ] … BEL`: the tab title, and the one question at startup.
+    /// Reads `ESC ] … BEL`: the tab title, the one question at startup, the
+    /// links, and a copy to the clipboard.
     fn command<'a>(&mut self, after: &'a str) -> &'a str {
         // Whichever ending comes first. A payload cannot contain either, so
         // the first one found is the one that ends this string rather than a
@@ -1409,7 +1410,12 @@ impl Screen {
         // them makes the words between clickable, and one that does not draws
         // the words and drops these — which is what this does, since a link
         // changes nothing about which column anything lands in.
-        if !said.starts_with("0;") && !said.starts_with("8;") && said != "11;?" {
+        // `52;c;` is a request to put text on the clipboard: a drag over the
+        // window ends in one, and the payload is kept for a case to read back.
+        // The same sequence with `?` for its payload asks the terminal to hand
+        // the clipboard over, which crucible asks for nowhere.
+        let copies = said.starts_with("52;c;") && said != "52;c;?";
+        if !said.starts_with("0;") && !said.starts_with("8;") && said != "11;?" && !copies {
             self.refuse(format!("wrote the command string {said:?}"));
         }
 
@@ -1752,6 +1758,27 @@ mod tests {
         screen.feed(b"one\ntwo");
 
         assert_eq!(screen.refusals(), ["ended a row with a bare newline"]);
+    }
+
+    #[test]
+    fn a_request_to_put_text_on_the_clipboard_is_kept_and_no_refusal() {
+        // A drag over the window ends in one, and what the case reads back is
+        // the payload as written: this screen has no clipboard to put it on.
+        let mut screen = Screen::new(8, 4);
+        screen.feed(b"\x1b]52;c;aGk=\x07");
+
+        assert!(screen.refusals().is_empty(), "{:?}", screen.refusals());
+        assert_eq!(screen.commands(), ["52;c;aGk="]);
+    }
+
+    #[test]
+    fn a_request_to_read_the_clipboard_back_is_still_a_refusal() {
+        // The other half of the same sequence asks the terminal to hand its
+        // contents over, which crucible asks for nowhere.
+        let mut screen = Screen::new(8, 4);
+        screen.feed(b"\x1b]52;c;?\x07");
+
+        assert_eq!(screen.refusals(), ["wrote the command string \"52;c;?\""]);
     }
 
     /// The rows of `picture`, edges and header off.

@@ -1,0 +1,19 @@
+---
+source: crates/crucible-tui/src/render/tests.rs
+expression: "held_picture(Glyphs::Unicode)"
+---
+The probes and their budgets:                                   
+                                                                
+<Quiet>◇ drawing a table · 3 lines so far</>                              
+
+
+The probes and their budgets:                                   
+                                                                
+<Bold>probe</><Quiet>       </><Quiet> </><Quiet>│</><Quiet> </><Bold>budget</><Quiet> </><Quiet>│</><Quiet> </><Bold>measured</>                                
+<Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>┼</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>┼</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</>                                
+render burst<Quiet> </><Quiet>│</><Quiet> </><Quiet>  </>30/s<Quiet> </><Quiet>│</><Quiet> </><Quiet>   </>412/s                                
+session rss<Quiet> </><Quiet> </><Quiet>│</><Quiet> </><Quiet> </><Figure>35</> MB<Quiet> </><Quiet>│</><Quiet> </><Quiet>   </><Figure>21</> MB                                
+                                                                
+The sum they come to:                                           
+                                                                
+<Quiet>◇ drawing a formula · 2 lines so far</>

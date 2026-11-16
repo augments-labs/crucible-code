@@ -719,6 +719,7 @@ impl Turning {
             | Event::Used { .. }
             | Event::PlanLimits { .. }
             | Event::Reported { .. }
+            | Event::Waiting { .. }
             | Event::Retrying => Vec::new(),
         };
 
@@ -785,6 +786,7 @@ impl Turning {
             | Event::PlanLimits { .. }
             | Event::Reported { .. }
             | Event::TurnFinished { .. }
+            | Event::Waiting { .. }
             | Event::Failed { .. } => self.doing,
         };
 
@@ -1014,7 +1016,7 @@ impl Turning {
         let spare = room
             .saturating_sub(ROWS + 1 + usize::from(self.making.is_some()))
             .saturating_add(usize::from(panel.is_empty()));
-        let panel_rows = queueing::panel(queued, window, spare, style);
+        let panel_rows = queueing::panel(queued, queueing::Stands::UnderTurn, window, spare, style);
         let calling = self.standing();
         let standing = if calling
             .is_some_and(|calling| calling.backgroundable || calling.printing.lines() > 0)

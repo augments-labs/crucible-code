@@ -247,6 +247,44 @@ fn preview_decoder_rejects_overflow_inconsistent_counts_and_oversized_unicode() 
 }
 
 #[test]
+fn a_preview_keeps_the_file_it_changed_and_one_written_before_reads_without_it() {
+    let lines = [Line::new(1, Change::Added, "fn main() {}")];
+
+    let named = Diff::new(lines.clone()).in_file("src/main.rs");
+    let written = preview(&named);
+    assert_eq!(written.get("path"), Some(&json!("src/main.rs")));
+    assert_eq!(read_preview(&written), Some(named));
+
+    // A preview no tool named a file for is written exactly as one was before
+    // a preview could name one, and one written then reads back without a
+    // name rather than being refused.
+    let unnamed = Diff::new(lines);
+    let written = preview(&unnamed);
+    assert_eq!(written.get("path"), None);
+    let read = read_preview(&written).expect("a preview from before paths");
+    assert_eq!(read.path(), None);
+    assert_eq!(read, unnamed);
+}
+
+#[test]
+fn preview_decoder_rejects_a_path_no_live_preview_could_have_written() {
+    let original = preview(&Diff::new([Line::new(1, Change::Added, "x")]).in_file("a.rs"));
+    for path in [
+        json!("é".repeat(Diff::PATH + 1)),
+        json!(7),
+        json!(null),
+        json!(""),
+    ] {
+        let mut damaged = original.clone();
+        *damaged.get_mut("path").unwrap() = path.clone();
+        assert!(read_preview(&damaged).is_none(), "{path}");
+    }
+    let mut longest = original;
+    *longest.get_mut("path").unwrap() = json!("é".repeat(Diff::PATH));
+    assert!(read_preview(&longest).is_some());
+}
+
+#[test]
 fn a_full_live_batch_of_maximum_unicode_previews_remains_replayable() {
     let sample = Sample::new("display-full-preview-batch");
     let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
@@ -263,9 +301,11 @@ fn a_full_live_batch_of_maximum_unicode_previews_remains_replayable() {
         calls: calls.clone(),
         stop: Some(StopReason::WantsTools),
     });
+    // Each naming the longest file a preview keeps the name of, too.
     let diff = Diff::new(
         (0..Diff::LINES).map(|n| Line::new(n + 1, Change::Removed, "🦀".repeat(Line::TEXT))),
-    );
+    )
+    .in_file("🦀".repeat(Diff::PATH));
     let mut results = Vec::new();
     for call in calls {
         let output = ToolOutput::ok("edited").showing(diff.clone());

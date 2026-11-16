@@ -666,7 +666,7 @@ fn ctrl_o_reaches_every_result_the_rows_offer() {
     );
 
     let mut standing = Standing::default();
-    standing.open(&back.kept);
+    standing.open(&back.kept, 0);
     let mut seen = std::collections::BTreeSet::new();
     loop {
         assert!(

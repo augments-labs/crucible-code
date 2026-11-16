@@ -1,0 +1,18 @@
+diff --git a/src/parse.rs b/src/parse.rs
+index 3b18e51..a9c4f02 100644
+--- a/src/parse.rs
++++ b/src/parse.rs
+@@ -10,4 +10,5 @@ fn parse(input: &str) -> Tree {
+     let mut tree = Tree::new();
+-    for line in input.lines() {
++    for (at, line) in input.lines().enumerate() {
+         tree.push(line);
++        tree.mark(at);
+     }
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -1,2 +1,2 @@
+-# old title
++# new title
+ Some words.

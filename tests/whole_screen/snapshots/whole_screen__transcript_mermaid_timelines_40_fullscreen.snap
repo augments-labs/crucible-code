@@ -1,0 +1,49 @@
+---
+source: tests/whole_screen/main.rs
+expression: window.picture()
+---
+40x44 cursor 41,4 scrolled 0
+|› show me the corpus                   │|
+|                                       │|
+|A sequence diagram:                    ●|
+|                                       ┃|
+|┌─ mermaid · sequence diagram · not dra┃|
+|│ sequenceDiagram                      ┃|
+|│   Alice->>Bob: Hello                 ┃|
+|│   Bob-->>Alice: Hi                   ┃|
+|└─                                     ┃|
+|                                       ┃|
+|A gantt chart:                         ┃|
+|                                       ┃|
+|┌─ mermaid · gantt · not drawn as text ┃|
+|│ gantt                                ┃|
+|│   title Release                      ┃|
+|│   section Tests                      ┃|
+|│   Gate :a1, 2026-11-01, 3d           ┃|
+|└─                                     ┃|
+|                                       ┃|
+|A git graph:                           ┃|
+|                                       ┃|
+|┌─ mermaid · git graph · not drawn as t┃|
+|│ gitGraph                             ┃|
+|│   commit id: "one"                   ┃|
+|│   branch feature                     ┃|
+|│   commit id: "two"                   ┃|
+|│   checkout main                      ┃|
+|│   merge feature                      ┃|
+|└─                                     ┃|
+|                                       ┃|
+|A kind with no drawing of its own:     ┃|
+|                                       ┃|
+|┌─ mermaid · pie · not drawn as text · ┃|
+|│ pie                                  ┃|
+|│   "drawn" : 1                        ┃|
+|└─                                     ┃|
+|                                       ┃|
+|The corpus ends here.                  ┃|
+|                                        |
+|                         99% window left|
+|╭──────────────────────────────────────╮|
+|│ ›                                    │|
+|╰──────────────────────────────────────╯|
+|ask mode on    anthropic · claude-test-1|

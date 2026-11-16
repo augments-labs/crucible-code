@@ -9,9 +9,10 @@
 use std::fmt::Write as _;
 
 use crate::color::Slot;
+use crate::drawing::{Drawers, Room};
 use crate::forge::Forge;
 use crate::glyphs::Glyphs;
-use crate::markdown::Markdown;
+use crate::markdown::{self, Links, Markdown, Said};
 use crate::row::Row;
 use crate::width::{columns as wide, cut, folds};
 
@@ -333,6 +334,19 @@ fn words(text: &str, room: usize, glyphs: Glyphs, forge: Option<&Forge>) -> Vec<
     rows
 }
 
+/// Adds `text` to the last of `lines`, starting a line at each line break in it.
+fn put(lines: &mut Vec<Spans>, slot: Slot, text: &str, link: Option<&str>) {
+    let mut parts = text.split('\n');
+    if let (Some(first), Some(last)) = (parts.next(), lines.last_mut()) {
+        last.push(slot, first, link);
+    }
+    for part in parts {
+        let mut next = Spans::default();
+        next.push(slot, part, link);
+        lines.push(next);
+    }
+}
+
 /// Reads one stretch of markdown into rows `room` wide, after `rows`.
 ///
 /// A stretch that follows a heading starts on the row under it; one that
@@ -344,20 +358,54 @@ fn read(segment: &str, room: usize, glyphs: Glyphs, forge: Option<&Forge>, rows:
     }
 
     let mut lines: Vec<Spans> = vec![Spans::default()];
-    let mut say = |slot: Slot, text: &str, link: Option<&str>| {
-        let mut parts = text.split('\n');
-        if let (Some(first), Some(line)) = (parts.next(), lines.last_mut()) {
-            line.push(slot, first, link);
+    // A block is told in the runs the record lays one out of, at this width
+    // and linking what the runs around it link, and they follow the runs
+    // before it: a page printed once has no later width to keep its source
+    // for. Its last line is ended where its runs leave it open.
+    let linking = Links {
+        forge: forge.cloned(),
+        files: None,
+    };
+    // The page is handed no drawer, so a fence on it stays as it was written.
+    let drawers = Drawers::default();
+    let mut said = |said: Said<'_>| match said {
+        Said::Run { slot, text, link } => put(&mut lines, slot, text, link),
+        // A page printed once is read, never dragged across.
+        Said::Aside(text) => put(&mut lines, Slot::Quiet, text, None),
+        // Nothing on a page printed once lists addresses to read whole.
+        Said::Shortened(_) => {}
+        Said::Block(block) => {
+            let mut open = false;
+            markdown::tell(
+                &block,
+                Room {
+                    columns: room,
+                    glyphs,
+                },
+                &linking,
+                &drawers,
+                &mut |slot, text, link| {
+                    if let Some(last) = text.chars().last() {
+                        open = last != '\n';
+                    }
+                    put(&mut lines, slot, text, link);
+                },
+            );
+            if open {
+                put(&mut lines, Slot::Plain, "\n", None);
+            }
         }
-        for part in parts {
-            let mut line = Spans::default();
-            line.push(slot, part, link);
-            lines.push(line);
+        // The line being written is the header of the table that follows, or
+        // the title of the heading that follows.
+        Said::Retract => {
+            if let Some(line) = lines.last_mut() {
+                *line = Spans::default();
+            }
         }
     };
-    let mut markdown = Markdown::new(glyphs).counting(forge.cloned());
-    markdown.read(segment, room, &mut say);
-    markdown.finish(room, &mut say);
+    let mut markdown = Markdown::new(glyphs).linking(&linking);
+    markdown.read(segment, room, &mut said);
+    markdown.finish(room, &mut said);
 
     while lines.last().is_some_and(Spans::is_empty) {
         lines.pop();

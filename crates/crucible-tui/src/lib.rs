@@ -32,11 +32,14 @@ mod asked;
 mod asking;
 mod bands;
 mod bar;
+pub mod chrome;
 mod clipboard;
 mod color;
 #[cfg(test)]
 mod colour_rule;
-#[cfg(test)]
+mod docked;
+pub mod drawing;
+#[cfg(any(test, feature = "testing"))]
 mod dump;
 mod editor;
 mod escape;
@@ -67,6 +70,8 @@ mod shelf;
 pub mod syntax;
 mod tab_row;
 mod terminal;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 mod timeline;
 mod title;
 mod welcome;
@@ -77,6 +82,10 @@ pub use asked::{Asked, Choice, Given, Stop, Writing};
 pub use asking::Question;
 pub use bar::{Bar, Fill, Part};
 pub use color::{Design, Palette, Sequence, Slot, Theme, Worn};
+pub use docked::{
+    Action, Batched, Chosen, Dock, Docked, Drafted, Editing, Focus, Member, Offer, Phase, Scrolled,
+    dock_keys,
+};
 pub use editor::{Editor, Key, Projection, Sending, Typed};
 pub use expanded::{Expanded, Shown};
 pub use files::{Files, Line};
@@ -94,17 +103,19 @@ pub use plan::{Plan, State, Task};
 pub use prompt::{CommandCount, Draft, Prompt, Recalled, Remaining, label, tokens};
 /// The most units of the transcript kept at once; a row put down whole costs one.
 pub const RECORDED: usize = record::MOST;
+pub use record::Source;
 pub use render::{Aimed, Caret, PromptRows, Recall, Renderer, ScreenMode};
 pub use row::Row;
 pub use running::{Command, Running};
 pub use sandbox_panel::{SandboxPanel, SandboxTab};
 pub use shelf::{Pane, Resting, Serving, Shelf, Stocked};
 pub use tab_row::TabRow;
+pub use terminal::graphics;
 pub use terminal::ground::asked;
 pub use terminal::keyboard::{Pasting, Spelling};
 pub use terminal::keys::{Characters, Pressed, characters, pressed, waiting};
 pub use terminal::mouse::Reporting;
-pub use terminal::raw::{Raw, RawError};
+pub use terminal::raw::{Raw, RawError, keyed};
 pub use terminal::screen::{Screen, ScreenError};
 #[cfg(unix)]
 pub use terminal::suspend::Suspend;

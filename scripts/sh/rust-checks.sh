@@ -46,30 +46,37 @@ named() {
 only=()
 skip=()
 partition=()
+# Every option takes an argument. macOS's /bin/bash is 3.2 and has no `;;&`,
+# so the count check they share and the option's own act are a nested case
+# rather than a fallthrough.
 while (($#)); do
     case $1 in
-    --only | --skip | --partition) (($# > 1)) || usage ;;&
-    --only) IFS=, read -ra only <<<"$2" && named "${only[@]}" ;;
-    --skip) IFS=, read -ra skip <<<"$2" && named "${skip[@]}" ;;
-    --partition) partition=(--partition "$2") ;;
+    --only | --skip | --partition)
+        (($# > 1)) || usage
+        case $1 in
+        --only) IFS=, read -ra only <<<"$2" && named ${only[@]+"${only[@]}"} ;;
+        --skip) IFS=, read -ra skip <<<"$2" && named ${skip[@]+"${skip[@]}"} ;;
+        --partition) partition=(--partition "$2") ;;
+        esac
+        ;;
     *) usage ;;
     esac
     shift 2
 done
 ((${#only[@]} == 0 || ${#skip[@]} == 0)) || usage
 # A part of the suite says nothing about any other section, so it runs alone.
-if ((${#partition[@]})) && [[ "${only[*]}" != tests ]]; then
+if ((${#partition[@]})) && [[ ${only[*]+"${only[*]}"} != tests ]]; then
     printf 'rust-checks: --partition runs part of the suite, so it needs --only tests\n' >&2
     exit 2
 fi
 
 wanted() {
     local one
-    for one in "${skip[@]}"; do
+    for one in ${skip[@]+"${skip[@]}"}; do
         [[ $one == "$1" ]] && return 1
     done
     ((${#only[@]} == 0)) && return 0
-    for one in "${only[@]}"; do
+    for one in ${only[@]+"${only[@]}"}; do
         [[ $one == "$1" ]] && return 0
     done
     return 1
@@ -93,6 +100,11 @@ close_section() {
         any=1
     fi
 }
+
+# Git Bash on Windows has `python`; its Linux and macOS peers have `python3`,
+# and either reads the same files.
+python=python3
+command -v python3 >/dev/null 2>&1 || python=python
 
 # One selection, read twice: the suite runs under it, and the required-case
 # manifest is checked against what it built. Narrowing it to skip a package
@@ -171,16 +183,40 @@ for package in sorted(metadata["packages"], key=lambda one: one["name"]):
     done
 }
 
-# cargo-nextest runs each test in a process of its own, as many at once as
-# there are cores, and `.config/nextest.toml` names the tests that share state
-# and so wait for each other. It runs no documentation example, so rustdoc's
-# own harness runs those in the next section.
+# How many processors nextest runs on, counted by Rust's standard library as
+# nextest counts them: under a CPU quota, that is fewer than Python counts.
+# The program is named count.exe so that Windows runs it too.
+nextest_processors() {
+    mkdir -p generated/processors &&
+        printf 'fn main() { print!("{}", std::thread::available_parallelism().map_or(1, |count| count.get())) }\n' |
+        rustc -o generated/processors/count.exe - &&
+        generated/processors/count.exe
+}
+
+# cargo-nextest runs each test in a process of its own. `.config/nextest.toml`
+# names the tests that share state and so wait for each other, and its gate
+# profile says how many slots each test holds. The run has that many slots per
+# processor, so the tests that keep a processor busy run at most one per
+# processor and the tests that mostly wait fill the time they leave. It runs
+# no documentation example, so rustdoc's own harness runs those in the next
+# section.
 check_tests() {
     section "tests"
+    local processors threads
     if ! cargo nextest --version >/dev/null 2>&1; then
         printf '    FAIL cargo-nextest is not installed; CONTRIBUTING.md says how to install it\n'
         failed=1
-    elif ! cargo nextest run "${TEST_SELECTION[@]}" "${partition[@]}" --no-fail-fast; then
+    elif ! processors=$(nextest_processors); then
+        printf '    FAIL rustc could not count the processors nextest runs on\n'
+        failed=1
+    elif ! threads=$("$python" scripts/python/required-cases.py --gate-threads "$processors"); then
+        # What it printed says why.
+        [[ -z $threads ]] || printf '%s\n' "$threads"
+        printf '    FAIL scripts/python/required-cases.py --gate-threads did not say how many slots the run has\n'
+        failed=1
+    # Python on Windows ends the line it prints with a carriage return.
+    elif ! cargo nextest run "${TEST_SELECTION[@]}" --profile gate --test-threads "${threads%$'\r'}" \
+        ${partition[@]+"${partition[@]}"} --no-fail-fast; then
         printf '    FAIL read the assertion, not the count\n'
         failed=1
     fi
@@ -191,6 +227,16 @@ check_examples() {
     if ! cargo test "${TEST_SELECTION[@]}" --doc; then
         printf '    FAIL a documentation example failed\n'
         failed=1
+    fi
+}
+
+# A native program on Windows reads a Windows path. Git Bash's own `/tmp` is
+# not one: guessed at, it would read the current drive's root instead.
+native_path() {
+    if command -v cygpath >/dev/null 2>&1; then
+        cygpath -w "$1"
+    else
+        printf '%s\n' "$1"
     fi
 }
 
@@ -209,7 +255,8 @@ check_required() {
         ! cargo test "${TEST_SELECTION[@]}" --doc -- --list --ignored >"$silenced"; then
         printf '    FAIL the documentation examples did not list; the required cases were not checked\n'
         failed=1
-    elif ! python3 scripts/python/required-cases.py "$artifacts" "$examples" "$silenced" "${TEST_SELECTION[@]}"; then
+    elif ! "$python" scripts/python/required-cases.py "$(native_path "$artifacts")" \
+        "$(native_path "$examples")" "$(native_path "$silenced")" "${TEST_SELECTION[@]}"; then
         printf '    FAIL a named obligation in scripts/required-cases.json is missing, silenced or changed\n'
         failed=1
     fi

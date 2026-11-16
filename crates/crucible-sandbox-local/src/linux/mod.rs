@@ -59,13 +59,18 @@ pub(super) fn observe(excluded: &[&Path]) -> Result<crate::SandboxObservation, S
     let backend = probe::locate(excluded)?;
     let _broker = broker::Broker::find(excluded)?;
     Ok(backend.leaving(
-        "whether Bubblewrap starts and can make its namespaces on this host, and whether each root passes the checks a command's preparation makes",
+        "whether Bubblewrap starts and can make its namespaces on this host, and whether each root passes the checks a command's preparation makes. Whether Bubblewrap lists --size, which a disk ceiling is mounted with, is read only by a preparation, so disk_limit shows unsupported here whatever this host's Bubblewrap lists, and a preparation decides it",
     ))
 }
 
+/// The claim the conformance tests and the published matrix read: this
+/// backend's, on a host whose Bubblewrap lists `--size`.
+///
+/// The live claim follows the probe, which reads that from the Bubblewrap a
+/// preparation finds, so a Bubblewrap without it claims no disk ceiling.
 #[cfg(test)]
 pub(super) fn declared_capabilities() -> SandboxCapabilities {
-    probe::capabilities()
+    probe::capabilities(true)
 }
 
 pub(super) fn prepare(

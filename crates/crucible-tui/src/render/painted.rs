@@ -29,7 +29,7 @@ use crate::color::Palette;
 use std::ops::Range;
 
 use crate::row::Row;
-use crate::select::{self, Taken, View};
+use crate::select::{self, Join, Taken, View};
 
 use super::frame::Frame;
 
@@ -98,6 +98,15 @@ impl Painted {
         let was = self.was.get(at)?.as_deref()?;
         let structural = self.structural.get(at).map_or(&[][..], Vec::as_slice);
         Some(select::said(was, covered, structural))
+    }
+
+    /// How screen row `at` stands to the row above it in what is copied.
+    pub(crate) fn joins(&self, at: usize) -> Join {
+        let Some(was) = self.was.get(at).and_then(Option::as_deref) else {
+            return Join::Line;
+        };
+        let structural = self.structural.get(at).map_or(&[][..], Vec::as_slice);
+        select::joins(was, structural)
     }
 
     /// Forgets what is on screen, so the next frame writes every row of it.

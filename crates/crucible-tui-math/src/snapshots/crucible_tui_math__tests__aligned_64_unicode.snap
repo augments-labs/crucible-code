@@ -1,0 +1,8 @@
+---
+source: crates/crucible-tui-math/src/tests.rs
+expression: "dump(&rows, 64)"
+---
+<Quiet>┌─ math</>                                                         
+<Quiet>│ </>f(x) = (x+1)²                                                 
+<Quiet>│ </>     = x² + 2x + 1                                            
+<Quiet>└─</>

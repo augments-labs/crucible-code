@@ -1,0 +1,11 @@
+---
+source: crates/crucible-tui/src/markdown/corpus_pictures.rs
+expression: "pictured(\"hostile\", 120, Glyphs::Unicode)"
+---
+A label a model wrote: 􎻮̅̅ and a second 􎻮.                                                                                
+                                                                                                                        
+A terminal instruction a model wrote:  after it.                                                                        
+                                                                                                                        
+A right-to-left override a model wrote: txet a after it.                                                                
+                                                                                                                        
+The corpus ends here.

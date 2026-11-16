@@ -1,4 +1,4 @@
-//! The terminal, as four operations.
+//! The terminal, as five operations.
 //!
 //! Everything this process needs from a terminal goes through [`Terminal`].
 //! That keeps the one crate that talks to the operating system's terminal
@@ -16,12 +16,15 @@
 //! of it: [`system`] for the size and the handle, [`raw`] for the mode,
 //! [`keys`] for what arrives once the mode is raw. Beside them sit the modes
 //! that are asked for in plain ANSI and so name nothing — [`mouse`] for the
-//! pointer, [`keyboard`] for how a modified key is spelled — and [`ground`],
-//! which is the one question this process asks a terminal. [`suspend`] is the
+//! pointer, [`keyboard`] for how a modified key is spelled — and the two
+//! questions this process asks a terminal, both before it reads a key:
+//! [`ground`] for the colour of its background and [`graphics`] for whether it
+//! draws pictures. [`suspend`] is the
 //! one way every one of those is handed to a child and put back. Everything the
 //! renderer writes is plain ANSI, so what a swap would cost is the first
 //! three.
 
+pub mod graphics;
 pub(crate) mod ground;
 pub(crate) mod keyboard;
 pub(crate) mod keys;
@@ -120,6 +123,12 @@ pub trait Terminal {
     /// A redirected run must not emit cursor movement: the escape bytes would
     /// end up in whatever consumed the output.
     fn is_terminal(&self) -> bool;
+
+    /// The pixel size of one character cell, where the window reports its
+    /// pixels; `None` where it does not, or will not say.
+    fn cell(&self) -> Option<graphics::Cell> {
+        None
+    }
 }
 
 /// A terminal that keeps what was written instead of showing it.
@@ -133,6 +142,8 @@ pub struct Recording {
     is_terminal: bool,
     /// How many times [`Terminal::flush`] was called — one per frame.
     flushes: usize,
+    /// The cell the window reports, which is none until it is told one.
+    cell: Option<graphics::Cell>,
 }
 
 impl Recording {
@@ -144,6 +155,7 @@ impl Recording {
             size: Size { columns, rows },
             is_terminal: true,
             flushes: 0,
+            cell: None,
         }
     }
 
@@ -176,6 +188,12 @@ impl Recording {
     /// Changes the reported size, standing in for a window the user resized.
     pub fn resize(&mut self, columns: usize, rows: usize) {
         self.size = Size { columns, rows };
+    }
+
+    /// Changes the reported cell, standing in for a window whose font changed
+    /// or that stopped reporting its pixels.
+    pub fn measures(&mut self, cell: Option<graphics::Cell>) {
+        self.cell = cell;
     }
 
     /// The picture everything written so far would have left on this size.
@@ -355,6 +373,10 @@ impl Terminal for Recording {
 
     fn is_terminal(&self) -> bool {
         self.is_terminal
+    }
+
+    fn cell(&self) -> Option<graphics::Cell> {
+        self.cell
     }
 }
 

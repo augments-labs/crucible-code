@@ -47,14 +47,16 @@ expression: "pictured(80, Glyphs::Ascii)"
 <Quiet>|  </><Quiet>Fixed</>                                                                        
 <Quiet>|  </><Bullet>-</><Quiet> </><Bold>Code keeps its lines.</>                                                      
 <Quiet>|</>                                                                               
-<Quiet>|  </><Quiet>first line</>                                                                   
-<Quiet>|  </><Quiet>second line</>                                                                  
+<Quiet>|  </><Quiet>+-</>                                                                           
+<Quiet>|  </><Quiet>| </><Quiet>first line</>                                                                 
+<Quiet>|  </><Quiet>| </><Quiet>second line</>                                                                
+<Quiet>|  </><Quiet>+-</>                                                                           
 <Quiet>|</>                                                                               
 <Quiet>|</>                                                                               
 <Accent>* </><Strong>0.41.1</><Quiet> - 2026-09-29</>                                                           
 <Quiet>|</>                                                                               
 <Quiet>|  </><Quiet>Fixed</>                                                                        
-<Quiet>|  </><Bullet>-</><Quiet> </><Bold>A link.</> See <Link>the notes</> for more.                                            
+<Quiet>|  </><Bullet>-</><Quiet> </><Bold>A link.</> See <Link>the notes</><Quiet> (example.invalid/notes)</> for more.                    
 <Quiet>|</>                                                                               
 <Quiet>|</>                                                                               
 <Accent>* </><Strong>0.42.0</><Quiet> - 2026-09-29</>                                                           

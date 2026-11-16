@@ -136,3 +136,46 @@ fn restored_preview_rejects_counts_that_cannot_describe_its_lines() {
         .is_none()
     );
 }
+
+#[test]
+fn a_diff_says_which_file_it_changed_once_told() {
+    let diff = added(2);
+    assert_eq!(diff.path(), None, "a diff no tool named a file for");
+
+    let named = added(2).in_file("src/main.rs");
+    assert_eq!(named.path(), Some("src/main.rs"));
+    // Naming the file moves none of what the change was.
+    assert_eq!((named.added(), named.lines().len()), (2, 2));
+
+    // A name with nothing in it is no name, and a header drawn from it would
+    // open on a gap.
+    assert_eq!(added(1).in_file("").path(), None);
+}
+
+#[test]
+fn a_path_past_its_bound_keeps_its_end_and_never_cuts_inside_a_character() {
+    // The end is the file's own name, which is what a reader looks for; the
+    // directories in front of it are what can go. A path is model output and
+    // so arrives at any length.
+    let long = format!("{}/name.rs", "é".repeat(Diff::PATH * 2));
+
+    let diff = added(1).in_file(long);
+    let path = diff.path().expect("a path cut, not dropped");
+
+    assert_eq!(path.chars().count(), Diff::PATH);
+    assert!(path.ends_with("/name.rs"), "{path}");
+    assert!(path.starts_with('é'), "{path}");
+}
+
+#[test]
+fn the_path_a_diff_names_is_kept_out_of_debug_and_counted_as_retained() {
+    // A path can name what the file holds, as a key file's name does, and it
+    // is held beside the lines until the change is drawn.
+    let path = "secrets/sk-ant-not-a-real-key.env";
+    let diff = added(1).in_file(path);
+
+    let said = format!("{diff:?}");
+    assert!(!said.contains("sk-ant"), "{said}");
+
+    assert!(diff.retained() >= added(1).retained() + path.len());
+}

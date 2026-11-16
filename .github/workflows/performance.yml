@@ -16,7 +16,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Saved by a push or a manual run, never a pull request, for the reason
+      # rust-ci.yml gives.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
 
       - name: Install the pinned rg comparison binary
         env:
@@ -34,8 +38,11 @@ jobs:
           rm -rf rg.tar.gz "$stem"
           rg --version | head -1
 
-      # A shared runner: the two startup probes hold it to their shared-runner
-      # limits, and every other budget stays the one it states.
+      # A shared runner: the seven startup probes with a shared-runner limit
+      # (the first frame, the native first frame and the first input, each with
+      # and without colour, and the first input with colour from a terminal
+      # that never answers) hold it to those limits, and every other budget
+      # stays the one it states.
       - run: mkdir -p generated/json && scripts/sh/bench.sh > generated/json/budgets.json
         env:
           CRUCIBLE_BENCH_RUNNER: shared

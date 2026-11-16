@@ -107,6 +107,39 @@ impl Settings {
             .unwrap_or_default()
     }
 
+    /// How pictures are drawn, or whether they are.
+    ///
+    /// A value rather than an `Option`, as the screen is: what the files fall
+    /// back to is the answer.
+    #[must_use]
+    pub fn images(&self) -> ImageOutput {
+        self.output("images")
+            .and_then(ImageOutput::read)
+            .unwrap_or_default()
+    }
+
+    /// How math in an answer is drawn.
+    ///
+    /// A value rather than an `Option`, as the pictures are: what the files
+    /// fall back to is the answer.
+    #[must_use]
+    pub fn math(&self) -> MathDrawing {
+        self.output("math")
+            .and_then(MathDrawing::read)
+            .unwrap_or_default()
+    }
+
+    /// How a diagram in an answer is drawn.
+    ///
+    /// A value rather than an `Option`, as math is: what the files fall back
+    /// to is the answer.
+    #[must_use]
+    pub fn diagrams(&self) -> DiagramDrawing {
+        self.output("diagrams")
+            .and_then(DiagramDrawing::read)
+            .unwrap_or_default()
+    }
+
     /// One string out of the `output` block.
     fn output(&self, key: &str) -> Option<&str> {
         self.value.get("output")?.get(key)?.as_str()
@@ -268,6 +301,103 @@ impl ScreenMode {
     }
 }
 
+/// How pictures are drawn.
+///
+/// `Auto` asks the terminal, only where its environment names a terminal
+/// pictures were seen to draw right on, with no multiplexer in between; a
+/// protocol is used without asking where it was seen to draw right, and is
+/// text elsewhere; `Off` draws every picture as text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ImageOutput {
+    /// Whatever the terminal confirms at the start.
+    #[default]
+    Auto,
+    /// Kitty's graphics protocol.
+    Kitty,
+    /// iTerm2's inline images.
+    Iterm2,
+    /// Sixel.
+    Sixel,
+    /// Text in place of every picture.
+    Off,
+}
+
+impl ImageOutput {
+    /// Reads one of the words `output.images` accepts, spelled as a document
+    /// spells it, as a settings menu hands one over.
+    #[must_use]
+    pub fn read(found: &str) -> Option<Self> {
+        match found {
+            "auto" => Some(Self::Auto),
+            "kitty" => Some(Self::Kitty),
+            "iterm2" => Some(Self::Iterm2),
+            "sixel" => Some(Self::Sixel),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
+    }
+}
+
+/// How math in an answer is drawn.
+///
+/// What the drawing calls each of these is the terminal's to say; this is only
+/// which one the reader chose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MathDrawing {
+    /// Every formula exactly as the model wrote it, markers and all.
+    Written,
+    /// Each formula drawn as characters.
+    Text,
+    /// Each formula drawn as a picture where one can be shown, and as text
+    /// everywhere else.
+    #[default]
+    Image,
+}
+
+impl MathDrawing {
+    /// Reads one of the words `output.math` accepts, spelled as a document
+    /// spells it, as a settings menu hands one over.
+    #[must_use]
+    pub fn read(found: &str) -> Option<Self> {
+        match found {
+            "written" => Some(Self::Written),
+            "text" => Some(Self::Text),
+            "image" => Some(Self::Image),
+            _ => None,
+        }
+    }
+}
+
+/// How a diagram in an answer is drawn.
+///
+/// What the drawing calls each of these is the terminal's to say; this is only
+/// which one the reader chose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DiagramDrawing {
+    /// Every diagram exactly as the model wrote it, in its fence.
+    Written,
+    /// Each diagram drawn as characters.
+    Text,
+    /// Each diagram drawn as a picture where one can be shown, and as text
+    /// everywhere else.
+    #[default]
+    Image,
+}
+
+impl DiagramDrawing {
+    /// Reads one of the words `output.diagrams` accepts, spelled as a document
+    /// spells it, as a settings menu hands one over.
+    #[must_use]
+    pub fn read(found: &str) -> Option<Self> {
+        match found {
+            "written" => Some(Self::Written),
+            "text" => Some(Self::Text),
+            "image" => Some(Self::Image),
+            _ => None,
+        }
+    }
+}
+
 /// How many of the theme's colours the transcript spends, and on what.
 ///
 /// Which kind of thing gets which colour is the drawing's to say; this is only
@@ -366,6 +496,76 @@ mod tests {
                 "transcriptColours: {name}"
             );
         }
+        for name in shape::IMAGES {
+            assert!(ImageOutput::read(name).is_some(), "images: {name}");
+        }
+        for name in shape::MATH {
+            assert!(MathDrawing::read(name).is_some(), "math: {name}");
+        }
+        for name in shape::DIAGRAMS {
+            assert!(DiagramDrawing::read(name).is_some(), "diagrams: {name}");
+        }
+    }
+
+    #[test]
+    fn math_is_an_image_unless_a_layer_names_written_or_text() {
+        let read =
+            |text: &str| Settings::resolve(vec![Document::sample(text, Origin::User)]).math();
+
+        assert_eq!(Settings::resolve(Vec::new()).math(), MathDrawing::Image);
+        assert_eq!(
+            read(r#"{"output": {"math": "written"}}"#),
+            MathDrawing::Written
+        );
+        assert_eq!(read(r#"{"output": {"math": "text"}}"#), MathDrawing::Text);
+        assert_eq!(read(r#"{"output": {"math": "image"}}"#), MathDrawing::Image);
+        assert_eq!(MathDrawing::read("latex"), None);
+    }
+
+    #[test]
+    fn diagrams_are_an_image_unless_a_layer_names_written_or_text() {
+        let read =
+            |text: &str| Settings::resolve(vec![Document::sample(text, Origin::User)]).diagrams();
+
+        assert_eq!(
+            Settings::resolve(Vec::new()).diagrams(),
+            DiagramDrawing::Image
+        );
+        assert_eq!(
+            read(r#"{"output": {"diagrams": "written"}}"#),
+            DiagramDrawing::Written
+        );
+        assert_eq!(
+            read(r#"{"output": {"diagrams": "text"}}"#),
+            DiagramDrawing::Text
+        );
+        assert_eq!(
+            read(r#"{"output": {"diagrams": "image"}}"#),
+            DiagramDrawing::Image
+        );
+        assert_eq!(DiagramDrawing::read("mermaid"), None);
+    }
+
+    #[test]
+    fn images_are_auto_unless_a_layer_names_a_protocol_or_off() {
+        let read =
+            |text: &str| Settings::resolve(vec![Document::sample(text, Origin::User)]).images();
+
+        assert_eq!(Settings::resolve(Vec::new()).images(), ImageOutput::Auto);
+        assert_eq!(
+            read(r#"{"output": {"images": "kitty"}}"#),
+            ImageOutput::Kitty
+        );
+        assert_eq!(
+            read(r#"{"output": {"images": "iterm2"}}"#),
+            ImageOutput::Iterm2
+        );
+        assert_eq!(
+            read(r#"{"output": {"images": "sixel"}}"#),
+            ImageOutput::Sixel
+        );
+        assert_eq!(read(r#"{"output": {"images": "off"}}"#), ImageOutput::Off);
+        assert_eq!(ImageOutput::read("png"), None);
     }
 
     #[test]
@@ -524,6 +724,18 @@ mod tests {
         assert_eq!(
             shape::usual(&["output", "pinAfterSeconds"]).parse::<u64>(),
             Ok(Settings::resolve(Vec::new()).pin_after().as_secs())
+        );
+        assert_eq!(
+            ImageOutput::read(shape::usual(&["output", "images"])),
+            Some(Settings::resolve(Vec::new()).images())
+        );
+        assert_eq!(
+            MathDrawing::read(shape::usual(&["output", "math"])),
+            Some(Settings::resolve(Vec::new()).math())
+        );
+        assert_eq!(
+            DiagramDrawing::read(shape::usual(&["output", "diagrams"])),
+            Some(Settings::resolve(Vec::new()).diagrams())
         );
     }
 }

@@ -2,6 +2,7 @@ use std::fs;
 use std::sync::{Arc, mpsc};
 
 use crucible_app::Settled;
+use crucible_client_api::Author;
 use crucible_models::{
     Delta, DeltaStream, PromptCacheCapabilities, PromptCacheRoute, Provider, ProviderError, Request,
 };
@@ -217,6 +218,7 @@ fn a_picture_named_at_the_prompt_is_attached() {
         Sent {
             prompt: "what is in holiday.png",
             images: &[],
+            author: Author::Person,
         },
     );
 
@@ -257,6 +259,7 @@ fn an_mp4_is_attached_only_when_provider_and_model_both_accept_video() {
         Sent {
             prompt: "describe demo.MP4",
             images: &[],
+            author: Author::Person,
         },
     );
 
@@ -286,6 +289,7 @@ fn an_mp4_is_refused_when_the_provider_has_no_video_shape() {
         Sent {
             prompt: "describe demo.mp4",
             images: &[],
+            author: Author::Person,
         },
     );
 
@@ -318,6 +322,7 @@ fn an_mp4_name_with_non_mp4_bytes_is_refused() {
         Sent {
             prompt: "describe demo.mp4",
             images: &[],
+            author: Author::Person,
         },
     );
 
@@ -350,6 +355,7 @@ fn a_prompt_naming_no_file_attaches_nothing_and_says_nothing() {
         Sent {
             prompt: "rename the field and run the tests",
             images: &[],
+            author: Author::Person,
         },
     );
 
@@ -377,6 +383,7 @@ fn a_source_file_named_at_the_prompt_is_still_only_text() {
         Sent {
             prompt: "have a look at main.rs",
             images: &[],
+            author: Author::Person,
         },
     );
 
@@ -412,6 +419,7 @@ fn the_provider_half_of_the_intersection_names_the_protocol() {
         Sent {
             prompt: "read invoice.pdf",
             images: &[],
+            author: Author::Person,
         },
     );
 
@@ -451,6 +459,7 @@ fn a_pdf_on_moonshot_is_refused_by_the_protocol_and_never_sent() {
         Sent {
             prompt: "read invoice.pdf",
             images: &[],
+            author: Author::Person,
         },
     );
 
@@ -495,6 +504,7 @@ fn the_model_half_of_the_intersection_names_the_model() {
         Sent {
             prompt: "read invoice.pdf",
             images: &[],
+            author: Author::Person,
         },
     );
 
@@ -528,6 +538,7 @@ fn a_model_outside_the_table_neither_offers_the_file_nor_refuses_it() {
         Sent {
             prompt: "what is in holiday.png",
             images: &[],
+            author: Author::Person,
         },
     );
 
@@ -564,6 +575,7 @@ fn a_file_over_the_ceiling_is_refused_where_the_user_can_still_hear_it() {
         Sent {
             prompt: "what is in huge.png",
             images: &[],
+            author: Author::Person,
         },
     );
 
@@ -598,6 +610,7 @@ fn a_png_that_is_not_a_png_is_refused_before_any_request() {
         Sent {
             prompt: "what is in holiday.png",
             images: &[],
+            author: Author::Person,
         },
     );
 
@@ -677,6 +690,7 @@ fn what_the_prompt_attached_reaches_the_transcript() {
         Sent {
             prompt,
             images: &[],
+            author: Author::Person,
         },
     );
 
@@ -718,6 +732,7 @@ fn a_prompt_naming_no_file_records_the_message_it_always_did() {
         Sent {
             prompt,
             images: &[],
+            author: Author::Person,
         },
     );
 
@@ -777,6 +792,7 @@ fn a_file_sent_with_a_prompt_is_marked_under_it_whichever_way_it_reached_the_scr
         Sent {
             prompt,
             images: &[],
+            author: Author::Person,
         },
         style,
     )
@@ -862,6 +878,7 @@ fn a_marker_names_the_image_pasted_before_it() {
         Sent {
             prompt: "what is in [Image #1]",
             images: &pasted,
+            author: Author::Person,
         },
     );
 
@@ -872,6 +889,75 @@ fn a_marker_names_the_image_pasted_before_it() {
     assert_eq!(
         fs::read(one.path.as_ref()).expect("the imported bytes"),
         PNG
+    );
+}
+
+#[test]
+fn words_the_application_wrote_attach_nothing_they_name_or_mark() {
+    let sample = Sample::new("attaching-an-application-note");
+    let named = [PNG, b"named"].concat();
+    let workspace = holding(&sample, "holiday.png", &named);
+    let root = sample.root();
+    let base = root.parent().expect("the sample base");
+    let outside = base.join("printed-by-a-command.png");
+    fs::write(&outside, [PNG, b"outside"].concat()).expect("a picture outside the workspace");
+    let pasted_file = base.join("pasted-earlier.png");
+    fs::write(&pasted_file, [PNG, b"pasted"].concat()).expect("a pasted picture");
+    let pasted = [written(&pasted_file).into_boxed_str()];
+    let imported = sample.logs().join("attachments/session-one");
+    // What a background command printed, put in the note that wakes the model.
+    let note = format!(
+        "Background command finished: wrote holiday.png and {} beside [Image #1]",
+        written(&outside),
+    );
+    let asking = Asking {
+        spells: spelling("anthropic").spells,
+        vendor: "anthropic",
+        model: "claude-opus-5",
+        reads: Some(opus()),
+        imported: Some(&imported),
+    };
+    let sent = |author| Sent {
+        prompt: &note,
+        images: &pasted,
+        author,
+    };
+
+    let woken = attaching(&workspace, asking, sent(Author::Application));
+    assert!(
+        !imported.exists(),
+        "the application's note copied a picture into the session's store"
+    );
+    assert!(
+        woken.attachments.is_empty(),
+        "the application's note attached {:?}",
+        woken
+            .attachments
+            .iter()
+            .map(|one| &one.path)
+            .collect::<Vec<_>>(),
+    );
+    assert!(
+        woken.refusals.is_empty(),
+        "nothing was offered, so nothing is refused: {:?}",
+        woken.refusals
+    );
+
+    // The same words typed by the person choose all three.
+    let typed = attaching(&workspace, asking, sent(Author::Person));
+    assert!(
+        typed.refusals.is_empty(),
+        "nothing was refused: {:?}",
+        typed.refusals
+    );
+    assert_eq!(
+        typed.attachments.len(),
+        3,
+        "the named, the outside and the marked picture"
+    );
+    assert!(
+        imported.exists(),
+        "the person's outside picture was copied into the session's store"
     );
 }
 
@@ -895,6 +981,7 @@ fn a_marker_with_nothing_pasted_behind_it_is_a_word() {
         Sent {
             prompt: "the plan in [Image #3] step one",
             images: &[],
+            author: Author::Person,
         },
     );
 
@@ -930,6 +1017,7 @@ fn a_marker_said_twice_attaches_the_image_once() {
         Sent {
             prompt: "compare [Image #1] with [Image #1]",
             images: &pasted,
+            author: Author::Person,
         },
     );
 

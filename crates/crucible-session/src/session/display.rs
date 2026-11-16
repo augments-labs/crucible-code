@@ -387,14 +387,25 @@ impl Iterator for DisplayHistory {
     }
 }
 
+/// One bounded preview as it is kept.
+///
+/// The file it changed is a key of its own, written only when the tool named
+/// one, so a preview that names none is written byte for byte as one was
+/// before a preview could. A build that never read the key passes over it, as
+/// it passes over every key it does not ask for, and draws the same box
+/// without the name; that is why the format number does not move for it.
 pub(super) fn preview(diff: &Diff) -> Value {
-    json!({
+    let mut kept = json!({
         "added": diff.added(), "removed": diff.removed(), "dropped": diff.dropped(),
         "lines": diff.lines().iter().map(|line| json!({
             "number": line.number(), "text": line.text(),
             "change": match line.change() { Change::Kept => "kept", Change::Added => "added", Change::Removed => "removed" },
         })).collect::<Vec<_>>(),
-    })
+    });
+    if let (Some(path), Value::Object(kept)) = (diff.path(), &mut kept) {
+        kept.insert("path".to_owned(), json!(path));
+    }
+    kept
 }
 
 fn count(value: &Value, name: &str) -> Option<usize> {
@@ -422,12 +433,24 @@ fn read_preview(value: &Value) -> Option<Diff> {
             Some(Line::new(count(row, "number")?, change, text))
         })
         .collect::<Option<Vec<_>>>()?;
-    Diff::restored(
+    let diff = Diff::restored(
         lines,
         count(value, "added")?,
         count(value, "removed")?,
         count(value, "dropped")?,
-    )
+    )?;
+    // A preview kept before one could name its file has no key, and is drawn
+    // without a name; a key this build could not have written is damage.
+    match value.get("path") {
+        None => Some(diff),
+        Some(path) => {
+            let path = path.as_str()?;
+            if path.is_empty() || path.chars().count() > Diff::PATH {
+                return None;
+            }
+            Some(diff.in_file(path))
+        }
+    }
 }
 
 pub(super) fn compacted(compacted: Compacted, pruned: bool) -> String {

@@ -531,8 +531,15 @@ turn are one thing you wanted said, and answering the first before reading the
 third is working to a question you had already added to. Each is still its own
 message, in the order you typed it; nothing is joined into a prompt you did not
 write. A turn that stopped on a used-up plan is the exception: the queue waits
-in the same panel over the box, where the same keys edit or delete it, until
-you send a prompt, since sent on its own it would reach a plan that is spent.
+in the same panel over the box, where the same keys edit or delete it, since
+sent on its own it would reach a plan that is spent. A queue you held back at
+the [content-use](../providers/content-use.md) question waits the same way.
+The panel's title then says `waiting for the next turn`, since with no turn to
+stop <kbd>Ctrl+Enter</kbd> is <kbd>Enter</kbd>. The prompt you send takes the
+queue with it, as a turn takes what was queued under it. A turn that starts
+without you, such as the one a background command's ending wakes, takes none
+of it, and once that turn ends the queue goes as a turn of its own, unless it
+too stopped on a used-up plan.
 
 Nothing holds the queue while you look at it. The turn above goes on writing,
 tools go on running, and the turn takes every waiting prompt at its next step,
@@ -831,7 +838,20 @@ An address written on its own is a link without being written as one. `https://`
 or `http://` and everything up to the next space is drawn the way a link's words
 are, and arrives exactly as it was written: the underscores and stars in a
 path are part of it rather than markers. What ends the sentence is not part of
-the address, so a full stop after one stays with the prose.
+the address, so a full stop after one stays with the prose. The one exception
+is a pull request, issue or commit on GitHub or GitLab, which is drawn as the
+reference people call it by: `#1324` in the repository you are in, and
+`owner/repo#1324` anywhere else, still a link to the whole address.
+
+A link whose words are not its address is followed by its address in the quiet
+grey, without its scheme, keeping its host and first segment and an ellipsis
+where more follows them, with at most 24 columns before the ellipsis:
+`the guide (example.com/docs/…)`. An image is drawn as `[image: its words]`
+followed by its address the same way, and nothing is fetched.
+<kbd>Ctrl+O</kbd> lists every address drawn shorter in full. See
+[Pull requests, issues and commits](../sessions/transcript.md#pull-requests-issues-and-commits)
+and
+[The address after a link's words](../sessions/transcript.md#the-address-after-a-links-words).
 
 A backslash in front of a marker says the marker was meant as itself: `\*` is a
 star and `\|` is a pipe, and the backslash is gone. In front of anything else
@@ -870,10 +890,15 @@ one gets a tick and its words go behind you, subdued and struck through. The
 brackets have to open the item: `- see [TODO] in the grammar` is a bracket
 somebody wrote, and it stays one.
 
-A phrase between two `~~` is one the answer wrote and then took back, and it is
-drawn with a line through it and nothing else, struck rather than dimmed,
-because a retraction is still being read. Exactly two: `~/Projects` is a path,
-`~40` is an approximation, and both are left where they were.
+A phrase between two `~~`, or between two single `~`, is one the answer wrote
+and then took back, and it is drawn with a line through it and nothing else,
+struck rather than dimmed, because a retraction is still being read. A single
+tilde needs one to close it in the same paragraph: `~/Projects` is a path,
+`~40` is an approximation, and both are left where they were. Until the closing
+tilde arrives, the foot of the transcript shows the last line of what is
+held, as it was written. A run raised and leant on at once, as in
+`***both***`, is drawn bold and italic together. See
+[Struck phrases and weight with emphasis](../sessions/transcript.md#struck-phrases-and-weight-with-emphasis).
 
 A table is drawn as a table. The bars a model wrote are replaced by one rule
 between the columns and one under the header, every column is as wide as the
@@ -1061,6 +1086,7 @@ back to correct.
 | `/login` | Signs in with your provider account |
 | `/logout` | Signs out from your provider account |
 | `/catalog` | Lists the coding agents the ACP Registry offers, and adds one |
+| `/questions` | Opens the [questions the agent asked without waiting](../tools/asking.md#asking-without-waiting), or closes them |
 | `/mode` | The [permission mode](../permissions/modes.md) in force, or the one you name |
 | `/sandbox` | Shows the [sandbox](../security/sandboxing.md) in force, and turns it on or off |
 | `/theme` | Picks the colours crucible draws with, and the one code is drawn in |
@@ -1446,8 +1472,8 @@ stays in the box, and the next prompt carries on the same session.
 ## What it can do
 
 Twelve tools, advertised in the order a model tends to reach for them. Nine are
-in the list from the start, and eight when nobody is at a keyboard for
-`ask_user` to ask. The rest are **held back**: they exist and they work, and the
+in the list from the start, and eight when there is nobody for `ask_user` to
+ask. The rest are **held back**: they exist and they work, and the
 agent does not see them until it looks them up with `tool_search`. A schema the
 agent can see is one it pays for on every request of every turn, and most
 sessions never write a plan or ask a question about the world.

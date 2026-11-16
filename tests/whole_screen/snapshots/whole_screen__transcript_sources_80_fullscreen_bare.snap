@@ -1,0 +1,17 @@
+---
+source: tests/whole_screen/main.rs
+expression: bare
+---
+80x12 cursor 11,0 scrolled 0
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|table                                                                           |
+|                                                                                |
+|name | what it does | since                                                     |
+|--|--|--                                                                        |
+|delta | draws a rule across the window | 0.4                                    |
+|epsilon | folds a long cell | 0.5                                               |
+|                                                                                |
+|table                                                                           |
+|                                                                                |
+|esc to close · ↑↓ pgup pgdn to see more · ←→ source 2 of 3                      |

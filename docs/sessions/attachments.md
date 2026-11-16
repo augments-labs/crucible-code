@@ -20,6 +20,11 @@ attached](#what-may-be-attached), and names a file that is there, is attached:
 what is wrong with the layout in shot.png
 ```
 
+Only words you write choose a file. When a command left running
+[ends on its own](../tools/commands.md#when-one-ends-on-its-own) and the note
+about it starts a turn, nothing in that note is attached, even a path or an
+`[Image #N]` marker the command printed.
+
 A relative path names a file in the workspace, and an absolute path under a
 directory that [`permissions.extraDirectories`](../permissions/directories.md)
 adds counts as one too. A leading `~` is not expanded, so write the path out.

@@ -5,11 +5,12 @@
 //! the screen, so the questions cross a thread boundary — which is why these
 //! values live here rather than in the crate that asks or the one that draws.
 //! Neither of those may depend on the other. What carries them across is `Put`,
-//! in `crucible-tools`.
+//! in `crucible-tools`, or for a question left waiting rather than awaited,
+//! `Deferred` beside it.
 //!
 //! Every string here is somebody's own words: the questions are the model's and
-//! the answers are the reader's. So all three values write `Debug` by hand and
-//! redact.
+//! the answers are the reader's. So the values holding them write `Debug` by
+//! hand and redact, and those built from them derive it from those.
 
 use std::fmt;
 
@@ -217,6 +218,98 @@ impl Answered {
 impl fmt::Debug for Answered {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Answered([redacted])")
+    }
+}
+
+/// What names a batch of questions left waiting for an answer.
+///
+/// Its text form, `q` and a number, is what the model and a client both name
+/// the batch by, so it is short and written the same way in both directions.
+/// Unique within the registry that handed it out, which is the only place it
+/// means anything.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct QuestionId(u64);
+
+impl QuestionId {
+    /// The id a registry hands out as its `number`th.
+    #[must_use]
+    pub fn numbered(number: u64) -> Self {
+        Self(number)
+    }
+
+    /// Where it falls among the ids its registry has handed out.
+    #[must_use]
+    pub fn number(self) -> u64 {
+        self.0
+    }
+
+    /// The id its text form names, or `None` where the text is not one.
+    ///
+    /// Only the form [`fmt::Display`] writes: `q` and the decimal digits of
+    /// the number, with no sign, space or leading zero. A model naming a batch
+    /// gets back exactly the id it was told about, or nothing.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        let digits = text.strip_prefix('q')?;
+        let canonical = !digits.is_empty()
+            && digits.bytes().all(|byte| byte.is_ascii_digit())
+            && (digits == "0" || !digits.starts_with('0'));
+
+        if !canonical {
+            return None;
+        }
+        digits.parse().ok().map(Self)
+    }
+}
+
+impl fmt::Display for QuestionId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "q{}", self.0)
+    }
+}
+
+/// What one question in a waiting batch got back.
+///
+/// Declining is an answer of its own, not an empty [`Answered`]: the reader
+/// said they would not decide this one, and the asker must not read that as
+/// any of the answers it offered.
+#[derive(Debug)]
+pub enum Reply {
+    /// The reader chose, and may have added a line.
+    Answered(Answered),
+    /// The reader would not decide it.
+    Declined,
+}
+
+/// The questions of one call that went on without waiting for its answer.
+///
+/// Cloned to cross a thread boundary for the reason [`Question`] is.
+#[derive(Clone, Debug)]
+pub struct Batch {
+    id: QuestionId,
+    questions: Box<[Question]>,
+}
+
+impl Batch {
+    /// The batch `id` names, asking `questions` in order.
+    #[must_use]
+    pub fn new(id: QuestionId, questions: impl IntoIterator<Item = Question>) -> Self {
+        Self {
+            id,
+            questions: questions.into_iter().collect(),
+        }
+    }
+
+    /// What it is named by.
+    #[must_use]
+    pub fn id(&self) -> QuestionId {
+        self.id
+    }
+
+    /// The questions, in the order they were asked.
+    #[must_use]
+    pub fn questions(&self) -> &[Question] {
+        &self.questions
     }
 }
 

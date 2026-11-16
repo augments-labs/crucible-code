@@ -483,6 +483,30 @@ pub(crate) const SCREEN: &[&str] = &["fullscreen", "native"];
 /// the most.
 pub(crate) const TRANSCRIPT_COLOURS: &[&str] = &["calm", "balanced", "rich"];
 
+/// Every answer `output.images` accepts.
+///
+/// `auto` asks the terminal at the start, and only where its environment names
+/// a terminal pictures were seen to draw right on, with no multiplexer in
+/// between; a protocol named here is used without asking where it was seen to
+/// draw right, and is text elsewhere; `off` draws every picture as text.
+pub(crate) const IMAGES: &[&str] = &["auto", "kitty", "iterm2", "sixel", "off"];
+
+/// Every answer `output.math` accepts.
+///
+/// `written` shows every formula exactly as the model wrote it; `text` draws
+/// it as characters; `image` draws it as a picture where one can be shown, and
+/// as text everywhere else, which is everywhere until a picture of a formula
+/// can be drawn. Each is read again by a running session.
+pub(crate) const MATH: &[&str] = &["written", "text", "image"];
+
+/// Every answer `output.diagrams` accepts.
+///
+/// `written` shows every diagram exactly as the model wrote it; `text` draws
+/// it as characters; `image` draws it as a picture where one can be shown, and
+/// as text everywhere else, which is everywhere until a picture of a diagram
+/// can be drawn. Each is read again by a running session.
+pub(crate) const DIAGRAMS: &[&str] = &["written", "text", "image"];
+
 /// What the model is asked under, where the reader wants something else.
 ///
 /// Two hooks that look alike and are not. `append` adds to what crucible says;
@@ -613,6 +637,33 @@ const OUTPUT: &[Field] = &[
         // The bounds are the answers, and the schema writes them out.
         examples: &[],
         usual: Some("3"),
+        needed: false,
+        widens: false,
+    },
+    Field {
+        name: "images",
+        about: "How pictures are drawn: auto asks the terminal at start, only where its environment names a terminal pictures were seen to draw right on and no multiplexer is in between; kitty, iterm2 or sixel uses that protocol without asking where it was seen to draw right, and text elsewhere; off draws text",
+        shape: Shape::Choice(IMAGES),
+        examples: &[],
+        usual: Some("auto"),
+        needed: false,
+        widens: false,
+    },
+    Field {
+        name: "math",
+        about: "How math in an answer is drawn: written shows each formula exactly as the model wrote it; text draws it as characters; image draws it as a picture where one can be shown and as text everywhere else",
+        shape: Shape::Choice(MATH),
+        examples: &[],
+        usual: Some("image"),
+        needed: false,
+        widens: false,
+    },
+    Field {
+        name: "diagrams",
+        about: "How a diagram in an answer is drawn: written shows each diagram exactly as the model wrote it; text draws it as characters; image draws it as a picture where one can be shown and as text everywhere else",
+        shape: Shape::Choice(DIAGRAMS),
+        examples: &[],
+        usual: Some("image"),
         needed: false,
         widens: false,
     },

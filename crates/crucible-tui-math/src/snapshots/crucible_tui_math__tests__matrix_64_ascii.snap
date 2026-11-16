@@ -1,0 +1,9 @@
+---
+source: crates/crucible-tui-math/src/tests.rs
+expression: "dump(&rows, 64)"
+---
+<Quiet>+- math</>                                                         
+<Quiet>| </>    / a₁₁  a₁₂ \                                              
+<Quiet>| </>A = | a₂₁  a₂₂ |                                              
+<Quiet>| </>    \  α    β  /                                              
+<Quiet>+-</>

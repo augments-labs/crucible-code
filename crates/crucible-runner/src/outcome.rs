@@ -209,15 +209,18 @@ pub enum Turned {
     /// The exchange ran to an ending, and the answer was accepted.
     Ran(RunResult),
 
-    /// A guardrail refused: the invocation on the way in, or the final
-    /// candidate answer on the way out.
+    /// A guardrail refused: the invocation on the way in, words taken into
+    /// it at a pass boundary (an answer delivered or a line steered in), or
+    /// the final candidate answer on the way out.
     Rejected {
         /// Which check refused, and what it said about why.
         rejection: Rejection,
         /// How the model's own answer ended, where there was one to refuse.
         ///
-        /// `None` for an input check, which runs before the first request of
-        /// the invocation: nothing was asked, so nothing stopped.
+        /// `None` for an input check. One on the invocation runs before its
+        /// first request, so nothing was asked; one on words taken in at a
+        /// pass boundary runs before the next request, so the model's last
+        /// ending was not an answer to them.
         stop: Option<StopReason>,
     },
 
@@ -236,8 +239,9 @@ pub enum Turned {
 impl Turned {
     /// How the model's own answer ended, where a request went out at all.
     ///
-    /// `None` is an invocation that never reached a provider, which is the one
-    /// shape that has no ending to report and the reason this is an option
+    /// `None` is an invocation an input check turned away, either before its
+    /// first request or at a pass boundary before the next one: the shape that
+    /// has no ending of its own to report, and the reason this is an option
     /// rather than a reason invented for it.
     #[must_use]
     pub const fn stop(&self) -> Option<StopReason> {

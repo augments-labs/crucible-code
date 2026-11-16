@@ -695,7 +695,7 @@ fn a_full_window_prunes_tool_output_from_the_active_turn_and_carries_on() {
             .iter()
             .any(|event| matches!(event, Event::Delta { text } if text.contains("carried on")))
     );
-    assert_eq!(scripted.asked(), [7, 9, 11, 13]);
+    assert_eq!(scripted.asked(), [8, 10, 12, 14]);
     let carried: Vec<Option<u8>> = events
         .iter()
         .filter_map(|event| match event {

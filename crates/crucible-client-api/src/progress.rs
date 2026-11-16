@@ -13,6 +13,16 @@
 //! [`Capability::Progress`](crate::Capability::Progress) is handed none, so
 //! nothing a client needs in order to be correct is carried here.
 //!
+//! [`Progress::Waiting`] is the one report a client acts on, and it goes to a
+//! client that claimed [`Capability::Questions`](crate::Capability::Questions)
+//! whether or not it asked for progress. It carries the whole waiting set each
+//! time, so a client replaces what it shows rather than adding to it, and a
+//! repeat changes nothing. It says which session the set belongs to, an
+//! [`Era`], and an answer names it back, so an answer to a batch of a session
+//! the conversation has since left is refused by name, as is one to a batch
+//! that stopped waiting while a report was dropped, rather than settling
+//! anything.
+//!
 //! Each report is a frame of its own and says which [`Version`] it is written
 //! in: a client reading a stream from a host that speaks another is refused by
 //! name at the first report, rather than shown what the fields it recognised
@@ -25,12 +35,14 @@
 //! [`Capability::Install`](crate::Capability::Install). It, too, is a frame of
 //! its own that says its [`Version`].
 
+use crucible_types::{QuestionId, SessionId};
 use serde_json::Value;
 
 use crate::bounds::{Name, Text};
 use crate::context::Context;
 use crate::error::{ErrorCode, Refusal};
 use crate::outcome::{Problem, Stop};
+use crate::pending::Asked;
 use crate::request::Version;
 use crate::usage::{Limits, Used};
 use crate::wire::{Fields, Writing, frame, parsed};
@@ -127,6 +139,105 @@ pub enum Progress {
     },
     /// A turn reported that it failed.
     Failed(Problem),
+    /// Every batch of questions left waiting for an answer, oldest first, as
+    /// the set stood when it changed. An empty list says none waits.
+    Waiting {
+        /// The session the batches belong to, which an answer to one of them
+        /// names beside its id.
+        era: Era,
+        /// The batches.
+        batches: Vec<Waiting>,
+    },
+}
+
+/// The session a waiting set and an answer to it belong to.
+///
+/// A batch's id is unique within its session and not across sessions: after
+/// a session is left and another picked up, each can wait on a batch of the
+/// same id. The era tells them apart, so an answer shown in one session never
+/// settles a batch of another. Two eras are equal exactly when they name the
+/// same session.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Era {
+    /// A session being recorded, by its identity: leaving it and coming back
+    /// to it gives the same era.
+    Session(SessionId),
+    /// A stint in a session that records nothing, numbered by the
+    /// application. Not reused while the host runs, so it is the same as no
+    /// other stint, a later one in the same unrecorded session included.
+    Stint(u64),
+}
+
+impl Era {
+    /// The era as it crosses: an object naming its kind, so a third kind is
+    /// a new word rather than a guess at what a bare value meant.
+    pub(crate) fn written(&self) -> Value {
+        match self {
+            Self::Session(session) => Writing::kind("session")
+                .with("session", session.as_str())
+                .finish(),
+            Self::Stint(number) => Writing::kind("stint").with("stint", *number).finish(),
+        }
+    }
+
+    /// The era `value` writes.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorCode::Malformed`] for a kind it has no arm for or a field out
+    /// of place, and the refusal [`Command::Resume`](crate::Command::Resume)
+    /// gives for a session identity it cannot take.
+    pub(crate) fn read(value: Value) -> Result<Self, Refusal> {
+        let mut fields = Fields::of(value)?;
+        let era = match fields.kind()?.as_str() {
+            "session" => Self::Session(crate::command::session(&fields.string("session")?)?),
+            "stint" => Self::Stint(fields.number("stint")?),
+            _ => return Err(ErrorCode::Malformed.into()),
+        };
+        fields.done()?;
+        Ok(era)
+    }
+}
+
+/// One batch of questions left waiting, as a client is shown it.
+///
+/// The questions cross in the shape a question a turn stops on does, so a
+/// client draws both the same way; only how it answers differs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Waiting {
+    /// What the batch is answered by.
+    pub id: QuestionId,
+    /// Its questions, in the order they were asked.
+    pub questions: Vec<Asked>,
+}
+
+impl Waiting {
+    fn written(&self) -> Value {
+        Writing::new()
+            .with("id", self.id.to_string())
+            .with(
+                "questions",
+                self.questions
+                    .iter()
+                    .map(Asked::written)
+                    .collect::<Vec<_>>(),
+            )
+            .finish()
+    }
+
+    fn read(value: Value) -> Result<Self, Refusal> {
+        let mut fields = Fields::of(value)?;
+        let waiting = Self {
+            id: QuestionId::parse(&fields.string("id")?).ok_or(ErrorCode::Malformed)?,
+            questions: fields
+                .list("questions")?
+                .into_iter()
+                .map(Asked::read)
+                .collect::<Result<_, _>>()?,
+        };
+        fields.done()?;
+        Ok(waiting)
+    }
 }
 
 /// What kind of thing a requested call's summary names, as the tool that read
@@ -270,7 +381,7 @@ impl InstallProgress {
 
 impl Progress {
     /// Every kind of progress, by the word it crosses as.
-    pub const KINDS: [&'static str; 14] = [
+    pub const KINDS: [&'static str; 15] = [
         "started",
         "delta",
         "tool_requested",
@@ -285,6 +396,7 @@ impl Progress {
         "limits",
         "finished",
         "failed",
+        "waiting",
     ];
 
     /// The word this kind crosses as.
@@ -305,6 +417,7 @@ impl Progress {
             Self::Limits(_) => "limits",
             Self::Finished { .. } => "finished",
             Self::Failed(_) => "failed",
+            Self::Waiting { .. } => "waiting",
         }
     }
 
@@ -347,6 +460,10 @@ impl Progress {
             Self::Limits(limits) => limits.written_into(object),
             Self::Finished { turn, stop } => object.with("turn", *turn).with("stop", stop.as_str()),
             Self::Failed(problem) => object.with("problem", problem.written()),
+            Self::Waiting { era, batches } => object.with("era", era.written()).with(
+                "batches",
+                batches.iter().map(Waiting::written).collect::<Vec<_>>(),
+            ),
         }
         .finish()
     }
@@ -418,6 +535,14 @@ impl Progress {
                 stop: Stop::named(&fields.string("stop")?)?,
             },
             "failed" => Self::Failed(Problem::read(fields.take("problem")?)?),
+            "waiting" => Self::Waiting {
+                era: Era::read(fields.take("era")?)?,
+                batches: fields
+                    .list("batches")?
+                    .into_iter()
+                    .map(Waiting::read)
+                    .collect::<Result<_, _>>()?,
+            },
             _ => return Err(ErrorCode::Malformed.into()),
         };
         fields.done()?;

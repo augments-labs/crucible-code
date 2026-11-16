@@ -48,9 +48,9 @@ use rustix::termios::{self, OptionalActions, Winsize};
 /// The percentile below is nearest-rank, so the size of what it is taken over
 /// decides how far into the tail it stands: over twenty readings the 95th is
 /// the second worst, which is one slow launch away from deciding a budget.
-/// Twenty-two puts it at the second worst still, and that is the point — a
-/// window is *meant* to be decidable by a stall, so that the median across
-/// windows can throw the stalled ones away.
+/// Twenty-two puts it at the second worst still, and that is the point — in
+/// windows taken in turn a window is *meant* to be decidable by a stall, so
+/// that the median across windows can throw the stalled ones away.
 const PER_WINDOW: usize = 22;
 
 /// Windows the runs are cut into.
@@ -61,17 +61,21 @@ const PER_WINDOW: usize = 22;
 ///
 /// The same shape as the burst probes' phases, and for the same reason. A
 /// percentile over one long run is decided by whatever else the machine was
-/// doing while it ran, and on a shared runner that is another job's build: a
-/// stall lands in the window it happened in, while a program that got slower is
-/// slower in all nine. Taking the tail of each window and the middle of those
-/// keeps the statistic a tail — it is still the second worst of twenty-two —
-/// and stops one bad stretch of wall clock from being the answer.
+/// doing while it ran, and on a shared runner that is another job's build: in
+/// windows taken in turn a stall lands in the window it happened in, while a
+/// program that got slower is slower in all nine. Taking the tail of each
+/// window and the middle of those keeps the statistic a tail — it is still the
+/// second worst of twenty-two — and stops one bad stretch of wall clock from
+/// being the answer.
 const WINDOWS: usize = 9;
 
 /// Runs per reading.
 ///
-/// A launch costs a couple of milliseconds, so the whole probe still finishes
-/// well inside a second.
+/// A launch costs a few milliseconds, except one whose reading is the first
+/// input on a picture candidate that never answers: that input waits out the
+/// picture exchange's reply wait, so a batch of those taken in turn would take
+/// at least `RUNS` times that wait, and [`coloured_input_at_once`] takes its
+/// windows together instead.
 const RUNS: usize = WINDOWS * PER_WINDOW;
 
 /// A stuck launch is a failed measurement rather than a benchmark that hangs.
@@ -83,6 +87,11 @@ const CEILING: Duration = Duration::from_secs(5);
 const COLUMNS: u16 = 80;
 #[cfg(target_os = "linux")]
 const ROWS: u16 = 24;
+
+/// The pixels of one cell the window reports, as a terminal that can draw
+/// pictures does.
+#[cfg(target_os = "linux")]
+const CELL: (u16, u16) = (8, 16);
 
 /// A placeholder, so the binary gets past the credential check and as far as
 /// drawing. Nothing is ever sent: standard input is closed, so no turn starts.
@@ -118,6 +127,88 @@ fn configuration(screen: Option<&str>) -> String {
         None => CONFIG.to_owned(),
         Some(mode) => CONFIG.replacen(OUTPUT, &format!(r#"{OUTPUT}"screen": "{mode}", "#), 1),
     }
+}
+
+/// What the fake terminal does with a question the child asks it.
+///
+/// A real terminal answers some escape sequences and ignores the rest, and the
+/// shipped program may wait on one before it draws. A probe that never answers
+/// measures the wait; one that answers at once measures the exchange without
+/// it. Those are two different readings of the same startup path, so both are
+/// taken rather than one standing for the other.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Answering {
+    /// Every query the child writes is answered as soon as it is whole.
+    AtOnce,
+    /// Nothing is ever answered.
+    Never,
+    /// Every answer arrives `LATE` after its question, long after the
+    /// child decided without it, as over a slow link, and in the pieces a
+    /// [`Answering::Split`] answer arrives in.
+    Late,
+    /// A question followed by a cursor-position query has the cursor position
+    /// answered first, which no terminal that answers in order does.
+    OutOfOrder,
+    /// Every answer arrives in pieces, cut before and after each escape
+    /// inside it, with `SPLIT` between them. The cut after an escape is the
+    /// one `crossterm` reads as Esc and typed characters when its read falls
+    /// between the two.
+    Split,
+}
+
+/// How long after its question a [`Answering::Late`] answer arrives.
+#[cfg(target_os = "linux")]
+const LATE: Duration = Duration::from_millis(50);
+
+/// The pause between the pieces of a [`Answering::Split`] answer.
+#[cfg(target_os = "linux")]
+const SPLIT: Duration = Duration::from_millis(2);
+
+/// The writes a terminal answering this way makes of `said`, each with how
+/// long after the question it is made.
+#[cfg(target_os = "linux")]
+fn paced(answering: Answering, said: Vec<u8>) -> Vec<(Duration, Vec<u8>)> {
+    if said.is_empty() {
+        return Vec::new();
+    }
+    match answering {
+        Answering::Never => Vec::new(),
+        Answering::AtOnce | Answering::OutOfOrder => vec![(Duration::ZERO, said)],
+        Answering::Late => pieces(said, LATE),
+        Answering::Split => pieces(said, Duration::ZERO),
+    }
+}
+
+/// `said` cut before and after each escape, the first piece `from` after the
+/// question and each next one [`SPLIT`] after it.
+#[cfg(target_os = "linux")]
+fn pieces(said: Vec<u8>, from: Duration) -> Vec<(Duration, Vec<u8>)> {
+    let mut pieces: Vec<Vec<u8>> = Vec::new();
+    for byte in said {
+        match pieces.last_mut() {
+            Some(piece) if byte != 0x1b && piece != b"\x1b" => piece.push(byte),
+            _ => pieces.push(vec![byte]),
+        }
+    }
+    pieces
+        .into_iter()
+        .zip(0_u32..)
+        .map(|(piece, at)| (from + SPLIT * at, piece))
+        .collect()
+}
+
+/// Whether the measured child is allowed to draw in colour.
+///
+/// A budget measured with `NO_COLOR=1` says nothing about the path a user with
+/// colour takes, and the bytes and work a palette adds are what this is for.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Colour {
+    /// The child reads no `NO_COLOR`, so a terminal gets colour.
+    On,
+    /// `NO_COLOR=1`, as every probe measured before colour had its own.
+    Off,
 }
 
 /// What proves that the timed startup operation happened.
@@ -215,6 +306,11 @@ pub(crate) enum StartupError {
     /// No readings at all, so there is no percentile to take.
     #[error("no readings")]
     Nothing,
+
+    /// A window taken beside the others stopped on a panic before it had its
+    /// readings.
+    #[error("a window of runs stopped on a panic before it finished")]
+    Abandoned,
 }
 
 /// Takes [`RUNS`] readings of the same thing.
@@ -227,16 +323,103 @@ pub(crate) fn readings_in(
     measure: Measure,
     screen: Option<&str>,
 ) -> Result<Readings, StartupError> {
+    readings_on(measure, screen, Answering::Never, Colour::Off)
+}
+
+/// The same, with the fake terminal's answers and the child's colour chosen.
+///
+/// A probe that names neither gets the terminal every probe measured before:
+/// silent, and told not to write colour.
+pub(crate) fn readings_on(
+    measure: Measure,
+    screen: Option<&str>,
+    answering: Answering,
+    colour: Colour,
+) -> Result<Readings, StartupError> {
     let binary = beside("crucible")?;
     let home = Scratch::in_screen(measure.label(), screen)?;
 
     let mut taken = Vec::with_capacity(RUNS);
     for _ in 0..RUNS {
         home.restore_fixture()?;
-        taken.push(once(&binary, home.path(), measure)?);
+        taken.push(once(&binary, home.path(), measure, answering, colour)?);
     }
 
     Ok(Readings::new(taken))
+}
+
+/// The first input with colour on.
+///
+/// One measurement for the probe a terminal answers and the one it never does,
+/// so the two readings differ only in the answers. The prompt mark is waited
+/// for alone, without the space the no-colour first input waits on: colour puts
+/// a reset between the mark and what follows it, so the plain pair is no longer
+/// contiguous in the terminal's bytes. The key sent is one uncommon character,
+/// absent from startup output and visible in the input box.
+const COLOURED_INPUT: Measure = Measure::Input {
+    ready: "\u{203a}",
+    probe: "\u{00a7}",
+};
+
+/// [`COLOURED_INPUT`], the fake terminal answering as `answering`.
+pub(crate) fn coloured_input(answering: Answering) -> Result<Readings, StartupError> {
+    readings_on(COLOURED_INPUT, None, answering, Colour::On)
+}
+
+/// The same, for a start that sits through `wait` before its first input, with
+/// every window taken at once and their starts spread evenly across `wait`.
+///
+/// Taken in turn, such a batch is [`RUNS`] of those waits end to end, and
+/// nearly all of it is the probe asleep. Spread across the wait, the launches
+/// of one window fall between those of the next rather than on them, so two
+/// children rarely start at the same moment and a reading is close to the
+/// start a machine running one gives. The windows begin a spacing apart and
+/// keep to it only roughly, since each launches again when its last child is
+/// done.
+///
+/// What that gives up is part of the windows' own defence. A stall shorter
+/// than a launch usually lands on one reading in each window, which the second
+/// worst of twenty-two passes over; one that spans two launches lands on two in
+/// every window, and the median keeps it. [`best`] answers that instead, by
+/// taking a batch that went over again, and a batch costs one window's wall
+/// clock rather than all nine's.
+pub(crate) fn coloured_input_at_once(
+    answering: Answering,
+    wait: Duration,
+) -> Result<Readings, StartupError> {
+    let binary = beside("crucible")?;
+    // Planting the fixtures, the costly part, is done before any window
+    // starts: between its runs a window only removes the logs its last child
+    // added, in a home of its own.
+    let homes = (0..WINDOWS)
+        .map(|window| Scratch::in_window(COLOURED_INPUT.label(), window))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    overlapped(spacing(wait), |window| {
+        let home = homes
+            .get(window)
+            .ok_or_else(|| io::Error::other("a window started that has no home"))?;
+
+        let mut taken = Vec::with_capacity(PER_WINDOW);
+        for _ in 0..PER_WINDOW {
+            home.restore_fixture()?;
+            taken.push(once(
+                &binary,
+                home.path(),
+                COLOURED_INPUT,
+                answering,
+                Colour::On,
+            )?);
+        }
+
+        Ok(taken)
+    })
+}
+
+/// How far apart the windows of a batch taken at once start, for a start that
+/// sits through `wait`.
+fn spacing(wait: Duration) -> Duration {
+    wait / u32::try_from(WINDOWS).unwrap_or(u32::MAX)
 }
 
 /// Takes [`RUNS`] readings of a noninteractive argument that exits by itself.
@@ -297,10 +480,12 @@ const AT_LIBERTY: usize = 3;
 ///
 /// It is not a way to pass. Nothing is thrown away that a second batch does not
 /// beat, and a startup that actually got slower is over budget in all three —
-/// which is the same claim the windows make, one layer up. What makes that hold
-/// is that `again` launches the binary afresh every call, from a scratch home it
-/// builds itself: a batch reading state a previous one left would open already
-/// slow, and the guarantee would invert.
+/// which is the same claim the windows make, one layer up. A batch whose
+/// windows were taken at once has no window that sits outside a stall longer
+/// than a launch, so against such a stall this is the whole of the defence.
+/// What makes that hold is that `again` launches the binary afresh every call,
+/// from a scratch home it builds itself: a batch reading state a previous one
+/// left would open already slow, and the guarantee would invert.
 pub(crate) fn best(
     budget: Duration,
     mut again: impl FnMut() -> Result<Readings, StartupError>,
@@ -323,6 +508,50 @@ pub(crate) fn best(
     }
 
     Ok(best)
+}
+
+/// Every window taken at once, each on a thread of its own and the `n`th
+/// started `spacing` times `n` after the first, read back in the order they
+/// were started.
+///
+/// The order is what lets the windows be cut back out by position, so a window
+/// that finished early waits for the ones started before it. A window that
+/// could not be measured is the batch's failure, as one run that could not be
+/// is in a batch taken in turn; one whose thread panicked is
+/// [`StartupError::Abandoned`] rather than a panic in the probe. Every window
+/// started is joined before any is read, so the failure is the first in start
+/// order, and no panic is left behind for the scope to raise on its way out.
+fn overlapped(
+    spacing: Duration,
+    window: impl Fn(usize) -> Result<Vec<Duration>, StartupError> + Sync,
+) -> Result<Readings, StartupError> {
+    let window = &window;
+
+    std::thread::scope(|scope| {
+        let mut started = Vec::with_capacity(WINDOWS);
+        for (index, at) in (0..WINDOWS).zip(0_u32..) {
+            started.push(
+                std::thread::Builder::new()
+                    .name(format!("crucible-startup-window-{index}"))
+                    .spawn_scoped(scope, move || {
+                        std::thread::sleep(spacing * at);
+                        window(index)
+                    }),
+            );
+        }
+
+        let mut finished = Vec::with_capacity(WINDOWS);
+        for spawned in started {
+            finished.push(spawned.map(std::thread::ScopedJoinHandle::join));
+        }
+
+        let mut taken = Vec::with_capacity(RUNS);
+        for joined in finished {
+            taken.extend(joined?.map_err(|_| StartupError::Abandoned)??);
+        }
+
+        Ok(Readings::new(taken))
+    })
 }
 
 /// The limit a probe is held to, on the runner it was started on.
@@ -349,14 +578,15 @@ fn chosen<T>(runner: Option<&std::ffi::OsStr>, quiet: T, shared: T) -> Result<T,
     }
 }
 
-/// Every reading one probe took, in the order it took them.
+/// Every reading one probe took, window by window in the order the windows
+/// started.
 pub(crate) struct Readings(Vec<Duration>);
 
 impl Readings {
-    /// Kept in the order they arrived, which is the whole of what the windows
-    /// are about: a machine stalls for a stretch of wall clock, and a run
-    /// sorted on the way in has thrown away which readings were next to each
-    /// other. Everything below that wants an order statistic sorts a window.
+    /// Kept window by window, which is the whole of what the windows are
+    /// about: a run sorted on the way in has thrown away which readings shared
+    /// a window and, in windows taken in turn, which shared a stretch of wall
+    /// clock. Everything below that wants an order statistic sorts a window.
     fn new(taken: Vec<Duration>) -> Self {
         Self(taken)
     }
@@ -372,7 +602,7 @@ impl Readings {
             .ok_or(StartupError::Nothing)
     }
 
-    /// What each window came to, in the order the windows were run.
+    /// What each window came to, in the order the windows were started.
     fn windows(&self) -> Vec<Duration> {
         self.0.chunks(PER_WINDOW).filter_map(percentile).collect()
     }
@@ -397,9 +627,10 @@ impl Readings {
         let median = sorted.get(sorted.len() / 2).copied().unwrap_or(best);
         let p95 = self.p95().unwrap_or(worst);
 
-        // The windows in the order they ran, because that is where a stall is
-        // legible: one number far above the rest is a stretch of wall clock
-        // this program did not own, and nine that agree is this program.
+        // The windows in the order they started, because in windows taken in
+        // turn that is where a stall is legible: one number far above the rest
+        // is a stretch of wall clock this program did not own, and nine that
+        // agree is this program.
         let windows = self
             .windows()
             .iter()
@@ -437,44 +668,115 @@ fn ms(taken: Duration) -> String {
 
 /// One run: start against a controlling terminal and wait for its proof.
 #[cfg(target_os = "linux")]
-fn once(binary: &Path, home: &Path, measure: Measure) -> Result<Duration, StartupError> {
-    let (terminal, inside) = pair()?;
-    let reading = terminal.try_clone()?;
-    let (sender, bytes) = mpsc::channel();
-    let reader = std::thread::Builder::new()
-        .name("crucible-startup-terminal".into())
-        .spawn(move || read(reading, &sender))?;
-
-    let second = inside.try_clone()?;
-    let third = inside.try_clone()?;
-    let started = Instant::now();
-    let child = Command::new("setsid")
-        .arg("--ctty")
-        .arg(binary)
-        .current_dir(std::env::current_dir()?)
-        .env_clear()
-        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-        .env("HOME", home)
-        .env("TERM", "xterm-256color")
-        .env("NO_COLOR", "1")
-        .env(crucible_config::HOME, home)
-        .env("ANTHROPIC_API_KEY", KEY)
-        .stdin(Stdio::from(inside))
-        .stdout(Stdio::from(second))
-        .stderr(Stdio::from(third))
-        .spawn()?;
-
-    let mut running = Running {
-        terminal,
-        child,
-        bytes,
-        reader: Some(reader),
-    };
+fn once(
+    binary: &Path,
+    home: &Path,
+    measure: Measure,
+    answering: Answering,
+    colour: Colour,
+) -> Result<Duration, StartupError> {
+    let (mut running, started) = start(binary, home, answering, colour, Seat::Terminal)?;
     running.until(measure, started)
 }
 
+/// Where the child's standard streams are, beside the terminal it controls.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Seat {
+    /// Every stream is the terminal, as when a person starts it.
+    Terminal,
+    /// Standard output goes to [`REDIRECTED`] in the home instead.
+    Redirected,
+    /// Standard input has nothing behind it.
+    NoInput,
+}
+
+/// The file a [`Seat::Redirected`] child writes its output to, in its home.
+#[cfg(target_os = "linux")]
+const REDIRECTED: &str = "redirected";
+
+/// Starts the child with the terminal as its controlling terminal, and the
+/// thread that reads and answers it, and says when the spawn began.
+#[cfg(target_os = "linux")]
+fn start(
+    binary: &Path,
+    home: &Path,
+    answering: Answering,
+    colour: Colour,
+    seat: Seat,
+) -> Result<(Running, Instant), StartupError> {
+    let (terminal, inside) = pair()?;
+    let reading = terminal.try_clone()?;
+    let replying = terminal.try_clone()?;
+    let (sender, bytes) = mpsc::channel();
+    let reader = std::thread::Builder::new()
+        .name("crucible-startup-terminal".into())
+        .spawn(move || read(reading, replying, answering, &sender))?;
+
+    let second = inside.try_clone()?;
+    let third = inside.try_clone()?;
+    let output = if seat == Seat::Redirected {
+        Stdio::from(File::create(home.join(REDIRECTED))?)
+    } else {
+        Stdio::from(second)
+    };
+    let started = Instant::now();
+    let child = {
+        let mut command = Command::new("setsid");
+        command.arg("--ctty");
+        if seat == Seat::NoInput {
+            // `setsid` takes the terminal from its own standard input, so the
+            // child's is taken away only after the terminal is its own.
+            command
+                .args(["/bin/sh", "-c", "exec \"$0\" </dev/null"])
+                .arg(binary);
+        } else {
+            command.arg(binary);
+        }
+        command
+            .current_dir(std::env::current_dir()?)
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("HOME", home)
+            .env("TERM", "xterm-256color")
+            // A terminal that can draw pictures, so a run with colour asks
+            // the questions that confirm it; the window reports its pixels
+            // below for the same reason.
+            .env("KITTY_WINDOW_ID", "1")
+            .env(crucible_config::HOME, home)
+            .env("ANTHROPIC_API_KEY", KEY)
+            .stdin(Stdio::from(inside))
+            .stdout(output)
+            .stderr(Stdio::from(third));
+        if matches!(colour, Colour::Off) {
+            command.env("NO_COLOR", "1");
+        }
+        // Dropped here rather than carried past the spawn: a `Command` keeps
+        // its `Stdio` handles, and this process holding the far side of the
+        // terminal open would keep the reading thread waiting for an end that
+        // never comes.
+        command.spawn()?
+    };
+
+    Ok((
+        Running {
+            terminal,
+            child,
+            bytes,
+            reader: Some(reader),
+        },
+        started,
+    ))
+}
+
 #[cfg(not(target_os = "linux"))]
-fn once(_binary: &Path, _home: &Path, _measure: Measure) -> Result<Duration, StartupError> {
+fn once(
+    _binary: &Path,
+    _home: &Path,
+    _measure: Measure,
+    _answering: Answering,
+    _colour: Colour,
+) -> Result<Duration, StartupError> {
     Err(StartupError::Unsupported)
 }
 
@@ -587,8 +889,8 @@ fn pair() -> Result<(File, File), StartupError> {
         Winsize {
             ws_row: ROWS,
             ws_col: COLUMNS,
-            ws_xpixel: 0,
-            ws_ypixel: 0,
+            ws_xpixel: COLUMNS * CELL.0,
+            ws_ypixel: ROWS * CELL.1,
         },
     )
     .map_err(io::Error::from)?;
@@ -597,20 +899,300 @@ fn pair() -> Result<(File, File), StartupError> {
 }
 
 /// Reads until the child closes the far side of the terminal.
+///
+/// The same pass also answers queries when the probe asked for a terminal that
+/// does. The answer goes out on the master's write side, which is the child's
+/// standard input; every byte the child wrote still goes to the waiting probe,
+/// answers or none.
 #[cfg(target_os = "linux")]
-fn read(mut terminal: File, sender: &Sender<Vec<u8>>) {
+fn read(mut terminal: File, reply: File, answering: Answering, sender: &Sender<Vec<u8>>) {
+    let mut answers = Answers::new(answering);
     let mut buffer = [0_u8; 8192];
+    // A terminal that answers late or in pieces does it from a thread of its
+    // own, so the child's output is still read while an answer waits.
+    let (later, writer, mut direct) = if matches!(answering, Answering::Late | Answering::Split) {
+        let (later, due) = mpsc::channel::<(Instant, Vec<u8>)>();
+        let writer = std::thread::Builder::new()
+            .name("crucible-startup-answers".into())
+            .spawn(move || answer_when_due(reply, &due));
+        match writer {
+            Ok(writer) => (Some(later), Some(writer), None),
+            Err(_) => return,
+        }
+    } else {
+        (None, None, Some(reply))
+    };
+
     while let Ok(read) = terminal.read(&mut buffer) {
         if read == 0 {
             break;
         }
-        if sender
-            .send(buffer.get(..read).unwrap_or_default().to_vec())
+
+        let asked = Instant::now();
+        let bytes = buffer.get(..read).unwrap_or_default();
+        let said = answers.feed(bytes);
+        let mut failed = false;
+        for (after, piece) in paced(answering, said) {
+            failed = match (&later, direct.as_mut()) {
+                (Some(later), _) => later.send((asked + after, piece)).is_err(),
+                (None, Some(reply)) => reply
+                    .write_all(&piece)
+                    .and_then(|()| reply.flush())
+                    .is_err(),
+                (None, None) => true,
+            };
+            if failed {
+                break;
+            }
+        }
+        if failed || sender.send(bytes.to_vec()).is_err() {
+            break;
+        }
+    }
+
+    drop(later);
+    if let Some(writer) = writer {
+        let _ = writer.join();
+    }
+}
+
+/// Writes each answer once its time has come, in the order they were given.
+#[cfg(target_os = "linux")]
+fn answer_when_due(mut reply: File, due: &Receiver<(Instant, Vec<u8>)>) {
+    for (at, piece) in due {
+        if let Some(wait) = at.checked_duration_since(Instant::now()) {
+            std::thread::sleep(wait);
+        }
+        if reply
+            .write_all(&piece)
+            .and_then(|()| reply.flush())
             .is_err()
         {
             break;
         }
     }
+}
+
+/// The longest query a question can start with.
+///
+/// Only a tail this long is kept between reads, because a query is one escape
+/// sequence and the child may write it across two of them.
+#[cfg(target_os = "linux")]
+const QUERY_START: usize = 24;
+
+/// The most the fake terminal will hold while a query has no end.
+///
+/// A child that writes a query it never terminates is a probe that must keep
+/// reading, not a probe that grows with what the child wrote. Past this the
+/// unterminated bytes are dropped and the session carries on unanswered, which
+/// is what a real terminal does with a sequence it cannot parse.
+#[cfg(target_os = "linux")]
+const UNSENT: usize = 4096;
+
+/// What a terminal saw in the child's output.
+#[cfg(target_os = "linux")]
+#[derive(Debug)]
+struct Asked {
+    /// Where the query starts.
+    start: usize,
+    /// One past its last byte, or `None` while more must arrive.
+    end: Option<usize>,
+    /// What a terminal says back once the query is whole.
+    reply: Vec<u8>,
+}
+
+/// The fake terminal's half of the conversation.
+///
+/// It is a scanner, not a parser: it looks for the four escapes a terminal can
+/// answer and says what one would say. Every byte that is not one of those is
+/// ignored, and only an unterminated query's start is held back.
+#[cfg(target_os = "linux")]
+#[derive(Debug)]
+struct Answers {
+    answering: Answering,
+    pending: Vec<u8>,
+    /// What an [`Answering::OutOfOrder`] terminal has not said yet, held until
+    /// a cursor position is asked and answered ahead of it.
+    held: Vec<u8>,
+}
+
+#[cfg(target_os = "linux")]
+impl Answers {
+    fn new(answering: Answering) -> Self {
+        Self {
+            answering,
+            pending: Vec::new(),
+            held: Vec::new(),
+        }
+    }
+
+    /// Says `reply`, or for a terminal answering out of order, holds every
+    /// answer but a cursor position's and says what it held after one.
+    fn say(&mut self, said: &mut Vec<u8>, asked: &Asked) {
+        if !matches!(self.answering, Answering::OutOfOrder) {
+            said.extend_from_slice(&asked.reply);
+        } else if asked.reply == CURSOR_REPLY {
+            said.extend_from_slice(&asked.reply);
+            said.append(&mut self.held);
+        } else if self.held.len() + asked.reply.len() <= UNSENT {
+            self.held.extend_from_slice(&asked.reply);
+        }
+    }
+
+    /// Adds what the child just wrote and returns what a terminal answers.
+    fn feed(&mut self, bytes: &[u8]) -> Vec<u8> {
+        if matches!(self.answering, Answering::Never) {
+            return Vec::new();
+        }
+
+        self.pending.extend_from_slice(bytes);
+        let mut said = Vec::new();
+        let mut from = 0;
+
+        while let Some(asked) = asked(&self.pending, from) {
+            let Some(end) = asked.end else {
+                // The query's start is here but its end is not. Hold it until
+                // the next read, or drop it if it will never be answerable.
+                self.pending.drain(..asked.start);
+                if self.pending.len() > UNSENT {
+                    self.pending.clear();
+                }
+                return said;
+            };
+
+            self.say(&mut said, &asked);
+            from = end;
+        }
+
+        let keep = QUERY_START.saturating_sub(1).min(self.pending.len());
+        let drop = self.pending.len().saturating_sub(keep).max(from);
+        self.pending.drain(..drop);
+        said
+    }
+}
+
+/// Finds the first answerable escape in `bytes` at or after `from`.
+#[cfg(target_os = "linux")]
+fn asked(bytes: &[u8], from: usize) -> Option<Asked> {
+    let cursor = find(bytes, b"\x1b[6n", from).map(|start| Asked {
+        start,
+        end: Some(start + b"\x1b[6n".len()),
+        reply: CURSOR_REPLY.to_vec(),
+    });
+    let attributes = find(bytes, b"\x1b[c", from)
+        .map(|start| Asked {
+            start,
+            end: Some(start + b"\x1b[c".len()),
+            reply: attributes_reply(),
+        })
+        .into_iter()
+        .chain(find(bytes, b"\x1b[0c", from).map(|start| Asked {
+            start,
+            end: Some(start + b"\x1b[0c".len()),
+            reply: attributes_reply(),
+        }));
+    let graphics = find(bytes, b"\x1b_G", from).map(|start| kitty(bytes, start));
+    let cell = find(bytes, b"\x1b]1337;ReportCellSize", from).map(|start| cell_size(bytes, start));
+
+    cursor
+        .into_iter()
+        .chain(attributes)
+        .chain(graphics)
+        .chain(cell)
+        .min_by_key(|asked| asked.start)
+}
+
+/// The terminal's answer to a cursor-position query: the top left corner.
+#[cfg(target_os = "linux")]
+const CURSOR_REPLY: &[u8] = b"\x1b[1;1R";
+
+/// The terminal's answer to a device-attributes query.
+///
+/// Parameter `4` is Sixel graphics, which is the one attribute a protocol
+/// choice reads; the rest describe a VT220-class terminal answering the way
+/// xterm does.
+#[cfg(target_os = "linux")]
+fn attributes_reply() -> Vec<u8> {
+    b"\x1b[?62;4;6;9;15;22c".to_vec()
+}
+
+/// A Kitty graphics query, which ends with ST and only asks when `a=q`.
+#[cfg(target_os = "linux")]
+fn kitty(bytes: &[u8], start: usize) -> Asked {
+    let body = start + b"\x1b_G".len();
+    let Some(over) = find(bytes, b"\x1b\\", body) else {
+        return Asked {
+            start,
+            end: None,
+            reply: Vec::new(),
+        };
+    };
+
+    let parameters = bytes.get(body..over).unwrap_or_default();
+    let reply = if parameters
+        .windows(b"a=q".len())
+        .any(|window| window == b"a=q")
+    {
+        format!("\x1b_Gi={};OK\x1b\\", image_id(parameters)).into_bytes()
+    } else {
+        Vec::new()
+    };
+
+    Asked {
+        start,
+        end: Some(over + b"\x1b\\".len()),
+        reply,
+    }
+}
+
+/// The `i` parameter of a Kitty query, or zero when it has none.
+#[cfg(target_os = "linux")]
+fn image_id(parameters: &[u8]) -> u64 {
+    let text = String::from_utf8_lossy(parameters);
+    let before_reply = text.split(';').next().unwrap_or_default();
+
+    before_reply
+        .split(',')
+        .find_map(|pair| pair.strip_prefix("i=")?.parse().ok())
+        .unwrap_or(0)
+}
+
+/// iTerm2's cell-size query, which ends with BEL or ST.
+#[cfg(target_os = "linux")]
+fn cell_size(bytes: &[u8], start: usize) -> Asked {
+    let body = start + b"\x1b]1337;ReportCellSize".len();
+    let bel = find(bytes, b"\x07", body).map(|at| (at, 1));
+    let st = find(bytes, b"\x1b\\", body).map(|at| (at, 2));
+    let end = match (bel, st) {
+        (Some(bel), Some(st)) => Some(if bel.0 <= st.0 { bel } else { st }),
+        (Some(bel), None) => Some(bel),
+        (None, Some(st)) => Some(st),
+        (None, None) => None,
+    };
+
+    match end {
+        Some((end, width)) => Asked {
+            start,
+            end: Some(end + width),
+            // The shipped program reads the ioctl rather than this reply when
+            // it wants a cell's pixels; the answer is here so a query has one.
+            reply: b"\x1b]1337;ReportCellSize=16;8\x07".to_vec(),
+        },
+        None => Asked {
+            start,
+            end: None,
+            reply: Vec::new(),
+        },
+    }
+}
+
+/// Where `needle` first sits in `bytes` at or after `from`.
+#[cfg(target_os = "linux")]
+fn find(bytes: &[u8], needle: &[u8], from: usize) -> Option<usize> {
+    let rest = bytes.get(from..)?;
+    rest.windows(needle.len())
+        .position(|window| window == needle)
+        .map(|at| from + at)
 }
 
 /// How many session logs the bench home is given.
@@ -807,13 +1389,28 @@ impl Scratch {
 
     /// The same, with `output.screen` set to `screen` when a probe names one.
     pub(crate) fn in_screen(name: &str, screen: Option<&str>) -> Result<Self, StartupError> {
-        let base = std::env::temp_dir().join(format!(
-            "crucible-bench-{}-{}",
-            name.trim().len(),
-            std::process::id()
-        ));
+        Self::holding(&name.trim().len().to_string(), &configuration(screen))
+    }
+
+    /// The same for window `window` of a batch whose windows are taken at
+    /// once, each of which needs a home of its own: one shared would have a
+    /// window restore the fixture under another's running child, and be
+    /// removed by whichever was dropped first.
+    pub(crate) fn in_window(name: &str, window: usize) -> Result<Self, StartupError> {
+        Self::holding(&Self::window_name(name, window), &configuration(None))
+    }
+
+    /// What the home of window `window` is named, among this process's.
+    fn window_name(name: &str, window: usize) -> String {
+        format!("{}-{window}", name.trim().len())
+    }
+
+    /// A home named `name` among this process's, configured by `document`.
+    fn holding(name: &str, document: &str) -> Result<Self, StartupError> {
+        let base =
+            std::env::temp_dir().join(format!("crucible-bench-{name}-{}", std::process::id()));
         fs::create_dir_all(&base)?;
-        fs::write(base.join("config.json"), configuration(screen))?;
+        fs::write(base.join("config.json"), document)?;
         let fixture = worked_in(&base.join("sessions"))?;
 
         Ok(Self {
@@ -848,15 +1445,165 @@ impl Drop for Scratch {
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
+    use std::collections::HashSet;
     use std::ffi::OsStr;
-    use std::time::Duration;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
 
     use super::chosen;
 
     use super::{
-        AT_LIBERTY, CONFIG, PER_WINDOW, RUNS, Readings, Scratch, TITLE, USABLE, WINDOWS, best,
-        configuration,
+        AT_LIBERTY, CONFIG, PER_WINDOW, RUNS, Readings, Scratch, StartupError, TITLE, USABLE,
+        WINDOWS, best, configuration, overlapped, spacing,
     };
+
+    /// One window's readings, every one of them `ms` long.
+    fn window_of(ms: usize) -> Vec<Duration> {
+        let ms = u64::try_from(ms).expect("a small number of milliseconds");
+        vec![Duration::from_millis(ms); PER_WINDOW]
+    }
+
+    #[test]
+    fn windows_taken_at_once_are_read_in_the_order_they_were_started() {
+        // The percentile cuts the readings into windows by position, so each
+        // window's readings have to come back together and in the order the
+        // windows began, whichever of them finished first. The last started
+        // here is the first done.
+        let readings = overlapped(Duration::ZERO, |window| {
+            let behind = u64::try_from(WINDOWS - window).expect("a small index");
+            std::thread::sleep(Duration::from_millis(behind));
+            Ok(window_of(window))
+        })
+        .expect("a reading");
+
+        assert_eq!(
+            readings.windows(),
+            (0..WINDOWS)
+                .flat_map(window_of)
+                .step_by(PER_WINDOW)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn every_window_is_under_way_before_any_of_them_finishes() {
+        // What taking them at once is for: a run that sits out a reply wait
+        // costs the wall clock and almost none of the machine, so the nine
+        // windows share one wait instead of queueing for nine.
+        let started = AtomicUsize::new(0);
+        let met = AtomicUsize::new(0);
+
+        overlapped(Duration::ZERO, |_| {
+            started.fetch_add(1, Ordering::SeqCst);
+            let until = Instant::now() + Duration::from_secs(2);
+            while started.load(Ordering::SeqCst) < WINDOWS && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            if started.load(Ordering::SeqCst) == WINDOWS {
+                met.fetch_add(1, Ordering::SeqCst);
+            }
+            Ok(window_of(1))
+        })
+        .expect("a reading");
+
+        assert_eq!(
+            met.load(Ordering::SeqCst),
+            WINDOWS,
+            "windows waited for the others and gave up"
+        );
+    }
+
+    #[test]
+    fn each_window_starts_a_spacing_after_the_one_before_it() {
+        // Started together, the launches would stay in step and every one of
+        // them would compete with eight others for the processor during the
+        // startup it is timing, which is a cost the probe made, not one this
+        // program has.
+        let spacing = Duration::from_millis(10);
+        let begun = Instant::now();
+        let starts = Mutex::new(vec![None; WINDOWS]);
+
+        overlapped(spacing, |window| {
+            if let Some(slot) = starts.lock().expect("an unpoisoned lock").get_mut(window) {
+                *slot = Some(begun.elapsed());
+            }
+            Ok(window_of(1))
+        })
+        .expect("a reading");
+
+        let starts = starts.into_inner().expect("an unpoisoned lock");
+        for ((window, start), at) in starts.into_iter().enumerate().zip(0_u32..) {
+            let start = start.unwrap_or_else(|| panic!("window {window} never ran"));
+            assert!(
+                start >= spacing * at,
+                "window {window} started {start:?} in, before its {:?}",
+                spacing * at
+            );
+        }
+    }
+
+    #[test]
+    fn a_window_that_could_not_be_measured_is_the_batch_s_failure() {
+        let taken = overlapped(Duration::ZERO, |window| {
+            if window == 4 {
+                Err(StartupError::Nothing)
+            } else {
+                Ok(window_of(1))
+            }
+        });
+
+        assert!(
+            matches!(taken, Err(StartupError::Nothing)),
+            "a failed window was not the batch's failure"
+        );
+    }
+
+    #[test]
+    fn a_window_whose_thread_panicked_is_a_failed_measurement() {
+        let taken = overlapped(Duration::ZERO, |window| {
+            assert_ne!(window, 2, "the window this test stops");
+            Ok(window_of(1))
+        });
+
+        assert!(
+            matches!(taken, Err(StartupError::Abandoned)),
+            "a window that panicked was not reported as abandoned"
+        );
+    }
+
+    #[test]
+    fn a_window_that_panicked_behind_a_failed_one_is_no_panic_in_the_probe() {
+        // The first failure in start order is the batch's, and the windows
+        // after it still have to be joined: a scoped thread whose panic nobody
+        // took is a panic in the scope that started it.
+        let taken = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            overlapped(Duration::ZERO, |window| {
+                assert_ne!(window, 2, "the window this test stops");
+                if window == 1 {
+                    Err(StartupError::Nothing)
+                } else {
+                    Ok(window_of(1))
+                }
+            })
+        }));
+
+        assert!(
+            matches!(taken, Ok(Err(StartupError::Nothing))),
+            "a window that panicked behind a failed one panicked the probe"
+        );
+    }
+
+    #[test]
+    fn the_windows_divide_the_wait_between_their_starts() {
+        // A ninth of the wait apart, so the last window starts inside the
+        // first one's wait and each start sits as far from the next as one
+        // wait allows.
+        let apart = Duration::from_millis(100);
+        let wait = apart * u32::try_from(WINDOWS).expect("a small count");
+
+        assert_eq!(spacing(wait), apart);
+    }
 
     /// A full set of readings, stalled from end to end of the first `windows`
     /// windows and clean through the rest.
@@ -920,8 +1667,8 @@ mod tests {
     #[test]
     fn the_spread_shows_a_middle_sitting_far_below_the_tail() {
         // What tells a program that got slower from a machine that stalled:
-        // the windows are printed in the order they ran, and the slow one is
-        // on its own at the front.
+        // the windows are printed in the order they started, and the slow one
+        // is on its own at the front.
         let said = stalled_in(1).spread();
 
         assert!(said.contains(&format!("{RUNS} runs")), "{said}");
@@ -1012,6 +1759,22 @@ mod tests {
     }
 
     #[test]
+    fn windows_taken_at_once_each_have_a_home_of_their_own() {
+        // A home's path is its name and this process's, so names apart are
+        // homes apart, and none has to be planted to show it.
+        let names = (0..WINDOWS)
+            .map(|window| Scratch::window_name("\u{00a7}", window))
+            .collect::<HashSet<_>>();
+
+        assert_eq!(
+            names.len(),
+            WINDOWS,
+            "two windows taken at once share a home, so one restores the other's \
+             fixture under a running child and the first dropped removes both"
+        );
+    }
+
+    #[test]
     fn an_unnamed_runner_is_held_to_the_quiet_machine_budget() {
         // This machine, and the run RELEASING.md decides a tag on: nothing
         // names a runner, so the budget is the one the probe states.
@@ -1059,5 +1822,409 @@ mod tests {
             .expect("an output block")
             .insert("screen".to_owned(), "native".into());
         assert_eq!(named, plain);
+    }
+
+    /// The fake terminal exists only where the probes can spawn a pseudo
+    /// terminal, so its tests are built only there.
+    #[cfg(target_os = "linux")]
+    mod fake_terminal {
+        use std::time::Duration;
+
+        use super::super::{Answering, Answers, LATE, SPLIT, UNSENT, attributes_reply, paced};
+
+        #[test]
+        fn a_late_terminal_answers_in_pieces_long_after_the_child_decided_without_it() {
+            // The child gives a terminal its patience for the cursor position
+            // and the background question alike; an answer past both is late.
+            assert!(LATE > crucible_tui::graphics::Deadline::STARTUP.patience * 2);
+            let mut answers = Answers::new(Answering::Late);
+
+            let said = answers.feed(b"\x1b[6n");
+            assert_eq!(said, b"\x1b[1;1R".to_vec());
+            assert_eq!(
+                paced(Answering::Late, said),
+                vec![(LATE, b"\x1b".to_vec()), (LATE + SPLIT, b"[1;1R".to_vec())]
+            );
+        }
+
+        #[test]
+        fn an_out_of_order_terminal_answers_the_cursor_position_ahead_of_the_question_before_it() {
+            let mut answers = Answers::new(Answering::OutOfOrder);
+            let mut asked = b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\".to_vec();
+            asked.extend_from_slice(b"\x1b[6n");
+
+            let said = answers.feed(&asked);
+            assert_eq!(said, b"\x1b[1;1R\x1b_Gi=31;OK\x1b\\".to_vec());
+            assert_eq!(
+                paced(Answering::OutOfOrder, said.clone()),
+                vec![(Duration::ZERO, said)]
+            );
+        }
+
+        #[test]
+        fn an_out_of_order_terminal_holds_an_answer_until_a_cursor_position_is_asked() {
+            let mut answers = Answers::new(Answering::OutOfOrder);
+
+            assert!(answers.feed(b"\x1b[c").is_empty());
+            let mut said = b"\x1b[1;1R".to_vec();
+            said.extend_from_slice(&attributes_reply());
+            assert_eq!(answers.feed(b"\x1b[6n"), said);
+        }
+
+        #[test]
+        fn a_split_terminal_cuts_each_answer_before_and_after_every_escape_inside_it() {
+            let mut answers = Answers::new(Answering::Split);
+
+            let said = answers.feed(b"\x1b[6n\x1b_Gi=31,a=q;AAAA\x1b\\");
+            assert_eq!(
+                paced(Answering::Split, said),
+                vec![
+                    (Duration::ZERO, b"\x1b".to_vec()),
+                    (SPLIT, b"[1;1R".to_vec()),
+                    (SPLIT * 2, b"\x1b".to_vec()),
+                    (SPLIT * 3, b"_Gi=31;OK".to_vec()),
+                    (SPLIT * 4, b"\x1b".to_vec()),
+                    (SPLIT * 5, b"\\".to_vec()),
+                ]
+            );
+        }
+
+        #[test]
+        fn a_terminal_that_answers_at_once_or_never_makes_one_write_or_none() {
+            assert_eq!(
+                paced(Answering::AtOnce, b"\x1b[1;1R".to_vec()),
+                vec![(Duration::ZERO, b"\x1b[1;1R".to_vec())]
+            );
+            assert!(paced(Answering::Never, b"\x1b[1;1R".to_vec()).is_empty());
+            assert!(paced(Answering::Split, Vec::new()).is_empty());
+        }
+
+        #[test]
+        fn a_cursor_position_query_split_across_two_reads_is_answered_once() {
+            // What a real terminal receives is one write, but the master's read
+            // side is free to hand it over one byte at a time. A response lost to
+            // that split would make the probe stall for a query the terminal
+            // answered, which is a startup budget measuring the probe instead.
+            let mut answers = Answers::new(Answering::AtOnce);
+
+            assert!(answers.feed(b"\x1b").is_empty());
+            assert_eq!(answers.feed(b"[6n"), b"\x1b[1;1R".to_vec());
+            assert!(answers.feed(b"more text").is_empty());
+        }
+
+        #[test]
+        fn device_attributes_are_answered_with_sixel_among_the_parameters() {
+            let mut answers = Answers::new(Answering::AtOnce);
+
+            let said = answers.feed(b"\x1b[c");
+            assert_eq!(said, attributes_reply());
+            assert!(said.windows(3).any(|window| window == b";4;"), "{said:?}");
+        }
+
+        #[test]
+        fn a_kitty_graphic_query_is_answered_with_its_own_image_id() {
+            let mut answers = Answers::new(Answering::AtOnce);
+            let query = b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\";
+
+            assert_eq!(
+                answers.feed(query),
+                b"\x1b_Gi=31;OK\x1b\\".to_vec(),
+                "a query is answered with the id it asked about"
+            );
+        }
+
+        #[test]
+        fn a_kitty_transmission_is_not_a_question_and_is_not_answered() {
+            // Only `a=q` asks. Answering a picture being sent would put bytes into
+            // the child's input that it never asked for, in the middle of a draw.
+            let mut answers = Answers::new(Answering::AtOnce);
+
+            assert!(
+                answers
+                    .feed(b"\x1b_Ga=t,f=24,s=1,v=1;AAAA\x1b\\")
+                    .is_empty()
+            );
+        }
+
+        #[test]
+        fn iterm2_cell_size_is_answered_when_the_osc_ends_with_bel_or_st() {
+            for terminator in [&b"\x07"[..], &b"\x1b\\"[..]] {
+                let mut answers = Answers::new(Answering::AtOnce);
+                let mut query = b"\x1b]1337;ReportCellSize".to_vec();
+                query.extend_from_slice(terminator);
+
+                assert_eq!(
+                    answers.feed(&query),
+                    b"\x1b]1337;ReportCellSize=16;8\x07".to_vec()
+                );
+            }
+        }
+
+        #[test]
+        fn a_terminal_that_never_answers_says_nothing_to_any_query() {
+            let mut answers = Answers::new(Answering::Never);
+
+            assert!(answers.feed(b"\x1b[6n\x1b[c").is_empty());
+            assert!(answers.feed(b"\x1b_Gi=31,a=q;AAAA\x1b\\").is_empty());
+        }
+
+        #[test]
+        fn an_unterminated_query_is_bounded_rather_than_collected() {
+            // A child that never closes a query is a probe that must keep reading.
+            // The held bytes are a tail, not a copy of everything the child wrote.
+            let mut answers = Answers::new(Answering::AtOnce);
+            let flood = vec![b'x'; UNSENT * 4];
+
+            assert!(answers.feed(b"\x1b_G").is_empty());
+            assert!(answers.feed(&flood).is_empty());
+            assert!(answers.pending.len() <= UNSENT);
+        }
+
+        #[test]
+        fn two_queries_in_one_read_are_both_answered_in_order() {
+            let mut answers = Answers::new(Answering::AtOnce);
+
+            assert_eq!(
+                answers.feed(b"\x1b[6n\x1b[6n"),
+                b"\x1b[1;1R\x1b[1;1R".to_vec()
+            );
+        }
+    }
+
+    /// The real binary, started under the fake terminal: what it writes to
+    /// the terminal it controls, wherever its own streams go.
+    #[cfg(target_os = "linux")]
+    mod heard {
+        use std::fs;
+        use std::io::Write as _;
+        use std::path::PathBuf;
+        use std::sync::mpsc::RecvTimeoutError;
+        use std::time::{Duration, Instant};
+
+        use super::super::{
+            Answering, CEILING, CONFIG, Colour, REDIRECTED, Scratch, Seat, StartupError, contains,
+            start,
+        };
+
+        /// The binary this test was built beside, one directory up from the
+        /// test itself.
+        fn built() -> Result<PathBuf, StartupError> {
+            let binary = std::env::current_exe()?
+                .parent()
+                .and_then(std::path::Path::parent)
+                .map(|directory| directory.join("crucible"))
+                .ok_or_else(|| std::io::Error::other("the test has no directory"))?;
+            if binary.is_file() {
+                Ok(binary)
+            } else {
+                Err(StartupError::Unbuilt(binary))
+            }
+        }
+
+        /// The program's name, which a run writes before anything else
+        /// wherever its output goes: in its window's title on a terminal, on
+        /// its opening line when its output is redirected.
+        const NAMED: &str = "crucible";
+
+        /// The prompt mark, written once the session reads keys, which is
+        /// after every question startup may ask.
+        const READY: &str = "\u{203a}";
+
+        /// A key nothing at startup writes, typed once the prompt is ready.
+        const TYPED: &str = "\u{00a7}";
+
+        /// How long the terminal is listened to after what was waited for.
+        const SETTLE: Duration = Duration::from_millis(200);
+
+        /// The questions the exchange writes: the cursor position and each
+        /// protocol's own.
+        const QUESTIONS: [&str; 4] = ["\x1b[6n", "\x1b_G", "\x1b]1337;ReportCellSize", "\x1b[c"];
+
+        /// Every answer the fake terminal gives, as it would read typed into
+        /// the box.
+        const ANSWERS: [&str; 4] = ["1;1R", "i=31;OK", "?62;4;6;9;15;22c", "ReportCellSize=16;8"];
+
+        /// One run of the real binary under the fake terminal.
+        struct Run<'a> {
+            /// Names its scratch home.
+            name: &'a str,
+            seat: Seat,
+            answering: Answering,
+            colour: Colour,
+            /// Its configuration file.
+            document: &'a str,
+            /// Whether [`TYPED`] is typed at its prompt.
+            typing: bool,
+        }
+
+        /// Everything the terminal received from `run`: on a terminal seat
+        /// until its prompt is drawn (and, when typing, until the key typed
+        /// there came back), elsewhere until it wrote [`NAMED`], or until it
+        /// ended; and for [`SETTLE`] after.
+        fn heard(run: &Run<'_>) -> Result<Vec<u8>, StartupError> {
+            let binary = built()?;
+            let home = Scratch::holding(run.name, run.document)?;
+            let (mut running, _) =
+                start(&binary, home.path(), run.answering, run.colour, run.seat)?;
+            let waited = if run.seat == Seat::Terminal {
+                READY
+            } else {
+                NAMED
+            };
+            let deadline = Instant::now() + CEILING;
+            let mut seen = Vec::new();
+            let mut settled: Option<Instant> = None;
+            let mut typed = false;
+            loop {
+                let now = Instant::now();
+                if settled.is_some_and(|at| now >= at) {
+                    return Ok(seen);
+                }
+                if now >= deadline {
+                    return Err(StartupError::Timeout(waited));
+                }
+                match running.bytes.recv_timeout(Duration::from_millis(10)) {
+                    Ok(bytes) => seen.extend_from_slice(&bytes),
+                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => return Ok(seen),
+                }
+                if settled.is_some() {
+                    continue;
+                }
+                let shown = if run.seat == Seat::Redirected {
+                    fs::read(home.path().join(REDIRECTED)).unwrap_or_default()
+                } else {
+                    seen.clone()
+                };
+                if !contains(&shown, waited) {
+                    continue;
+                }
+                if !run.typing {
+                    settled = Some(Instant::now() + SETTLE);
+                } else if !typed {
+                    running.terminal.write_all(TYPED.as_bytes())?;
+                    running.terminal.flush()?;
+                    typed = true;
+                } else if contains(&shown, TYPED) {
+                    settled = Some(Instant::now() + SETTLE);
+                }
+            }
+        }
+
+        fn has(heard: &[u8], text: &str) -> bool {
+            contains(heard, text)
+        }
+
+        /// Where `text` first sits in `heard`.
+        fn at(heard: &[u8], text: &str) -> Option<usize> {
+            heard
+                .windows(text.len())
+                .position(|window| window == text.as_bytes())
+        }
+
+        #[test]
+        fn a_named_terminal_is_asked_after_the_background_question_and_before_the_prompt() {
+            let heard = heard(&Run {
+                name: "asked",
+                seat: Seat::Terminal,
+                answering: Answering::AtOnce,
+                colour: Colour::On,
+                document: CONFIG,
+                typing: false,
+            })
+            .expect("a run");
+            let said = String::from_utf8_lossy(&heard);
+
+            let background = at(&heard, "\x1b]11;?").expect(&said);
+            let cursor = at(&heard, "\x1b[6n").expect(&said);
+            let picture = at(&heard, "\x1b_Gi=31,").expect(&said);
+            let prompt = at(&heard, READY).expect(&said);
+            assert!(background < cursor, "{said:?}");
+            assert!(cursor < picture, "{said:?}");
+            assert!(picture < prompt, "{said:?}");
+        }
+
+        #[test]
+        fn where_nothing_may_be_asked_no_question_reaches_the_terminal() {
+            let never = CONFIG.replacen(r#""color": "auto""#, r#""color": "never""#, 1);
+            assert_ne!(never, CONFIG);
+            let cases = [
+                ("quiet-redirected", Seat::Redirected, Colour::On, CONFIG),
+                ("quiet-no-input", Seat::NoInput, Colour::On, CONFIG),
+                ("quiet-no-color", Seat::Terminal, Colour::Off, CONFIG),
+                (
+                    "quiet-color-never",
+                    Seat::Terminal,
+                    Colour::On,
+                    never.as_str(),
+                ),
+            ];
+            for (name, seat, colour, document) in cases {
+                let heard = heard(&Run {
+                    name,
+                    seat,
+                    answering: Answering::AtOnce,
+                    colour,
+                    document,
+                    typing: false,
+                })
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+                let said = String::from_utf8_lossy(&heard);
+                // The run got as far as it goes before any question is
+                // judged absent.
+                if seat == Seat::Terminal {
+                    assert!(has(&heard, READY), "{name} drew no prompt: {said:?}");
+                }
+                // The background question as well as the exchange's.
+                for question in QUESTIONS.into_iter().chain(["\x1b]11;?"]) {
+                    assert!(
+                        !has(&heard, question),
+                        "{name} asked {question:?}: {said:?}"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn no_answer_given_at_once_late_out_of_order_or_split_becomes_a_key() {
+            // Each way the fake answers, with whether the picture's question
+            // is asked at all: only after a cursor position answered within
+            // the patience. Split and late answers both arrive cut right
+            // after each escape, which `crossterm` reads as Esc and typed
+            // characters when its read falls between the pieces: split ones
+            // within the patience, late ones at the fake's fifty
+            // milliseconds, past every patience, so the first cursor
+            // position and the device attributes ahead of it are late and
+            // drained by the exchange. What the run drew is what its key
+            // reader made of whatever was left, in the reads the fake made.
+            // The fake never answers the background question, and a
+            // picture's answer after every wait is not among these.
+            let cases = [
+                ("keys-at-once", Answering::AtOnce, true),
+                ("keys-never", Answering::Never, false),
+                ("keys-late", Answering::Late, false),
+                ("keys-out-of-order", Answering::OutOfOrder, true),
+                ("keys-split", Answering::Split, true),
+            ];
+            for (name, answering, pictured) in cases {
+                let heard = heard(&Run {
+                    name,
+                    seat: Seat::Terminal,
+                    answering,
+                    colour: Colour::On,
+                    document: CONFIG,
+                    typing: true,
+                })
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+                let said = String::from_utf8_lossy(&heard);
+                assert!(has(&heard, "\x1b[6n"), "{name}: {said:?}");
+                assert_eq!(has(&heard, "\x1b_Gi=31,"), pictured, "{name}: {said:?}");
+                // The key the test typed is the one that reached the box.
+                assert!(has(&heard, TYPED), "{name} lost the typed key: {said:?}");
+                for answer in ANSWERS {
+                    assert!(!has(&heard, answer), "{name} typed {answer:?}: {said:?}");
+                }
+            }
+        }
     }
 }

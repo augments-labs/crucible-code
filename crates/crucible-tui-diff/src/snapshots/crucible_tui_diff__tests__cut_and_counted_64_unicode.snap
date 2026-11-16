@@ -1,0 +1,13 @@
+---
+source: crates/crucible-tui-diff/src/tests.rs
+expression: "dump(&drawn(&change, 64, UNICODE), 64)"
+---
+<Quiet>╭─</> <Path>src/parse.rs</><Quiet> · </>Added <AddedCount>1</> line, removed <RemovedCount>1</> line                  
+<Quiet>│</> <Quiet>   3  </> <Keyword>let</> width <Operator>=</> <Number>8</>;                                         
+<Quiet>│</> <RemovedNumber>   4 - </><Removed>let message = "a line that runs well past the right e</><Removed>…</> 
+<Quiet>│</> <AddedNumber>   4 + </><Added>let message = "a line that runs past the right edge o</><Added>…</> 
+<Quiet>│</> <Quiet>   5  </> <Keyword>let</> depth <Operator>=</> <Number>1</>;                                         
+<Quiet>├─</> <Path>README.md</><Quiet> · </>Added <AddedCount>1</> line                                     
+<Quiet>│</> <Quiet>   1  </> # <Name>parse</>                                                
+<Quiet>│</> <AddedNumber>   2 + </><Added>A small parser.</><Added>                                       </> 
+<Quiet>╰─</>

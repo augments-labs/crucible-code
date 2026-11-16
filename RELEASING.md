@@ -60,8 +60,11 @@ same way afterwards.
      The first frame and first input are held there to 150 ms and 250 ms
      rather than 20 and 60: a runner that stalls launches through a whole
      measurement read 71.6 to 109.3 ms and 89.1 to 189.9 ms while its typical
-     launch stayed near 5 ms. Those limits still stop a startup that got many
-     times slower; a smaller slowdown is this run's to catch.
+     launch stayed near 5 ms. The first input with colour from a
+     picture-candidate terminal that never answers is held there to 2250 ms
+     rather than 2060: the 2 seconds crucible reads such a candidate for,
+     added to the first input's own. Those limits still stop a startup that
+     got many times slower; a smaller slowdown is this run's to catch.
    - This run, here, on a quiet machine, is the authoritative one for the
      release. It is what decides whether the tag is cut.
    - The release workflow's staging run runs them again on a shared runner.
@@ -160,7 +163,7 @@ git push -u origin release/v0.0.1
 # 2. Open it against the released branch, let CI answer, merge it.
 gh pr create --base main --title "release: 0.0.1"
 gh pr checks --watch
-gh pr merge --merge
+gh pr merge --merge --match-head-commit "$(git rev-parse HEAD)"
 
 # 3. Wait for the run the merge started on main, which tests every platform,
 #    then stage that commit's release and wait for its verdict.
@@ -184,7 +187,7 @@ git push -u origin chore/merge-v0.0.1
 
 gh pr create --base dev --title "chore: merge 0.0.1 back into dev"
 gh pr checks --watch
-gh pr merge --merge
+gh pr merge --merge --match-head-commit "$(git rev-parse HEAD)"
 ```
 
 Step 5 carries the bump over a branch rather than opening `main` against `dev`
@@ -196,7 +199,8 @@ it did.
 
 `dev` and `main` both merge directly once `CI required` is green on a head that
 is up to date with the base. Only a release branch or a hotfix reaches `main`,
-one at a time.
+one at a time, and a maintainer merges it, as
+[`CONTRIBUTING.md`](CONTRIBUTING.md#merging-and-closing) sets out.
 
 Step 5 is not bookkeeping either. Until it runs, `dev` builds a binary that
 reports the previous version and a changelog with no entry for the release that

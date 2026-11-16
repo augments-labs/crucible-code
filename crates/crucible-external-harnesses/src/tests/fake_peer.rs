@@ -174,3 +174,40 @@ async fn a_grandchild_that_goes_on_beating_has_not_ceased() {
     let beating = judged.expect_err("it goes on beating");
     assert!(beating.first < beating.last, "{beating:?}");
 }
+
+/// Windows can refuse one write or rename while another process holds the
+/// file, so a grandchild that ended at the first refused beat would read as
+/// one its stop had ended. A beat that cannot be written is skipped, and the
+/// grandchild beats again once it can.
+#[test]
+fn a_beat_that_cannot_be_written_leaves_the_grandchild_beating() {
+    let at = Owned::new("refused-beat");
+    let peer = install(&at.0, "claude", &Script::of([])).expect("built");
+    let blocked = at.0.join("lingering.writing");
+    fs::create_dir(&blocked).expect("blocked");
+    let mut killed = Killed(
+        Command::new(&peer)
+            .arg("--linger")
+            .arg(&at.0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("started"),
+    );
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(lingering(&at.0), None, "a beat was written past the block");
+    assert!(
+        killed.0.try_wait().expect("asked").is_none(),
+        "the grandchild ended at a beat it could not write"
+    );
+
+    fs::remove_dir(&blocked).expect("unblocked");
+    let unblocked = Instant::now();
+    while lingering(&at.0).is_none() {
+        assert!(
+            unblocked.elapsed() < Duration::from_secs(5),
+            "the grandchild never beat once it could"
+        );
+    }
+}

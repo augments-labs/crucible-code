@@ -2,11 +2,18 @@
 //!
 //! Settled at startup, and again only when a command says so, into plain
 //! answers the drawing can read without asking anything: whether to write
-//! colour and how much of it, which characters to draw with, and how much of a
-//! line to show. None of those may be asked per event — two are syscalls and
-//! the third is a file.
+//! colour and how much of it, which characters to draw with, how much of a
+//! line to show, how math is drawn and how a diagram is. None of those may be
+//! asked per event — two are syscalls, the third is a file and the last two
+//! are read from configuration. What the start learned of where pictures can be drawn is
+//! kept beside them for the same reason: tmux's answer is a process run.
 
-use crucible_config::{Color, Glyphs as Wanted, ThemeChoice, ToolDetail, TranscriptColours};
+use crucible_config::{
+    Color, DiagramDrawing, Glyphs as Wanted, MathDrawing, ThemeChoice, ToolDetail,
+    TranscriptColours,
+};
+use crucible_tui::drawing::Mode;
+use crucible_tui::graphics::{Passthrough, Platform};
 use crucible_tui::{Design, Glyphs, Ground, Palette, Theme};
 
 /// What the `output` block said, before the terminal and the environment have
@@ -33,6 +40,10 @@ pub(crate) struct Output {
     pub(crate) syntax: Option<String>,
     /// How many of the theme's colours the transcript spends.
     pub(crate) colours: Option<TranscriptColours>,
+    /// How math in an answer is drawn.
+    pub(crate) math: MathDrawing,
+    /// How a diagram in an answer is drawn.
+    pub(crate) diagrams: DiagramDrawing,
 }
 
 /// The maximum columns shown in a compact tool heading.
@@ -89,8 +100,23 @@ pub(crate) struct Style {
     glyphs: Glyphs,
     /// How much of a tool call and its result one line shows.
     detail: ToolDetail,
+    /// How math in an answer is drawn, for a renderer of its own, as a
+    /// preview's is, to draw it the way the session's screen does.
+    math: Mode,
+    /// How a diagram in an answer is drawn, for a renderer of its own, for
+    /// the reason math is.
+    diagrams: Mode,
     /// Which way the terminal said its ground goes, where it has said.
     ground: Option<Ground>,
+    /// The system the session runs on, which the terminal support table is
+    /// read for.
+    platform: Platform,
+    /// What tmux's server said of passing sequences through, where it was
+    /// asked.
+    passthrough: Passthrough,
+    /// Whether the start found its input coming from a terminal, without
+    /// which no picture is drawn.
+    input: bool,
 }
 
 impl Style {
@@ -121,6 +147,8 @@ impl Style {
             theme: chosen,
             syntax,
             colours,
+            math,
+            diagrams,
         } = output;
 
         let color = match wanted.unwrap_or_default() {
@@ -158,7 +186,7 @@ impl Style {
 
         // The six colours a fenced block is drawn in. Settled here with
         // everything else, because a palette is settled once — and it is
-        // only the *themes* that are read now, about half a millisecond of
+        // only one *theme* that is read now, under half a millisecond of
         // the startup budget. The syntax definitions, which are the larger
         // half, stay unread until a fence actually arrives.
         let code = color
@@ -187,6 +215,12 @@ impl Style {
             ground,
             glyphs: glyph_set(glyphs),
             detail: detail.unwrap_or_default(),
+            math: super::math_drawn(math),
+            diagrams: super::diagrams_drawn(diagrams),
+            platform: Platform::current(),
+            passthrough: Passthrough::Unknown,
+            // Taken to be as the output is until the start has looked.
+            input: terminal,
         }
     }
 
@@ -230,6 +264,38 @@ impl Style {
         self.ground
     }
 
+    /// The system the session runs on.
+    pub(crate) fn platform(self) -> Platform {
+        self.platform
+    }
+
+    /// What tmux's server said of passing sequences through, where it was
+    /// asked; [`Passthrough::Unknown`] where it was not.
+    pub(crate) fn passthrough(self) -> Passthrough {
+        self.passthrough
+    }
+
+    /// The same style, knowing what tmux's server said.
+    pub(crate) fn passing(self, passthrough: Passthrough) -> Self {
+        Self {
+            passthrough,
+            ..self
+        }
+    }
+
+    /// Whether the start found its input coming from a terminal.
+    pub(crate) fn input_terminal(self) -> bool {
+        self.input
+    }
+
+    /// The same style, knowing whether input comes from a terminal.
+    pub(crate) fn reading_from(self, terminal: bool) -> Self {
+        Self {
+            input: terminal,
+            ..self
+        }
+    }
+
     /// The same style, reading code in a different syntax theme.
     pub(crate) fn reading(self, colours: [(u8, u8, u8); 6]) -> Self {
         Self {
@@ -268,6 +334,26 @@ impl Style {
     /// The same style, showing a tool call in a different detail.
     pub(crate) fn detailing(self, detail: ToolDetail) -> Self {
         Self { detail, ..self }
+    }
+
+    /// The same style, drawing math a different way.
+    pub(crate) fn laying_out(self, math: Mode) -> Self {
+        Self { math, ..self }
+    }
+
+    /// How math in an answer is drawn.
+    pub(crate) fn math(self) -> Mode {
+        self.math
+    }
+
+    /// The same style, drawing a diagram a different way.
+    pub(crate) fn diagramming(self, diagrams: Mode) -> Self {
+        Self { diagrams, ..self }
+    }
+
+    /// How a diagram in an answer is drawn.
+    pub(crate) fn diagrams(self) -> Mode {
+        self.diagrams
     }
 
     /// What a component's slots are worth here.
@@ -346,6 +432,12 @@ impl Style {
         Self::resolve(Output::default(), true, Some(background), None, &|name| {
             (name == "COLORTERM").then(|| "truecolor".to_owned())
         })
+    }
+
+    /// The same style, read as though the session ran on `platform`, so every
+    /// platform's answer is tested from any host.
+    pub(crate) fn running_on(self, platform: Platform) -> Self {
+        Self { platform, ..self }
     }
 }
 
@@ -612,6 +704,36 @@ mod tests {
         render.settle().unwrap();
 
         assert_eq!(render.terminal().written(), "a **loud** word\n");
+    }
+
+    #[test]
+    fn a_redirected_run_under_always_keeps_every_link_and_image_the_model_wrote() {
+        // A file keeps no quiet address and no image words either: it keeps
+        // the link the model wrote, which reads the same anywhere it is pasted.
+        let style = Style::resolve(
+            Output {
+                color: Some(Color::Always),
+                ..Output::default()
+            },
+            false,
+            None,
+            None,
+            &environment(&[("COLORTERM", "truecolor")]),
+        );
+        let mut render = crucible_tui::Renderer::new(crucible_tui::Recording::redirected(200, 24));
+        render.wears(style.palette());
+        render.counts(Some(crucible_tui::Forge::new(
+            "https://github.com",
+            "augments-labs/crucible-code",
+            "/issues/",
+        )));
+        let three = "https://github.com/augments-labs/crucible-code/pull/1324 \
+                     [the guide](https://example.com/docs/guide/intro) ![shot](out/shot.png)";
+
+        render.stream(three).unwrap();
+        render.settle().unwrap();
+
+        assert_eq!(render.terminal().written(), format!("{three}\n"));
     }
 
     #[test]

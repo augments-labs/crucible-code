@@ -520,12 +520,44 @@
           ],
           "type": "string"
         },
+        "diagrams": {
+          "default": "image",
+          "description": "How a diagram in an answer is drawn: written shows each diagram exactly as the model wrote it; text draws it as characters; image draws it as a picture where one can be shown and as text everywhere else",
+          "enum": [
+            "written",
+            "text",
+            "image"
+          ],
+          "type": "string"
+        },
         "glyphs": {
           "default": "unicode",
           "description": "Which characters crucible draws with: unicode for box drawing, ascii for a font that lacks it",
           "enum": [
             "unicode",
             "ascii"
+          ],
+          "type": "string"
+        },
+        "images": {
+          "default": "auto",
+          "description": "How pictures are drawn: auto asks the terminal at start, only where its environment names a terminal pictures were seen to draw right on and no multiplexer is in between; kitty, iterm2 or sixel uses that protocol without asking where it was seen to draw right, and text elsewhere; off draws text",
+          "enum": [
+            "auto",
+            "kitty",
+            "iterm2",
+            "sixel",
+            "off"
+          ],
+          "type": "string"
+        },
+        "math": {
+          "default": "image",
+          "description": "How math in an answer is drawn: written shows each formula exactly as the model wrote it; text draws it as characters; image draws it as a picture where one can be shown and as text everywhere else",
+          "enum": [
+            "written",
+            "text",
+            "image"
           ],
           "type": "string"
         },

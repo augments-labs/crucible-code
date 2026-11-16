@@ -90,6 +90,16 @@ impl Glyphs {
         }
     }
 
+    /// One column of the rule under a heading of the first level: the heavier
+    /// stroke, where the set has one.
+    #[must_use]
+    pub fn heavy(self) -> &'static str {
+        match self {
+            Self::Unicode => "━",
+            Self::Ascii => "=",
+        }
+    }
+
     /// One row of an edge that runs down.
     ///
     /// Public for the reason [`Glyphs::top`] is.
@@ -174,6 +184,45 @@ impl Glyphs {
         match self {
             Self::Unicode => "›",
             Self::Ascii => ">",
+        }
+    }
+
+    /// The square corners a block's frame opens and closes with: top, then
+    /// bottom.
+    ///
+    /// Square where [`Glyphs::top`] is round, because the two are not the same
+    /// frame: that one holds a control, and this one only shows where a block
+    /// of the answer begins and ends.
+    #[must_use]
+    pub fn square(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Unicode => ("┌", "└"),
+            Self::Ascii => ("+", "+"),
+        }
+    }
+
+    /// The square corners a box closes with on its right: top, then bottom.
+    ///
+    /// The other side of [`Glyphs::square`], for a frame drawn whole, as the
+    /// box holding an answer's specimen is.
+    #[must_use]
+    pub(crate) fn square_closed(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Unicode => ("┐", "┘"),
+            Self::Ascii => ("+", "+"),
+        }
+    }
+
+    /// The mark in front of a row of code that carries on the one above it,
+    /// where a line wrapped.
+    ///
+    /// Dotted rather than solid, so it reads as the edge of the frame gone
+    /// faint where the line broke and not as another line of code.
+    #[must_use]
+    pub fn continued(self) -> &'static str {
+        match self {
+            Self::Unicode => "┆",
+            Self::Ascii => ":",
         }
     }
 
@@ -428,6 +477,109 @@ impl Glyphs {
         }
     }
 
+    /// The bar down the left of an alert, on each line of it.
+    ///
+    /// Not [`Glyphs::vertical`] where the set can draw another, so an alert
+    /// reads as a quote with a mark on it rather than as a quote. The ascii set
+    /// has one bar, which is also a quote's.
+    #[must_use]
+    pub(crate) fn alerted(self) -> &'static str {
+        match self {
+            Self::Unicode => "\u{258e}",
+            Self::Ascii => "|",
+        }
+    }
+
+    /// The mark a footnote is drawn as, at its reference and in front of its
+    /// note: the number written in superscript digits, or in brackets where the
+    /// set has none.
+    #[must_use]
+    pub(crate) fn cited(self, number: usize) -> String {
+        const RAISED: [char; 10] = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
+        match self {
+            Self::Unicode => number
+                .to_string()
+                .chars()
+                .map(|digit| {
+                    digit
+                        .to_digit(10)
+                        .and_then(|at| RAISED.get(at as usize))
+                        .copied()
+                        .unwrap_or(digit)
+                })
+                .collect(),
+            Self::Ascii => format!("[{number}]"),
+        }
+    }
+
+    /// The mark in front of the summary of a `<details>` block: a triangle
+    /// pointing at what it opens onto, or a word where the set has none.
+    #[must_use]
+    pub(crate) fn folded(self) -> &'static str {
+        match self {
+            Self::Unicode => "\u{25b8}",
+            Self::Ascii => "Details:",
+        }
+    }
+
+    /// What stands either side of a key a `<kbd>` tag names: nothing where the
+    /// code slot sets the key apart, and brackets under ascii.
+    #[must_use]
+    pub(crate) fn keyed(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Unicode => ("", ""),
+            Self::Ascii => ("[", "]"),
+        }
+    }
+
+    /// The mark of a note, which is [`Glyphs::told`] as a shape and is its own
+    /// method so that neither follows the other.
+    #[must_use]
+    pub(crate) fn noted(self) -> &'static str {
+        match self {
+            Self::Unicode => "\u{25c6}",
+            Self::Ascii => "*",
+        }
+    }
+
+    /// The mark of a tip.
+    #[must_use]
+    pub(crate) fn advised(self) -> &'static str {
+        match self {
+            Self::Unicode => "\u{2713}",
+            Self::Ascii => "+",
+        }
+    }
+
+    /// The mark of an alert that says something must not be missed.
+    ///
+    /// A filled square in the unicode set and `#` in the ascii one.
+    #[must_use]
+    pub(crate) fn urged(self) -> &'static str {
+        match self {
+            Self::Unicode => "\u{25a0}",
+            Self::Ascii => "#",
+        }
+    }
+
+    /// The mark of a warning.
+    #[must_use]
+    pub(crate) fn warned(self) -> &'static str {
+        match self {
+            Self::Unicode => "\u{25b2}",
+            Self::Ascii => "!",
+        }
+    }
+
+    /// The mark of a caution.
+    #[must_use]
+    pub(crate) fn cautioned(self) -> &'static str {
+        match self {
+            Self::Unicode => "\u{2717}",
+            Self::Ascii => "x",
+        }
+    }
+
     /// The mark on a task nobody has started.
     #[must_use]
     pub fn open(self) -> &'static str {
@@ -535,6 +687,46 @@ mod tests {
             assert_eq!(columns(glyphs.caret()), 1, "{glyphs:?}");
             assert_eq!(columns(glyphs.hidden()), 1, "{glyphs:?}");
         }
+    }
+
+    #[test]
+    fn the_heavy_rule_is_one_column_and_apart_from_the_light_one_only_where_the_set_can() {
+        // A heading's rule is as wide as its words in columns, so a glyph of
+        // two would draw it twice as long in that set only. The ascii set has
+        // no heavier stroke than the plain one, and answers with the equals
+        // sign the way an underlined title in plain text always has.
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            assert_eq!(columns(glyphs.heavy()), 1, "{glyphs:?}");
+        }
+        assert_eq!(Glyphs::Unicode.heavy(), "━");
+        assert_eq!(Glyphs::Ascii.heavy(), "=");
+        assert_ne!(Glyphs::Unicode.heavy(), Glyphs::Unicode.horizontal());
+        assert_ne!(Glyphs::Ascii.heavy(), Glyphs::Ascii.horizontal());
+    }
+
+    #[test]
+    fn the_frame_marks_are_one_column_and_ascii_in_the_ascii_set() {
+        // A frame is laid out in columns it counts by the gutter's width and
+        // the mark that carries a wrapped row on, so neither may be wider than
+        // one in either set, and the ascii set draws nothing else.
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let (top, bottom) = glyphs.square();
+            let (closed_top, closed_bottom) = glyphs.square_closed();
+            for mark in [top, bottom, closed_top, closed_bottom, glyphs.continued()] {
+                assert_eq!(columns(mark), 1, "{glyphs:?} {mark:?}");
+            }
+        }
+        for mark in [
+            Glyphs::Ascii.square().0,
+            Glyphs::Ascii.square().1,
+            Glyphs::Ascii.square_closed().0,
+            Glyphs::Ascii.square_closed().1,
+            Glyphs::Ascii.continued(),
+        ] {
+            assert!(mark.is_ascii(), "{mark:?}");
+        }
+        assert_ne!(Glyphs::Unicode.continued(), Glyphs::Unicode.vertical());
+        assert_ne!(Glyphs::Ascii.continued(), Glyphs::Ascii.vertical());
     }
 
     #[test]
@@ -671,6 +863,109 @@ mod tests {
                     "{glyphs:?}: {mark:?} twice"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn the_five_marks_of_an_alert_are_five_different_one_column_marks_in_both_sets() {
+        // The mark and the word beside it are what name the kind where colour
+        // says nothing, so two kinds drawn alike in one set cannot be told
+        // apart on a terminal with no colour. One column apiece, because the
+        // word after the mark starts in the same column for every kind.
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let marks = [
+                glyphs.noted(),
+                glyphs.advised(),
+                glyphs.urged(),
+                glyphs.warned(),
+                glyphs.cautioned(),
+            ];
+
+            for mark in marks {
+                assert_eq!(columns(mark), 1, "{glyphs:?}: {mark:?}");
+            }
+            for (at, mark) in marks.iter().enumerate() {
+                assert!(
+                    !marks.iter().skip(at + 1).any(|other| other == mark),
+                    "{glyphs:?}: {mark:?} twice"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_bar_of_an_alert_is_one_column_and_a_mark_of_none_of_its_kinds() {
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            assert_eq!(columns(glyphs.alerted()), 1, "{glyphs:?}");
+            for mark in [
+                glyphs.noted(),
+                glyphs.advised(),
+                glyphs.urged(),
+                glyphs.warned(),
+                glyphs.cautioned(),
+            ] {
+                assert_ne!(glyphs.alerted(), mark, "{glyphs:?}");
+            }
+        }
+        assert_ne!(Glyphs::Unicode.alerted(), Glyphs::Unicode.vertical());
+    }
+
+    #[test]
+    fn the_bar_and_the_five_marks_of_an_alert_are_exactly_these_in_both_sets() {
+        assert_eq!(Glyphs::Unicode.alerted(), "▎");
+        assert_eq!(Glyphs::Ascii.alerted(), "|");
+        for (glyphs, marks) in [
+            (Glyphs::Unicode, ["◆", "✓", "■", "▲", "✗"]),
+            (Glyphs::Ascii, ["*", "+", "#", "!", "x"]),
+        ] {
+            assert_eq!(
+                [
+                    glyphs.noted(),
+                    glyphs.advised(),
+                    glyphs.urged(),
+                    glyphs.warned(),
+                    glyphs.cautioned(),
+                ],
+                marks,
+                "{glyphs:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_footnote_is_cited_in_superscript_digits_and_under_ascii_in_brackets() {
+        assert_eq!(Glyphs::Unicode.cited(1), "¹");
+        assert_eq!(Glyphs::Unicode.cited(64), "⁶⁴");
+        assert_eq!(Glyphs::Unicode.cited(1_234_567_890), "¹²³⁴⁵⁶⁷⁸⁹⁰");
+        assert_eq!(Glyphs::Ascii.cited(1), "[1]");
+        assert_eq!(Glyphs::Ascii.cited(64), "[64]");
+        for number in [1, 9, 10, 64] {
+            assert_eq!(
+                columns(&Glyphs::Unicode.cited(number)),
+                number.to_string().len(),
+                "{number}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_details_mark_and_the_key_brackets_are_exactly_these_in_both_sets() {
+        assert_eq!(Glyphs::Unicode.folded(), "▸");
+        assert_eq!(Glyphs::Ascii.folded(), "Details:");
+        assert_eq!(Glyphs::Unicode.keyed(), ("", ""));
+        assert_eq!(Glyphs::Ascii.keyed(), ("[", "]"));
+        assert_eq!(columns(Glyphs::Unicode.folded()), 1);
+    }
+
+    #[test]
+    fn every_mark_of_a_footnote_a_details_block_and_a_key_is_ascii_under_ascii() {
+        for number in 1..=crate::markdown::FOOTNOTE_CAP {
+            let mark = Glyphs::Ascii.cited(number);
+            assert!(mark.is_ascii(), "{mark:?}");
+        }
+        let (open, close) = Glyphs::Ascii.keyed();
+        for mark in [Glyphs::Ascii.folded(), open, close] {
+            assert!(mark.is_ascii(), "{mark:?}");
         }
     }
 

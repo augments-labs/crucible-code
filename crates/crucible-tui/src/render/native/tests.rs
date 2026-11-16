@@ -2037,3 +2037,2025 @@ fn a_native_mark_waiting_when_the_transcript_empties_is_dropped() {
         "{all:#?}"
     );
 }
+
+/// What a native session on `window` keeps of `answer` once it has settled
+/// at `columns` by `rows`: every row but the box's and the blank ones.
+fn answered_natively(
+    window: &Window,
+    answer: &str,
+    resized: Option<(usize, usize)>,
+) -> Vec<String> {
+    answered_natively_in(window, Glyphs::Unicode, answer, resized)
+}
+
+/// [`answered_natively`], drawing with `glyphs`.
+fn answered_natively_in(
+    window: &Window,
+    glyphs: Glyphs,
+    answer: &str,
+    resized: Option<(usize, usize)>,
+) -> Vec<String> {
+    answered_natively_in_pieces(window, glyphs, &[answer], resized)
+}
+
+/// [`answered_natively_in`], the answer arriving as `pieces`, one delta each.
+fn answered_natively_in_pieces(
+    window: &Window,
+    glyphs: Glyphs,
+    pieces: &[&str],
+    resized: Option<(usize, usize)>,
+) -> Vec<String> {
+    let mut render = native(window);
+    render.draws(glyphs);
+    render.wears(colourful());
+    stands(&mut render);
+    for piece in pieces {
+        render.stream(piece).unwrap();
+    }
+    render.settle().unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+    if let Some((columns, rows)) = resized {
+        settles_at(window, &mut render, columns, rows);
+    }
+    let (boxed, _) = boxed();
+    let boxed: Vec<String> = boxed.iter().map(Row::text).collect();
+    window
+        .all()
+        .into_iter()
+        .filter(|row| !row.trim().is_empty() && !boxed.contains(row))
+        .collect()
+}
+
+#[test]
+fn a_native_table_narrowed_is_the_table_a_window_that_narrow_draws() {
+    let table = "| name | what it does | since |\n|---|---|---|\n\
+         | alpha | reads the markdown out of a stream | 0.1 |\n\
+         | beta | lays a table against the window | 0.2 |\n";
+    let fresh = answered_natively(&Window::new(30, 20), table, None);
+    let narrowed = answered_natively(&Window::new(60, 20), table, Some((30, 20)));
+
+    assert_eq!(narrowed, fresh);
+}
+
+#[test]
+fn a_native_table_written_without_outer_bars_is_drawn_as_a_table() {
+    let rows = answered_natively(&Window::new(40, 8), "a | b\n--|--\n1 | 2\n", None);
+
+    assert!(!rows.iter().any(|row| row.contains("--|--")), "{rows:#?}");
+    assert!(rows.iter().any(|row| row.contains('│')), "{rows:#?}");
+}
+
+#[test]
+fn a_native_frame_drawn_while_a_header_is_in_doubt_leaves_what_drawing_the_whole_answer_leaves() {
+    // A frame between two deltas, wherever the answer is cut: inside the
+    // header, between it and the delimiter row, or inside that row. What
+    // reached the scrollback is what one delta gives, so no header was sent
+    // out as prose that the table then repeated.
+    let answer = "before\n\nname | what it does\n--|--\nalpha | first\n\nafter\n";
+    let fresh = answered_natively(&Window::new(40, 10), answer, None);
+    assert!(fresh.iter().any(|row| row.contains('│')), "{fresh:#?}");
+    assert!(
+        !fresh
+            .iter()
+            .any(|row| row.contains("name | what") || row.contains("--|--")),
+        "{fresh:#?}"
+    );
+
+    for cut in 0..=answer.len() {
+        let (first, second) = answer.split_at(cut);
+        let window = Window::new(40, 10);
+        let mut render = native(&window);
+        render.wears(colourful());
+        stands(&mut render);
+        render.stream(first).unwrap();
+        stands(&mut render);
+        render.stream(second).unwrap();
+        render.settle().unwrap();
+        stands(&mut render);
+        render.seal().unwrap();
+
+        let (boxed, _) = boxed();
+        let boxed: Vec<String> = boxed.iter().map(Row::text).collect();
+        let rows: Vec<String> = window
+            .all()
+            .into_iter()
+            .filter(|row| !row.trim().is_empty() && !boxed.contains(row))
+            .collect();
+        assert_eq!(rows, fresh, "cut at {cut}");
+    }
+}
+
+/// A call that writes under the line an answer left open.
+type Writes = fn(&mut Renderer<Window>);
+
+/// What a native screen is left holding when `call` writes under an answer
+/// cut at `cut`, then the rest of the answer arrives.
+fn written_under_the_cut(cut: &str, call: Writes) -> Vec<String> {
+    let window = Window::new(40, 12);
+    let mut render = native(&window);
+    render.wears(colourful());
+    stands(&mut render);
+    render.stream(&format!("before\n\n{cut}")).unwrap();
+    call(&mut render);
+    render.stream("\n--|--\nalpha | 0.1\n\nafter\n").unwrap();
+    render.settle().unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+    let (boxed, _) = boxed();
+    let boxed: Vec<String> = boxed.iter().map(Row::text).collect();
+    window
+        .all()
+        .into_iter()
+        .filter(|row| !row.trim().is_empty() && !boxed.contains(row))
+        .collect()
+}
+
+#[test]
+fn a_native_call_that_writes_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // Presenting rows, committing a line and writing a prompt each end the
+    // line an answer left open, and a header that is still only a guess is
+    // the prose it looked like when they do: said once in the scrollback,
+    // with the same rows for the same words that could not have been a header.
+    let calls: [(&str, Writes); 3] = [
+        ("present", |render| {
+            render.present(&[row("component")]).unwrap();
+        }),
+        ("commit", |render| render.commit("note").unwrap()),
+        ("prompt", |render| {
+            render.prompt(Slot::Plain, "note").unwrap();
+        }),
+    ];
+    for (name, call) in calls {
+        for cut in [
+            "name | what it does\n",
+            "name | what",
+            "name | what it does\n--",
+        ] {
+            let doubtful = written_under_the_cut(cut, call);
+            let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+                .iter()
+                .map(|row| row.replace(" - ", " | "))
+                .collect();
+
+            assert_eq!(
+                doubtful
+                    .iter()
+                    .filter(|row| row.contains("name | what"))
+                    .count(),
+                1,
+                "{name} {cut:?}: {doubtful:#?}"
+            );
+            assert_eq!(doubtful, plain, "{name} {cut:?}");
+        }
+    }
+}
+
+#[test]
+fn a_native_responsive_block_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // On a native screen a block that keeps what lays it ends the line an
+    // answer left open, and a header still in doubt goes to the scrollback as
+    // the prose it looked like, said once, never as a table made of it later.
+    let call: Writes = |render| {
+        render
+            .responsive(9, Box::new(|_| vec![row("component")]))
+            .unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = written_under_the_cut(cut, call);
+        let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_native_block_charged_as_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // As the responsive block, for the one charged as its rows: the header
+    // still in doubt reaches the scrollback once, as the prose it looked like.
+    let call: Writes = |render| {
+        render
+            .responsive_as_laid(Box::new(|_| vec![row("component")]))
+            .unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = written_under_the_cut(cut, call);
+        let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_native_opening_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // The opening ends the line an answer left open the same way on a native
+    // screen: the header still in doubt reaches the scrollback once, as prose.
+    let call: Writes = |render| {
+        render
+            .opens(Box::new(|_, _| vec![row("component")]))
+            .unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = written_under_the_cut(cut, call);
+        let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_native_divider_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // A divider parts what is above it in the scrollback from what follows,
+    // so a header still in doubt over it goes there once, as the prose it
+    // looked like, and the delimiter row that comes later makes no table of it.
+    let call: Writes = |render| render.divides("new session").unwrap();
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = written_under_the_cut(cut, call);
+        let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_native_transcript_emptied_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // Emptying a native transcript writes what it held out to the scrollback,
+    // so a header still in doubt goes there once, as the prose it looked like,
+    // and the delimiter row that comes later makes no table of it.
+    let call: Writes = |render| render.empties().unwrap();
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = written_under_the_cut(cut, call);
+        let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_native_answer_hung_while_a_header_is_in_doubt_ends_it_as_the_prose_it_was() {
+    // Hanging what was written under a result mark ends the line an answer
+    // left open, so on a native screen a header still in doubt reaches the
+    // scrollback once, marked, as the prose it looked like.
+    let call: Writes = |render| {
+        let last = render.lines().saturating_sub(1);
+        render.subordinate(last, Glyphs::Unicode).unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = written_under_the_cut(cut, call);
+        let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_native_line_still_arriving_is_on_screen_whatever_it_could_turn_out_to_be() {
+    let window = Window::new(40, 8);
+    let mut render = native(&window);
+    render.wears(colourful());
+    stands(&mut render);
+    render.stream("It is started. That is all.").unwrap();
+    render.seal().unwrap();
+
+    let rows = window.all();
+    assert!(
+        rows.iter().any(|row| row.contains("That is all.")),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_native_header_stalled_part_way_never_reaches_the_scrollback_as_prose() {
+    // A window this short pushes every finished line out into the terminal's
+    // own buffer, which cannot take one back: so a header that turned out to
+    // be a table's must never have been finished while it was in doubt.
+    let window = Window::new(40, 6);
+    let mut render = native(&window);
+    render.wears(colourful());
+    stands(&mut render);
+    let piece = |render: &mut Renderer<Window>, text: &str| {
+        render.stream(text).unwrap();
+        render
+            .under(&[row("* thinking")], None, Palette::plain())
+            .unwrap();
+        render.seal().unwrap();
+        window.all()
+    };
+    let has = |rows: &[String], needle: &str| rows.iter().any(|row| row.contains(needle));
+
+    let rows = piece(&mut render, "one\ntwo\nthree\nfour\n\nname | wha");
+    assert!(has(&rows, "name | wha"), "{rows:#?}");
+
+    let rows = piece(&mut render, "t it does\n");
+    assert!(has(&rows, "name | what it does"), "{rows:#?}");
+
+    let rows = piece(&mut render, "--|--\n");
+    assert!(!has(&rows, "name | what"), "{rows:#?}");
+    assert!(!has(&rows, "--|--"), "{rows:#?}");
+
+    let rows = piece(&mut render, "alpha | first\nbeta | second\n\n");
+    assert!(has(&rows, "alpha"), "{rows:#?}");
+
+    render.settle().unwrap();
+    render.under(&[], None, Palette::plain()).unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+    let rows = window.all();
+    assert!(!has(&rows, "name | what"), "{rows:#?}");
+    assert!(!has(&rows, "--|--"), "{rows:#?}");
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("name") && row.contains('│')),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_native_table_written_without_outer_bars_narrowed_is_the_table_a_window_that_narrow_draws() {
+    let table = "name | what it does | since\n--|--|--\n\
+         alpha | reads the markdown out of a stream | 0.1\n\
+         beta | lays a table against the window | 0.2\n";
+    let fresh = answered_natively(&Window::new(30, 20), table, None);
+    assert!(
+        fresh.iter().filter(|row| row.contains('│')).count() >= 3,
+        "{fresh:#?}"
+    );
+    let narrowed = answered_natively(&Window::new(60, 20), table, Some((30, 20)));
+
+    assert_eq!(narrowed, fresh);
+}
+
+#[test]
+fn a_native_table_written_without_outer_bars_draws_its_structure_in_the_glyphs_worn() {
+    let rows = answered_natively_in(
+        &Window::new(40, 8),
+        Glyphs::Ascii,
+        "a | b\n--|--\n1 | 2\n",
+        None,
+    );
+
+    let rows: Vec<&str> = rows.iter().map(|row| row.trim_end()).collect();
+    assert_eq!(rows, ["a | b", "--+--", "1 | 2"], "{rows:#?}");
+}
+
+#[test]
+fn a_native_answer_cut_anywhere_draws_the_table_written_without_outer_bars_the_whole_answer_draws()
+{
+    let answer = "before\n\na | b\n--|--\n1 | 2\n\nafter\n";
+    let window = Window::new(40, 12);
+    let whole = answered_natively(&window, answer, None);
+    assert!(whole.iter().any(|row| row.contains('│')), "{whole:#?}");
+
+    for cut in 1..answer.len() {
+        let rows = answered_natively_in_pieces(
+            &Window::new(40, 12),
+            Glyphs::Unicode,
+            &[&answer[..cut], &answer[cut..]],
+            None,
+        );
+        assert_eq!(rows, whole, "cut at {cut}");
+    }
+}
+
+#[test]
+fn a_native_rule_narrowed_is_still_one_row() {
+    let rows = answered_natively(
+        &Window::new(40, 10),
+        "above\n\n---\n\nbelow\n",
+        Some((25, 10)),
+    );
+
+    let ruled: Vec<&String> = rows.iter().filter(|row| row.contains('─')).collect();
+    assert_eq!(
+        ruled
+            .iter()
+            .map(|row| crate::width::columns(row))
+            .collect::<Vec<_>>(),
+        [25],
+        "{rows:#?}"
+    );
+}
+
+/// What a native session on a window `columns` wide keeps of `answer`, which
+/// arrives as `pieces`, once it has settled.
+fn kept_natively(columns: usize, glyphs: Glyphs, pieces: &[&str]) -> Vec<String> {
+    answered_natively_in_pieces(&Window::new(columns, 30), glyphs, pieces, None)
+        .into_iter()
+        .map(|row| row.trim_end().to_owned())
+        .collect()
+}
+
+#[test]
+fn a_native_setext_underline_is_read_rather_than_drawn() {
+    let rows = answered_natively(
+        &Window::new(40, 12),
+        "Title\n=====\n\nSub\n---\n\nprose\n",
+        None,
+    );
+
+    assert!(!rows.iter().any(|row| row.contains("=====")), "{rows:#?}");
+    assert!(!rows.iter().any(|row| row.contains("---")), "{rows:#?}");
+    let is_rule = |row: &str| {
+        let row = row.trim();
+        !row.is_empty() && row.chars().all(|c| matches!(c, '─' | '━'))
+    };
+    let above = std::iter::once("").chain(rows.iter().map(String::as_str));
+    for (over, row) in above.zip(rows.iter()) {
+        if is_rule(row) {
+            assert!(
+                row.trim().chars().count() <= over.trim().chars().count(),
+                "a rule under {over:?} is wider than its words: {rows:#?}"
+            );
+        }
+    }
+    assert!(rows.iter().any(|row| row.contains("Title")));
+    assert!(rows.iter().any(|row| row.contains("Sub")));
+}
+
+#[test]
+fn a_native_setext_heading_wears_a_rule_as_wide_as_its_words_in_both_sets() {
+    let answer = "Title\n=====\n\nSub\n---\n\nprose\n";
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &[answer]),
+        ["Title", "━━━━━", "Sub", "───", "prose"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Ascii, &[answer]),
+        ["Title", "=====", "Sub", "---", "prose"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Ascii, &["Title\n==========\n"]),
+        ["Title", "====="]
+    );
+}
+
+#[test]
+fn a_native_title_and_its_underline_in_two_deltas_are_one_heading() {
+    for pieces in [
+        ["Title\n", "=====\n"].as_slice(),
+        ["Ti", "tle", "\n", "=", "====", "\n"].as_slice(),
+        ["Title\n=====", "\n"].as_slice(),
+        ["Title\n", "=====\n\nafter\n"].as_slice(),
+    ] {
+        let rows = kept_natively(40, Glyphs::Unicode, pieces);
+        assert_eq!(
+            rows.iter().filter(|row| row.contains("Title")).count(),
+            1,
+            "{pieces:?}: {rows:#?}"
+        );
+        assert_eq!(
+            rows.iter().take(2).map(String::as_str).collect::<Vec<_>>(),
+            ["Title", "━━━━━"],
+            "{pieces:?}: {rows:#?}"
+        );
+    }
+}
+
+#[test]
+fn a_native_dashed_row_under_something_that_is_not_a_paragraph_stays_a_full_width_rule() {
+    let rule = "─".repeat(40);
+    for answer in [
+        "---\n",
+        "above\n\n---\n",
+        "- item\n---\n",
+        "> quote\n---\n",
+        "# Foo\n---\n",
+        "```\ncode\n```\n---\n",
+        "| a | b |\n|---|---|\n| 1 | 2 |\n---\n",
+    ] {
+        let rows = kept_natively(40, Glyphs::Unicode, &[answer]);
+        assert_eq!(rows.last(), Some(&rule), "{answer:?}: {rows:#?}");
+    }
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["one cell\n---\n"]),
+        ["one cell", "────────"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["a | b\n--|--\n1 | 2\n"]).len(),
+        3
+    );
+}
+
+#[test]
+fn a_native_heading_that_wraps_wears_a_rule_as_wide_as_its_last_row() {
+    let rows = kept_natively(16, Glyphs::Unicode, &["A title long enough to wrap\n=\n"]);
+    assert!(rows.len() > 2, "{rows:#?}");
+    let [.., words, rule] = rows.as_slice() else {
+        panic!("{rows:#?}");
+    };
+    assert_eq!(*rule, "━".repeat(crate::width::columns(words)), "{rows:#?}");
+}
+
+#[test]
+fn a_native_heading_is_laid_out_again_at_a_new_width_and_in_a_new_glyph_set() {
+    let answer = "A title long enough to wrap\n=====\n\nAnd a second one to wrap\n---\n";
+    let narrowed = answered_natively(&Window::new(40, 30), answer, Some((16, 30)));
+    let narrowed: Vec<String> = narrowed
+        .iter()
+        .map(|row| row.trim_end().to_owned())
+        .collect();
+    assert!(
+        narrowed.iter().any(|row| row.contains('━')),
+        "{narrowed:#?}"
+    );
+    assert_eq!(narrowed, kept_natively(16, Glyphs::Unicode, &[answer]));
+
+    // The set changes after the answer is kept; the next replay is in it.
+    let window = Window::new(40, 30);
+    let mut render = native(&window);
+    render.wears(colourful());
+    stands(&mut render);
+    render.stream(answer).unwrap();
+    render.settle().unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+    render.draws(Glyphs::Ascii);
+    settles_at(&window, &mut render, 16, 30);
+    let (boxed, _) = boxed();
+    let boxed: Vec<String> = boxed.iter().map(Row::text).collect();
+    let replayed: Vec<String> = window
+        .all()
+        .into_iter()
+        .filter(|row| !row.trim().is_empty() && !boxed.contains(row))
+        .map(|row| row.trim_end().to_owned())
+        .collect();
+    assert!(
+        replayed.iter().any(|row| row.starts_with('=')),
+        "{replayed:#?}"
+    );
+    assert_eq!(replayed, kept_natively(16, Glyphs::Ascii, &[answer]));
+}
+
+#[test]
+fn a_native_underline_at_the_end_of_the_message_or_with_trailing_blanks_counts() {
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["Title\n====="]),
+        ["Title", "━━━━━"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["Sub\n---"]),
+        ["Sub", "───"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["Title\n===\t\n"]),
+        ["Title", "━━━━━"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["Sub\n---\t\n"]),
+        ["Sub", "───"]
+    );
+}
+
+#[test]
+fn a_native_underline_and_a_title_of_the_most_the_reader_holds_are_headings_and_one_more_is_not() {
+    assert_eq!(
+        kept_natively(
+            200,
+            Glyphs::Unicode,
+            &[&format!("Sub\n{}\n", "-".repeat(128))]
+        ),
+        ["Sub", "───"]
+    );
+    assert_eq!(
+        kept_natively(
+            200,
+            Glyphs::Unicode,
+            &[&format!("Title\n{}\n", "=".repeat(128))]
+        ),
+        ["Title", "━━━━━"]
+    );
+    assert_eq!(
+        kept_natively(
+            200,
+            Glyphs::Unicode,
+            &[&format!("Sub\n{}\n", "-".repeat(129))]
+        ),
+        ["Sub".to_owned(), "─".repeat(200)]
+    );
+    assert_eq!(
+        kept_natively(
+            200,
+            Glyphs::Unicode,
+            &[&format!("Title\n{}\n", "=".repeat(129))]
+        ),
+        ["Title".to_owned(), "=".repeat(129)]
+    );
+    for (underline, heavy) in [("---", false), ("===", true)] {
+        let long = "t".repeat(128);
+        let rule = if heavy { "━" } else { "─" }.repeat(128);
+        assert_eq!(
+            kept_natively(200, Glyphs::Unicode, &[&format!("{long}\n{underline}\n")]),
+            [long.clone(), rule]
+        );
+
+        let longer = "t".repeat(129);
+        let expected = if heavy {
+            underline.to_owned()
+        } else {
+            "─".repeat(200)
+        };
+        assert_eq!(
+            kept_natively(200, Glyphs::Unicode, &[&format!("{longer}\n{underline}\n")]),
+            [longer, expected]
+        );
+    }
+}
+
+#[test]
+fn a_native_indented_atx_heading_wears_a_rule_as_wide_as_its_words_and_not_its_indent() {
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["  # Title\nafter\n"]),
+        ["  Title", "━━━━━", "after"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["   ## Sub\nafter\n"]),
+        ["   Sub", "───", "after"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Ascii, &["  # Title"]),
+        ["  Title", "====="]
+    );
+}
+
+#[test]
+fn a_native_title_of_markers_or_opening_with_a_dollar_or_a_backslash_is_a_heading() {
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["**\n---\n"]),
+        ["**", "──"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["--\n---\n"]),
+        ["--", "──"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["$5\n---\n"]),
+        ["$5", "──"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["\\*x\n===\n"]),
+        ["*x", "━━"]
+    );
+}
+
+#[test]
+fn a_native_answer_cut_anywhere_draws_the_setext_heading_the_whole_answer_draws() {
+    for answer in [
+        "intro\n\nTitle\n=====\n\nSub\n---\nafter\n",
+        "intro line\nTitle with **bold**\n=\nafter\n",
+        "$5\n---\nx\n\\*x\n===\nend\n",
+    ] {
+        let whole = kept_natively(40, Glyphs::Unicode, &[answer]);
+        assert!(
+            whole
+                .iter()
+                .any(|row| row.contains('━') || row.contains('─')),
+            "{answer:?} drew no rule: {whole:#?}"
+        );
+
+        for cut in 1..answer.len() {
+            let rows = kept_natively(40, Glyphs::Unicode, &[&answer[..cut], &answer[cut..]]);
+            assert_eq!(rows, whole, "cut at {cut} of {answer:?}");
+        }
+    }
+}
+
+#[test]
+fn a_native_answer_cut_anywhere_draws_the_indented_block_the_whole_answer_draws() {
+    let answer = "para\n\n    let total = first_value + second_value;\n\n    done();\n---\n\nmore\n\n    code\n===\n";
+    let whole = kept_natively(40, Glyphs::Unicode, &[answer]);
+    for row in ["┌─", "│ done();", "└─", "│ code", "==="] {
+        assert!(
+            whole.iter().any(|kept| kept.trim_start() == row),
+            "{row:?} is not kept: {whole:#?}"
+        );
+    }
+    assert!(
+        whole.iter().any(|row| row.trim_start().starts_with('┆')),
+        "no wrapped code row: {whole:#?}"
+    );
+    assert!(!whole.iter().any(|row| row.contains('━')), "{whole:#?}");
+
+    for cut in 1..answer.len() {
+        let rows = kept_natively(40, Glyphs::Unicode, &[&answer[..cut], &answer[cut..]]);
+        assert_eq!(rows, whole, "cut at {cut} of {answer:?}");
+    }
+}
+
+#[test]
+fn a_native_title_that_proved_prose_reaches_the_scrollback_once_as_the_prose_it_was() {
+    let rows = kept_natively(40, Glyphs::Unicode, &["Title\n", "not an underline\n"]);
+    assert_eq!(rows, ["Title", "not an underline"]);
+}
+
+/// An item long enough to wrap at thirty columns onto three rows or more.
+const LONG_ITEM: &str = "long enough that it has to wrap onto another row, and then one more";
+
+#[test]
+fn a_native_wrapped_item_hangs_under_its_words() {
+    for (marker, hang) in [("- a bullet", 2), ("1. a number", 3)] {
+        let answer = format!("{marker} {LONG_ITEM}\n");
+        for resized in [None, Some((30, 12))] {
+            let columns = if resized.is_some() { 60 } else { 30 };
+            let rows = answered_natively(&Window::new(columns, 12), &answer, resized);
+
+            assert!(rows.len() > 2, "{rows:#?}");
+            for row in rows.iter().skip(1) {
+                let indent = row.len() - row.trim_start().len();
+                assert_eq!(indent, hang, "{row:?} does not hang under the words");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_native_wrapped_quote_keeps_its_bar_on_every_row() {
+    let answer = format!("> a quote {LONG_ITEM}\n");
+    for resized in [None, Some((30, 12))] {
+        let columns = if resized.is_some() { 60 } else { 30 };
+        let rows = answered_natively(&Window::new(columns, 12), &answer, resized);
+
+        assert!(rows.len() > 2, "{rows:#?}");
+        for row in &rows {
+            assert!(row.starts_with("│ "), "{row:?} lost the quote bar");
+        }
+    }
+}
+
+#[test]
+fn a_native_wrapped_alert_keeps_its_bar_on_every_row() {
+    let answer = format!("> [!NOTE]\n> a body {LONG_ITEM}\n");
+    for resized in [None, Some((30, 12))] {
+        let columns = if resized.is_some() { 60 } else { 30 };
+        let rows = answered_natively(&Window::new(columns, 12), &answer, resized);
+
+        assert!(rows.len() > 3, "{rows:#?}");
+        assert_eq!(rows.first().map(String::as_str), Some("▎ ◆ Note"));
+        for row in &rows {
+            assert!(row.starts_with("▎ "), "{row:?} lost the alert bar");
+        }
+    }
+}
+
+#[test]
+fn a_native_answer_cut_anywhere_draws_the_alert_the_whole_answer_draws() {
+    let answer = "> [!WARNING]\n> a body long enough that it has to wrap onto another row\n\n> [!tip]\n> more\n";
+    let whole = kept_natively(40, Glyphs::Unicode, &[answer]);
+    for row in ["▎ ▲ Warning", "▎ ✓ Tip", "▎ more"] {
+        assert!(
+            whole.iter().any(|kept| kept == row),
+            "{row:?} is not kept: {whole:#?}"
+        );
+    }
+    assert!(!whole.iter().any(|row| row.contains("[!")), "{whole:#?}");
+
+    for cut in 1..answer.len() {
+        let rows = kept_natively(40, Glyphs::Unicode, &[&answer[..cut], &answer[cut..]]);
+        assert_eq!(rows, whole, "cut at {cut} of {answer:?}");
+    }
+}
+
+#[test]
+fn a_native_footnote_is_drawn_as_its_number_in_both_glyph_sets() {
+    // The rows kept natively leave out the blank one between the two.
+    let answer = "A claim[^1] here.\n\n[^1]: the note\n";
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &[answer]),
+        ["A claim¹ here.", "¹ the note"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Ascii, &[answer]),
+        ["A claim[1] here.", "[1] the note"]
+    );
+}
+
+#[test]
+fn a_native_key_and_sub_and_superscript_are_drawn_without_their_tags() {
+    let answer = "Press <kbd>Ctrl</kbd> for H<sub>2</sub>O and x<sup>2</sup>.\n";
+    assert_eq!(
+        kept_natively(60, Glyphs::Unicode, &[answer]),
+        ["Press Ctrl for H₂O and x²."]
+    );
+    assert_eq!(
+        kept_natively(60, Glyphs::Ascii, &[answer]),
+        ["Press [Ctrl] for H₂O and x²."]
+    );
+}
+
+#[test]
+fn a_native_line_break_tag_breaks_the_row_and_a_quote_keeps_its_bar_after_it() {
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["one<br>two\n"]),
+        ["one", "two"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["> one<br/>two\n"]),
+        ["│ one", "│ two"]
+    );
+}
+
+#[test]
+fn a_native_details_block_draws_its_summary_behind_a_mark_and_its_body_two_columns_in() {
+    let answer = "<details>\n<summary>Why it is</summary>\nthe body\n</details>\nafter\n";
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &[answer]),
+        ["▸ Why it is", "  the body", "after"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Ascii, &[answer]),
+        ["Details: Why it is", "  the body", "after"]
+    );
+}
+
+#[test]
+fn a_native_answer_cut_anywhere_draws_the_footnotes_and_tags_the_whole_answer_draws() {
+    let answer = "A claim[^1] with <kbd>Ctrl</kbd>, H<sub>2</sub>O<br>and x<sup>2</sup>.\n\n\
+                  <details><summary>Why</summary>\nthe body\n</details>\n\n[^1]: the note\n";
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let whole = kept_natively(40, glyphs, &[answer]);
+        assert!(
+            !whole
+                .iter()
+                .any(|row| row.contains('<') || row.contains("[^")),
+            "{glyphs:?} drew markup: {whole:#?}"
+        );
+
+        for cut in (1..answer.len()).filter(|cut| answer.is_char_boundary(*cut)) {
+            let rows = kept_natively(40, glyphs, &[&answer[..cut], &answer[cut..]]);
+            assert_eq!(rows, whole, "{glyphs:?} cut at {cut} of {answer:?}");
+        }
+    }
+}
+
+#[test]
+fn a_native_hostile_reference_angle_or_www_address_writes_no_escape_nor_a_picture_cell() {
+    for answer in [
+        "[a]: https://x.test/\u{1b}]0;t\u{7}\nsee [a] and [a\u{1b}]0;t\u{7}][a]\n",
+        "<https://x.test/\u{1b}]8;;https://evil.invalid\u{1b}\\> and <a\u{1b}]0;t\u{7}@b.test>\n",
+        "www.x.test/\u{1b}]0;t\u{7} and www.\u{1b}_Gi=1;AAAA\u{1b}\\x.test and www.y.test\u{8}\u{85}\n",
+        "[a\u{1b}]0;t\u{7}]: https://x.test/a\nsee [a\u{1b}]0;t\u{7}] and [w\u{8}][a\u{1b}]0;t\u{7}]\n",
+        concat!(
+            "[\u{10eeee}\u{305}x]: https://x.test\n",
+            "see [words][\u{10eeee}\u{305}x]\n",
+        ),
+    ] {
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let window = Window::new(64, 12);
+            let mut render = native(&window);
+            render.images(crate::terminal::graphics::Capability::Graphics {
+                protocol: crate::terminal::graphics::Protocol::Kitty,
+                cell: crate::terminal::graphics::Cell {
+                    width: 9,
+                    height: 18,
+                },
+            });
+            render.draws(glyphs);
+            render.wears(colourful().addressing(true));
+            stands(&mut render);
+            render.stream(answer).unwrap();
+            render.settle().unwrap();
+            render.seal().unwrap();
+
+            // Each hyperlink sequence is taken out first: it may hold
+            // printable ASCII and nothing that ends it early.
+            let written = window.written();
+            let mut rest = written.as_str();
+            let mut kept = String::new();
+            while let Some(at) = rest.find("\u{1b}]8;") {
+                kept.push_str(&rest[..at]);
+                let after = &rest[at + 4..];
+                let end = after.find("\u{1b}\\").unwrap_or(after.len());
+                assert!(
+                    after[..end].bytes().all(|byte| byte.is_ascii_graphic()),
+                    "a link sequence carried {:?} for {answer:?}",
+                    &after[..end]
+                );
+                rest = &after[(end + 2).min(after.len())..];
+            }
+            kept.push_str(rest);
+
+            for hostile in [
+                "\u{1b}]", "\u{1b}P", "\u{1b}_", "\u{7}", "\u{8}", "\u{85}", "\u{9c}",
+            ] {
+                assert!(
+                    !kept.contains(hostile),
+                    "{hostile:?} reached the terminal for {answer:?} with {glyphs:?}"
+                );
+            }
+            assert!(
+                !kept.contains('\u{10eeee}'),
+                "a picture cell was placed for {answer:?} with {glyphs:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_native_hostile_forge_address_worded_link_or_image_writes_no_escape() {
+    for answer in [
+        "https://github.com/augments-labs/crucible-code/pull/1\u{1b}]0;t\u{7} and https://github.com/o/r/commit/abcdef1\u{9b}31m\n",
+        "[fix\u{1b}]0;t\u{7}](https://github.com/o/r/pull/12) and [x](https://github.com/o/r/pull/12\u{85})\n",
+        "[guide](https://example.com/\u{1b}]8;;https://evil.invalid\u{1b}\\/a/b) and [g](https://example.com/\u{202e}\u{200b}x/y/z)\n",
+        "![alt\u{1b}]0;t\u{7}](out/\u{1b}_Gi=1;AAAA\u{1b}\\shot.png) and ![a](https://x.test/\u{202e}gnp.exe\u{9c})\n",
+        "[write](mailto:a\u{1b}]0;t\u{7}@b.test) and [w](mailto:a@b.test\u{8}\u{9b}2J)\n",
+        "| a |\n|---|\n| [g](https://example.com/\u{1b}]0;t\u{7}/x) https://github.com/o/r/pull/3\u{85} |\n",
+    ] {
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let window = Window::new(64, 12);
+            let mut render = native(&window);
+            render.draws(glyphs);
+            render.wears(colourful().addressing(true));
+            render.counts(Some(crate::Forge::new(
+                "https://github.com",
+                "augments-labs/crucible-code",
+                "/issues/",
+            )));
+            stands(&mut render);
+            render.stream(answer).unwrap();
+            render.settle().unwrap();
+            render.seal().unwrap();
+
+            // Each hyperlink sequence is taken out first: it may hold
+            // printable ASCII and nothing that ends it early.
+            let written = window.written();
+            let mut rest = written.as_str();
+            let mut kept = String::new();
+            while let Some(at) = rest.find("\u{1b}]8;") {
+                kept.push_str(&rest[..at]);
+                let after = &rest[at + 4..];
+                let end = after.find("\u{1b}\\").unwrap_or(after.len());
+                assert!(
+                    after[..end].bytes().all(|byte| byte.is_ascii_graphic()),
+                    "a link sequence carried {:?} for {answer:?}",
+                    &after[..end]
+                );
+                rest = &after[(end + 2).min(after.len())..];
+            }
+            kept.push_str(rest);
+
+            for hostile in [
+                "\u{1b}]",
+                "\u{1b}P",
+                "\u{1b}_",
+                "\u{1b}[31",
+                "\u{1b}[2J",
+                "\u{7}",
+                "\u{8}",
+                "\u{85}",
+                "\u{9b}",
+                "\u{9c}",
+                "\u{202e}",
+                "\u{200b}",
+            ] {
+                assert!(
+                    !kept.contains(hostile),
+                    "{hostile:?} reached the terminal for {answer:?} with {glyphs:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_native_run_with_no_colour_in_it_keeps_every_link_and_image_as_the_model_wrote_it() {
+    let three = "https://github.com/augments-labs/crucible-code/pull/1324 \
+                 [the guide](https://example.com/docs/guide/intro) ![shot](out/shot.png)";
+    let window = Window::new(200, 12);
+    let mut render = native(&window);
+    render.counts(Some(crate::Forge::new(
+        "https://github.com",
+        "augments-labs/crucible-code",
+        "/issues/",
+    )));
+    stands(&mut render);
+    render.stream(three).unwrap();
+    render.settle().unwrap();
+    render.seal().unwrap();
+
+    let rows: Vec<String> = window
+        .all()
+        .into_iter()
+        .map(|row| row.trim_end().to_owned())
+        .collect();
+    assert!(rows.iter().any(|row| row == three), "{rows:#?}");
+    for shown in ["#1324", "(example.com", "[image"] {
+        assert!(!rows.iter().any(|row| row.contains(shown)), "{rows:#?}");
+    }
+}
+
+/// How many columns of blank stand in front of `row`'s first word.
+fn indent_of(row: &str) -> usize {
+    row.len() - row.trim_start().len()
+}
+
+/// The rows `answer` comes to natively, drawn at thirty columns, once as
+/// written there and once after a window of sixty narrowed to it.
+fn at_thirty_and_narrowed(glyphs: Glyphs, answer: &str) -> [Vec<String>; 2] {
+    [None, Some((30, 12))].map(|resized| {
+        let columns = if resized.is_some() { 60 } else { 30 };
+        answered_natively_in(&Window::new(columns, 12), glyphs, answer, resized)
+    })
+}
+
+#[test]
+fn a_native_wrapped_task_hangs_under_its_words() {
+    for (marker, first) in [("- [ ]", "□ a task"), ("- [x]", "✓ a task")] {
+        let answer = format!("{marker} a task {LONG_ITEM}\n");
+        for rows in at_thirty_and_narrowed(Glyphs::Unicode, &answer) {
+            assert!(rows.len() > 2, "{rows:#?}");
+            assert!(
+                rows.first().is_some_and(|row| row.starts_with(first)),
+                "{rows:#?}"
+            );
+            for row in rows.iter().skip(1) {
+                assert_eq!(indent_of(row), 2, "{row:?} does not hang under the words");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_native_wrapped_nested_item_hangs_under_its_words_not_its_parents() {
+    let answer = format!("- an outer item\n  - a nested item {LONG_ITEM}\n");
+    for rows in at_thirty_and_narrowed(Glyphs::Unicode, &answer) {
+        assert_eq!(rows.first().map(String::as_str), Some("• an outer item"));
+        assert!(
+            rows.get(1)
+                .is_some_and(|row| row.starts_with("  • a nested item")),
+            "{rows:#?}"
+        );
+        for row in rows.iter().skip(2) {
+            assert_eq!(indent_of(row), 4, "{row:?} does not hang under the words");
+        }
+    }
+}
+
+#[test]
+fn a_native_wrapped_item_hangs_under_its_words_in_ascii_too() {
+    let answer = format!("- a bullet item {LONG_ITEM}\n");
+    for rows in at_thirty_and_narrowed(Glyphs::Ascii, &answer) {
+        assert!(rows.len() > 2, "{rows:#?}");
+        assert!(
+            rows.first()
+                .is_some_and(|row| row.starts_with("- a bullet")),
+            "{rows:#?}"
+        );
+        for row in rows.iter().skip(1) {
+            assert_eq!(indent_of(row), 2, "{row:?} does not hang under the words");
+        }
+    }
+}
+
+#[test]
+fn a_native_wrapped_quote_keeps_its_bar_in_ascii_too() {
+    let answer = format!("> a quote {LONG_ITEM}\n");
+    for rows in at_thirty_and_narrowed(Glyphs::Ascii, &answer) {
+        assert!(rows.len() > 2, "{rows:#?}");
+        for row in &rows {
+            assert!(row.starts_with("| "), "{row:?} lost the quote bar");
+        }
+    }
+}
+
+#[test]
+fn a_native_held_block_shows_one_status_row_and_none_of_its_source() {
+    let window = Window::new(64, 12);
+    let mut render = native(&window);
+    render.wears(colourful());
+    stands(&mut render);
+    render.stream("before\n\n$$\nx^2 + y^2\n").unwrap();
+
+    let rows = window.all();
+    let status: Vec<&String> = rows
+        .iter()
+        .filter(|row| row.contains("drawing a"))
+        .collect();
+    assert_eq!(
+        status.iter().map(|row| row.trim_end()).collect::<Vec<_>>(),
+        ["◇ drawing a formula · 2 lines so far"],
+        "{rows:#?}"
+    );
+    assert!(!rows.iter().any(|row| row.contains("x^2")), "{rows:#?}");
+
+    render.stream("$$\nafter\n").unwrap();
+    render.settle().unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    let rows = window.all();
+    assert!(
+        !rows.iter().any(|row| row.contains("drawing a")),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| row.contains("x^2 + y^2")),
+        "{rows:#?}"
+    );
+}
+
+// A fenced block in its frame. Copying a wrapped code row is the fullscreen
+// selection's to answer; in native mode the terminal's own selection and copy
+// take whatever is on screen.
+
+/// A line of code that cannot fit thirty columns beside its gutter.
+const CODE_LINE: &str = "let total = first_value + second_value + third_value + fourth_value;";
+
+/// The rows `answer` comes to natively in `glyphs`: once as written in a
+/// window `columns` wide, and once as written in a window of eleven hundred
+/// columns and then narrowed to `columns`, which must come to the same rows.
+fn fenced_natively(glyphs: Glyphs, columns: usize, answer: &str) -> [Vec<String>; 2] {
+    [None, Some((columns, 40))].map(|resized| {
+        let width = if resized.is_some() { 1100 } else { columns };
+        answered_natively_in(&Window::new(width, 40), glyphs, answer, resized)
+            .into_iter()
+            .map(|row| row.trim_end().to_owned())
+            .collect()
+    })
+}
+
+#[test]
+fn a_native_fence_is_drawn_in_a_frame_naming_its_language() {
+    for rows in fenced_natively(Glyphs::Unicode, 64, "```rust\nlet x = 1;\n```\n") {
+        assert_eq!(rows, ["┌─ rust", "│ let x = 1;", "└─"]);
+    }
+}
+
+#[test]
+fn a_native_fence_is_drawn_in_the_ascii_frame_too() {
+    for rows in fenced_natively(Glyphs::Ascii, 64, "```rust\nlet x = 1;\n```\n") {
+        assert_eq!(rows, ["+- rust", "| let x = 1;", "+-"]);
+    }
+}
+
+#[test]
+fn a_native_fence_naming_no_language_is_a_frame_with_no_label() {
+    for rows in fenced_natively(Glyphs::Unicode, 64, "```\nplain text\n```\n") {
+        assert_eq!(rows, ["┌─", "│ plain text", "└─"]);
+    }
+}
+
+#[test]
+fn a_native_empty_fence_is_its_frame_and_no_refusal() {
+    for rows in fenced_natively(Glyphs::Unicode, 64, "```rust\n```\n") {
+        assert_eq!(rows, ["┌─ rust", "└─"]);
+    }
+}
+
+#[test]
+fn a_native_blank_line_of_code_keeps_its_place_in_the_frame() {
+    for rows in fenced_natively(Glyphs::Unicode, 64, "```\none\n\ntwo\n```\n") {
+        assert_eq!(rows, ["┌─", "│ one", "│", "│ two", "└─"]);
+    }
+}
+
+#[test]
+fn a_native_fence_label_longer_than_a_label_may_be_is_cut_short() {
+    let long = "x".repeat(200);
+    for rows in fenced_natively(Glyphs::Unicode, 64, &format!("```{long}\ncode\n```\n")) {
+        let top = rows.first().expect("a frame");
+        assert!(top.starts_with("┌─ xxx"), "{top:?}");
+        assert!(top.ends_with('…'), "{top:?}");
+        assert!(crate::width::columns(top) < 64, "{top:?}");
+    }
+}
+
+#[test]
+fn a_native_held_block_that_fits_its_cap_carries_no_refusal() {
+    for rows in fenced_natively(
+        Glyphs::Unicode,
+        64,
+        "```mermaid\ngraph TD\n  A --> B\n```\n",
+    ) {
+        assert!(
+            !rows
+                .iter()
+                .any(|row| row.contains("longer than this can hold")),
+            "{rows:#?}"
+        );
+    }
+}
+
+#[test]
+fn a_native_wrapped_code_row_marks_itself_with_the_glyph_of_its_set() {
+    let answer = format!("```\n{CODE_LINE}\n```\n");
+    for rows in fenced_natively(Glyphs::Unicode, 30, &answer) {
+        assert!(rows.iter().any(|row| row.starts_with("┆ ")), "{rows:#?}");
+    }
+    for rows in fenced_natively(Glyphs::Ascii, 30, &answer) {
+        assert!(rows.iter().any(|row| row.starts_with(": ")), "{rows:#?}");
+        assert!(!rows.iter().any(|row| row.contains(['┌', '│', '└', '┆'])));
+    }
+}
+
+#[test]
+fn a_native_wrapped_code_row_is_marked_as_a_continuation() {
+    for (glyphs, side, again) in [(Glyphs::Unicode, "│ ", "┆ "), (Glyphs::Ascii, "| ", ": ")] {
+        for rows in fenced_natively(glyphs, 30, &format!("```rust\n{CODE_LINE}\n```\n")) {
+            let code: Vec<&str> = rows
+                .iter()
+                .filter_map(|row| row.strip_prefix(side).or_else(|| row.strip_prefix(again)))
+                .collect();
+            assert!(code.len() > 2, "{rows:#?}");
+            assert!(
+                rows.iter()
+                    .skip(2)
+                    .take(code.len() - 1)
+                    .all(|row| row.starts_with(again)),
+                "{rows:#?}"
+            );
+            assert_eq!(code.concat(), CODE_LINE, "{rows:#?}");
+            for row in &rows {
+                assert!(crate::width::columns(row) <= 30, "{row:?} is too wide");
+            }
+        }
+    }
+}
+
+/// A fence named `mermaid` holding more than the reader will hold back.
+fn mermaid_past_its_cap() -> String {
+    let line = format!("A{} --> B", "a".repeat(990));
+    let mut answer = String::from("```mermaid\n");
+    for _ in 0..20 {
+        answer.push_str(&line);
+        answer.push('\n');
+    }
+    answer.push_str("```\n");
+    answer
+}
+
+#[test]
+fn a_native_held_block_past_its_cap_is_drawn_as_written_with_its_refusal_in_the_label() {
+    for (glyphs, top, bottom) in [
+        (
+            Glyphs::Unicode,
+            "┌─ mermaid · longer than this can hold · shown as written",
+            "└─",
+        ),
+        (
+            Glyphs::Ascii,
+            "+- mermaid - longer than this can hold - shown as written",
+            "+-",
+        ),
+    ] {
+        let rows = answered_natively_in(
+            &Window::new(1100, 40),
+            glyphs,
+            &mermaid_past_its_cap(),
+            None,
+        );
+        let rows: Vec<&str> = rows.iter().map(|row| row.trim_end()).collect();
+        assert_eq!(rows.first(), Some(&top), "{rows:#?}");
+        assert_eq!(rows.last(), Some(&bottom), "{rows:#?}");
+        assert_eq!(rows.iter().filter(|row| row.len() > 990).count(), 20);
+    }
+}
+
+#[test]
+fn a_native_hostile_fence_label_reaches_the_terminal_as_nothing_but_its_name() {
+    // An escape that opens a device control string or an application command
+    // is dropped with its introducer only; what follows it is inert text.
+    for (label, name) in [
+        ("\u{1b}]0;a title it chose\u{7}rust", "rust"),
+        ("\u{1b}]8;;https://example.invalid\u{1b}\\rust", "rust"),
+        ("ru\u{7}st\u{8}", "rust"),
+        ("ru\u{85}st", "rust"),
+        ("\u{1b}P1$r\u{1b}\\rust", "1$rrust"),
+        ("\u{1b}_Gi=1;AAAA\u{1b}\\rust", "Gi=1;AAAArust"),
+        ("\u{10eeee}\u{305}\u{305}rust", "rust"),
+        ("\u{2066}rust\u{2069}", "rust"),
+        ("\u{202e}tsur\u{202c}", "tsur"),
+    ] {
+        let window = Window::new(64, 12);
+        let rows = answered_natively(&window, &format!("```{label}\ncode\n```\n"), None);
+        assert_eq!(
+            rows.iter().map(|row| row.trim_end()).collect::<Vec<_>>(),
+            [format!("┌─ {name}"), "│ code".to_owned(), "└─".to_owned()],
+            "for {label:?}"
+        );
+
+        let written = window.written();
+        for hostile in ["\u{1b}]", "\u{1b}P", "\u{1b}_", "\u{7}", "\u{8}", "\u{85}"] {
+            assert!(
+                !written.contains(hostile),
+                "{hostile:?} reached the terminal for {label:?}"
+            );
+        }
+        for hostile in ['\u{2066}', '\u{2069}', '\u{202e}', '\u{202c}', '\u{10eeee}'] {
+            assert!(
+                !written.contains(hostile),
+                "{hostile:?} reached the terminal for {label:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_native_hostile_tag_key_or_footnote_label_writes_no_escape_nor_a_tag_or_label_a_picture_cell() {
+    for answer in [
+        "<kbd\u{1b}]0;a title\u{7}>K</kbd> and <details \u{1b}_Gi=1;AAAA\u{1b}\\>\n",
+        "<kbd>&amp; \u{1b}]8;;https://example.invalid\u{1b}\\ \u{1b}_Gi=1;AAAA\u{1b}\\</kbd>\n",
+        "a[^\u{1b}]0;t\u{7}] and [^\u{1b}_Gi=1;AAAA\u{1b}\\]\n\n[^\u{1b}P1$r\u{1b}\\]: a note\n",
+        "H<sub>\u{1b}]0;t\u{7}</sub>O and x<sup>\u{8}2\u{85}</sup>\n",
+        concat!(
+            "<kbd \u{10eeee}\u{305}>K</kbd> a[^\u{10eeee}\u{305}x] H<sub \u{10eeee}\u{305}>2</sub>",
+            " <details \u{10eeee}\u{305}>\n\n[^\u{10eeee}\u{305}x]: n\n",
+        ),
+    ] {
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let window = Window::new(64, 12);
+            let mut render = native(&window);
+            render.images(crate::terminal::graphics::Capability::Graphics {
+                protocol: crate::terminal::graphics::Protocol::Kitty,
+                cell: crate::terminal::graphics::Cell {
+                    width: 9,
+                    height: 18,
+                },
+            });
+            render.draws(glyphs);
+            render.wears(colourful());
+            stands(&mut render);
+            render.stream(answer).unwrap();
+            render.settle().unwrap();
+            render.seal().unwrap();
+
+            let written = window.written();
+            for hostile in ["\u{1b}]", "\u{1b}P", "\u{1b}_", "\u{7}", "\u{8}", "\u{85}"] {
+                assert!(
+                    !written.contains(hostile),
+                    "{hostile:?} reached the terminal for {answer:?} with {glyphs:?}"
+                );
+            }
+            assert!(
+                !written.contains('\u{10eeee}'),
+                "a picture cell was placed for {answer:?} with {glyphs:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_native_entity_inside_a_key_is_drawn_as_written() {
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["<kbd>&amp; &lt;</kbd>\n"]),
+        ["&amp; &lt;"]
+    );
+}
+
+#[test]
+fn a_native_session_lists_the_drawn_blocks_newest_first_each_with_its_written_source() {
+    let table = "| name | job |\n|---|---|\n| alpha | first |\n| beta | second |\n";
+    let math = "$$\nx^2 + y^2\n$$\n";
+    let window = Window::new(60, 20);
+    let mut render = native(&window);
+    render.wears(colourful());
+    stands(&mut render);
+    render
+        .stream(&format!("before\n\n{table}\nbetween\n\n{math}\nafter\n"))
+        .unwrap();
+    render.settle().unwrap();
+    render.seal().unwrap();
+
+    let listed: Vec<(&str, &str)> = render
+        .sources()
+        .map(|source| (source.word, source.text))
+        .collect();
+    assert_eq!(listed, [("math", math), ("table", table)]);
+
+    let bound = render.sourced();
+    assert!(bound > 0);
+    assert!(render.sources().all(|source| source.line < bound));
+}
+
+#[test]
+fn a_native_session_of_prose_and_a_rule_lists_no_source_and_bounds_nothing() {
+    let window = Window::new(60, 20);
+    let mut render = native(&window);
+    stands(&mut render);
+    render
+        .stream("just prose\n\n---\n\nand a rule above it\n")
+        .unwrap();
+    render.settle().unwrap();
+    render.seal().unwrap();
+
+    assert_eq!(render.sources().count(), 0);
+    assert_eq!(render.sourced(), 0);
+}
+
+#[test]
+fn a_native_lone_marker_is_an_underline() {
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["Title\n=\n"]),
+        ["Title", "━━━━━"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["Sub\n-\n"]),
+        ["Sub", "───"]
+    );
+}
+
+#[test]
+fn native_atx_and_setext_headings_of_one_level_look_alike_and_levels_four_to_six_look_like_three() {
+    let atx = kept_natively(40, Glyphs::Unicode, &["# One\n\n## Two\n\n### Three\n"]);
+    let setext = kept_natively(40, Glyphs::Unicode, &["One\n===\n\nTwo\n---\n\nThree\n"]);
+    assert_eq!(atx, ["One", "━━━", "Two", "───", "Three"]);
+    assert_eq!(
+        setext.iter().take(4).collect::<Vec<_>>(),
+        atx.iter().take(4).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        kept_natively(
+            40,
+            Glyphs::Unicode,
+            &["#### Four\n\n##### Five\n\n###### Six\n"]
+        ),
+        ["Four", "Five", "Six"]
+    );
+}
+
+#[test]
+fn a_native_line_of_cells_over_a_delimiter_row_is_still_a_table_and_not_a_heading() {
+    let rows = kept_natively(40, Glyphs::Unicode, &["a | b\n--|--\n1 | 2\n"]);
+    assert!(rows.iter().any(|row| row.contains('│')), "{rows:#?}");
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row.contains('─') && !row.contains('┼')),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_native_dashed_row_under_a_line_that_was_no_table_header_underlines_it() {
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["one cell\n---\n"]),
+        ["one cell", "────────"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["a | b\n---\n1 | 2\n"]),
+        ["a | b", "─────", "1 | 2"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["one cell\n:-:\n"]),
+        ["one cell", ":-:"]
+    );
+}
+
+#[test]
+fn a_native_underline_makes_only_the_last_line_of_a_paragraph_the_heading() {
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["first line\nsecond line\n===\n"]),
+        ["first line", "second line", "━━━━━━━━━━━"]
+    );
+}
+
+#[test]
+fn a_native_details_body_wider_than_the_window_is_two_columns_in_on_every_row() {
+    let wide = format!("<details><summary>Why</summary>\n{LONG_ITEM}\n</details>\nafter\n");
+    let broken =
+        format!("<details><summary>Why</summary>\nthe body<br>{LONG_ITEM}\n</details>\nafter\n");
+    for answer in [wide, broken] {
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            for rows in at_thirty_and_narrowed(glyphs, &answer) {
+                let body = rows
+                    .get(1..rows.len().saturating_sub(1))
+                    .unwrap_or_default();
+                assert!(body.len() > 2, "{glyphs:?} drew {rows:#?}");
+                for row in body {
+                    assert_eq!(indent_of(row), 2, "{glyphs:?} drew {row:?} in {rows:#?}");
+                }
+                assert_eq!(rows.last().map(String::as_str), Some("after"), "{rows:#?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_native_closing_details_tag_after_a_bare_table_is_no_row_of_it_whole_or_cut() {
+    let answer = "<details>\n<summary>S</summary>\n\na | b\n--|--\n1 | 2\n</details>\nafter\n";
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let whole = kept_natively(40, glyphs, &[answer]);
+        assert!(
+            whole.iter().all(|row| !row.contains("details")),
+            "{glyphs:?} drew {whole:#?}"
+        );
+        assert!(
+            whole.iter().any(|row| row.contains('2')),
+            "{glyphs:?} drew {whole:#?}"
+        );
+        assert_eq!(
+            whole.last().map(String::as_str),
+            Some("after"),
+            "{whole:#?}"
+        );
+
+        for cut in (1..answer.len()).filter(|cut| answer.is_char_boundary(*cut)) {
+            let rows = kept_natively(40, glyphs, &[&answer[..cut], &answer[cut..]]);
+            assert_eq!(rows, whole, "{glyphs:?} cut at {cut} of {answer:?}");
+        }
+    }
+}
+
+#[test]
+fn native_a_line_written_over_the_box_past_the_rows_the_window_draws_leaves_the_cursor_in_the_box()
+{
+    // The turn's row and four over the box, on a window with room for three
+    // over it: the note being written is not drawn, so the cursor stays in
+    // the box.
+    let window = Window::new(40, 6);
+    let mut render = native(&window);
+    let (rows, caret) = boxed();
+    let prompt = PromptRows::new(&rows, caret, None)
+        .unwrap()
+        .writing_over(Some(Caret { row: 3, column: 8 }));
+    let over = [
+        row("Which?"),
+        row("  1. this"),
+        row("  2. that"),
+        row("Note: hi"),
+    ];
+    render
+        .replace_running(prompt, &[row("* thinking")], &over, Palette::plain())
+        .unwrap();
+
+    let screen = window.screen();
+    assert!(
+        !screen.iter().any(|shown| shown == "Note: hi"),
+        "the note is drawn: {screen:#?}"
+    );
+    let (at, column) = window.caret();
+    assert_eq!(
+        (screen.get(at).map(String::as_str), column),
+        (Some("| > typed"), 4),
+        "{screen:#?}"
+    );
+}
+
+#[test]
+fn native_a_line_written_on_the_first_row_the_window_does_not_draw_leaves_the_cursor_in_the_box() {
+    // The turn's row and three over the box, on a window with room for three:
+    // the note is the first row past those drawn, so the cursor stays in the
+    // box rather than on the row the box begins on.
+    let window = Window::new(40, 6);
+    let mut render = native(&window);
+    let (rows, caret) = boxed();
+    let prompt = PromptRows::new(&rows, caret, None)
+        .unwrap()
+        .writing_over(Some(Caret { row: 2, column: 8 }));
+    let over = [row("Which?"), row("  1. this"), row("Note: hi")];
+    render
+        .replace_running(prompt, &[row("* thinking")], &over, Palette::plain())
+        .unwrap();
+
+    let screen = window.screen();
+    assert!(
+        !screen.iter().any(|shown| shown == "Note: hi"),
+        "the note is drawn: {screen:#?}"
+    );
+    let (at, column) = window.caret();
+    assert_eq!(
+        (screen.get(at).map(String::as_str), column),
+        (Some("| > typed"), 4),
+        "{screen:#?}"
+    );
+}
+
+#[test]
+fn a_native_entity_is_drawn_as_the_character_it_names_and_a_backslash_break_draws_no_backslash() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let rows = kept_natively(30, glyphs, &["a &amp; b &lt;c&gt; &#169; &#x41;\n"]);
+        assert!(rows.iter().any(|row| row == "a & b <c> © A"), "{rows:#?}");
+
+        let rows = kept_natively(30, glyphs, &["first line\\\nsecond line\n"]);
+        assert!(rows.iter().any(|row| row == "first line"), "{rows:#?}");
+        assert!(rows.iter().any(|row| row == "second line"), "{rows:#?}");
+        assert!(!rows.iter().any(|row| row.contains('\\')), "{rows:#?}");
+
+        let rows = kept_natively(30, glyphs, &["ends on it\\\n\nnext\n"]);
+        assert!(rows.iter().any(|row| row == "ends on it\\"), "{rows:#?}");
+    }
+}
+
+#[test]
+fn a_native_hostile_entity_writes_no_escape_nor_a_picture_cell_and_is_drawn_as_written() {
+    for answer in [
+        "&#27;[31mred&#27;[0m and &#27;]0;t&#7;\n",
+        "&#x1b; and &#x1B;]8;;https://evil.invalid&#x7;\n",
+        "&#x202E;gnirts and &#8238;\n",
+        "&#7; bell, &#0; nothing and &#x0; nothing\n",
+        "a &#x10EEEE; b and &#1109742; c\n",
+    ] {
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let window = Window::new(64, 12);
+            let mut render = native(&window);
+            render.images(crate::terminal::graphics::Capability::Graphics {
+                protocol: crate::terminal::graphics::Protocol::Kitty,
+                cell: crate::terminal::graphics::Cell {
+                    width: 9,
+                    height: 18,
+                },
+            });
+            render.draws(glyphs);
+            stands(&mut render);
+            render.stream(answer).unwrap();
+            render.settle().unwrap();
+            render.seal().unwrap();
+
+            let written = window.written();
+            for hostile in [
+                "\u{1b}]",
+                "\u{1b}[31",
+                "\u{1b}P",
+                "\u{1b}_",
+                "\u{7}",
+                "\u{8}",
+                "\u{85}",
+                "\u{9c}",
+                "\u{202e}",
+                "\u{0}",
+            ] {
+                assert!(
+                    !written.contains(hostile),
+                    "{hostile:?} reached the terminal for {answer:?} with {glyphs:?}"
+                );
+            }
+            assert!(
+                !written.contains('\u{10eeee}'),
+                "a picture cell was placed for {answer:?} with {glyphs:?}"
+            );
+        }
+    }
+    let rows = kept_natively(
+        64,
+        Glyphs::Unicode,
+        &["&#27;[31mred and &#x1b; and &#x202E;gnirts and &#7; and &#0;\n"],
+    )
+    .join("\n");
+    for words in ["&#27;[31m", "&#x1b;", "&#x202E;", "&#7;", "&#0;"] {
+        assert!(rows.contains(words), "{rows:?} lost {words:?}");
+    }
+}
+
+#[test]
+fn a_native_struck_phrase_wears_the_strike_and_a_path_stays_as_written() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let rows = kept_natively(80, glyphs, &["~one~ and ~/Projects and cd ~/a and ~/b\n"]);
+        assert!(
+            rows.iter()
+                .any(|row| row == "one and ~/Projects and cd ~/a and ~/b"),
+            "{glyphs:?}: {rows:#?}"
+        );
+
+        let rows = kept_natively(80, glyphs, &["between ~/a and ~/b\n"]);
+        assert!(
+            rows.iter().any(|row| row == "between ~/a and ~/b"),
+            "{glyphs:?}: {rows:#?}"
+        );
+
+        let window = Window::new(80, 12);
+        answered_natively_in(&window, glyphs, "~one~ and ~/Projects\n", None);
+        let worn = colourful().open(Slot::Struck);
+        let written = window.written();
+        assert!(
+            written.contains(&format!("{}one", worn.as_str())),
+            "{glyphs:?}: {written:?}"
+        );
+        assert!(
+            !written.contains(&format!("{}/Projects", worn.as_str())),
+            "{glyphs:?}: {written:?}"
+        );
+    }
+}
+
+#[test]
+fn a_native_run_under_three_markers_is_drawn_bold_and_italic_together() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let window = Window::new(80, 12);
+        let rows = answered_natively_in(&window, glyphs, "a ***both*** b\n", None);
+        assert!(
+            rows.iter().any(|row| row.trim_end() == "a both b"),
+            "{glyphs:?}: {rows:#?}"
+        );
+        let written = window.written();
+        assert!(
+            written.contains("\u{1b}[1;3mboth"),
+            "{glyphs:?}: {written:?}"
+        );
+    }
+}
+
+#[test]
+fn a_native_held_phrase_is_told_of_in_the_foot_and_joins_the_scrollback_once_settled() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let window = Window::new(64, 12);
+        let mut render = native(&window);
+        render.draws(glyphs);
+        render.wears(colourful());
+        stands(&mut render);
+        render.stream("look in ~/Projects").unwrap();
+
+        let rows = window.all();
+        assert!(
+            rows.iter().any(|row| row.trim_end() == "~/Projects"),
+            "{glyphs:?}: {rows:#?}"
+        );
+        assert!(
+            !window
+                .scrollback()
+                .iter()
+                .any(|row| row.contains("~/Projects")),
+            "{glyphs:?}: the held phrase reached the scrollback"
+        );
+
+        render.stream("\n\nnext\n").unwrap();
+        render.settle().unwrap();
+        stands(&mut render);
+        render.seal().unwrap();
+
+        let rows: Vec<String> = window
+            .all()
+            .into_iter()
+            .map(|row| row.trim_end().to_owned())
+            .collect();
+        assert!(
+            !rows.iter().any(|row| row == "~/Projects"),
+            "{glyphs:?}: {rows:#?}"
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|row| *row == "look in ~/Projects")
+                .count(),
+            1,
+            "{glyphs:?}: {rows:#?}"
+        );
+        assert!(
+            rows.iter().any(|row| row == "next"),
+            "{glyphs:?}: {rows:#?}"
+        );
+    }
+}
+
+// A fence drawn by the drawers the renderer was handed. The drawer and the
+// hostile fences are the full screen's, so both modes are held to one input.
+
+/// The rows `answer` comes to natively in `glyphs` in a window `columns`
+/// wide, with `drawers` handed to the renderer, and everything written.
+fn drawn_natively(
+    glyphs: Glyphs,
+    columns: usize,
+    answer: &str,
+    drawers: Option<crate::drawing::Drawers>,
+    resized: Option<usize>,
+) -> (Vec<String>, String) {
+    let window = Window::new(columns, 40);
+    let mut render = native(&window);
+    render.draws(glyphs);
+    render.wears(colourful().addressing(true));
+    if let Some(drawers) = drawers {
+        render.drawers(drawers);
+    }
+    stands(&mut render);
+    render.stream(answer).unwrap();
+    render.settle().unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+    if let Some(columns) = resized {
+        settles_at(&window, &mut render, columns, 40);
+    }
+    let (boxed, _) = boxed();
+    let boxed: Vec<String> = boxed.iter().map(Row::text).collect();
+    let rows = window
+        .all()
+        .into_iter()
+        .filter(|row| !row.trim().is_empty() && !boxed.contains(row))
+        .map(|row| row.trim_end().to_owned())
+        .collect();
+    (rows, window.written())
+}
+
+/// An answer with a change in a fence between two lines of prose.
+const CHANGE_FENCED: &str =
+    "Before.\n\n```diff\n--- a/x.rs\n+++ b/x.rs\n@@ -1 +1 @@\n-old\n+new\n```\n\nAfter.\n";
+
+#[test]
+fn a_native_fence_of_an_answer_is_drawn_by_the_drawer_the_renderer_was_handed() {
+    use super::super::tests::drawers::echoing;
+
+    for (glyphs, mark) in [(Glyphs::Unicode, "»"), (Glyphs::Ascii, ">")] {
+        let (rows, _) = drawn_natively(glyphs, 64, CHANGE_FENCED, Some(echoing()), None);
+        assert_eq!(
+            rows,
+            [
+                "Before.".to_owned(),
+                format!("{mark} --- a/x.rs"),
+                format!("{mark} +++ b/x.rs"),
+                format!("{mark} @@ -1 +1 @@"),
+                format!("{mark} -old"),
+                format!("{mark} +new"),
+                "After.".to_owned(),
+            ],
+            "{glyphs:?}"
+        );
+    }
+}
+
+#[test]
+fn a_native_drawn_fences_offer_of_a_key_stands_at_each_width_it_is_laid_out_for() {
+    use super::super::tests::drawers::offering;
+
+    // Ctrl+O lists the fence in this screen too, so the key is one that
+    // answers, in the window it was drawn in and in a narrower one.
+    for narrowed in [None, Some(40)] {
+        let (rows, _) = drawn_natively(
+            Glyphs::Unicode,
+            64,
+            CHANGE_FENCED,
+            Some(offering()),
+            narrowed,
+        );
+        assert_eq!(
+            rows,
+            ["Before.", "5 lines held · ctrl+o to expand", "After."],
+            "{narrowed:?}"
+        );
+    }
+}
+
+#[test]
+fn a_native_renderer_handed_no_drawer_draws_a_fence_exactly_as_it_was_written() {
+    let (untold, written) = drawn_natively(Glyphs::Unicode, 64, CHANGE_FENCED, None, None);
+    assert_eq!(
+        untold,
+        [
+            "Before.",
+            "┌─ diff",
+            "│ --- a/x.rs",
+            "│ +++ b/x.rs",
+            "│ @@ -1 +1 @@",
+            "│ -old",
+            "│ +new",
+            "└─",
+            "After.",
+        ]
+    );
+
+    // Handed a registry with nothing in it, it writes the same bytes.
+    let empty = Some(crate::drawing::Drawers::default());
+    let (rows, same) = drawn_natively(Glyphs::Unicode, 64, CHANGE_FENCED, empty, None);
+    assert_eq!(rows, untold);
+    assert_eq!(same, written);
+}
+
+#[test]
+fn a_native_drawn_fence_narrowed_is_the_fence_a_window_that_narrow_draws() {
+    use super::super::tests::drawers::echoing;
+
+    let answer = "```diff\n+a line a good deal longer than the narrow window is wide\n```\n";
+    let (fresh, _) = drawn_natively(Glyphs::Unicode, 24, answer, Some(echoing()), None);
+    let (narrowed, _) = drawn_natively(Glyphs::Unicode, 70, answer, Some(echoing()), Some(24));
+
+    // The room is the window's less the column the rail is spared.
+    assert_eq!(fresh, ["» +a line a good deal lo"]);
+    assert_eq!(narrowed, fresh);
+}
+
+#[test]
+fn a_native_hostile_path_or_line_in_a_drawn_fence_writes_no_escape() {
+    use super::super::tests::drawers::{HOSTILE_FENCES, OBEYED, echoing};
+
+    for answer in HOSTILE_FENCES {
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let (rows, written) = drawn_natively(glyphs, 64, answer, Some(echoing()), None);
+
+            // The drawer drew it, so what it was handed is what is on screen.
+            assert!(
+                rows.iter().any(|row| row.contains("@@ -1")),
+                "{answer:?} with {glyphs:?}: {rows:#?}"
+            );
+            assert!(
+                !rows
+                    .iter()
+                    .any(|row| row.contains("diff") || row.contains("patch")),
+                "{answer:?} with {glyphs:?}: {rows:#?}"
+            );
+            for hostile in OBEYED {
+                assert!(
+                    !written.contains(hostile),
+                    "{hostile:?} reached the terminal for {answer:?} with {glyphs:?}"
+                );
+            }
+        }
+    }
+}

@@ -26,16 +26,23 @@
 //! sentence is the defect this catches, and a fixture of short words never
 //! reaches it.
 
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use crate::asked::{Asked, Choice, Given, Stop, Writing};
 use crate::asking::Question;
 use crate::bar::{Bar, Fill, Part};
+use crate::chrome::{Frame, Label, Undrawn};
 use crate::color::Slot;
+use crate::docked::{
+    Batched, Chosen, Dock, Docked, Drafted, Editing, Focus, Member, Offer, Phase, Scrolled,
+};
 use crate::expanded::{Expanded, Shown};
 use crate::glyphs::Glyphs;
 use crate::key_panel::KeyPanel;
 use crate::ladder::Ladder;
+use crate::markdown::corpus_pictures::laid;
+use crate::markdown::{Held, Holding};
 use crate::menu::{Listed, Menu};
 use crate::notice::Notice;
 use crate::panel::{Heading, Offered, Panel};
@@ -48,37 +55,10 @@ use crate::sandbox_panel::{SandboxPanel, SandboxTab};
 use crate::scroll_rail::{Place, ScrollRail};
 use crate::shelf::{Pane, Serving, Shelf, Stocked};
 use crate::tab_row::TabRow;
+use crate::testing::{across, down};
 use crate::timeline::{Brief, Timeline, Told};
 use crate::welcome::{Recent, Welcome};
 use crate::working::Working;
-
-/// Every width worth walking: one column, and on past the widest terminal
-/// anybody works in.
-///
-/// From one rather than from nothing, because a window of no columns is not a
-/// window. A terminal that will not say its size is given
-/// [`Size::FALLBACK`](crate::Size::FALLBACK) instead of a zero, and the one
-/// component that draws into a nought-column window does it on purpose — the
-/// prompt mark, so that a record says a prompt was asked — with its own test
-/// beside it saying so.
-const WIDTHS: std::ops::RangeInclusive<usize> = 1..=200;
-
-/// Every room worth walking, for the components that are given one.
-///
-/// From no rows at all — which is what a window with something already standing
-/// in it has left — through every height a component decides something at, and
-/// on past an ordinary terminal.
-///
-/// A list rather than the range the widths are, because the two are not the
-/// same kind of axis. Width is where the wrapping arithmetic lives, and it is
-/// wrong at one column and right at the next. Height is where a component picks
-/// which rung of its ladder to draw, and those are counted in single rows near
-/// the bottom and nowhere near the top.
-const ROOMS: [usize; 11] = [0, 1, 2, 3, 4, 5, 6, 8, 12, 24, 40];
-
-/// Both fonts, because a component picks its glyphs by which it was handed and
-/// the two are not the same width.
-const FONTS: [Glyphs; 2] = [Glyphs::Unicode, Glyphs::Ascii];
 
 /// Prose long enough to break at every width in the sweep, in words short
 /// enough that where it breaks is the layout's decision rather than one word's.
@@ -100,45 +80,83 @@ const WIDE: &str = "\u{691c}\u{7d22}\u{304c} \u{9014}\u{4e2d}\u{3067} \u{6b62}\u
 const MARKED: &str = "a re\u{301}sume\u{301} of a nai\u{308}ve cafe\u{301} that stops \
                       partway through, and says so on the ro\u{302}w it stopped on";
 
-/// Sweeps `laid` across every width in both fonts.
-#[track_caller]
-fn across(what: &str, laid: impl Fn(usize, Glyphs) -> Vec<Row>) {
-    for glyphs in FONTS {
-        for columns in WIDTHS {
-            within(&laid(columns, glyphs), columns, what, glyphs);
+#[test]
+fn a_framed_block_fits_the_window_it_stands_in() {
+    let inner: Vec<Row> = [PROSE, LONG, WIDE, MARKED]
+        .iter()
+        .map(|text| Row::new().then(Slot::Plain, *text))
+        .collect();
+
+    for refusal in [
+        None,
+        Some(Undrawn::PastCap),
+        Some(Undrawn::NotText),
+        Some(Undrawn::TooWide),
+        Some(Undrawn::Unsupported("pie")),
+    ] {
+        across("a frame", |columns, glyphs| {
+            let frame = Frame {
+                label: Label::new(LONG, glyphs),
+                refusal,
+            };
+            frame.rows(columns, &inner)
+        });
+    }
+}
+
+#[test]
+fn a_fence_in_its_frame_fits_the_window_it_is_drawn_in() {
+    // Code is cut where the room runs out, so every fixture is one line that
+    // is long, wide or marked, and a window of any width has to hold the row
+    // it is cut into -- and the mark that carries it on.
+    for code in [PROSE, LONG, WIDE, MARKED, "    let x = 1;    \t    "] {
+        across("a fence", |columns, glyphs| {
+            laid(&format!("```rust\n{code}\n```\n"), columns, glyphs)
+        });
+    }
+}
+
+#[test]
+fn an_alert_fits_the_window_it_is_drawn_in() {
+    // The bar and the mark take their columns on every row of it, and the
+    // header's word is bold, so a window of any width has to hold the row
+    // each fixture is cut into: the words after the marker and the ones below.
+    for kind in ["NOTE", "TIP", "IMPORTANT", "WARNING", "CAUTION"] {
+        for body in [PROSE, LONG, WIDE, MARKED] {
+            across("an alert", |columns, glyphs| {
+                laid(&format!("> [!{kind}]\n> {body}\n"), columns, glyphs)
+            });
         }
     }
 }
 
-/// The same, across every room as well, checking the height too.
-#[track_caller]
-fn down(what: &str, laid: impl Fn(usize, usize, Glyphs) -> Vec<Row>) {
-    for glyphs in FONTS {
-        for columns in WIDTHS {
-            for room in ROOMS {
-                let rows = laid(columns, room, glyphs);
-                within(&rows, columns, what, glyphs);
-                assert!(
-                    rows.len() <= room,
-                    "{what} drew {} rows into a window with room for {room}, at {columns} \
-                     columns with {glyphs:?}",
-                    rows.len()
-                );
-            }
-        }
-    }
-}
-
-/// Asserts that nothing in `rows` reaches past column `columns`.
-#[track_caller]
-fn within(rows: &[Row], columns: usize, what: &str, glyphs: Glyphs) {
-    for row in rows {
-        assert!(
-            row.columns() <= columns,
-            "{what} drew {} columns into a window {columns} wide with {glyphs:?}: {:?}",
-            row.columns(),
-            row.text()
+#[test]
+fn footnotes_and_tags_fit_the_window_and_under_ascii_draw_no_structure_but_ascii() {
+    // A note's number, a key's brackets, the summary's mark and the two
+    // columns a details block's body is drawn in take their columns on the
+    // rows they stand on, so a window of any width has to hold the rows each
+    // fixture is cut into. Under ascii, with a fixture that is ascii, nothing
+    // on those rows is anything else but the sub and superscript characters,
+    // which are drawn in both glyph sets.
+    for body in [PROSE, LONG, WIDE, MARKED] {
+        let answer = format!(
+            "{body}[^1] <kbd>{body}</kbd> H<sub>2</sub>O x<sup>2</sup><br>{body}\n\n\
+             <details><summary>{body}</summary>\n{body}\n</details>\n\n[^1]: {body}\n"
         );
+        across("footnotes and tags", |columns, glyphs| {
+            let rows = laid(&answer, columns, glyphs);
+            if glyphs == Glyphs::Ascii && body.is_ascii() {
+                for row in &rows {
+                    let text = row.text();
+                    assert!(
+                        text.chars().all(|character| character.is_ascii()
+                            || "\u{2082}\u{b2}".contains(character)),
+                        "drew {text:?} at {columns} columns under ascii"
+                    );
+                }
+            }
+            rows
+        });
     }
 }
 
@@ -344,6 +362,17 @@ fn a_notice_fits_the_window_it_is_read_in() {
 }
 
 #[test]
+fn the_row_a_held_block_shows_fits_the_live_foot_it_stands_in() {
+    for held in [Held::Table, Held::DisplayMath, Held::Mermaid, Held::Diff] {
+        for lines in [1, 12, usize::MAX] {
+            across("held block", |columns, glyphs| {
+                vec![Holding { held, lines }.row(columns, glyphs)]
+            });
+        }
+    }
+}
+
+#[test]
 fn a_ladder_fits_the_window_its_rungs_are_chosen_in() {
     const RUNGS: [&str; 5] = ["none", "low", "medium", "high", "the most there is"];
 
@@ -506,7 +535,7 @@ fn a_permission_question_fits_the_window_it_is_answered_in() {
         question: "Allow it?",
         answers: &ANSWERS,
         marked: 1,
-        footer: "enter to take it · esc to leave",
+        footer: &["enter to take it", "esc to leave"],
     };
     down("a permission question", |columns, room, glyphs| {
         question.within(columns, room, glyphs)
@@ -570,6 +599,72 @@ fn an_ask_fits_the_window_its_questions_are_put_in() {
     down("an ask", |columns, room, glyphs| {
         asked.within(columns, room, glyphs).0
     });
+}
+
+#[test]
+fn a_dock_fits_the_window_its_questions_wait_in() {
+    // Every phase, over four questions of the hostile texts with eight answers
+    // each, so that the open dock is far taller than most rooms here: the
+    // sweep's small rooms are where it has to give way to the closed row.
+    let member = |at: usize, text: &str| Member {
+        heading: format!("{text} {at}"),
+        question: format!("{PROSE} {text}"),
+        answers: (0..8)
+            .map(|answer| Offer {
+                answer: format!("{text} {answer}"),
+                says: PROSE.to_owned(),
+                shows: (0..=answer)
+                    .map(|line| format!("{line} {LONG} {MARKED}"))
+                    .collect(),
+                recommended: answer == 0,
+            })
+            .collect(),
+        draft: Drafted {
+            chosen: if at % 2 == 1 {
+                Chosen::Several(BTreeSet::from([0, 7]))
+            } else {
+                Chosen::One(Some(7))
+            },
+            written: WIDE.to_owned(),
+            note: PROSE.to_owned(),
+            declined: at == 3,
+        },
+    };
+    for phase in [
+        Phase::Collapsed,
+        Phase::Answering,
+        Phase::Reviewing,
+        Phase::Submitting,
+        Phase::Refused(PROSE.to_owned()),
+        Phase::Accepted,
+    ] {
+        let dock = Dock {
+            batches: vec![Batched {
+                key: 0_u8,
+                members: [LONG, WIDE, MARKED, PROSE]
+                    .iter()
+                    .enumerate()
+                    .map(|(at, text)| member(at, text))
+                    .collect(),
+            }],
+            current: 0,
+            focus: Focus {
+                member: 1,
+                marked: 8,
+                editing: Some(Editing::Written { column: 2 }),
+            },
+            scrolled: Scrolled::default(),
+            phase,
+        };
+        down("a dock", |columns, room, glyphs| {
+            Docked {
+                dock: &dock,
+                footer: &[PROSE],
+            }
+            .within(columns, room, glyphs)
+            .0
+        });
+    }
 }
 
 #[test]

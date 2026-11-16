@@ -295,7 +295,7 @@ fn put(
     // is not one that was empty, and a diff drawn from an empty string would
     // say every line here is new when the truth is that nobody can say.
     let output = match before {
-        Some(before) => answer.showing(Diff::between(&before, content)),
+        Some(before) => answer.showing(Diff::between(&before, content).in_file(requested)),
         None => answer,
     };
 

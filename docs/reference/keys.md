@@ -50,7 +50,7 @@ this page is the list. Slash commands are not keys: they are listed under
 | <kbd>Ctrl+W</kbd>, <kbd>Ctrl+Backspace</kbd>, <kbd>Alt-Backspace</kbd> | Rubs out the word behind the cursor. |
 | <kbd>Ctrl+U</kbd> | Rubs out from the cursor back to the start of its line. |
 | <kbd>Ctrl+K</kbd> | Rubs out from the cursor to the end of its line. |
-| <kbd>Tab</kbd> | Nothing. A tab inside pasted text becomes four spaces. |
+| <kbd>Tab</kbd> | Gives the keys to the [dock of questions](#answering-questions-asked-without-waiting) while it is open. Nothing otherwise. A tab inside pasted text becomes four spaces. |
 | <kbd>Ctrl+Y</kbd> | Copies everything in the box exactly as typed, by asking your terminal to put it on the clipboard. The row under the box says `line copied` once the request is sent. Nothing while the box is empty. |
 | <kbd>Ctrl+V</kbd> | Pastes an image from the clipboard and puts a marker such as `[Image #1]` in the box. When nothing readable is there, the reason is written under the box. |
 | <kbd>Ctrl+C</kbd> | Clears the box, every line of it. When the box is already empty the row says `press ctrl+c again to leave`, and a second press within two seconds ends the session. |
@@ -117,7 +117,7 @@ Under three rows it is not drawn, but it is still there: <kbd>↑</kbd> and
 | --- | --- |
 | <kbd>Shift-Tab</kbd> | Steps the permission mode on the press: `ask`, `allowEdits`, `fullAccess`, then `ask` again. See [Stepping it while you type](../permissions/modes.md#stepping-it-while-you-type). |
 | <kbd>Ctrl+B</kbd> | Stands the list of commands left running. With none running it closes at once. A click on their count under the box does the same. While a turn runs it stands the list only when the turn has no command to leave in the background and one or more commands are left running: see [While a turn runs](#while-a-turn-runs). |
-| <kbd>Ctrl+O</kbd> | Stands the results the transcript cut short. Nothing while none were cut. |
+| <kbd>Ctrl+O</kbd> | Stands the results the transcript cut short, and each change it folded with every line kept of it under its call, then the source of each table, formula, diagram or diff it drew, then the whole of each address it drew shorter. Nothing while there is none of them: a drawn block or a shortened address alone opens it. See [Results cut short](#results-cut-short). |
 | <kbd>Ctrl+T</kbd> | Expands the plan past its seven rows, or folds it back. Nothing without a plan. See [Seven rows, and the key that gives the rest back](../tools/planning.md#seven-rows-and-the-key-that-gives-the-rest-back). |
 | <kbd>Esc</kbd> | Closes the command list, keeping the line. Nothing otherwise. |
 | <kbd>Ctrl+E</kbd>, <kbd>Ctrl+X</kbd> | Take the highlighted prompt of [the queue](#the-queue) back into the box, or delete it. Nothing while none are waiting. |
@@ -141,10 +141,10 @@ wheel. These differ:
 | <kbd>Ctrl+C</kbd> | Clears the box. When it is already empty it offers to leave as at the prompt, and the second press within two seconds stops the turn and ends the session. |
 | <kbd>Ctrl+D</kbd> | Nothing. |
 | <kbd>Ctrl+B</kbd> | Leaves the running command in the background, where it can be, including in the seconds before its row offering `(ctrl+b to background)` is drawn ([`output.pinAfterSeconds`](../configuration/configuration.md#output)). See [Leaving one running](../tools/commands.md#leaving-one-running). Where there is no such command and one or more commands are left running, it stands their `Still running` list, as a click on their count under the box does. Nothing otherwise. |
-| <kbd>Ctrl+O</kbd> | Stands the cut results under the tail of the answer, which goes on arriving above them. |
+| <kbd>Ctrl+O</kbd> | Stands the cut results, a folded change's kept lines under its call among them, then the source of each drawn block, then each address drawn shorter, under the tail of the answer, which goes on arriving above them. Opens for a drawn block or a shortened address alone. |
 | <kbd>Ctrl+E</kbd>, <kbd>Ctrl+X</kbd> | Take the highlighted prompt of [the queue](#the-queue) back into the box, or delete it. Nothing while none are waiting. |
 | <kbd>Ctrl+Enter</kbd>, <kbd>Ctrl+S</kbd> | Stop the turn and send [the queue](#the-queue) now: all of it with the line in the box last, or the highlighted prompt alone. Each prompt is sent as the line it was typed as. |
-| <kbd>Tab</kbd> | Nothing. |
+| <kbd>Tab</kbd> | Gives the keys to the [dock of questions](#answering-questions-asked-without-waiting) while it is open, as at the prompt. Nothing otherwise. |
 
 While the <kbd>Ctrl+O</kbd> view or the command list stands over a running
 turn, <kbd>Esc</kbd> closes it rather than stopping the turn. Its keys are
@@ -221,6 +221,32 @@ other ask has a review stop and adds `←→ between questions`. A question that
 takes several answers adds `space to choose`, and the review stop itself reads
 `esc to cancel · ←→ between questions`. [Several questions
 at once](../tools/asking.md#several-questions-at-once) is about that stop.
+
+## Answering questions asked without waiting
+
+Questions the agent [asked without
+waiting](../tools/asking.md#asking-without-waiting) stand in a dock over the
+box once `/questions` opens it. While the dock has the keys:
+
+| Key | What it does |
+| --- | --- |
+| <kbd>↑</kbd>, <kbd>↓</kbd> | Moves the mark down the answers, or down the actions on the last stop. Stops at each end. |
+| <kbd>←</kbd>, <kbd>→</kbd> | Steps to the next question in the batch or the one before. Stops at each end. |
+| <kbd>Enter</kbd> | Chooses the marked answer and moves on, to the review stop after the last question. Where several answers may be chosen, it moves on and <kbd>Space</kbd> does the choosing. On `Write your own answer` with nothing written yet, it opens the line instead; once a line is written, it takes it and moves on. On `Decline question`, it asks once more; on a question already declined, it takes the decline back. On the last stop, it does the marked action. |
+| <kbd>Space</kbd> | Where several answers may be chosen, chooses the marked one or unchooses it. |
+| <kbd>n</kbd> | Opens a line for a note of your own beside the answer. |
+| <kbd>Tab</kbd> | Gives the keys to the box, with the dock left open; <kbd>Tab</kbd> in the box gives them back. |
+| <kbd>PgUp</kbd>, <kbd>PgDn</kbd> | Scrolls a question or a read-back taller than the room for it. |
+| <kbd>Esc</kbd> | Closes the dock with everything you picked and wrote kept, and does not stop the turn. |
+| <kbd>Ctrl+C</kbd>, <kbd>Ctrl+D</kbd>, <kbd>Shift+Tab</kbd>, <kbd>Ctrl+B</kbd>, <kbd>Ctrl+E</kbd>, <kbd>Ctrl+O</kbd>, <kbd>Ctrl+T</kbd>, the wheel, a drag, a click | What they do with the box focused. |
+| Anything else | Nothing. |
+
+While you are writing a line, the editing keys edit it, and <kbd>Enter</kbd>
+or <kbd>Esc</kbd> stops writing and keeps what you wrote. While a decline
+asks once more, <kbd>Enter</kbd> declines and <kbd>Esc</kbd> keeps the
+question; any other key keeps it too, and one the dock reads then does what it
+does there. The footer
+under the dock names the keys that work where you are.
 
 ## Pickers and panels
 
@@ -450,6 +476,11 @@ it, one result's worth at a time: a further one the window reaches says
 `read back from the session log as the view moves on to it` until the one
 above it leaves, as does one the running turn has not written yet, and a step
 stops at each such result rather than passing it.
+A [change](../tools/files.md#what-a-change-leaves-on-screen) the transcript
+folded is one of these results: its kept lines are shown under its call, the
+row naming the file and counting its lines and then every line the tool kept,
+each with its number and its sign, and none folded. One read back from the
+session log is what the model was told of the change, without its lines.
 Between
 turns the view takes the place of the box; while a turn runs it stands under
 the tail. Results cut after it opened are there the next time it is opened.
@@ -462,6 +493,26 @@ open. The footer reads `esc to close`; where there is more it reads
 result it goes on ` · ←→ result 2 of 7`, counting the result at the top of
 the view with the newest as 1. In a window too narrow for all of it, it loses
 whole parts from the right, and never `esc to close`.
+
+After the results the view stands the source of each table, formula (display
+math), mermaid diagram and diff the transcript drew, newest first, each under
+its word and written as the model wrote it, however wide the block was drawn.
+A rule and a fenced block of code are not among them. The source is shown in
+full: one longer than the window is read in pieces the height of the window,
+and the arrows step from the last result onto the first source. Over the
+sources the footer counts `source 1 of 2` where it counts results otherwise.
+A block still arriving is not listed until it is whole, and a block drawn after
+the view opened is there the next time it is opened. The view opens when a drawn
+block is all there is to show.
+
+After the sources the view stands the whole of each address the transcript drew
+shorter than it was written, newest first, each under the word `address`: a
+pull request, issue or commit drawn as its reference, and a quiet address cut
+with an ellipsis. A link in a table's cell is listed whenever the same link in
+prose would be. See
+[The address after a link's words](../sessions/transcript.md#the-address-after-a-links-words).
+The view opens when such an address is all there is to show. It is the same in both
+[`output.screen`](../configuration/configuration.md#output) modes.
 
 | Key | What it does |
 | --- | --- |
@@ -479,8 +530,16 @@ The prompts waiting behind a running turn stand in one panel over the box
 whenever any are waiting: a title counting them, up to three of them a blank
 row apart with one highlighted, and a footer naming the keys. Between turns the
 same panel holds the prompts left queued behind a turn that stopped on a
-used-up plan, until you send a prompt. You go on typing into the box under it;
-the panel only adds these keys:
+used-up plan, or that the [content-use](../providers/content-use.md) question
+held back. Its title then says `waiting for the next turn` where a turn's says
+`ctrl+enter to send all now`, since with no turn to stop <kbd>Ctrl+Enter</kbd>
+is <kbd>Enter</kbd>. The turn a prompt you send starts takes them with it, as
+does one your answers from the
+[dock](#answering-questions-asked-without-waiting) start. A turn that starts
+without you, such as the one a background command's ending wakes, takes none
+of them, and nor does the room `/compact` makes; once either ends they go as a
+turn of their own, unless it too stopped on a used-up plan. You go on typing
+into the box under it; the panel only adds these keys:
 
 | Key | What it does |
 | --- | --- |
@@ -488,7 +547,7 @@ the panel only adds these keys:
 | <kbd>Ctrl+E</kbd> | Takes the highlighted prompt out of the queue and into the box at the cursor, where it can be edited or sent again. A prompt too long to go in beside what the box already holds (1 MiB together) stays queued and highlighted, and the panel says `no room in the box · line stays queued` until the next key. On an approval prompt it opens the explanation instead. |
 | <kbd>Ctrl+X</kbd> | Deletes the highlighted prompt; the box is left as it was. |
 | <kbd>Ctrl+Enter</kbd> | Stops the turn as <kbd>Esc</kbd> does and sends every waiting prompt, oldest first, with the line in the box last, as the next turn, each as the line it was typed as. The panel goes and the box is left empty. With nothing waiting it stops the turn and sends the line in the box; with the box empty too it does nothing. A line in the box past the queue's bound stays there, the row says why, and the turn goes on; one that is a command is run or refused as <kbd>Enter</kbd> runs it. Between turns it is <kbd>Enter</kbd>. |
-| <kbd>Ctrl+S</kbd> | Stops the turn as <kbd>Esc</kbd> does and sends the highlighted prompt alone as the next turn. The rest stay queued in order behind it, to be sent together when it ends, with the highlight on the prompt that followed; the line in the box stays in the box. Between turns it sends the highlighted prompt. Nothing while none are waiting, or once the turn has taken the highlighted one. |
+| <kbd>Ctrl+S</kbd> | Stops the turn as <kbd>Esc</kbd> does and sends the highlighted prompt alone as the next turn. The rest stay queued in order behind it, to be sent together when it ends, with the highlight on the prompt that followed; the line in the box stays in the box. Between turns it sends the highlighted prompt alone in the same way. Nothing while none are waiting, or once the turn has taken the highlighted one. |
 
 After <kbd>Ctrl+E</kbd> or <kbd>Ctrl+X</kbd>, the highlight stays where it
 was, on the prompt that followed, and the panel goes when the last prompt does.

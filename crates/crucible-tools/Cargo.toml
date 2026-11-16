@@ -20,6 +20,9 @@ crucible-workspace.workspace = true
 # a second matcher would let `src/**` mean one thing in a rule and another in a
 # search, and the two would disagree exactly where it costs most.
 globset.workspace = true
+# The waiting questions are saved with the session and read back on resume, as
+# the JSON value the session line already carries.
+serde_json.workspace = true
 thiserror.workspace = true
 # The tool worker's blocking work: `rt` for the handle it is spawned onto, `sync`
 # for the permits that bound how much of it runs at once, and `time` for the

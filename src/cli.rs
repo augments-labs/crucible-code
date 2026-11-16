@@ -41,7 +41,7 @@ mod update;
 
 use std::cell::{Cell, RefCell};
 use std::ffi::OsString;
-use std::io::{self, Write as _};
+use std::io::{self, IsTerminal as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -63,6 +63,7 @@ use crucible_runtime::Cancel;
 use crucible_tools::Revealed;
 use crucible_tui::{
     RawError, Renderer, ScreenError, SystemTerminal, TerminalError, Title, TitleError, Welcome,
+    graphics,
 };
 use crucible_types::SessionId;
 use crucible_workspace::Workspace;
@@ -990,7 +991,7 @@ fn asked(
 /// What the `output` block said, gathered out of the settled layers.
 ///
 /// Its own function because it is the one value in `run` that is only a list:
-/// six answers read out of one block, none of them decided here.
+/// eight answers read out of one block, none of them decided here.
 fn drawn(settings: &crucible_config::Settings) -> style::Output {
     style::Output {
         color: settings.color(),
@@ -999,6 +1000,8 @@ fn drawn(settings: &crucible_config::Settings) -> style::Output {
         theme: settings.theme(),
         syntax: settings.syntax_theme().map(str::to_owned),
         colours: settings.transcript_colours(),
+        math: settings.math(),
+        diagrams: settings.diagrams(),
     }
 }
 
@@ -1054,6 +1057,44 @@ fn leaving_first<L, T>(
         let leaving = registry();
         session(services, &leaving)
     })
+}
+
+/// Settles what pictures are drawn with, before raw mode and the first frame,
+/// so what the terminal answers while the exchange waits, a first cursor
+/// position too late to decide anything included, is read before any key is;
+/// what it says later than every wait is left to the key reader, as
+/// `crucible_tui::graphics` says. Only a terminal on both sides is asked, and
+/// only where the configuration and the support table allow; what the input
+/// was is kept, so `/settings` draws by the same rule.
+fn settle_pictures<T: crucible_tui::Terminal>(
+    terms: &converse::Terms,
+    renderer: &mut Renderer<T>,
+    settings: &Settings,
+    from: &dyn Fn(&str) -> Option<String>,
+) {
+    terms
+        .style
+        .set(terms.style().reading_from(io::stdin().is_terminal()));
+    let picturing_on = picturing(
+        settings.images(),
+        settings,
+        renderer.is_terminal() && terms.style().input_terminal(),
+        graphics::Passthrough::Unknown,
+    );
+    let platform = terms.style().platform();
+    let passthrough = graphics::passthrough(from, platform, picturing_on);
+    terms.style.set(terms.style().passing(passthrough));
+    renderer.images(graphics::confirm(
+        graphics::select(
+            from,
+            platform,
+            graphics::Setting {
+                passthrough,
+                ..picturing_on
+            },
+        ),
+        graphics::Deadline::STARTUP,
+    ));
 }
 
 /// Builds everything, then hands over to the loop.
@@ -1168,7 +1209,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // Where it draws is read here, once: a session cannot move between a
     // screen of its own and the terminal's buffer without leaving half of
     // itself in a scrollback the other does not keep.
-    let mut renderer = Renderer::drawing(SystemTerminal::stdout(), drawn_on(settings.screen()));
+    let mut renderer = screen(&settings);
     watch_size(&mut renderer);
 
     // The mode the files named, or the one that asks. `None` is "no layer
@@ -1276,6 +1317,10 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         workspace: workspace.clone(),
     };
 
+    // After the background question, so the two exchanges never interleave on
+    // the wire, and before raw mode and the first frame.
+    settle_pictures(&terms, &mut renderer, &settings, &from);
+
     // Said once, now that the style is settled. It is what decides whether the
     // markers in the model's markdown are read or left where they are.
     renderer.wears(terms.style().palette());
@@ -1370,7 +1415,11 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // the same generation. A registration committed after this point is for the
     // next reader to see, not for a runner already built.
     let catalogue = terms.providers.snapshot();
+    // Settled by the same rule that decides whether keys are read as they are
+    // pressed: a screen with its input from a pipe has nobody to answer on it.
+    let keyed = crucible_tui::keyed();
     let conversation = assemble(&Startup {
+        questions: dock_questions(keyed),
         services,
         leaving,
         providers: &catalogue,
@@ -1389,7 +1438,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         plan: &plan,
         asking: std::sync::Arc::new(putting.clone()),
         hosting: &cli.with_mcp,
-        terminal: renderer.is_terminal(),
+        terminal: keyed,
         from: &from,
         stored: &keys,
         subscriptions: &subscriptions,
@@ -1415,6 +1464,16 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     draw::parting(&mut renderer, &outcome?, terms.style())?;
 
     Ok(())
+}
+
+/// Where the model's questions asked without waiting are held for the dock
+/// over the box, which reads them back through the conversation.
+///
+/// Nothing unless the session is a terminal at both ends: with no keys there
+/// is no dock to answer from, and a run given no registry and nobody at the
+/// keys is not offered the tool for asking at all.
+fn dock_questions(keyed: bool) -> Option<crucible_app::client::Questions> {
+    keyed.then(crucible_app::client::Questions::new)
 }
 
 /// What is asked again once the first frame is on the screen, or nothing where
@@ -1548,14 +1607,84 @@ fn watch_size<T: crucible_tui::Terminal>(renderer: &mut Renderer<T>) {
 #[cfg(not(unix))]
 fn watch_size<T: crucible_tui::Terminal>(_renderer: &mut Renderer<T>) {}
 
+/// The renderer a session is read on, drawing where `output.screen` names.
+///
+/// It is handed the drawers a fence of an answer is drawn by, since a renderer
+/// names none of them, and how `output.math` asks math to be drawn and
+/// `output.diagrams` a diagram, which `/settings` changes at once.
+fn screen(settings: &Settings) -> Renderer<SystemTerminal> {
+    let mut renderer = Renderer::drawing(SystemTerminal::stdout(), drawn_on(settings.screen()));
+    renderer.drawers(draw::drawers());
+    renderer.math(math_drawn(settings.math()));
+    renderer.diagrams(diagrams_drawn(settings.diagrams()));
+    renderer
+}
+
 /// Where the renderer draws, for the screen the configuration names.
 ///
 /// Written out case by case so a third screen in the configuration is a
 /// decision here rather than a default.
-fn drawn_on(screen: crucible_config::ScreenMode) -> crucible_tui::ScreenMode {
+pub(crate) fn drawn_on(screen: crucible_config::ScreenMode) -> crucible_tui::ScreenMode {
     match screen {
         crucible_config::ScreenMode::Fullscreen => crucible_tui::ScreenMode::Fullscreen,
         crucible_config::ScreenMode::Native => crucible_tui::ScreenMode::Native,
+    }
+}
+
+/// What `output.math` asks math in an answer to be drawn as, written out case
+/// by case so a way added to the configuration is a decision here. An image
+/// is asked for as one; the renderer draws text until one can be shown.
+pub(crate) const fn math_drawn(math: crucible_config::MathDrawing) -> crucible_tui::drawing::Mode {
+    use crucible_config::MathDrawing;
+    use crucible_tui::drawing::Mode;
+    match math {
+        MathDrawing::Written => Mode::Written,
+        MathDrawing::Text => Mode::Text,
+        MathDrawing::Image => Mode::Image,
+    }
+}
+
+/// What `output.diagrams` asks a diagram in an answer to be drawn as, written
+/// out case by case for the reason [`math_drawn`] is.
+pub(crate) const fn diagrams_drawn(
+    diagrams: crucible_config::DiagramDrawing,
+) -> crucible_tui::drawing::Mode {
+    use crucible_config::DiagramDrawing;
+    use crucible_tui::drawing::Mode;
+    match diagrams {
+        DiagramDrawing::Written => Mode::Written,
+        DiagramDrawing::Text => Mode::Text,
+        DiagramDrawing::Image => Mode::Image,
+    }
+}
+
+/// What `output.images` asks pictures to be drawn with, written out case by
+/// case so a protocol added to the configuration is a decision here.
+pub(crate) const fn pictures_wanted(images: crucible_config::ImageOutput) -> graphics::Wanted {
+    use crucible_config::ImageOutput;
+    match images {
+        ImageOutput::Auto => graphics::Wanted::Auto,
+        ImageOutput::Kitty => graphics::Wanted::Forced(graphics::Protocol::Kitty),
+        ImageOutput::Iterm2 => graphics::Wanted::Forced(graphics::Protocol::Iterm2),
+        ImageOutput::Sixel => graphics::Wanted::Forced(graphics::Protocol::Sixel),
+        ImageOutput::Off => graphics::Wanted::Off,
+    }
+}
+
+/// What a session reading `settings` would draw pictures with, asking for
+/// `images`: on a terminal or not, and with what tmux said.
+pub(crate) fn picturing(
+    images: crucible_config::ImageOutput,
+    settings: &Settings,
+    terminal: bool,
+    passthrough: graphics::Passthrough,
+) -> graphics::Setting {
+    graphics::Setting {
+        images: pictures_wanted(images),
+        screen: drawn_on(settings.screen()),
+        colour: settings.color() != Some(crucible_config::Color::Never),
+        terminal,
+        passthrough,
     }
 }
 

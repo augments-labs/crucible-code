@@ -1,0 +1,21 @@
+---
+source: crates/crucible-tui/src/markdown/corpus_pictures.rs
+expression: "pictured(\"notes\", 40, Glyphs::Ascii)"
+---
+A claim with a source.<Quiet>[1]</> Another claim,
+defined later.<Quiet>[2]</>                       
+                                        
+<Quiet>Details:</> <Bold>More</>                           
+<Quiet>  </>hidden                                
+                                        
+A line broken                           
+inside it, a key <Code>[Ctrl]</>, and H<Quiet>₂</>O with   
+x<Quiet>²</>.                                     
+                                        
+An <article> tag is not in the subset.  
+                                        
+<Quiet>[1]</><Quiet> the first source</>                    
+<Quiet>[2]</><Quiet> the second source, written after it</> 
+<Quiet>was used</>                                
+                                        
+The corpus ends here.

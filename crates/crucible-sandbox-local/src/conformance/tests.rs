@@ -27,6 +27,7 @@ const LINUX_ENFORCED: &[SandboxFeature] = &[
     SandboxFeature::Materialization,
     SandboxFeature::CpuLimit,
     SandboxFeature::MemoryLimit,
+    SandboxFeature::DiskLimit,
     SandboxFeature::OpenFileLimit,
     SandboxFeature::CommandTimeLimit,
     SandboxFeature::OutputLimit,
@@ -139,10 +140,13 @@ fn windows_matrix_is_complete_and_claims_only_implemented_boundaries() {
 fn published_capability_matrix_matches_declared_backends() {
     let document = include_str!("../../../../docs/security/sandboxing.md");
     for feature in SandboxFeature::ALL {
-        // The one cell no single word states, because the answer belongs to the
-        // reader's kernel rather than to this tree. It is still one row and
-        // still exact; it is checked just below.
-        if feature == SandboxFeature::ProcessLimit {
+        // The cells no single word states, because the answer belongs to the
+        // reader's kernel or Bubblewrap rather than to this tree. Each is still
+        // one row and still exact; they are checked just below.
+        if matches!(
+            feature,
+            SandboxFeature::ProcessLimit | SandboxFeature::DiskLimit
+        ) {
             continue;
         }
         let linux = expected(feature, LINUX_ENFORCED, OBSERVED).as_str();
@@ -159,21 +163,29 @@ fn published_capability_matrix_matches_declared_backends() {
             "missing or duplicate documented capability row: {row}"
         );
     }
-    let compatibility = expected(
-        SandboxFeature::ProcessLimit,
-        COMPATIBILITY_ENFORCED,
-        OBSERVED,
-    )
-    .as_str();
-    let row = format!(
-        "| `{}` | enforced on Linux 5.14 or newer | unsupported | unsupported | {compatibility} |",
-        SandboxFeature::ProcessLimit.as_str()
-    );
-    assert_eq!(
-        document.matches(&row).count(),
-        1,
-        "missing or duplicate documented capability row: {row}"
-    );
+    for (feature, linux) in [
+        (
+            SandboxFeature::ProcessLimit,
+            "enforced on Linux 5.14 or newer",
+        ),
+        (
+            SandboxFeature::DiskLimit,
+            "enforced where Bubblewrap lists `--size`",
+        ),
+    ] {
+        let macos = expected(feature, MACOS_ENFORCED, OBSERVED).as_str();
+        let windows = expected(feature, WINDOWS_ENFORCED, OBSERVED).as_str();
+        let compatibility = expected(feature, COMPATIBILITY_ENFORCED, OBSERVED).as_str();
+        let row = format!(
+            "| `{}` | {linux} | {macos} | {windows} | {compatibility} |",
+            feature.as_str()
+        );
+        assert_eq!(
+            document.matches(&row).count(),
+            1,
+            "missing or duplicate documented capability row: {row}"
+        );
+    }
 }
 
 /// The runtime this harness awaits the audit on.

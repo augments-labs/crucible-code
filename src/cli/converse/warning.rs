@@ -1,21 +1,22 @@
 //! The question put before anything is sent on a route whose vendor says it
 //! uses what is sent to it.
 //!
-//! Asked on the drawing thread, before the work is handed to a worker, so
-//! the message is still this side's to give back; a message that would start
-//! an installed agent is asked about on that agent's own route, and says
-//! what starting it runs, unless the start would be refused whatever the
-//! answer: that message is not asked about, and goes on to be refused as a
-//! failed turn, before anything starts. Put before an installed agent is
-//! first started any other way, it is the application's question, answered
-//! on the drawing thread while the operation that asked it waits: it says the
-//! same, and the application writes down its yes. What stands is a panel
-//! with the vendor's sentence and the page it comes from; `Use it anyway`
-//! writes the yes into the user's own file and lets the work go, and
-//! anything else sends nothing. Behind it, every client the run sends through
-//! holds the route's origins until the yes is given, and a web source built
-//! for a warned model asks that model's route before each request, so a path
-//! that reached a send without passing here still sends nothing.
+//! Asked on the drawing thread, before the work is handed to a worker, so the
+//! message is still this side's to give back, and the dock's answers held back
+//! where keys are read stay in the dock, refused with their drafts kept; a
+//! message that would start an installed agent is asked about on that agent's
+//! own route, and says what starting it runs, unless the start would be refused
+//! whatever the answer: that message is not asked about, and goes on to be
+//! refused as a failed turn, before anything starts. Put before an installed
+//! agent is first started any other way, it is the application's question,
+//! answered on the drawing thread while the operation that asked it waits: it
+//! says the same, and the application writes down its yes. What stands is a
+//! panel with the vendor's sentence and the page it comes from; `Use it anyway`
+//! writes the yes into the user's own file and lets the work go, and anything
+//! else sends nothing. Behind it, every client the run sends through holds the
+//! route's origins until the yes is given, and a web source built for a warned
+//! model asks that model's route before each request, so a path that reached a
+//! send without passing here still sends nothing.
 //!
 //! A key pressed before the panel was drawn does not answer it: whatever is
 //! waiting to be read when it is about to stand is dropped, so the Enter that
@@ -23,7 +24,8 @@
 
 use crucible_app::Conversation;
 use crucible_app::content_use::{self, Warned};
-use crucible_tui::{Offered, Panel, Renderer, Terminal};
+use crucible_client_api::Author;
+use crucible_tui::{Glyphs, Offered, Panel, Renderer, Terminal};
 
 use crate::cli::Fatal;
 use crate::cli::style::Style;
@@ -36,10 +38,50 @@ use super::{Held, Terms, Work, picking};
 pub(super) enum Put {
     /// A message about to be sent.
     Send,
+    /// The application's note about a command that ended, about to start a
+    /// turn. Held back, it is dropped rather than put in the prompt box,
+    /// where it would read as the person's message.
+    Note,
+    /// The lines queued behind a turn about to be sent as the next one, or
+    /// the one Ctrl+S sent alone. Held back, they stay in the queue, or the one
+    /// line goes back to it, and the box is left as it is.
+    Queue,
+    /// The dock's answers about to be sent.
+    Answer,
+    /// Room about to be made, which sends the conversation for its recap.
+    /// There is no message to send or to keep.
+    Room,
     /// A row or a model about to be chosen.
     Choice,
     /// An installed agent about to be started for the first time.
     Launch,
+}
+
+impl Put {
+    /// The question put before `work` is sent.
+    pub(super) fn before(work: &Work) -> Self {
+        match work {
+            Work::Answer(_) => Self::Answer,
+            Work::Turn(_, _, Author::Application) => Self::Note,
+            Work::Turn(_, _, Author::Person) => Self::Send,
+            Work::Queued(..) => Self::Queue,
+            Work::Room(_) => Self::Room,
+        }
+    }
+
+    /// The answers offered, where they are fixed: all but a launch's, which
+    /// name the agent it starts.
+    pub(super) fn offered(self) -> Option<&'static [Offered<'static>]> {
+        match self {
+            Self::Send => Some(&SENDING),
+            Self::Note => Some(&NOTING),
+            Self::Queue => Some(&QUEUING),
+            Self::Answer => Some(&ANSWERING),
+            Self::Room => Some(&MAKING_ROOM),
+            Self::Choice => Some(&CHOOSING),
+            Self::Launch => None,
+        }
+    }
 }
 
 /// How the question was answered.
@@ -65,6 +107,56 @@ const SENDING: [Offered<'static>; 2] = [
     },
 ];
 
+/// The answers offered before the lines queued behind a turn are sent, which
+/// stay in the queue where they are not.
+const QUEUING: [Offered<'static>; 2] = [
+    Offered {
+        name: "Use it anyway",
+        says: "Sends what you queued; this route is not asked about again",
+    },
+    Offered {
+        name: "Go back",
+        says: "Keeps it all in the queue for your next prompt; nothing is sent",
+    },
+];
+
+/// The answers offered before the dock's answers are sent, which stay in the
+/// dock where they are not.
+const ANSWERING: [Offered<'static>; 2] = [
+    Offered {
+        name: "Use it anyway",
+        says: "Sends your answers; this route is not asked about again",
+    },
+    Offered {
+        name: "Go back",
+        says: "Keeps your answers in the dock; nothing is sent",
+    },
+];
+
+/// The answers offered before room is made.
+const MAKING_ROOM: [Offered<'static>; 2] = [
+    Offered {
+        name: "Use it anyway",
+        says: "Sends the conversation for its recap; this route is not asked about again",
+    },
+    Offered {
+        name: "Go back",
+        says: "Leaves the conversation as it is; nothing is sent",
+    },
+];
+
+/// The answers offered before the application's note starts a turn.
+const NOTING: [Offered<'static>; 2] = [
+    Offered {
+        name: "Use it anyway",
+        says: "Sends the note; this route is not asked about again",
+    },
+    Offered {
+        name: "Go back",
+        says: "Leaves the prompt box as it is; nothing is sent",
+    },
+];
+
 /// The answers offered before a choice.
 const CHOOSING: [Offered<'static>; 2] = [
     Offered {
@@ -81,19 +173,36 @@ const CHOOSING: [Offered<'static>; 2] = [
 pub(super) const CRAMPED_SEND: &str =
     "! this route needs an answer first; make the window taller and send again";
 
+/// Said where no panel fits before the lines queued behind a turn are sent.
+pub(super) const CRAMPED_QUEUE: &str = "! this route needs an answer first; make the window taller, and your queue goes with your next prompt";
+
 /// Said where the panel did not fit at a choice.
 pub(super) const CRAMPED_CHOICE: &str =
     "! this route needs an answer first; make the window taller and choose again";
 
-/// Said where no panel fits before room is made.
+/// Said where no panel fits before room is made, or before the dock's answers
+/// are sent.
 pub(super) const CRAMPED_ROOM: &str =
     "! this route needs an answer first; make the window taller and try again";
 
-/// Said once room was going to be made and nothing was sent.
+/// Said once room was going to be made, or the dock's answers were going to
+/// be sent, and nothing was sent.
 pub(super) const UNSENT: &str = "nothing was sent";
 
 /// Said once the message is back in the box.
 pub(super) const KEPT: &str = "nothing was sent; your message is back in the prompt box";
+
+/// Said once the queue is back as it was, waiting for the reader's next prompt.
+pub(super) const QUEUE_KEPT: &str =
+    "nothing was sent; your queued messages go with the next prompt you send";
+
+/// Said once the note about a command that ended was going to start a turn,
+/// and nothing was sent.
+pub(super) const DROPPED: &str = "nothing was sent; the model was not told the command ended";
+
+/// Said where no panel fits before the note about a command that ended starts
+/// a turn. There is no sending it again: the note is dropped.
+pub(super) const CRAMPED_NOTE: &str = "! this route needs an answer first; nothing was sent, so the model was not told the command ended";
 
 /// Said after the words under a run with no terminal.
 pub(super) const ELSEWHERE: &str = "Nothing was sent; answer it once in a terminal.";
@@ -115,6 +224,14 @@ pub(super) fn ask<T: Terminal>(
     ask_while(renderer, style, warned, put, &mut |_| Ok(()))
 }
 
+/// The route's name as the panel draws it.
+///
+/// The registry writes a name the way the design does, `Kimi Code · kimi.ai`;
+/// a terminal set to ASCII is sent the glyph set's own dot in its place.
+pub(super) fn named(warned: &Warned, glyphs: Glyphs) -> String {
+    warned.shown.replace('·', glyphs.dot())
+}
+
 /// [`ask`], with a running turn's drain run once a pass so what it reports
 /// goes on arriving behind the panel.
 ///
@@ -128,7 +245,7 @@ pub(super) fn ask_while<T: Terminal>(
     put: Put,
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<Answer, Fatal> {
-    let agent = &*warned.shown;
+    let agent = named(warned, style.glyphs());
     let starts = format!("Starts {agent} to check the account; this route is not asked again");
     let launching = [
         Offered {
@@ -145,13 +262,19 @@ pub(super) fn ask_while<T: Terminal>(
     } else {
         &[content_use::LAUNCHING]
     };
-    let (shown, told): (&[Offered<'_>], &[&str]) = match put {
-        // A message on an installed agent's route that starts the agent says
-        // what starting it runs, as a launch does.
-        Put::Send if content_use::launches(&warned.route) => (&SENDING, launched),
-        Put::Send => (&SENDING, &[]),
-        Put::Choice => (&CHOOSING, &[]),
-        Put::Launch => (&launching, launched),
+    let shown: &[Offered<'_>] = put.offered().unwrap_or(&launching);
+    let told: &[&str] = match put {
+        // A message, a note, the queue or an answer on an installed agent's
+        // route that starts the agent says what starting it runs, as a launch
+        // does.
+        Put::Send | Put::Note | Put::Queue | Put::Answer
+            if content_use::launches(&warned.route) =>
+        {
+            launched
+        }
+        Put::Launch => launched,
+        // Room is not made on an agent's route, so making it starts nothing.
+        Put::Send | Put::Note | Put::Queue | Put::Answer | Put::Room | Put::Choice => &[],
     };
     let cited = warned.warning.cited();
     let footer = format!("enter to choose {} esc to go back", style.glyphs().dot());
@@ -164,7 +287,7 @@ pub(super) fn ask_while<T: Terminal>(
         &mut at,
         |marked, columns, _| {
             let panel = Panel {
-                title: &warned.shown,
+                title: &agent,
                 said: Some(&warned.warning.sentence),
                 source: Some(&cited),
                 told,
@@ -200,8 +323,13 @@ pub(super) fn recorded(terms: &Terms, warned: &Warned) -> Result<(), String> {
 
 /// Whether `work` is held back rather than sent: asked about first where the
 /// route it would go on has no yes, and handed back whole where the answer
-/// was anything but yes. A turn [`Conversation::unlaunchable`] refuses is not
-/// held: it goes on to that refusal unasked.
+/// was anything but yes, or a yes that could not be written down. The
+/// application's note about a command that ended is not handed back: it is
+/// dropped, and the prompt box keeps what it held. The queue's turn is handed
+/// back to the queue, which waits for the reader (see
+/// [`super::queueing::taken`]), and the box keeps what it held. A turn
+/// [`Conversation::unlaunchable`] refuses is not held: it goes on to that
+/// refusal unasked.
 ///
 /// # Errors
 ///
@@ -217,7 +345,8 @@ pub(super) fn held<T: Terminal>(
     // Every route that holds the send is asked about in turn: two warned
     // routes at one origin each keep the request back until each has its
     // yes. A yes is written down before the next question, so a route comes
-    // back only where its yes could not be, and that is said and stops here.
+    // back only where its yes could not be, and that is said, with what
+    // became of the work, and stops here.
     let said = loop {
         let Some(warned) = unsent(conversation, terms, work) else {
             return Ok(false);
@@ -225,7 +354,7 @@ pub(super) fn held<T: Terminal>(
         // A turn that would be refused before it started the agent, whatever
         // the answer, is not asked about: it goes on to be refused as it
         // would be after a yes, drawn as a failed turn is, and nothing starts.
-        if let Work::Turn(_, attached) = work
+        if let Work::Turn(_, attached, _) | Work::Queued(_, attached) = work
             && conversation.unlaunchable(attached).is_err()
         {
             return Ok(false);
@@ -235,23 +364,62 @@ pub(super) fn held<T: Terminal>(
         if !held.answers.keys {
             return Err(Fatal::Unanswered(unanswered(&warned)));
         }
-        break match ask(renderer, terms.style(), &warned, Put::Send)? {
+        break match ask(renderer, terms.style(), &warned, Put::before(work))? {
+            // Nothing was sent where the yes could not be written down, as
+            // after going back, so what became of the work is said after why.
             Answer::Yes => match recorded(terms, &warned) {
                 Ok(()) => continue,
-                Err(said) => said,
+                Err(why) => {
+                    renderer.commit(&why)?;
+                    left(work, false).to_owned()
+                }
             },
-            // Room to be made has no message to give back.
-            Answer::Back if matches!(work, Work::Room(_)) => UNSENT.to_owned(),
-            Answer::Cramped if matches!(work, Work::Room(_)) => CRAMPED_ROOM.to_owned(),
-            Answer::Back => KEPT.to_owned(),
-            Answer::Cramped => CRAMPED_SEND.to_owned(),
+            Answer::Back => left(work, false).to_owned(),
+            Answer::Cramped => left(work, true).to_owned(),
         };
     };
-    if let Work::Turn(prompt, _) = work {
+    if let Some(prompt) = returned(work) {
         held.editor.put(prompt);
+    }
+    if let Work::Queued(prompt, _) = work {
+        held.queued.kept(prompt, &terms.steer);
+        held.left_to_reader = true;
     }
     renderer.commit(&said)?;
     Ok(true)
+}
+
+/// What is said once `work` was held back unsent, where the panel was answered
+/// with no or with a yes that could not be written down, or did not fit where
+/// `cramped`. Room to be made has no message to give back and the dock's
+/// answers stay in the dock; the application's note is not the person's to
+/// have back, and is dropped; the queued lines stay queued.
+pub(super) fn left(work: &Work, cramped: bool) -> &'static str {
+    match (work, cramped) {
+        (Work::Turn(_, _, Author::Person), false) => KEPT,
+        (Work::Turn(_, _, Author::Person), true) => CRAMPED_SEND,
+        (Work::Turn(_, _, Author::Application), false) => DROPPED,
+        (Work::Turn(_, _, Author::Application), true) => CRAMPED_NOTE,
+        (Work::Queued(..), false) => QUEUE_KEPT,
+        (Work::Queued(..), true) => CRAMPED_QUEUE,
+        (Work::Room(_) | Work::Answer(_), false) => UNSENT,
+        (Work::Room(_) | Work::Answer(_), true) => CRAMPED_ROOM,
+    }
+}
+
+/// The message held back that goes back in the prompt box: only one the
+/// person wrote in it. Putting it back replaces what the box holds, so the
+/// application's note would overwrite a half-typed line and then be sent as
+/// the person's own, and the queue's first line would overwrite it and leave
+/// the lines behind it to be asked about one by one.
+pub(super) fn returned(work: &Work) -> Option<&str> {
+    match work {
+        Work::Turn(prompt, _, Author::Person) => Some(prompt),
+        Work::Turn(_, _, Author::Application)
+        | Work::Queued(..)
+        | Work::Room(_)
+        | Work::Answer(_) => None,
+    }
 }
 
 /// What a run with no terminal says when `warned` has no yes: the route's
@@ -269,15 +437,22 @@ pub(super) fn unanswered(warned: &Warned) -> Box<str> {
 /// The warned route `work` would go on with no yes: the one a send to the
 /// conversation's provider is held by, or on an installed agent's route, the
 /// agent's own where the turn would start it. Room is not made on an agent's
-/// route, so nothing is started for it. Both are read from the yes the
-/// question writes to, so a route answered here is not asked again.
+/// route, so nothing is started for it. Either route is read from the yes the
+/// question writes to, so a route answered here is not asked again. The dock's
+/// answers that reach this are asked about as a turn would be, and always:
+/// the check that spares a turn the question when it would be refused before
+/// it started the agent is made in `held` for a turn alone, so an answer is
+/// asked about whatever its launch would do. Ones with nothing left to settle
+/// were refused before it.
 fn unsent(conversation: &Conversation, terms: &Terms, work: &Work) -> Option<Warned> {
     match conversation.serving() {
         Some(provider) => terms
             .consent
             .unanswered(provider, conversation.settled().model()),
         None => match work {
-            Work::Turn(..) => terms.consent.asks(&conversation.launching()?),
+            Work::Turn(..) | Work::Queued(..) | Work::Answer(_) => {
+                terms.consent.asks(&conversation.launching()?)
+            }
             Work::Room(_) => None,
         },
     }

@@ -1,0 +1,11 @@
+---
+source: crates/crucible-tui/src/chrome.rs
+expression: "picture(RUST, 64, Glyphs::Unicode)"
+---
+A fence that names its language:                                
+                                                                
+<Quiet>┌─ rust</>                                                         
+<Quiet>│ </><Keyword>fn</> <Name>main</>() {                                                   
+<Quiet>│ </>    <Keyword>let</> value <Operator>=</> compute(one, two);                            
+<Quiet>│ </>}                                                             
+<Quiet>└─</>

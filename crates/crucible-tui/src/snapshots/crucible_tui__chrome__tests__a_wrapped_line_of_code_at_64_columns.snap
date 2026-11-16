@@ -1,0 +1,10 @@
+---
+source: crates/crucible-tui/src/chrome.rs
+expression: "picture(WRAPPED, 64, Glyphs::Unicode)"
+---
+A line longer than the window:                                  
+                                                                
+<Quiet>┌─ rust</>                                                         
+<Quiet>│ </><Keyword>let</> total <Operator>=</> first_value <Operator>+</> second_value <Operator>+</> third_value <Operator>+</> fourth_
+<Quiet>┆ </>value <Operator>+</> fifth_value;                                          
+<Quiet>└─</>

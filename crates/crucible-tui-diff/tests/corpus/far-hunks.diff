@@ -1,0 +1,11 @@
+--- a/far.txt
++++ b/far.txt
+@@ -1,1 +1,1 @@
+-a
++b
+@@ -900000000,1 +900000000,1 @@ at the far end
+-c
++d
+@@ -5,1 +5,1 @@ backwards
+-e
++f

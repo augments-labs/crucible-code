@@ -14,7 +14,7 @@ use super::*;
 use crate::color::{Palette, Slot, Theme};
 use crate::prompt::Prompt;
 use crate::row::Row;
-use crate::terminal::{Picture, Recording};
+use crate::terminal::{Picture, Recording, graphics};
 
 /// A renderer on a window of the given size, and the screen it has drawn so
 /// far.
@@ -175,6 +175,7 @@ fn replacing_the_foot_flushes_turn_prompt_and_status_once() {
                 rows: &old,
                 caret: Caret::default(),
                 pointed: None,
+                over: None,
             },
             &[Row::plain("old turn")],
             Palette::plain(),
@@ -189,6 +190,7 @@ fn replacing_the_foot_flushes_turn_prompt_and_status_once() {
                 rows: &new,
                 caret: Caret::default(),
                 pointed: None,
+                over: None,
             },
             &[Row::plain("new turn")],
             Palette::plain(),
@@ -229,6 +231,7 @@ fn a_pointable_prompt_defers_one_frame_until_its_target_is_replaced() {
                 rows: &prompt,
                 caret: Caret::default(),
                 pointed: Some((1, &pointed)),
+                over: None,
             },
             &[],
             colourful(),
@@ -251,6 +254,7 @@ fn a_pointable_prompt_defers_one_frame_until_its_target_is_replaced() {
                 rows: &prompt,
                 caret: Caret::default(),
                 pointed: Some((1, &pointed)),
+                over: None,
             },
             &[],
             colourful(),
@@ -285,6 +289,7 @@ fn a_pointable_prompt_defers_one_frame_until_its_target_is_replaced() {
                 rows: &prompt,
                 caret: Caret::default(),
                 pointed: Some((1, &pointed)),
+                over: None,
             },
             &[],
             colourful(),
@@ -552,6 +557,72 @@ fn a_resize_that_changed_nothing_writes_nothing() {
     assert_eq!(drawn.render.terminal.written(), "");
 }
 
+// What the session draws pictures with.
+
+/// Kitty's protocol in a cell `width` by `height` pixels.
+fn kitty_in(width: u16, height: u16) -> graphics::Capability {
+    graphics::Capability::Graphics {
+        protocol: graphics::Protocol::Kitty,
+        cell: graphics::Cell { width, height },
+    }
+}
+
+#[test]
+fn a_renderer_draws_text_until_it_is_told_what_the_terminal_draws() {
+    let mut drawn = Drawn::new(40, 10);
+    assert_eq!(drawn.render.capability(), graphics::Capability::Text);
+
+    drawn.render.images(kitty_in(9, 18));
+
+    assert_eq!(drawn.render.capability(), kitty_in(9, 18));
+}
+
+#[test]
+fn a_resize_reads_the_windows_cell_again() {
+    // A font made larger: the window has fewer cells, each of more pixels.
+    let mut drawn = Drawn::new(40, 10);
+    drawn.render.terminal.measures(Some(graphics::Cell {
+        width: 9,
+        height: 18,
+    }));
+    drawn.render.images(kitty_in(9, 18));
+
+    drawn.render.terminal.resize(30, 8);
+    drawn.render.terminal.measures(Some(graphics::Cell {
+        width: 12,
+        height: 24,
+    }));
+    drawn.resized().unwrap();
+
+    assert_eq!(drawn.render.capability(), kitty_in(12, 24));
+}
+
+#[test]
+fn a_resize_the_window_reports_no_pixels_for_keeps_the_cell_it_had() {
+    let mut drawn = Drawn::new(40, 10);
+    drawn.render.images(kitty_in(9, 18));
+
+    drawn.render.terminal.resize(30, 8);
+    drawn.render.terminal.measures(None);
+    drawn.resized().unwrap();
+
+    assert_eq!(drawn.render.capability(), kitty_in(9, 18));
+}
+
+#[test]
+fn a_resize_leaves_text_as_text_whatever_the_window_reports() {
+    let mut drawn = Drawn::new(40, 10);
+    drawn.render.terminal.measures(Some(graphics::Cell {
+        width: 9,
+        height: 18,
+    }));
+
+    drawn.render.terminal.resize(30, 8);
+    drawn.resized().unwrap();
+
+    assert_eq!(drawn.render.capability(), graphics::Capability::Text);
+}
+
 #[test]
 fn a_resize_keeps_what_was_standing_cut_at_the_new_width() {
     // A box laid out against a window that has gone stays on screen until the
@@ -641,6 +712,7 @@ fn a_resize_drops_a_stale_prompt_hover_target_until_replacement_reflows_it() {
                 rows: &prompt,
                 caret: Caret::default(),
                 pointed: Some((1, &pointed)),
+                over: None,
             },
             &[],
             colourful(),
@@ -670,6 +742,7 @@ fn a_resize_drops_a_stale_prompt_hover_target_until_replacement_reflows_it() {
                 rows: &prompt,
                 caret: Caret::default(),
                 pointed: Some((1, &pointed)),
+                over: None,
             },
             &[],
             colourful(),
@@ -717,6 +790,83 @@ fn a_format_character_from_elsewhere_reaches_no_screen_and_no_file() {
         assert!(!written.contains('\u{2067}'), "{written:?}");
         assert!(written.contains("result txt.exe"), "{written:?}");
     }
+}
+
+#[test]
+fn a_redirected_run_is_written_a_table_without_outer_bars_as_the_table_and_never_its_header() {
+    // What a file is given cannot be taken back, so a line that may be a
+    // header is not written until the delimiter row under it says what it is:
+    // the file has the table once, and no row of it as prose.
+    let table = "name | since\n--|--\nalpha | 0.1\n";
+    let answer = format!("before\n{table}\nafter\n");
+    let whole = {
+        let mut render = Renderer::new(Recording::redirected(80, 24));
+        render.wears(colourful());
+        render.stream(&answer).unwrap();
+        render.settle().unwrap();
+        render.terminal.written().to_owned()
+    };
+    assert!(whole.contains('│'), "{whole:?}");
+    assert!(
+        !whole.contains("--|--") && !whole.contains("name | since"),
+        "{whole:?}"
+    );
+
+    // A character at a time, and cut once at every offset.
+    let mut render = Renderer::new(Recording::redirected(80, 24));
+    render.wears(colourful());
+    for piece in answer.chars() {
+        render.stream(&piece.to_string()).unwrap();
+    }
+    render.settle().unwrap();
+    assert_eq!(render.terminal.written(), whole);
+
+    for cut in 0..=answer.len() {
+        let (first, second) = answer.split_at(cut);
+        let mut render = Renderer::new(Recording::redirected(80, 24));
+        render.wears(colourful());
+        render.stream(first).unwrap();
+        render.stream(second).unwrap();
+        render.settle().unwrap();
+        assert_eq!(render.terminal.written(), whole, "cut at {cut}");
+    }
+}
+
+#[test]
+fn a_redirected_run_has_not_written_a_line_that_may_still_be_a_header() {
+    let mut render = Renderer::new(Recording::redirected(80, 24));
+    render.wears(colourful());
+    render.stream("before\nname | sin").unwrap();
+    assert_eq!(render.terminal.written(), "before\n");
+
+    // Not a header after all: the line is written, whole, and so is the next
+    // one once its break has shown it is no underline either.
+    render.stream("ce\nnot a delimiter\n\n").unwrap();
+    assert_eq!(
+        render.terminal.written(),
+        "before\nname | since\nnot a delimiter\n\n"
+    );
+}
+
+#[test]
+fn a_recording_that_is_no_screen_draws_a_table_written_without_outer_bars_as_one() {
+    // How a session is previewed: replayed onto a renderer over a recording
+    // that stands in for a pipe, so that nothing repaints, wearing the palette
+    // of the screen, and read back as rows. The rows are what picking the
+    // session up would draw.
+    let mut preview = Renderer::new(Recording::redirected(40, 20));
+    preview.wears(colourful());
+    preview
+        .stream("name | what it does\n--|--\nalpha | first\n")
+        .unwrap();
+    preview.settle().unwrap();
+    let rows: Vec<String> = preview.tail(20).iter().map(Row::text).collect();
+
+    let mut live = reading(40, 20);
+    live.answer("name | what it does\n--|--\nalpha | first\n");
+    assert!(rows.iter().any(|row| row.contains('│')), "{rows:#?}");
+    assert!(!rows.iter().any(|row| row.contains("--|--")), "{rows:#?}");
+    assert_eq!(rows, kept(&live).1);
 }
 
 #[test]
@@ -1771,6 +1921,7 @@ fn counting() -> (Drawn, usize) {
                 rows: &prompt,
                 caret: Caret::default(),
                 pointed: Some((1, &pointed)),
+                over: None,
             },
             &[],
             colourful(),
@@ -2195,6 +2346,7 @@ fn a_pointer_on_the_rail_asks_for_a_frame_only_when_the_row_under_it_changes() {
                 rows: &prompt,
                 caret: Caret::default(),
                 pointed: Some((1, &pointed)),
+                over: None,
             },
             &[],
             Palette::plain(),
@@ -2742,6 +2894,7 @@ fn running(drawn: &mut Drawn, turn: &[Row], over: &[Row]) {
                 rows: &rows,
                 caret,
                 pointed: None,
+                over: None,
             },
             turn,
             over,
@@ -2983,4 +3136,1848 @@ fn a_recall_as_a_wait_ends_calls_it_off() {
         matches!(pressed, Err(TerminalError::Recalled)),
         "{pressed:?}"
     );
+}
+
+/// A renderer on a window of the given size that reads markdown, as a session
+/// with colour does.
+fn reading(columns: usize, rows: usize) -> Drawn {
+    let mut drawn = Drawn::new(columns, rows);
+    drawn.wears(colourful());
+    drawn
+}
+
+impl Drawn {
+    /// One whole answer, as one delta, then the end of the message.
+    fn answer(&mut self, text: &str) {
+        self.render.stream(text).unwrap();
+        self.render.settle().unwrap();
+    }
+
+    /// One answer cut into deltas at the given byte offsets.
+    fn answer_in_pieces(&mut self, text: &str, cuts: &[usize]) {
+        let mut from = 0;
+        for &cut in cuts {
+            if cut > from && text.is_char_boundary(cut) {
+                self.render.stream(&text[from..cut]).unwrap();
+                from = cut;
+            }
+        }
+        self.render.stream(&text[from..]).unwrap();
+        self.render.settle().unwrap();
+    }
+
+    /// Makes the window this size and tells the renderer.
+    fn resize(&mut self, columns: usize, rows: usize) {
+        self.render.terminal.resize(columns, rows);
+        self.render.resized().unwrap();
+    }
+
+    /// Every row of the window, as words.
+    fn rows(&self) -> Vec<String> {
+        self.screen().said()
+    }
+}
+
+/// The table the narrowing cases draw: about fifty columns at its natural
+/// width.
+const TABLE: &str = "| name | what it does | since |\n|---|---|---|\n\
+     | alpha | reads the markdown out of a stream | 0.1 |\n\
+     | beta | lays a table against the window | 0.2 |\n";
+
+#[test]
+fn a_table_narrowed_is_the_table_a_window_that_narrow_draws() {
+    // The oracle is the same build drawing the same answer at the new width
+    // from the start, so whatever narrowing rule is in force is the rule a
+    // resize follows too.
+    let mut fresh = reading(30, 20);
+    fresh.answer(TABLE);
+
+    let mut drawn = reading(60, 20);
+    drawn.answer(TABLE);
+    drawn.resize(30, 20);
+
+    assert_eq!(drawn.rows(), fresh.rows());
+}
+
+#[test]
+fn a_table_that_fits_keeps_one_window_row_per_table_row() {
+    // Every table row fits one window row at its natural width.
+    let mut drawn = reading(80, 20);
+    drawn.answer(TABLE);
+    drawn.resize(56, 20);
+
+    let rows: Vec<String> = drawn
+        .rows()
+        .into_iter()
+        .filter(|row| !row.trim().is_empty())
+        .collect();
+    assert_eq!(rows.len(), 4, "{rows:#?}");
+    for row in rows
+        .iter()
+        .enumerate()
+        .filter(|(at, _)| *at != 1)
+        .map(|(_, row)| row)
+    {
+        assert_eq!(row.matches('│').count(), 2, "{row:?} lost a column bar");
+    }
+}
+
+#[test]
+fn a_table_narrowed_and_widened_again_is_the_table_it_was() {
+    let mut drawn = reading(60, 20);
+    drawn.answer("| a | b |\n|---|---|\n| one | two |\n");
+    let before = drawn.rows();
+    drawn.resize(12, 20);
+    drawn.resize(60, 20);
+
+    assert_eq!(drawn.rows(), before);
+}
+
+/// A table written without its outer bars.
+const BARE_TABLE: &str = "name | what it does | since\n--|--|--\n\
+     alpha | reads the markdown out of a stream | 0.1\n\
+     beta | lays a table against the window | 0.2\n";
+
+#[test]
+fn a_table_written_without_outer_bars_is_drawn_as_a_table() {
+    let mut drawn = reading(40, 8);
+    drawn.answer("a | b\n--|--\n1 | 2\n");
+
+    let rows = drawn.rows();
+    assert!(!rows.iter().any(|row| row.contains("--|--")), "{rows:#?}");
+    assert!(rows.iter().any(|row| row.contains('│')), "{rows:#?}");
+}
+
+#[test]
+fn a_line_still_arriving_is_on_screen_whatever_it_could_turn_out_to_be() {
+    // Prose that is not a table is not made to wait for the one that is: a
+    // line that starts like a header is drawn as the prose it is so far.
+    let mut drawn = reading(40, 8);
+    drawn.render.stream("It is started. That is all.").unwrap();
+
+    let rows = drawn.rows();
+    assert!(
+        rows.iter().any(|row| row.contains("That is all.")),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_header_stalled_part_way_is_drawn_as_the_prose_it_is_until_the_delimiter_row_decides() {
+    let mut drawn = reading(40, 8);
+    let shown = |drawn: &Drawn, needle: &str| drawn.rows().iter().any(|row| row.contains(needle));
+
+    drawn.render.stream("before\n\nname | wha").unwrap();
+    assert!(shown(&drawn, "name | wha"), "{:#?}", drawn.rows());
+
+    // The line is whole and nothing says yet what it is a header of.
+    drawn.render.stream("t it does\n").unwrap();
+    assert!(shown(&drawn, "name | what it does"), "{:#?}", drawn.rows());
+
+    // The delimiter row decides: the header is no longer a line of prose, and
+    // the table is not drawn in part either.
+    drawn.render.stream("--|--\n").unwrap();
+    let rows = drawn.rows();
+    assert!(!shown(&drawn, "name | what it does"), "{rows:#?}");
+    assert!(!shown(&drawn, "--|--"), "{rows:#?}");
+    assert!(!rows.iter().any(|row| row.contains('│')), "{rows:#?}");
+
+    drawn.render.stream("alpha | first\n\n").unwrap();
+    let rows = drawn.rows();
+    assert!(rows.iter().any(|row| row.contains('│')), "{rows:#?}");
+
+    // Nothing the table owns was left in the record as a line of prose.
+    drawn.render.settle().unwrap();
+    let (_, kept) = kept(&drawn);
+    assert!(
+        !kept
+            .iter()
+            .any(|row| row.contains("name | what") || row.contains("--|--")),
+        "{kept:#?}"
+    );
+    assert!(
+        kept.iter()
+            .any(|row| row.contains("name") && row.contains('│')),
+        "{kept:#?}"
+    );
+}
+
+#[test]
+fn a_frame_drawn_while_a_header_is_in_doubt_leaves_what_drawing_the_whole_answer_leaves() {
+    // The app draws a frame between deltas, with its own rows under the
+    // transcript. Whichever byte the answer is cut at, so that one falls
+    // inside the header, between it and the delimiter row, or inside the
+    // delimiter row, the screen and the record end up what one delta gives.
+    let answer = "before\n\nname | what it does\n--|--\nalpha | first\n\nafter\n";
+    let mut fresh = reading(40, 10);
+    fresh.answer(answer);
+    fresh.under(&[], None, colourful()).unwrap();
+
+    for cut in 0..=answer.len() {
+        let (first, second) = answer.split_at(cut);
+        let mut drawn = reading(40, 10);
+        drawn.render.stream(first).unwrap();
+        drawn.under(&standing(), None, colourful()).unwrap();
+        drawn.render.stream(second).unwrap();
+        drawn.render.settle().unwrap();
+        drawn.under(&[], None, colourful()).unwrap();
+
+        assert_eq!(drawn.rows(), fresh.rows(), "cut at {cut}");
+        assert_eq!(kept(&drawn), kept(&fresh), "cut at {cut}");
+    }
+
+    // The oracle is the same build, so say what it is: a table, and no line of
+    // the header or of the delimiter row left over as prose.
+    let rows = fresh.rows();
+    assert!(rows.iter().any(|row| row.contains('│')), "{rows:#?}");
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row.contains("name | what") || row.contains("--|--")),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_component_presented_while_a_header_is_in_doubt_ends_it_as_the_prose_it_was() {
+    // The rows of a component end the line the transcript was on, so a header
+    // that is still only a guess is the prose it looked like: the record is
+    // what it is for the same words with nothing in them that could be a
+    // header, with no row of the answer's own missing, repeated or made blank.
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let run = |cut: &str| {
+            let mut drawn = reading(40, 12);
+            drawn.render.stream(&format!("before\n\n{cut}")).unwrap();
+            drawn.render.present(&[Row::plain("component")]).unwrap();
+            drawn.render.stream("\nafter\n").unwrap();
+            drawn.render.settle().unwrap();
+            kept(&drawn).1
+        };
+        let doubtful = run(cut);
+        let plain: Vec<String> = run(&cut.replace('|', "-"))
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_line_written_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // Every call that writes under the line an answer left open ends a header
+    // that is still only a guess first, as presenting rows does: what is
+    // written is under the prose, and the delimiter row that comes later has
+    // no header left to turn into a table or to take back.
+    let calls: [(&str, Writes); 2] = [
+        ("commit", |render| render.commit("note").unwrap()),
+        ("prompt", |render| {
+            render.prompt(Slot::Plain, "note").unwrap();
+        }),
+    ];
+    for (name, call) in calls {
+        for cut in [
+            "name | what it does\n",
+            "name | what",
+            "name | what it does\n--",
+        ] {
+            let run = |cut: &str| {
+                let mut drawn = reading(40, 12);
+                drawn.render.stream(&format!("before\n\n{cut}")).unwrap();
+                call(&mut drawn.render);
+                drawn
+                    .render
+                    .stream("\n--|--\nalpha | 0.1\n\nafter\n")
+                    .unwrap();
+                drawn.render.settle().unwrap();
+                kept(&drawn).1
+            };
+            let doubtful = run(cut);
+            let plain: Vec<String> = run(&cut.replace('|', "-"))
+                .iter()
+                .map(|row| row.replace(" - ", " | "))
+                .collect();
+
+            assert!(
+                doubtful
+                    .iter()
+                    .filter(|row| row.contains("name | what"))
+                    .count()
+                    == 1,
+                "{name} {cut:?}: {doubtful:#?}"
+            );
+            assert_eq!(doubtful, plain, "{name} {cut:?}");
+        }
+    }
+}
+
+/// A call that writes under the line an answer left open.
+type Writes = fn(&mut Renderer<Recording>);
+
+/// What the record keeps when `call` writes under an answer cut at `cut`,
+/// then the rest of the answer arrives, delimiter row and all.
+fn laid_under_the_cut(cut: &str, call: Writes) -> Vec<String> {
+    let mut drawn = reading(40, 12);
+    drawn.render.stream(&format!("before\n\n{cut}")).unwrap();
+    call(&mut drawn.render);
+    drawn
+        .render
+        .stream("\n--|--\nalpha | 0.1\n\nafter\n")
+        .unwrap();
+    drawn.render.settle().unwrap();
+    kept(&drawn).1
+}
+
+#[test]
+fn a_responsive_block_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // A block that keeps what lays it ends the line an answer left open, as
+    // presenting rows does, so a header that is still only a guess is the
+    // prose it looked like: said once, with no blank row added and no table
+    // made of it when the delimiter row comes later.
+    let call: Writes = |render| {
+        render
+            .responsive(9, Box::new(|_| vec![Row::plain("component")]))
+            .unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = laid_under_the_cut(cut, call);
+        let plain: Vec<String> = laid_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_block_charged_as_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // As a responsive block, for the one whose rows are what it is charged:
+    // the header still in doubt is the prose it looked like, said once.
+    let call: Writes = |render| {
+        render
+            .responsive_as_laid(Box::new(|_| vec![Row::plain("component")]))
+            .unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = laid_under_the_cut(cut, call);
+        let plain: Vec<String> = laid_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn an_opening_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // The opening keeps what lays it too, and ends the line an answer left
+    // open the same way: the header still in doubt is the prose it looked
+    // like, said once.
+    let call: Writes = |render| {
+        render
+            .opens(Box::new(|_, _| vec![Row::plain("component")]))
+            .unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = laid_under_the_cut(cut, call);
+        let plain: Vec<String> = laid_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_divider_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // A divider is a row of its own under the line an answer left open, so a
+    // header still in doubt is the prose it looked like when one is laid:
+    // said once, and no table made of it when the delimiter row comes later.
+    let call: Writes = |render| render.divides("new session").unwrap();
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = laid_under_the_cut(cut, call);
+        let plain: Vec<String> = laid_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_transcript_emptied_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // Emptying the transcript ends the line an answer left open with
+    // everything else, so a header still in doubt is the prose it looked like
+    // and goes with it: no blank row is left for it and no table is made of it
+    // when the delimiter row comes later.
+    let call: Writes = |render| render.empties().unwrap();
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = laid_under_the_cut(cut, call);
+        let plain: Vec<String> = laid_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            0,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn an_answer_hung_while_a_header_is_in_doubt_ends_it_as_the_prose_it_was() {
+    // Hanging what was written under a result mark ends the line an answer
+    // left open, so a header still in doubt is marked as the prose it looked
+    // like, said once, and the delimiter row that comes later makes no table.
+    let call: Writes = |render| {
+        let last = render.lines().saturating_sub(1);
+        render.subordinate(last, Glyphs::Unicode).unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = laid_under_the_cut(cut, call);
+        let plain: Vec<String> = laid_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_table_written_without_outer_bars_narrowed_is_the_table_a_window_that_narrow_draws() {
+    let mut fresh = reading(30, 20);
+    fresh.answer(BARE_TABLE);
+    let rows = fresh.rows();
+    assert!(
+        rows.iter().filter(|row| row.contains('│')).count() >= 3,
+        "{rows:#?}"
+    );
+
+    let mut drawn = reading(60, 20);
+    drawn.answer(BARE_TABLE);
+    drawn.resize(30, 20);
+
+    assert_eq!(drawn.rows(), fresh.rows());
+}
+
+#[test]
+fn a_table_written_without_outer_bars_draws_its_structure_in_the_glyphs_worn() {
+    let mut drawn = reading(40, 8);
+    drawn.render.draws(Glyphs::Ascii);
+    drawn.answer("a | b\n--|--\n1 | 2\n");
+
+    let rows: Vec<String> = drawn
+        .rows()
+        .into_iter()
+        .map(|row| row.trim_end().to_owned())
+        .filter(|row| !row.is_empty())
+        .collect();
+    assert_eq!(rows, ["a | b", "--+--", "1 | 2"], "{rows:#?}");
+}
+
+#[test]
+fn the_corpus_table_written_without_outer_bars_is_drawn_as_a_table() {
+    // The rows the width sweep compares, so what is asserted here is what the
+    // sweep holds every width to.
+    let answer = crate::markdown::corpus::answer("tables").expect("the tables answer");
+    for columns in [40, 80, 120] {
+        let mut drawn = reading(columns, 8);
+        drawn.answer(answer);
+
+        let (_, rows) = kept(&drawn);
+        assert!(
+            !rows.iter().any(|row| row.contains("--|--|--")),
+            "{rows:#?}"
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("delta") && row.contains('│')),
+            "at {columns}: {rows:#?}"
+        );
+    }
+}
+
+#[test]
+fn a_rule_narrowed_is_still_one_row() {
+    let mut drawn = reading(40, 10);
+    drawn.answer("above\n\n---\n\nbelow\n");
+    drawn.resize(25, 10);
+
+    let rows = drawn.rows();
+    let ruled: Vec<&String> = rows.iter().filter(|row| row.contains('─')).collect();
+    assert_eq!(
+        ruled
+            .iter()
+            .map(|row| crate::width::columns(row))
+            .collect::<Vec<_>>(),
+        [25],
+        "{rows:#?}"
+    );
+}
+
+mod diagrams;
+pub(super) mod drawers;
+mod escapes;
+mod headings;
+mod links;
+mod math;
+mod notes;
+mod strikes;
+mod writing;
+
+/// The words of an item that wraps at thirty columns, three rows or more.
+const LONG: &str = "long enough that it has to wrap onto another row, and then one more";
+
+/// The rows of `answer` at thirty columns that are not blank.
+fn drawn_at_thirty(answer: &str, glyphs: Glyphs) -> Vec<String> {
+    let mut drawn = reading(30, 12);
+    drawn.render.draws(glyphs);
+    drawn.answer(answer);
+    drawn
+        .rows()
+        .into_iter()
+        .map(|row| row.trim_end().to_owned())
+        .filter(|row| !row.is_empty())
+        .collect()
+}
+
+/// The first of `rows`, or nothing where there is none.
+fn first_of(rows: &[String]) -> &str {
+    rows.first().map_or("", String::as_str)
+}
+
+/// How many columns of blank stand in front of `row`'s first word.
+fn indent(row: &str) -> usize {
+    row.len() - row.trim_start().len()
+}
+
+#[test]
+fn a_wrapped_bullet_hangs_under_its_words() {
+    let rows = drawn_at_thirty(&format!("- a bullet item {LONG}\n"), Glyphs::Unicode);
+
+    assert!(rows.len() > 2, "{rows:#?}");
+    assert!(first_of(&rows).starts_with("• a bullet"), "{rows:#?}");
+    for row in rows.iter().skip(1) {
+        assert_eq!(indent(row), 2, "{row:?} does not hang under the words");
+    }
+}
+
+#[test]
+fn a_wrapped_task_hangs_under_its_words() {
+    for (answer, first) in [
+        (format!("- [ ] a task {LONG}\n"), "□ a task"),
+        (format!("- [x] a task {LONG}\n"), "✓ a task"),
+    ] {
+        let rows = drawn_at_thirty(&answer, Glyphs::Unicode);
+
+        assert!(first_of(&rows).starts_with(first), "{rows:#?}");
+        for row in rows.iter().skip(1) {
+            assert_eq!(indent(row), 2, "{row:?} does not hang under the words");
+        }
+    }
+}
+
+#[test]
+fn a_wrapped_numbered_item_hangs_under_its_own_number() {
+    let rows = drawn_at_thirty(
+        &format!("1. a numbered item {LONG}\n\n10. a longer number {LONG}\n"),
+        Glyphs::Unicode,
+    );
+
+    let tenth = rows
+        .iter()
+        .position(|row| row.starts_with("10. "))
+        .unwrap_or_default();
+    assert!(tenth > 2, "{rows:#?}");
+    for row in rows.iter().take(tenth).skip(1) {
+        assert_eq!(indent(row), 3, "{row:?} does not hang under the words");
+    }
+    for row in rows.iter().skip(tenth + 1) {
+        assert_eq!(indent(row), 4, "{row:?} does not hang under the words");
+    }
+}
+
+#[test]
+fn a_wrapped_nested_item_hangs_under_its_words_not_its_parents() {
+    let rows = drawn_at_thirty(
+        &format!("- an outer item\n  - a nested item {LONG}\n"),
+        Glyphs::Unicode,
+    );
+
+    assert_eq!(first_of(&rows), "• an outer item", "{rows:#?}");
+    assert!(
+        rows.get(1)
+            .is_some_and(|row| row.starts_with("  • a nested item")),
+        "{rows:#?}"
+    );
+    for row in rows.iter().skip(2) {
+        assert_eq!(indent(row), 4, "{row:?} does not hang under the words");
+    }
+}
+
+#[test]
+fn a_wrapped_item_hangs_under_its_words_in_ascii_too() {
+    let rows = drawn_at_thirty(&format!("- a bullet item {LONG}\n"), Glyphs::Ascii);
+
+    assert!(first_of(&rows).starts_with("- a bullet"), "{rows:#?}");
+    for row in rows.iter().skip(1) {
+        assert_eq!(indent(row), 2, "{row:?} does not hang under the words");
+    }
+}
+
+#[test]
+fn a_wrapped_quote_keeps_its_bar_on_every_row() {
+    let rows = drawn_at_thirty(&format!("> a quote {LONG}\n"), Glyphs::Unicode);
+
+    assert!(rows.len() > 2, "{rows:#?}");
+    for row in &rows {
+        assert!(row.starts_with("│ "), "{row:?} lost the quote bar");
+    }
+}
+
+#[test]
+fn a_wrapped_quote_keeps_its_bar_in_ascii_too() {
+    let rows = drawn_at_thirty(&format!("> a quote {LONG}\n"), Glyphs::Ascii);
+
+    assert!(rows.len() > 2, "{rows:#?}");
+    for row in &rows {
+        assert!(row.starts_with("| "), "{row:?} lost the quote bar");
+    }
+}
+
+#[test]
+fn a_wrapped_alert_keeps_its_bar_on_every_row() {
+    for (glyphs, bar, mark) in [(Glyphs::Unicode, "▎ ", "▲"), (Glyphs::Ascii, "| ", "!")] {
+        let rows = drawn_at_thirty(&format!("> [!WARNING]\n> a body {LONG}\n"), glyphs);
+
+        assert!(rows.len() > 3, "{rows:#?}");
+        assert_eq!(first_of(&rows), format!("{bar}{mark} Warning"), "{rows:#?}");
+        for row in &rows {
+            assert!(row.starts_with(bar), "{row:?} lost the alert bar");
+        }
+    }
+}
+
+#[test]
+fn a_wrapped_item_is_drawn_again_under_its_words_at_a_new_width() {
+    let answer = format!("- a bullet item {LONG}\n\n> a quote {LONG}\n");
+    let mut drawn = reading(60, 12);
+    drawn.answer(&answer);
+    drawn.resize(30, 12);
+
+    let mut fresh = reading(30, 12);
+    fresh.answer(&answer);
+    assert_eq!(drawn.rows(), fresh.rows());
+
+    let rows: Vec<String> = drawn
+        .rows()
+        .into_iter()
+        .map(|row| row.trim_end().to_owned())
+        .filter(|row| !row.is_empty())
+        .collect();
+    let quoted = rows
+        .iter()
+        .position(|row| row.starts_with('│'))
+        .unwrap_or_default();
+    assert!(quoted > 2, "{rows:#?}");
+    for row in rows.iter().take(quoted).skip(1) {
+        assert_eq!(indent(row), 2, "{row:?} does not hang under the words");
+    }
+    for row in rows.iter().skip(quoted) {
+        assert!(row.starts_with("│ "), "{row:?} lost the quote bar");
+    }
+}
+
+#[test]
+fn every_cut_of_an_answer_draws_what_the_whole_answer_draws() {
+    let corpus = [
+        "a **loud** and *leant* phrase with `code` and a [link](https://example.com)\n",
+        "- one\n- [x] done\n  - nested\n1. first\n> quoted *words*\n",
+        // Items and a quote that wrap at fifty columns, as one delta or many.
+        "- a bullet item long enough that it has to wrap onto another row\n  - a nested one long enough to wrap onto another row too\n1. a numbered item long enough that it has to wrap as well\n> a quote long enough that it has to wrap onto another row too\n",
+        "| a | b |\n|:--|--:|\n| `x` | **y** |\n\nafter\n",
+        "```rust\nfn main() { let x = 1; }\n```\n\n---\n\nend\n",
+        // A line of code that wraps at fifty columns, under a label cut short
+        // and beside an empty fence.
+        "```rust-with-a-label-longer-than-a-label-may-be-cut\nlet total = first_value + second_value + third_value + fourth_value;\n```\n```\n```\nend\n",
+        "see #12 and owner/repo#3 at https://example.com/a_b.\n",
+        "~~gone~~ and \\*kept\\* and a_b_c\n",
+        // Every kind the reader holds whole, and the lines that only look
+        // like the start of one.
+        "before\n\n$$\nx^2 + y^2\n$$\n\nafter\n",
+        "\\[\nx = 1\n\\]\n\\begin{align*}\na &= b\n\\end{align*}\nend\n",
+        "```mermaid\ngraph TD\n  A --> B\n```\n```diff\n-old\n+new\n```\nend\n",
+        "```math\nx^2\n```\n$5 a price, $$ in prose\n\\section{not math}\n",
+        "$$\nnever closed\n",
+        // Lines that only look like the start of a table without its outer
+        // bars: the delimiter row has another number of cells, or has no
+        // bar, or the header has none.
+        "a | b\n--|---|--\n1 | 2\n\nno bars\n--|--\nend\n",
+        "a | b\n---\n1 | 2\n\nx | y\n:|:\nend\n",
+    ];
+
+    // Tables written without their outer bars, which a cut can split in the
+    // header, in the middle of the delimiter row or in the body. Each one is
+    // drawn as a table, so a reader that stopped recognising them would draw
+    // the same rows however they were cut and still fail here.
+    let tables = [
+        "before\n\na | b\n--|--\n1 | 2\n\nafter\n",
+        "name | since\n:--|--:\n`x` | **y**\nlonger cell | 2\n\n```rust\nlet a = 1 | 2;\n```\n",
+        "text\nname | what it does\n--|--\nalpha | first\n",
+    ];
+
+    // Blocks indented four spaces after a blank line, one with a line that
+    // wraps at fifty columns and a blank line inside it, under which a dashed
+    // row is a rule and a row of equals is prose. Each one is drawn in a
+    // frame, so a reader that read them as prose would draw the same rows
+    // however they were cut and still fail here.
+    let indented = [
+        "para\n\n    let total = first_value + second_value + third_value;\n\n    done();\n---\n",
+        "more\n\n    code\n===\nend\n",
+    ];
+
+    // Alerts, whose marker a cut can split anywhere and whose rows wrap at
+    // fifty columns. Each whole answer is checked to be drawn behind the alert
+    // bar, because a reader that drew every marker as a plain quote would draw
+    // the same rows however they were cut and agree with itself.
+    let alerts = [
+        "> [!NOTE]\n> a body long enough that it has to wrap onto another row too\n\nafter\n",
+        "> [!caution]\n> first\n> second *leant* and **loud**\n\n> [!TIP]\n",
+        "> [!IMPORTANT]",
+    ];
+
+    for answer in corpus
+        .into_iter()
+        .chain(tables)
+        .chain(indented)
+        .chain(alerts)
+    {
+        let mut whole = reading(50, 30);
+        whole.answer(answer);
+        let expected = whole.rows();
+        if alerts.contains(&answer) {
+            assert!(
+                expected.iter().any(|row| row.starts_with("▎ ")),
+                "{answer:?} drew no alert: {expected:#?}"
+            );
+        }
+        if tables.contains(&answer) {
+            assert!(
+                expected.iter().any(|row| row.contains('│')),
+                "{answer:?} drew no table: {expected:#?}"
+            );
+        }
+        if indented.contains(&answer) {
+            assert!(
+                expected.iter().any(|row| row.contains("┌─")),
+                "{answer:?} drew no frame: {expected:#?}"
+            );
+        }
+
+        for cut in 1..answer.len() {
+            let mut pieces = reading(50, 30);
+            pieces.answer_in_pieces(answer, &[cut]);
+            assert_eq!(pieces.rows(), expected, "cut at {cut} of {answer:?}");
+        }
+    }
+}
+
+#[test]
+fn a_held_block_shows_one_status_row_and_none_of_its_source() {
+    let mut drawn = reading(64, 12);
+    drawn.render.stream("before\n\n$$\nx^2 + y^2\n").unwrap();
+
+    let rows = drawn.rows();
+    let status: Vec<&String> = rows
+        .iter()
+        .filter(|row| row.contains("drawing a"))
+        .collect();
+    assert_eq!(
+        status.iter().map(|row| row.trim_end()).collect::<Vec<_>>(),
+        ["◇ drawing a formula · 2 lines so far"],
+        "{rows:#?}"
+    );
+    assert!(!rows.iter().any(|row| row.contains("x^2")), "{rows:#?}");
+    assert!(rows.iter().any(|row| row.contains("before")), "{rows:#?}");
+
+    drawn.render.stream("$$\nafter\n").unwrap();
+    drawn.render.settle().unwrap();
+
+    let rows = drawn.rows();
+    assert!(
+        !rows.iter().any(|row| row.contains("drawing a")),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| row.contains("x^2 + y^2")),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_held_table_is_counted_in_the_glyphs_worn() {
+    let mut drawn = reading(64, 12);
+    drawn.render.draws(Glyphs::Ascii);
+    drawn
+        .render
+        .stream("| a | b |\n|---|---|\n| 1 | 2 |\n")
+        .unwrap();
+
+    let rows = drawn.rows();
+    assert!(
+        rows.iter()
+            .any(|row| row.trim_end() == "o drawing a table - 3 lines so far"),
+        "{rows:#?}"
+    );
+    assert!(!rows.iter().any(|row| row.contains("| 1 |")), "{rows:#?}");
+}
+
+/// Every row the record holds, as words, and the width it holds them at.
+fn kept(drawn: &Drawn) -> (usize, Vec<String>) {
+    let record = &drawn.render.record;
+    let rows = (0..record.lines())
+        .flat_map(|line| record.folded(line))
+        .map(|row| row.text())
+        .collect();
+    (drawn.render.folds(), rows)
+}
+
+#[test]
+fn every_corpus_answer_resized_to_a_width_is_what_that_width_draws_fresh() {
+    // Fresh at a width is the oracle, so whatever layout rule is in force is
+    // the one a resize is held to; from either end of the range, because a
+    // block laid out wide and one laid out narrow lose different things.
+    const WIDTHS: std::ops::RangeInclusive<usize> = 8..=160;
+    for (name, answer) in crate::markdown::corpus::ANSWERS {
+        let drawn_at = |columns| {
+            let mut drawn = reading(columns, 8);
+            drawn.answer(answer);
+            drawn
+        };
+        let mut from = [drawn_at(*WIDTHS.end()), drawn_at(*WIDTHS.start())];
+        for columns in WIDTHS {
+            let (folds, fresh) = kept(&drawn_at(columns));
+            for row in &fresh {
+                assert!(
+                    width::columns(row) <= folds,
+                    "{name} at {columns}: {row:?} is wider than {folds}"
+                );
+            }
+            for resized in &mut from {
+                let was = resized.render.size.columns;
+                resized.resize(columns, 8);
+                assert_eq!(
+                    kept(resized),
+                    (folds, fresh.clone()),
+                    "{name} resized from {was} to {columns}"
+                );
+                resized.resize(was, 8);
+            }
+        }
+    }
+}
+
+/// What the transcript band holds mid-stream, as a picture: every row the
+/// record keeps, then the row a held block stands as at the foot.
+fn held_picture(glyphs: Glyphs) -> String {
+    const COLUMNS: usize = 64;
+    let mut drawn = reading(COLUMNS, 24);
+    drawn.render.draws(glyphs);
+    let mut picture = String::new();
+    for delta in [
+        "The probes and their budgets:\n\n| probe | budget | measured |\n|---|---:|---:|\n| render burst | 30/s | 412/s |\n",
+        "| session rss | 35 MB | 21 MB |\n\nThe sum they come to:\n\n$$\n\\sum_{i=1}^{n} x_i\n",
+    ] {
+        drawn.render.stream(delta).unwrap();
+        let record = &drawn.render.record;
+        let mut rows: Vec<Row> = (0..record.lines())
+            .flat_map(|line| record.folded(line))
+            .collect();
+        rows.extend(drawn.render.holding(COLUMNS));
+        picture.push_str(&crate::dump::dump(&rows, COLUMNS));
+        picture.push_str("\n\n");
+    }
+    picture
+}
+
+#[test]
+fn a_table_and_a_formula_held_mid_stream_unicode() {
+    insta::assert_snapshot!(held_picture(Glyphs::Unicode));
+}
+
+#[test]
+fn a_table_and_a_formula_held_mid_stream_ascii() {
+    insta::assert_snapshot!(held_picture(Glyphs::Ascii));
+}
+
+// While a block is held, the record is shown in one row fewer than the band,
+// and the row under it is the held block's. What answers the pointer and what
+// the rail stands for are counted in the rows the record is shown in.
+
+/// A renderer thirty numbered lines into a window forty columns wide and ten
+/// tall, holding a formula: `line 21` to `line 29` over the held block's row.
+fn holding_under_thirty_lines() -> (Drawn, Vec<(String, usize)>) {
+    let mut drawn = reading(40, 10);
+    let mut numbered = Vec::new();
+    for k in 0..30 {
+        drawn.commit(&format!("line {k}")).unwrap();
+        numbered.push((format!("line {k}"), drawn.lines() - 1));
+    }
+    drawn.render.stream("$$\nx\n").unwrap();
+    (drawn, numbered)
+}
+
+#[test]
+fn a_click_while_a_block_is_held_names_the_line_drawn_under_it() {
+    let (drawn, numbered) = holding_under_thirty_lines();
+    let rows = drawn.rows();
+    assert_eq!(
+        rows.last().map(|row| row.trim_end()),
+        Some("◇ drawing a formula · 2 lines so far"),
+        "{rows:#?}"
+    );
+    let mut checked = 0;
+    for (at, row) in rows.iter().enumerate() {
+        if let Some((_, line)) = numbered.iter().find(|(text, _)| row.trim_end() == text) {
+            assert_eq!(
+                drawn.aimed(at),
+                Some(Aimed::Line(*line)),
+                "row {at}: {row:?}"
+            );
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, 9, "{rows:#?}");
+}
+
+#[test]
+fn a_pointer_while_a_block_is_held_lights_the_result_drawn_under_it() {
+    let mut drawn = reading(40, 6);
+    for k in 0..10 {
+        drawn.commit(&format!("line {k}")).unwrap();
+    }
+    drawn.present(&[cut("alpha")]).unwrap();
+    drawn.render.stream("$$\nx\n").unwrap();
+    let rows = drawn.rows();
+    let at = rows
+        .iter()
+        .position(|row| row.trim_end() == "alpha")
+        .unwrap();
+    assert!(
+        rows.get(at + 1)
+            .is_some_and(|row| row.contains("drawing a")),
+        "{rows:#?}"
+    );
+    drawn.take();
+
+    drawn.took(Pressed::Hovered { row: at, column: 0 }).unwrap();
+    assert!(
+        lit(&mut drawn, "alpha"),
+        "the result under the pointer did not light"
+    );
+}
+
+#[test]
+fn the_rail_while_a_block_is_held_stands_for_the_rows_drawn() {
+    // Twelve lines on a rail of ten. Held, the band shows `line 3` to
+    // `line 11` and the held block's row under them, which reads as the
+    // record's last, the way a running turn's rows do: thirteen rows, the
+    // band's first three rows in, so the thumb starts on rail row two. A rail
+    // laid for the band's whole height over the record alone starts it on
+    // row one, for a `line 2` the band does not show.
+    let mut drawn = reading(60, 10);
+    drawn.rails(true);
+    for line in 0..12 {
+        drawn.commit(&format!("line {line}")).unwrap();
+    }
+    drawn.render.stream("$$\nx\n").unwrap();
+    let rows = drawn.rows();
+    assert!(
+        rows.first().is_some_and(|row| row.starts_with("line 3")),
+        "{rows:#?}"
+    );
+    assert_eq!(rail_of(&drawn), "││┃┃┃┃┃┃┃┃");
+}
+
+#[test]
+fn display_math_counts_and_opens_what_it_streamed_with() {
+    let slots = |answer: &str| {
+        let mut drawn = reading(60, 10);
+        drawn.render.counts(Some(crate::forge::Forge::new(
+            "https://github.com",
+            "augments-labs/crucible-code",
+            "/issues/",
+        )));
+        drawn.render.reads_paths(Some(crate::files::Files::new(
+            std::path::Path::new("/home/me/repo"),
+            crate::files::Line::Fragment,
+        )));
+        drawn.answer(answer);
+        let record = &drawn.render.record;
+        (0..record.lines())
+            .flat_map(|line| record.folded(line))
+            .filter(|row| row.text().contains("#12"))
+            .map(|row| format!("{row:?}"))
+            .collect::<Vec<_>>()
+    };
+    // On the answer's first line, where the stream counts and opens what it
+    // reads, as prose and as a formula held until it closes alike.
+    for answer in [
+        "see #12 in [main](src/main.rs)\n",
+        "$$ see #12 in [main](src/main.rs) $$\n",
+    ] {
+        let rows = slots(answer);
+        assert!(
+            rows.iter().any(|row| row.contains(
+                "slot: Link, structural: [], link: Some(\"https://github.com/augments-labs/crucible-code/issues/12\")"
+            )),
+            "{answer:?}: {rows:#?}"
+        );
+        assert!(
+            rows.iter().any(|row| row.contains(
+                "slot: Link, structural: [], link: Some(\"file:///home/me/repo/src/main.rs\")"
+            )),
+            "{answer:?}: {rows:#?}"
+        );
+    }
+}
+
+// A move that brings a held band back to its foot owes the frame that shows
+// the held row again, and a drag reaching that row takes none of its words.
+
+/// The held picture's last row.
+const HELD_ROW: &str = "◇ drawing a formula · 2 lines so far";
+
+#[test]
+fn a_notch_back_and_one_forward_while_a_block_is_held_draws_it_held_again() {
+    let (mut drawn, _) = holding_under_thirty_lines();
+    assert!(drawn.render.scrolled(-1).unwrap());
+    let rows = drawn.rows();
+    assert_eq!(
+        rows.last().map(|row| row.trim_end()),
+        Some("line 29"),
+        "{rows:#?}"
+    );
+
+    assert!(drawn.render.scrolled(1).unwrap(), "the notch was swallowed");
+    let rows = drawn.rows();
+    assert_eq!(
+        rows.last().map(|row| row.trim_end()),
+        Some(HELD_ROW),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_thumb_held_back_to_the_foot_while_a_block_is_held_draws_it_held_again() {
+    let mut drawn = reading(60, 10);
+    drawn.rails(true);
+    for line in 0..30 {
+        drawn.commit(&format!("line {line}")).unwrap();
+    }
+    drawn.render.stream("$$\nx\n").unwrap();
+    assert!(drawn.render.scrolled(-1).unwrap());
+    let column = drawn.columns() - 1;
+    // The thumb stands on the rail's last row with the band at the foot of
+    // the record alone; pressed there under a resting pointer and moved along
+    // that row, it seeks that foot, where the record follows and the held row
+    // is drawn again.
+    drawn.took(Pressed::Hovered { row: 9, column }).unwrap();
+    assert!(rail_click(&mut drawn, 9).is_none());
+    drawn.took(Pressed::Dragged { row: 9, column }).unwrap();
+    let rows = drawn.rows();
+    assert_eq!(
+        rows.last().map(|row| row.trim_end_matches([' ', '│', '┃'])),
+        Some(HELD_ROW.trim_end()),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_drag_reaching_the_held_row_copies_none_of_its_words() {
+    let (mut drawn, _) = holding_under_thirty_lines();
+    drawn.take();
+    let wrote = drag(&mut drawn, (0, 0), (9, 39));
+    let shown = (21..30)
+        .map(|line| format!("line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    // The held row comes as a row with no words on it, as a blank row under
+    // the last line would.
+    assert!(
+        wrote.contains(&onto_the_clipboard(&format!("{shown}\n"))),
+        "{wrote:?}"
+    );
+}
+
+// A fenced block in its frame.
+
+/// The rows of `answer` drawn in a window of `columns`, blank ones left out,
+/// each cut of the blank it was padded with.
+fn framed_at(columns: usize, answer: &str, glyphs: Glyphs) -> Vec<String> {
+    let mut drawn = reading(columns, 40);
+    drawn.render.draws(glyphs);
+    drawn.answer(answer);
+    drawn
+        .rows()
+        .into_iter()
+        .map(|row| row.trim_end().to_owned())
+        .filter(|row| !row.is_empty())
+        .collect()
+}
+
+#[test]
+fn a_fence_is_drawn_in_a_frame_naming_its_language() {
+    let rows = framed_at(
+        64,
+        "```rust\nlet x = 1;\nlet y = 2;\n```\n",
+        Glyphs::Unicode,
+    );
+
+    assert_eq!(rows, ["┌─ rust", "│ let x = 1;", "│ let y = 2;", "└─"]);
+}
+
+#[test]
+fn a_fence_is_drawn_in_the_ascii_frame_too() {
+    let rows = framed_at(64, "```rust\nlet x = 1;\n```\n", Glyphs::Ascii);
+
+    assert_eq!(rows, ["+- rust", "| let x = 1;", "+-"]);
+}
+
+#[test]
+fn a_fence_naming_no_language_is_a_frame_with_no_label() {
+    let rows = framed_at(64, "```\nplain text\n```\n", Glyphs::Unicode);
+
+    assert_eq!(rows, ["┌─", "│ plain text", "└─"]);
+}
+
+#[test]
+fn an_empty_fence_is_its_frame_and_no_refusal() {
+    let rows = framed_at(64, "```rust\n```\n", Glyphs::Unicode);
+
+    assert_eq!(rows, ["┌─ rust", "└─"]);
+}
+
+#[test]
+fn a_blank_line_of_code_keeps_its_place_in_the_frame() {
+    let rows = framed_at(64, "```\none\n\ntwo\n```\n", Glyphs::Unicode);
+
+    assert_eq!(rows, ["┌─", "│ one", "│", "│ two", "└─"]);
+}
+
+/// A line of code that cannot fit thirty columns beside its gutter.
+const CODE_LINE: &str = "let total = first_value + second_value + third_value + fourth_value;";
+
+/// What a code row says after its gutter, and whether that gutter marked it as
+/// a continuation.
+fn beyond_the_gutter(row: &str, glyphs: Glyphs) -> Option<(bool, String)> {
+    let side = format!("{} ", glyphs.vertical());
+    let again = format!("{} ", glyphs.continued());
+    row.strip_prefix(side.as_str())
+        .map(|code| (false, code.to_owned()))
+        .or_else(|| {
+            row.strip_prefix(again.as_str())
+                .map(|code| (true, code.to_owned()))
+        })
+}
+
+#[test]
+fn a_wrapped_code_row_is_marked_as_a_continuation() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let rows = framed_at(30, &format!("```rust\n{CODE_LINE}\n```\n"), glyphs);
+
+        let code: Vec<(bool, String)> = rows
+            .iter()
+            .filter_map(|row| beyond_the_gutter(row, glyphs))
+            .collect();
+        assert!(code.len() > 2, "{rows:#?}");
+        assert_eq!(
+            code.iter().map(|(again, _)| *again).collect::<Vec<_>>(),
+            std::iter::once(false)
+                .chain(std::iter::repeat_n(true, code.len() - 1))
+                .collect::<Vec<_>>(),
+            "{rows:#?}"
+        );
+        assert_eq!(
+            code.iter()
+                .map(|(_, code)| code.as_str())
+                .collect::<String>(),
+            CODE_LINE,
+            "wrapping lost or added code: {rows:#?}"
+        );
+        for row in &rows {
+            assert!(crate::width::columns(row) <= 30, "{row:?} is too wide");
+        }
+    }
+}
+
+#[test]
+fn a_wrapped_code_row_marks_itself_with_the_glyph_of_its_set() {
+    let unicode = framed_at(30, &format!("```\n{CODE_LINE}\n```\n"), Glyphs::Unicode);
+    let ascii = framed_at(30, &format!("```\n{CODE_LINE}\n```\n"), Glyphs::Ascii);
+
+    assert!(
+        unicode.iter().any(|row| row.starts_with("┆ ")),
+        "{unicode:#?}"
+    );
+    assert!(ascii.iter().any(|row| row.starts_with(": ")), "{ascii:#?}");
+    assert!(!ascii.iter().any(|row| row.contains(['┌', '│', '└', '┆'])));
+}
+
+#[test]
+fn a_fence_narrowed_wraps_as_a_fence_that_narrow_does() {
+    let answer = format!("```rust\n{CODE_LINE}\n```\n");
+    let fresh = framed_at(30, &answer, Glyphs::Unicode);
+
+    let mut drawn = reading(64, 40);
+    drawn.answer(&answer);
+    drawn.resize(30, 40);
+    let narrowed: Vec<String> = drawn
+        .rows()
+        .into_iter()
+        .map(|row| row.trim_end().to_owned())
+        .filter(|row| !row.is_empty())
+        .collect();
+
+    assert_eq!(narrowed, fresh);
+}
+
+/// The window row `needle` starts, among `rows`.
+fn row_starting(rows: &[String], needle: &str) -> usize {
+    rows.iter()
+        .position(|row| row.starts_with(needle))
+        .unwrap_or_else(|| panic!("no row starts {needle:?}: {rows:#?}"))
+}
+
+#[test]
+fn copying_a_wrapped_code_row_gives_the_line_as_written() {
+    let mut drawn = reading(30, 12);
+    drawn.answer(&format!("```rust\n{CODE_LINE}\n```\n"));
+    let rows = drawn.rows();
+    let first = row_starting(&rows, "│ let total");
+    let last = row_starting(&rows, "└─") - 1;
+    assert!(last > first + 1, "the line did not wrap: {rows:#?}");
+    drawn.take();
+
+    let wrote = drag(&mut drawn, (first, 0), (last, 29));
+
+    assert!(
+        wrote.contains(&onto_the_clipboard(CODE_LINE)),
+        "{wrote:?} is not {CODE_LINE:?} on the clipboard"
+    );
+}
+
+#[test]
+fn a_drag_over_a_whole_fenced_block_copies_the_code_and_not_its_edges() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let mut drawn = reading(30, 12);
+        drawn.draws(glyphs);
+        drawn.answer("```rust\nlet x = 1;\nlet y = 2;\n```\n");
+        let rows = drawn.rows();
+        let top = row_starting(&rows, glyphs.square().0);
+        let bottom = rows
+            .iter()
+            .rposition(|row| row.starts_with(glyphs.square().1))
+            .expect("a bottom edge");
+        drawn.take();
+
+        let wrote = drag(&mut drawn, (top, 0), (bottom, 29));
+
+        assert!(
+            wrote.contains(&onto_the_clipboard("let x = 1;\nlet y = 2;")),
+            "{rows:#?} gave {wrote:?}"
+        );
+    }
+}
+
+/// A short window with the scroll rail on, holding a fenced block and the line
+/// after it, at the foot of a transcript taller than the window: so every row
+/// ends in a rail glyph, as it does by default once there is something to
+/// scroll.
+fn railed_block(glyphs: Glyphs, tail: usize) -> Drawn {
+    let mut drawn = Drawn::new(30, 6);
+    drawn.rails(true);
+    drawn.wears(colourful());
+    drawn.draws(glyphs);
+    for line in 0..20 {
+        drawn.commit(&format!("line {line}")).unwrap();
+    }
+    drawn.answer("```rust\nlet x = 1;\nlet y = 2;\n```\nafter\n");
+    for line in 0..tail {
+        drawn.commit(&format!("tail {line}")).unwrap();
+    }
+    drawn
+}
+
+/// The window row that starts with `needle`, last one first.
+fn last_row_starting(rows: &[String], needle: &str) -> usize {
+    rows.iter()
+        .rposition(|row| row.starts_with(needle))
+        .unwrap_or_else(|| panic!("no row starts {needle:?}: {rows:#?}"))
+}
+
+#[test]
+fn with_the_rail_drawn_a_drag_over_a_whole_fenced_block_copies_the_code_alone() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let mut drawn = railed_block(glyphs, 0);
+        let rows = drawn.rows();
+        let top = row_starting(&rows, glyphs.square().0);
+        let bottom = last_row_starting(&rows, glyphs.square().1);
+        assert!(bottom > top + 2, "{rows:#?}");
+        drawn.take();
+
+        let wrote = drag(&mut drawn, (top, 0), (bottom, 29));
+
+        assert!(
+            wrote.contains(&onto_the_clipboard("let x = 1;\nlet y = 2;")),
+            "{rows:#?} gave {wrote:?}"
+        );
+    }
+}
+
+#[test]
+fn with_the_rail_drawn_the_line_after_a_fenced_block_follows_its_code_without_a_gap() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let mut drawn = railed_block(glyphs, 0);
+        let rows = drawn.rows();
+        let last = row_starting(&rows, &format!("{} let y", glyphs.vertical()));
+        let after = row_starting(&rows, "after");
+        drawn.take();
+
+        let wrote = drag(&mut drawn, (last, 0), (after, 29));
+
+        assert!(
+            wrote.contains(&onto_the_clipboard("let y = 2;\nafter")),
+            "{rows:#?} gave {wrote:?}"
+        );
+    }
+}
+
+#[test]
+fn with_the_rail_drawn_a_drag_from_the_bottom_edge_takes_the_next_line_alone() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let mut drawn = railed_block(glyphs, 0);
+        let rows = drawn.rows();
+        let bottom = last_row_starting(&rows, glyphs.square().1);
+        let after = row_starting(&rows, "after");
+        drawn.take();
+
+        let wrote = drag(&mut drawn, (bottom, 0), (after, 29));
+
+        assert!(
+            wrote.contains(&onto_the_clipboard("after")),
+            "{rows:#?} gave {wrote:?}"
+        );
+    }
+}
+
+#[test]
+fn with_the_rail_drawn_a_drag_that_scrolled_off_the_window_still_copies_the_code_alone() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let mut drawn = railed_block(glyphs, 8);
+        assert!(drawn.scrolled(-8).unwrap());
+        let rows = drawn.rows();
+        let top = row_starting(&rows, glyphs.square().0);
+        // The button goes down on the top edge, and the band is carried on
+        // until that row and the code beside it are above the window.
+        drawn.take();
+        drawn
+            .took(Pressed::Clicked {
+                row: top,
+                column: 0,
+            })
+            .unwrap();
+        drawn.took(Pressed::Dragged { row: 5, column: 6 }).unwrap();
+        assert!(drawn.scrolled(8).unwrap());
+        let foot = drawn.rows();
+        assert!(
+            !foot.iter().any(|row| row.starts_with(glyphs.square().0)),
+            "{foot:#?}"
+        );
+        drawn.took(Pressed::Dragged { row: 0, column: 6 }).unwrap();
+        drawn.take();
+        drawn.took(Pressed::Released { row: 0, column: 6 }).unwrap();
+
+        let wrote = drawn.take();
+        let expected = "let x = 1;\nlet y = 2;\nafter\ntail 0\ntail 1\ntail 2";
+        assert!(
+            wrote.contains(&onto_the_clipboard(expected)),
+            "{rows:#?} {foot:#?} gave {wrote:?}"
+        );
+    }
+}
+
+#[test]
+fn copying_across_two_wrapped_lines_keeps_the_break_between_them() {
+    let second = "let other = fourth_value * fifth_value * sixth_value;";
+    let mut drawn = reading(30, 16);
+    drawn.answer(&format!("```rust\n{CODE_LINE}\n{second}\n```\n"));
+    let rows = drawn.rows();
+    let first = row_starting(&rows, "│ let total");
+    let last = row_starting(&rows, "└─") - 1;
+    drawn.take();
+
+    let wrote = drag(&mut drawn, (first, 0), (last, 29));
+
+    assert!(
+        wrote.contains(&onto_the_clipboard(&format!("{CODE_LINE}\n{second}"))),
+        "{wrote:?}"
+    );
+}
+
+#[test]
+fn copying_the_start_of_a_wrapped_line_gives_the_start_as_written() {
+    let mut drawn = reading(30, 12);
+    drawn.answer(&format!("```rust\n{CODE_LINE}\n```\n"));
+    let rows = drawn.rows();
+    let first = row_starting(&rows, "│ let total");
+    let code_of = |at: usize| {
+        let row = rows.get(at).expect("a row");
+        beyond_the_gutter(row.trim_end(), Glyphs::Unicode).expect("code")
+    };
+    let (_, head) = code_of(first);
+    let (_, tail) = code_of(first + 1);
+    drawn.take();
+
+    let wrote = drag(&mut drawn, (first, 0), (first + 1, 29));
+
+    let expected = format!("{head}{tail}");
+    assert!(CODE_LINE.starts_with(&expected), "{expected:?}");
+    assert!(wrote.contains(&onto_the_clipboard(&expected)), "{wrote:?}");
+}
+
+/// A fence's label as a model might write it to be read as an instruction.
+const HOSTILE_LABELS: [(&str, &str); 9] = [
+    ("\u{1b}]0;a title it chose\u{7}rust", "rust"),
+    ("\u{1b}]8;;https://example.invalid\u{1b}\\rust", "rust"),
+    ("ru\u{7}st\u{8}", "rust"),
+    ("ru\u{85}st", "rust"),
+    ("\u{202e}tsur\u{202c}", "tsur"),
+    ("\u{2066}rust\u{2069}", "rust"),
+    ("\u{10eeee}\u{305}\u{305}rust", "rust"),
+    ("\u{1b}P1$r\u{1b}\\rust", "1$rrust"),
+    ("\u{1b}_Gi=1;AAAA\u{1b}\\rust", "Gi=1;AAAArust"),
+];
+
+#[test]
+fn a_hostile_fence_label_reaches_the_terminal_as_nothing_but_its_name() {
+    for (label, name) in HOSTILE_LABELS {
+        let mut drawn = reading(64, 12);
+        drawn.answer(&format!("```{label}\ncode\n```\n"));
+
+        let rows = drawn.rows();
+        let top = rows
+            .iter()
+            .find(|row| row.starts_with('┌'))
+            .unwrap_or_else(|| panic!("no frame for {label:?}: {rows:#?}"));
+        assert_eq!(top.trim_end(), format!("┌─ {name}"), "for {label:?}");
+
+        let written = drawn.render.terminal.written();
+        for hostile in ["\u{1b}]", "\u{1b}P", "\u{1b}_", "\u{7}", "\u{8}", "\u{85}"] {
+            assert!(
+                !written.contains(hostile),
+                "{hostile:?} reached the terminal for {label:?}"
+            );
+        }
+        for hostile in ['\u{202e}', '\u{2066}', '\u{2069}', '\u{10eeee}'] {
+            assert!(
+                !written.contains(hostile),
+                "{hostile:?} reached the terminal for {label:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_fence_label_longer_than_a_label_may_be_is_cut_short() {
+    let long = "x".repeat(200);
+    let rows = framed_at(64, &format!("```{long}\ncode\n```\n"), Glyphs::Unicode);
+
+    let top = rows.first().expect("a frame");
+    assert!(top.starts_with("┌─ xxx"), "{top:?}");
+    assert!(top.ends_with('…'), "{top:?}");
+    assert!(crate::width::columns(top) < 64, "{top:?}");
+}
+
+/// A fence named `mermaid` holding more than the reader will hold back.
+fn mermaid_past_its_cap() -> String {
+    let line = format!("A{} --> B", "a".repeat(990));
+    let mut answer = String::from("```mermaid\n");
+    for _ in 0..20 {
+        answer.push_str(&line);
+        answer.push('\n');
+    }
+    answer.push_str("```\n");
+    answer
+}
+
+#[test]
+fn a_held_block_past_its_cap_is_drawn_as_written_with_its_refusal_in_the_label() {
+    let mut drawn = reading(1100, 40);
+    drawn.answer(&mermaid_past_its_cap());
+
+    let rows: Vec<String> = drawn
+        .rows()
+        .into_iter()
+        .map(|row| row.trim_end().to_owned())
+        .filter(|row| !row.is_empty())
+        .collect();
+    assert_eq!(
+        rows.first().map(String::as_str),
+        Some("┌─ mermaid · longer than this can hold · shown as written"),
+        "{rows:#?}"
+    );
+    assert_eq!(rows.iter().filter(|row| row.starts_with("│ A")).count(), 20);
+    assert_eq!(rows.last().map(String::as_str), Some("└─"));
+}
+
+#[test]
+fn a_held_block_that_fits_its_cap_carries_no_refusal() {
+    let mut drawn = reading(64, 40);
+    drawn.answer("```mermaid\ngraph TD\n  A --> B\n```\n");
+
+    let rows = drawn.rows();
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row.contains("longer than this can hold")),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_held_block_past_its_cap_names_its_refusal_in_ascii_with_the_ascii_dot() {
+    let mut drawn = reading(1100, 40);
+    drawn.render.draws(Glyphs::Ascii);
+    drawn.answer(&mermaid_past_its_cap());
+
+    let rows = drawn.rows();
+    assert_eq!(
+        rows.iter()
+            .map(|row| row.trim_end())
+            .find(|row| row.starts_with("+-")),
+        Some("+- mermaid - longer than this can hold - shown as written"),
+        "{rows:#?}"
+    );
+}
+
+// A drag over a drawn block takes the block as it was written.
+
+/// A table, as a model wrote it.
+const WRITTEN_TABLE: &str = "| name | job |\n|---|---|\n| alpha | first |\n| beta | second |\n";
+
+/// Display math, as a model wrote it.
+const WRITTEN_MATH: &str = "$$\nx^2 + y^2\n$$\n";
+
+/// Every row of a window `height` tall, blank ones included, so a row's index
+/// is the window row a pointer names.
+fn window(drawn: &Drawn, height: usize) -> Vec<String> {
+    (0..height)
+        .map(|row| drawn.screen().row(row).to_owned())
+        .collect()
+}
+
+/// The window row of `rows` whose text contains `needle`, first one first.
+fn row_containing(rows: &[String], needle: &str) -> usize {
+    rows.iter()
+        .position(|row| row.contains(needle))
+        .unwrap_or_else(|| panic!("no row contains {needle:?}: {rows:#?}"))
+}
+
+#[test]
+fn a_drag_touching_one_row_of_a_drawn_table_copies_the_whole_source() {
+    let mut drawn = reading(60, 20);
+    drawn.answer(WRITTEN_TABLE);
+    let rows = window(&drawn, 20);
+    let row = row_containing(&rows, "alpha");
+    drawn.take();
+
+    let wrote = drag(&mut drawn, (row, 0), (row, 8));
+
+    assert!(
+        wrote.contains(&onto_the_clipboard(WRITTEN_TABLE)),
+        "{rows:#?} gave {wrote:?}"
+    );
+}
+
+#[test]
+fn a_drag_over_a_table_written_without_outer_bars_copies_it_as_written_with_no_bars_added() {
+    let written = "name | job\n--|--\nalpha | first\nbeta | second\n";
+    let mut drawn = reading(60, 20);
+    drawn.answer(written);
+    let rows = window(&drawn, 20);
+    let row = row_containing(&rows, "alpha");
+    drawn.take();
+
+    let wrote = drag(&mut drawn, (row, 0), (row, 8));
+
+    assert!(
+        wrote.contains(&onto_the_clipboard(written)),
+        "{rows:#?} gave {wrote:?}"
+    );
+}
+
+#[test]
+fn a_drag_over_a_whole_drawn_block_copies_its_source_once() {
+    let mut drawn = reading(60, 20);
+    drawn.answer(WRITTEN_TABLE);
+    let rows = window(&drawn, 20);
+    let first = row_containing(&rows, "name");
+    let last = row_containing(&rows, "beta");
+    assert!(last > first + 1, "the table drew few rows: {rows:#?}");
+    drawn.take();
+
+    let wrote = drag(&mut drawn, (first, 0), (last, 59));
+
+    assert!(
+        wrote.contains(&onto_the_clipboard(WRITTEN_TABLE)),
+        "{rows:#?} gave {wrote:?}"
+    );
+}
+
+#[test]
+fn a_drag_from_prose_into_a_drawn_block_copies_the_prose_and_then_the_source() {
+    let mut drawn = reading(60, 20);
+    drawn.answer(&format!("before\n\n{WRITTEN_TABLE}\nafter\n"));
+    let rows = window(&drawn, 20);
+    let from = row_containing(&rows, "before");
+    let into = row_containing(&rows, "alpha");
+    drawn.take();
+
+    let wrote = drag(&mut drawn, (from, 0), (into, 3));
+
+    assert!(
+        wrote.contains(&onto_the_clipboard(&format!("before\n\n{WRITTEN_TABLE}"))),
+        "{rows:#?} gave {wrote:?}"
+    );
+}
+
+#[test]
+fn a_drag_across_two_drawn_blocks_copies_both_sources_in_order_with_the_prose_between() {
+    let mut drawn = reading(60, 30);
+    drawn.answer(&format!(
+        "{WRITTEN_TABLE}\nbetween\n\n{WRITTEN_MATH}\nafter\n"
+    ));
+    let rows = window(&drawn, 30);
+    let from = row_containing(&rows, "alpha");
+    let to = row_containing(&rows, "after");
+    drawn.take();
+
+    let wrote = drag(&mut drawn, (from, 2), (to, 3));
+
+    assert!(
+        wrote.contains(&onto_the_clipboard(&format!(
+            "{WRITTEN_TABLE}\nbetween\n\n{WRITTEN_MATH}\nafte"
+        ))),
+        "{rows:#?} gave {wrote:?}"
+    );
+}
+
+#[test]
+fn a_drag_over_display_math_copies_the_source_with_its_closing_break() {
+    let mut drawn = reading(60, 20);
+    drawn.answer(WRITTEN_MATH);
+    let rows = window(&drawn, 20);
+    let last = rows.iter().rposition(|row| !row.trim().is_empty()).unwrap();
+    drawn.take();
+
+    let wrote = drag(&mut drawn, (0, 0), (last, 59));
+
+    assert!(
+        wrote.contains(&onto_the_clipboard(WRITTEN_MATH)),
+        "{rows:#?} gave {wrote:?}"
+    );
+}
+
+#[test]
+fn a_drag_over_a_rule_copies_what_is_drawn_and_no_source() {
+    let mut drawn = reading(30, 12);
+    drawn.answer("above\n\n---\n\nbelow\n");
+    let rows = window(&drawn, 12);
+    let above = row_containing(&rows, "above");
+    let below = row_containing(&rows, "below");
+    drawn.take();
+
+    let wrote = drag(&mut drawn, (above, 0), (below, 29));
+
+    let rule = "─".repeat(30);
+    assert!(
+        wrote.contains(&onto_the_clipboard(&format!("above\n\n{rule}\n\nbelow"))),
+        "{rows:#?} gave {wrote:?}"
+    );
+}
+
+#[test]
+fn a_drag_over_a_drawn_block_that_scrolled_off_the_window_still_copies_its_source_once() {
+    let mut drawn = reading(60, 8);
+    drawn.answer(WRITTEN_TABLE);
+    for line in 0..10 {
+        drawn.commit(&format!("line {line}")).unwrap();
+    }
+    assert!(drawn.render.scrolled(-100).unwrap());
+    let rows = window(&drawn, 8);
+    let beta = row_containing(&rows, "beta");
+    drawn.take();
+
+    drawn
+        .took(Pressed::Clicked {
+            row: beta,
+            column: 0,
+        })
+        .unwrap();
+    drawn.took(Pressed::Dragged { row: 7, column: 5 }).unwrap();
+    assert!(drawn.render.scrolled(5).unwrap());
+    drawn.took(Pressed::Dragged { row: 7, column: 5 }).unwrap();
+    drawn.take();
+    drawn.took(Pressed::Released { row: 7, column: 5 }).unwrap();
+    let wrote = drawn.take();
+
+    let lines: Vec<String> = (0..=9).map(|line| format!("line {line}")).collect();
+    assert!(
+        wrote.contains(&onto_the_clipboard(&format!(
+            "{WRITTEN_TABLE}{}",
+            lines.join("\n")
+        ))),
+        "{rows:#?} gave {wrote:?}"
+    );
+}
+
+#[test]
+fn the_drawn_blocks_are_listed_newest_first_each_with_the_source_it_was_written_as() {
+    let mut drawn = reading(60, 20);
+    drawn.answer(&format!(
+        "before\n\n{WRITTEN_TABLE}\nbetween\n\n{WRITTEN_MATH}\nafter\n"
+    ));
+
+    let listed: Vec<(&str, &str)> = drawn
+        .sources()
+        .map(|source| (source.word, source.text))
+        .collect();
+    assert_eq!(listed, [("math", WRITTEN_MATH), ("table", WRITTEN_TABLE)]);
+
+    // A bound a later list can be held to: past the newest of them, and none
+    // of theirs past it.
+    let bound = drawn.sourced();
+    assert!(bound > 0);
+    assert!(drawn.sources().all(|source| source.line < bound));
+    assert_eq!(
+        drawn.sources().next().map(|source| source.line + 1),
+        Some(bound)
+    );
+}
+
+#[test]
+fn prose_and_a_rule_list_no_source_and_bound_nothing() {
+    let mut drawn = Drawn::new(60, 20);
+    drawn.answer("just prose\n\n---\n\nand a rule above it\n");
+
+    assert_eq!(drawn.sources().count(), 0);
+    assert_eq!(drawn.sourced(), 0);
 }

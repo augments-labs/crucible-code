@@ -1,0 +1,14 @@
+---
+source: crates/crucible-tui/src/markdown/tests.rs
+expression: "corpus_pictures::picture(INDENTED_CODE, 64, Glyphs::Ascii)"
+---
+A block indented four spaces:                                   
+                                                                
+<Quiet>+-</>                                                              
+<Quiet>| </><Quiet>let total = 1 + 2;</>                                            
+<Quiet>| </>                                                              
+<Quiet>| </><Quiet>let message = "a line of code long enough to wrap at sixty-fou</>
+<Quiet>: </><Quiet>r columns";</>                                                   
+<Quiet>+-</>                                                              
+                                                                
+After it.

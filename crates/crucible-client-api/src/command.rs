@@ -4,9 +4,10 @@
 //! terminal, and none besides: a command that does not ship has no arm, so
 //! there is no spelling a decoder could take for it.
 //!
-//! Nothing here reaches the host's files. A prompt is its words; what is
-//! attached to it is chosen on the host, by the front end standing there, and
-//! handed to the application beside the request rather than named inside it. A
+//! Nothing here reaches the host's files. A prompt is its words and who wrote
+//! them; what is attached to it is chosen on the host, by the front end
+//! standing there, and handed to the application beside the request rather
+//! than named inside it. A
 //! login names a provider and never the credential: the secret is stored on
 //! the host, and the command says only that it now can be read.
 //!
@@ -21,16 +22,23 @@
 //! and finds `version`, `instance` and `method` by equality against the catalog
 //! or the configuration, before any of them is used, and none is ever read as a
 //! path, an argument or shell text.
+//!
+//! Answering the questions a turn left waiting is served only to a client that
+//! claimed [`Capability::Questions`], the one that is told what waits. The
+//! command names the batch by the era and the id it was reported under and
+//! carries one reply per question; whether the replies fit is the registry's
+//! to decide.
 
 use std::fmt;
 use std::str::FromStr;
 
-use crucible_types::SessionId;
+use crucible_types::{QuestionId, SessionId};
 use serde_json::Value;
 
 use crate::bounds::{Name, PROMPT_BYTES};
 use crate::error::{ErrorCode, Refusal};
-use crate::pending::Decision;
+use crate::pending::{Decision, Picked};
+use crate::progress::Era;
 use crate::request::Capability;
 use crate::wire::{Fields, Writing};
 
@@ -51,6 +59,27 @@ pub enum Command {
     /// its own finds no turn stopped and nothing pending, and is refused as
     /// [`StaleDecision`](crate::ErrorCode::StaleDecision).
     Decide(Decision),
+    /// Answer a batch of questions a turn left waiting, without stopping.
+    ///
+    /// The batch is named by the era and the id
+    /// [`Progress::Waiting`](crate::Progress::Waiting) reported it under, and
+    /// takes one reply for each of its questions, in order. A batch that is
+    /// not waiting, one of a session the conversation has left, or any batch
+    /// once no conversation is left to deliver it, is refused as
+    /// [`StaleQuestions`](crate::ErrorCode::StaleQuestions), and replies it
+    /// cannot take as [`InvalidAnswer`](crate::ErrorCode::InvalidAnswer); either
+    /// way nothing is settled and the batch still waits. An answer settles
+    /// questions and nothing else: it is never a ruling on a pending action
+    /// nor a yes to sending anything.
+    Answer {
+        /// The session the batch belongs to, as
+        /// [`Progress::Waiting`](crate::Progress::Waiting) reported it.
+        era: Era,
+        /// The batch answered.
+        id: QuestionId,
+        /// One reply per question, in the order they were asked.
+        replies: Vec<Replied>,
+    },
     /// Start a new session, leaving this one where a resume can find it.
     Clear,
     /// Pick a recorded session of this workspace back up.
@@ -233,11 +262,12 @@ pub enum Command {
 
 impl Command {
     /// The word each arm crosses as, in the order the arms are declared.
-    pub const KINDS: [&'static str; 36] = [
+    pub const KINDS: [&'static str; 37] = [
         "prompt",
         "compact",
         "cancel",
         "decide",
+        "answer",
         "clear",
         "resume",
         "select_model",
@@ -280,6 +310,7 @@ impl Command {
             Self::Compact => "compact",
             Self::Cancel => "cancel",
             Self::Decide(_) => "decide",
+            Self::Answer { .. } => "answer",
             Self::Clear => "clear",
             Self::Resume(_) => "resume",
             Self::SelectModel { .. } => "select_model",
@@ -318,8 +349,9 @@ impl Command {
     /// The capability a client has to have claimed for this command to be
     /// taken at all, where it takes one.
     ///
-    /// The install commands do: a client that did not claim
-    /// [`Capability::Install`] is refused them as
+    /// The install commands do, and so does answering waiting questions: a
+    /// client that did not claim [`Capability::Install`], or
+    /// [`Capability::Questions`] for an answer, is refused them as
     /// [`ErrorCode::NeedsCapability`] and nothing changes. Every other command
     /// is taken whatever was claimed, and a capability only decides which
     /// questions and reports that client is put while it runs.
@@ -334,6 +366,7 @@ impl Command {
             | Self::RemoveAgent { .. }
             | Self::VerifyAgent { .. }
             | Self::SignInAgent { .. } => Some(Capability::Install),
+            Self::Answer { .. } => Some(Capability::Questions),
             Self::Prompt(_)
             | Self::Compact
             | Self::Cancel
@@ -368,8 +401,15 @@ impl Command {
     pub(crate) fn written(&self) -> Value {
         let object = Writing::kind(self.kind());
         match self {
-            Self::Prompt(prompt) => object.with("text", prompt.as_str()),
+            Self::Prompt(prompt) => prompt.onto(object),
             Self::Decide(decision) => object.with("decision", decision.written()),
+            Self::Answer { era, id, replies } => object
+                .with("era", era.written())
+                .with("id", id.to_string())
+                .with(
+                    "replies",
+                    replies.iter().map(Replied::written).collect::<Vec<_>>(),
+                ),
             Self::Resume(session) => object.with("session", session.as_str()),
             Self::SelectModel {
                 provider,
@@ -429,10 +469,19 @@ impl Command {
         let mut fields = Fields::of(value)?;
         let kind = fields.kind()?;
         let command = match kind.as_str() {
-            "prompt" => Self::Prompt(Prompt::new(&fields.string("text")?)?),
+            "prompt" => Self::Prompt(Prompt::read(&mut fields)?),
             "compact" => Self::Compact,
             "cancel" => Self::Cancel,
             "decide" => Self::Decide(Decision::read(fields.take("decision")?)?),
+            "answer" => Self::Answer {
+                era: Era::read(fields.take("era")?)?,
+                id: QuestionId::parse(&fields.string("id")?).ok_or(ErrorCode::Malformed)?,
+                replies: fields
+                    .list("replies")?
+                    .into_iter()
+                    .map(Replied::read)
+                    .collect::<Result<_, _>>()?,
+            },
             "clear" => Self::Clear,
             "resume" => Self::Resume(session(&fields.string("session")?)?),
             "select_model" => Self::SelectModel {
@@ -522,7 +571,7 @@ impl Command {
 }
 
 /// The session `word` names.
-fn session(word: &str) -> Result<SessionId, Refusal> {
+pub(crate) fn session(word: &str) -> Result<SessionId, Refusal> {
     if word.len() > crate::bounds::NAME_BYTES {
         return Err(ErrorCode::TooLarge.into());
     }
@@ -537,40 +586,147 @@ fn word<T: FromStr<Err = Refusal>>(value: &Value) -> Result<T, Refusal> {
         .parse()
 }
 
-/// The words of a prompt: never empty, never over [`PROMPT_BYTES`].
+/// What one question of a waiting batch is answered with.
 ///
-/// Redacted from `Debug`, because they are a person's.
+/// Declining is a reply of its own, not an empty choice: the person would not
+/// decide that question, and the model must not read it as any of the answers
+/// it offered. On a question that takes several answers, choosing none of
+/// them is an answer, and the model is told nothing was chosen; on one that
+/// takes a single answer, exactly one is chosen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Replied {
+    /// The answers chosen, and a note beside them.
+    Answered(Picked),
+    /// The person would not decide it.
+    Declined,
+}
+
+impl Replied {
+    fn written(&self) -> Value {
+        match self {
+            Self::Answered(picked) => picked.written_into(Writing::kind("answered")).finish(),
+            Self::Declined => Writing::kind("declined").finish(),
+        }
+    }
+
+    fn read(value: Value) -> Result<Self, Refusal> {
+        let mut fields = Fields::of(value)?;
+        let replied = match fields.kind()?.as_str() {
+            "answered" => Self::Answered(Picked::taken(&mut fields)?),
+            "declined" => Self::Declined,
+            _ => return Err(ErrorCode::InvalidArgument.into()),
+        };
+        fields.done()?;
+        Ok(replied)
+    }
+}
+
+/// The words of a prompt, and who wrote them: never empty, never over
+/// [`PROMPT_BYTES`].
+///
+/// Redacted from `Debug`, because they are a person's, or carry what a
+/// person's commands printed.
 #[derive(Clone, PartialEq, Eq)]
-pub struct Prompt(Box<str>);
+pub struct Prompt {
+    words: Box<str>,
+    author: Author,
+}
 
 impl Prompt {
-    /// A prompt saying `words`.
+    /// A prompt the person wrote, saying `words`.
     ///
     /// # Errors
     ///
     /// [`ErrorCode::TooLarge`] over [`PROMPT_BYTES`], checked before the words
     /// are copied; [`ErrorCode::InvalidArgument`] where there are none.
     pub fn new(words: &str) -> Result<Self, Refusal> {
+        Self::by(words, Author::Person)
+    }
+
+    /// A prompt the application wrote, saying `words`: a note of its own that
+    /// wakes the model, such as what commands left running printed before they
+    /// ended. It is taken as a turn as any prompt is, and is never kept as what
+    /// the person asked for.
+    ///
+    /// # Errors
+    ///
+    /// As [`Prompt::new`].
+    pub fn application(words: &str) -> Result<Self, Refusal> {
+        Self::by(words, Author::Application)
+    }
+
+    fn by(words: &str, author: Author) -> Result<Self, Refusal> {
         if words.len() > PROMPT_BYTES {
             return Err(ErrorCode::TooLarge.into());
         }
         if words.is_empty() {
             return Err(ErrorCode::InvalidArgument.into());
         }
-        Ok(Self(words.into()))
+        Ok(Self {
+            words: words.into(),
+            author,
+        })
     }
 
     /// The words.
     #[must_use]
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.words
+    }
+
+    /// Who wrote them.
+    #[must_use]
+    pub const fn author(&self) -> Author {
+        self.author
+    }
+
+    /// `object` with these words in it, and who wrote them where that is not
+    /// the person.
+    fn onto(&self, object: Writing) -> Writing {
+        let by = match self.author {
+            Author::Person => None,
+            Author::Application => Some("application"),
+        };
+        object.with("text", self.as_str()).maybe("by", by)
+    }
+
+    /// The prompt in `fields`: the person's where `by` is left out, the
+    /// application's where it says so, and refused where it says anything
+    /// else.
+    fn read(fields: &mut Fields) -> Result<Self, Refusal> {
+        let words = fields.string("text")?;
+        let author = match fields.maybe("by") {
+            None => Author::Person,
+            Some(Value::String(by)) if by == "application" => Author::Application,
+            Some(_) => return Err(ErrorCode::Malformed.into()),
+        };
+        Self::by(&words, author)
     }
 }
 
 impl fmt::Debug for Prompt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Prompt([redacted; {} bytes])", self.0.len())
+        write!(
+            f,
+            "Prompt([redacted; {} bytes], {:?})",
+            self.words.len(),
+            self.author
+        )
     }
+}
+
+/// Who wrote a [`Prompt`].
+///
+/// Told apart because what the person asked for is kept and said back to the
+/// model once the conversation no longer holds it, and words the application
+/// wrote are not the person's to be kept as theirs. On the wire the person is
+/// said by leaving `by` out, and the application by `"application"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Author {
+    /// The person at the front end.
+    Person,
+    /// The application, speaking for itself.
+    Application,
 }
 
 /// How hard a model is asked to think, as this protocol spells it.

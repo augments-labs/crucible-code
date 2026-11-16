@@ -55,14 +55,19 @@
 use std::borrow::Cow;
 use std::fmt;
 use std::path::Path;
+use std::sync::Arc;
 
 use crucible_builtins::Ended;
 use crucible_client_api::pending::Effect;
 use crucible_runner::{Breakdown, Event, TurnError, Turned};
 use crucible_tools::{Argument, Sensitivity, Summary, ToolOutput};
+use crucible_tui::drawing::{Drawers, EXPAND, Room};
 use crucible_tui::{
     Glyphs, Remaining, Renderer, Row, Slot, Terminal, TerminalError, clip, columns, cut, fold,
 };
+use crucible_tui_diff::{Changes, File, Side};
+use crucible_tui_math::Formulas;
+use crucible_tui_mermaid::Diagrams;
 use crucible_types::{
     Answer, Attachment, Change, Changed, Compacted, Compacting, Diff, Modality, Question,
     RecordedToolOutput, StopReason, ToolCall, ToolId,
@@ -103,13 +108,6 @@ pub(crate) fn offered(answer: &Answer) -> Cow<'_, str> {
         Cow::Borrowed(answer.answer())
     }
 }
-
-/// The narrowest a block's gutter of line numbers is drawn.
-///
-/// Three, because that is where a file stops being one screen: below it the
-/// numbers say where the reader is looking, and a column that narrowed to fit
-/// them would move the whole block sideways between one call and the next.
-const NUMBER: usize = 3;
 
 /// What stands where a file's kind stands, on the row saying a request went out
 /// without it.
@@ -156,6 +154,10 @@ pub(crate) fn event<T: Terminal>(
         // session has used and the plan windows are kept for `/usage`. Each is
         // true only until its next event, so committing every reading would
         // leave a column of stale state in front of the answer.
+        //
+        // What waits for an answer is the dock's, over the box: the loop
+        // that drains the turn reads it through the client on this report,
+        // and nothing of it is a transcript line either.
         Event::Spent { .. }
         | Event::PromptCache { .. }
         | Event::Sandbox { .. }
@@ -163,7 +165,8 @@ pub(crate) fn event<T: Terminal>(
         | Event::Carried { .. }
         | Event::Used { .. }
         | Event::PlanLimits { .. }
-        | Event::Compacting { .. } => Ok(()),
+        | Event::Compacting { .. }
+        | Event::Waiting { .. } => Ok(()),
 
         // A call the agent running this turn made with one of its own tools,
         // over there. Drawn as a call made here is, live in the footing until
@@ -1208,6 +1211,8 @@ pub(crate) fn pascal(name: &str) -> String {
 /// in its answer to the model. Both are true of the same call, and only one is
 /// about the file: how many replacements `edit` made is a fact about the
 /// instruction it was sent, and the reader is looking at what is in the file.
+/// Where the lines are here the change is drawn as a box instead, by
+/// [`finished_rows`]; this row is for a log that kept only the counts.
 fn finished(output: &Shown, beyond: usize, window: usize, style: Style, details: bool) -> Vec<Row> {
     let glyphs = style.glyphs();
     let mut lead = Row::new().then(Slot::Plain, " ".repeat(columns(glyphs.called()) + 1));
@@ -1229,17 +1234,12 @@ fn finished(output: &Shown, beyond: usize, window: usize, style: Style, details:
         .min(window.saturating_sub(lead.columns()));
 
     if let Some(counts) = changed(output) {
-        counted(
-            &mut lead,
-            counts,
-            output.diff.as_ref().map_or(0, Diff::dropped),
-            room,
-        );
+        counted(&mut lead, counts);
         if details {
             lead.push(
                 Slot::Cut,
                 clipped(
-                    " (ctrl+o to expand)",
+                    format!(" ({EXPAND})"),
                     room.saturating_sub(lead.columns()),
                     glyphs,
                 ),
@@ -1410,14 +1410,12 @@ fn offer(beyond: usize, glyphs: Glyphs) -> (String, &'static str, &'static str) 
     )
 }
 
-/// The words that name the key an offer to expand is made with.
-const EXPAND: &str = "ctrl+o to expand";
-
 /// Every row one answered call comes back as.
 ///
-/// The row that says what came back, and under it the lines a call that changed
-/// a file moved. No row parts them, because a reader asking what the call did is
-/// asking both halves of the same question.
+/// The row that says what came back; or, for a call that changed a file, the
+/// change drawn as a box whose header counts it, the box a `diff` fence in an
+/// answer is drawn in, because a reader who has learned what one edit looks
+/// like has learned the other.
 ///
 /// One builder rather than two, for the reason [`words`] is one: this is drawn
 /// when the call answers and again when the session is put back on the screen,
@@ -1429,14 +1427,16 @@ pub(crate) fn finished_rows(
     style: Style,
     details: bool,
 ) -> Vec<Row> {
-    let glyphs = style.glyphs();
-    let mut rows = finished(output, beyond(output), window, style, details);
-
-    if let Some(diff) = output.diff.as_ref().filter(|diff| !diff.is_empty()) {
-        rows.extend(block(diff, window, glyphs));
+    match output.diff.as_ref().filter(|diff| !diff.is_empty()) {
+        Some(diff) => block(
+            diff,
+            output.output.is_failed(),
+            window,
+            style.glyphs(),
+            details,
+        ),
+        None => finished(output, beyond(output), window, style, details),
     }
-
-    rows
 }
 
 /// One result, on the screen and held where the key that opens it can find it.
@@ -1469,9 +1469,11 @@ pub(crate) fn came_back<T: Terminal>(
         let retained = output.clone();
         let rows = finished_rows(&retained, renderer.transcript_columns(), style, details);
         let bytes = retained.diff.as_ref().map_or(0, Diff::retained);
-        renderer.responsive(
+        renderer.responsive_in(
             bytes,
-            Box::new(move |columns| finished_rows(&retained, columns, style, details)),
+            Box::new(move |columns, glyphs| {
+                finished_rows(&retained, columns, style.drawing(glyphs), details)
+            }),
         )?;
         rows
     } else {
@@ -1485,15 +1487,32 @@ pub(crate) fn came_back<T: Terminal>(
     // offered, and one held anyway would be an offer to show somebody what they
     // are already looking at.
     //
-    // Where the offer went is the block's first row, which is the one that names
-    // the key — the lines under it are a change, and a change is cut where it is
-    // built rather than here, so it offers nothing.
+    // A change offers on its box's first row where its call's line was cut,
+    // and on the row that counts its fold. The fold is asked of the change and
+    // not read off the rows: it is drawn again at every width, and a room too
+    // narrow for the key now is followed by one that names it.
+    let change = output
+        .diff
+        .as_ref()
+        .filter(|diff| !diff.is_empty())
+        .map(change_of);
+    let folded = change
+        .as_ref()
+        .is_some_and(|change| change.files().iter().any(File::folds));
     if details
+        || folded
         || rows
             .iter()
             .any(|row| row.kinds().any(|slot| slot == Slot::Cut))
     {
-        kept.finished(call, output.into_text(), at);
+        // What the key opens under a change is the change, every line the tool
+        // kept, in the words its box is drawn in; the sentence the model was
+        // sent says none of them.
+        let whole = match change {
+            Some(change) => Changes.written(&change, style.glyphs()).into_boxed_str(),
+            None => output.into_text(),
+        };
+        kept.finished(call, whole, at);
     } else {
         // Even when nothing needs retaining, the call and any live tail are
         // over. Leaving them would show a completed call as live.
@@ -1536,10 +1555,14 @@ pub(crate) fn withdraw<T: Terminal>(
 /// What [`finished`] and [`offer`] wrote for it goes: the key's name and the
 /// brackets it stood in, or the whole of a change's offer, which is a cut run
 /// of its own at the end of the row. A count of the lines the row could not
-/// show stays, because it is still true. What was cut stops wearing the slot
-/// that lights under the pointer and reads as the row around it.
+/// show stays, because it is still true, and so does the count on the row a
+/// change's box folds its middle into, which loses the key after it. What was
+/// cut stops wearing the slot that lights under the pointer and reads as the
+/// row around it.
 fn unoffered(rows: &mut [Row]) {
     for row in rows {
+        // The fold's row is the box's to word, so the box takes its key out.
+        crucible_tui_diff::unoffered(row);
         let spans: Vec<(Slot, String)> = row
             .spans()
             .map(|(slot, text)| (slot, text.to_owned()))
@@ -1663,8 +1686,9 @@ impl Shown {
 ///
 /// Zero for a call that changed a file. That result is drawn as the change
 /// itself and the block under the row is where its lines are; what the block
-/// could not fit was cut where the change was built rather than here, so there
-/// is nothing left over to offer.
+/// folds it counts on a row of its own, and what the tool never kept was cut
+/// where the change was built rather than here, so no line of the result is
+/// left over for this row to count.
 ///
 /// Restored previews follow the same rule. Legacy logs with counts alone also
 /// offer no expansion: the result text repeats the sentence in the header.
@@ -1693,23 +1717,13 @@ fn changed(output: &Shown) -> Option<Changed> {
         .filter(|counts| !counts.is_empty())
 }
 
-/// What a change did, counted.
+/// What a change did, counted, for a log that kept the counts and not the
+/// lines.
 ///
 /// The numbers are what the row is read for, so they are the part of it that
-/// stands out; the words around them are as quiet as the rest of the line.
-///
-/// What the block below could not fit is said here rather than at its foot,
-/// because this is the row that claims a number — a reader told nine lines went
-/// in and shown six of them has been told the truth about the call, and a block
-/// that stopped without saying so reads as the whole of what happened.
-///
-/// `dropped` is what the block below is leaving out, and it is passed in rather
-/// than read off the counts because it is a fact about lines being drawn.
-/// Restored previews retain their omitted-line count; legacy headers without
-/// previews do not claim to show or omit any diff rows.
-fn counted(row: &mut Row, counts: Changed, dropped: usize, room: usize) {
-    let before = row.columns();
-
+/// stands out; the words around them are as quiet as the rest of the line. It
+/// claims to show no line, so it says nothing of lines left out.
+fn counted(row: &mut Row, counts: Changed) {
     match (counts.added(), counts.removed()) {
         (0, removed) => count(row, "Removed ", removed),
         (added, 0) => count(row, "Added ", added),
@@ -1718,14 +1732,6 @@ fn counted(row: &mut Row, counts: Changed, dropped: usize, room: usize) {
             row.push(Slot::Quiet, ", ");
             count(row, "removed ", removed);
         }
-    }
-
-    // Left off a window with no room for it rather than clipped, and the
-    // numbers above are never either: half of "(5 of them not shown)" says
-    // nothing, and a clipped count says something untrue.
-    let said = format!(" ({dropped} of them not shown)");
-    if dropped > 0 && row.columns() - before + columns(&said) <= room {
-        row.push(Slot::Quiet, said);
     }
 }
 
@@ -1736,69 +1742,104 @@ fn count(row: &mut Row, word: &str, lines: usize) {
     row.push(Slot::Quiet, if lines == 1 { " line" } else { " lines" });
 }
 
-/// The narrowest column the numbers down the left of a block all fit in.
+/// The drawers every renderer of a session is handed: [`Changes`], which
+/// draws a `diff` or `patch` fence of an answer as the box [`block`] draws a
+/// call's change as, [`Formulas`], which draws math as text, and
+/// [`Diagrams`], which draws a `mermaid` fence as text.
 ///
-/// Never under [`NUMBER`], so two calls in a column start their lines in the
-/// same place whatever part of a file each of them touched.
-fn gutter(diff: &Diff) -> usize {
-    let widest = diff
-        .lines()
-        .iter()
-        .map(|line| line.number().checked_ilog10().unwrap_or(0))
-        .max()
-        .unwrap_or(0);
-
-    usize::try_from(widest)
-        .unwrap_or(0)
-        .saturating_add(1)
-        .max(NUMBER)
+/// One function, so the screen a session is read on and the preview of one
+/// nobody has picked up are handed the same drawers, and draw the same answer
+/// the same way.
+pub(crate) fn drawers() -> Drawers {
+    Drawers::default()
+        .with(Arc::new(Changes))
+        .with(Arc::new(Formulas))
+        .with(Arc::new(Diagrams))
 }
 
-/// The lines a call moved, under the row that counted them.
-///
-/// Each row is the number the reader would find that line at, the sign saying
-/// which way it went, and the line itself. The two that moved are drawn on a
-/// ground of their own carried to the last column of the window: a block of
-/// colour is what the eye finds before it reads anything, and one that stopped
-/// where its text stopped would have a ragged edge that means nothing.
-///
-/// The lines around them are on the reader's own ground, because they did not
-/// move. They are here so the ones that did have something to be read against,
-/// and a context line painted like the rest of the terminal is one the eye skips
-/// on its way to the change — which is what it is for.
-///
-/// Clipped to the window rather than to the ceiling a result line is held to.
-/// That ceiling exists to keep one event to about one row, and these rows are
-/// the event: a line of code cut off at the same column on a wide terminal would
-/// be hiding the change the block was drawn to show.
-fn block(diff: &Diff, window: usize, glyphs: Glyphs) -> Vec<Row> {
-    let left = columns(glyphs.called()) + 4;
-    let gutter = gutter(diff);
+/// The change a tool kept of one edit, as the box takes it: the one file it
+/// was made to.
+fn change_of(diff: &Diff) -> crucible_tui_diff::Change {
+    crucible_tui_diff::Change::new(vec![tool_file(diff)])
+}
 
-    // A space each side of the number, the sign, and two more before the text:
-    // the columns the row spends before it says anything.
-    let room = window.saturating_sub(left + gutter + 5);
+/// The change a call made, drawn as a box.
+///
+/// Through [`Changes`], the one function a `diff` fence in an answer is drawn
+/// by too, so the two cannot drift: a header that says in words what moved,
+/// the number each line is found at, the sign that says which way it went, and
+/// a ground under each line that moved, carried to one column short of the
+/// window. A change longer than the fold draws its start and its end around a
+/// row that counts the rest and names the key that shows them, which
+/// [`came_back`] keeps the change written out for; the lines the tool never
+/// kept are one quiet row under the ones it did.
+///
+/// Hung where the row under a call hangs, with a failure's cross in the call's
+/// own column. Clipped to the window rather than to the ceiling a result line
+/// is held to: that ceiling keeps one event to about one row, and these rows
+/// are the event. Where `details` says the call's own line was cut, the
+/// header offers the key that shows the whole of it, two columns after what
+/// it says, or makes no offer where the row has no room for its opening
+/// bracket and the start of the key's name.
+fn block(diff: &Diff, failed: bool, window: usize, glyphs: Glyphs, details: bool) -> Vec<Row> {
+    let left = columns(glyphs.called()) + 1;
+    let room = Room {
+        columns: window.saturating_sub(left),
+        glyphs,
+    };
+    let mut rows = Changes.draw(&change_of(diff), &room).rows;
 
-    diff.lines()
-        .iter()
-        .map(|line| {
-            let (ground, marked, sign) = match line.change() {
-                Change::Kept => (Slot::Plain, Slot::Quiet, ' '),
-                Change::Removed => (Slot::Removed, Slot::RemovedNumber, '-'),
-                Change::Added => (Slot::Added, Slot::AddedNumber, '+'),
+    if details && let Some(header) = rows.first_mut() {
+        // The lead is written here rather than handed to [`clipped`], which
+        // takes the space off both ends of what it is given.
+        let lead = "  ";
+        let offer = clipped(
+            format!("({EXPAND})"),
+            room.columns
+                .saturating_sub(header.columns() + columns(lead)),
+            glyphs,
+        );
+        // Drawn only where [`unoffered`] will know it: a room that leaves the
+        // mark of a cut alone, or a bracket and the mark, names no key.
+        if change_offer(&offer) {
+            header.push(Slot::Cut, format!("{lead}{offer}"));
+        }
+    }
+
+    rows.into_iter()
+        .enumerate()
+        .map(|(at, row)| {
+            let mark = if at == 0 && failed {
+                glyphs.failed()
+            } else {
+                ""
             };
-
-            let mut row = Row::new().then(Slot::Plain, " ".repeat(left));
-            row.push(marked, format!(" {:>gutter$} {sign}  ", line.number()));
-            row.push(ground, indented(line.text(), room, glyphs));
-
-            if !matches!(line.change(), Change::Kept) {
-                row.fill(ground, window);
-            }
-
-            row
+            let pad = " ".repeat(left.saturating_sub(columns(mark)));
+            Row::new()
+                .then(Slot::Plain, format!("{mark}{pad}"))
+                .join(row)
         })
         .collect()
+}
+
+/// The file a tool's change is drawn as: named as the tool named it, every
+/// line it kept, numbered as the tool numbered them, counted as the tool
+/// counted the whole of the edit, and the lines it never kept as a count. A
+/// change kept before it could name its file is drawn with no name, and so
+/// with no language to colour its lines as.
+fn tool_file(diff: &Diff) -> File {
+    let lines = diff.lines().iter().map(|line| {
+        let side = match line.change() {
+            Change::Kept => Side::Kept,
+            Change::Removed => Side::Removed,
+            Change::Added => Side::Added,
+        };
+        (line.number(), side, line.text())
+    });
+
+    File::numbered(diff.path(), lines)
+        .counted(diff.added(), diff.removed())
+        .dropping(diff.dropped())
 }
 
 /// The record of room having been made, as it joins the transcript.
@@ -1976,14 +2017,16 @@ const UNCERTAIN: &str = "what the agent was doing when it stopped may or may not
 /// The one ending of a turn that may have drawn nothing at all: a prompt
 /// refused on the way in is refused before any request is made, so no event
 /// was posted and the reader would otherwise be handed a fresh prompt with no
-/// word on why nothing answered. Drawn the way a failed turn is — on its own,
-/// with no mark in front, in the colour kept for trouble — because nobody's
-/// line asked for it either.
+/// word on why nothing answered. A line typed while the turn ran, or an answer
+/// to a question asked without waiting, is refused the same way at the pass
+/// that would have sent it, and the turn ends there. Drawn the way a failed
+/// turn is — on its own, with no mark in front, in the colour kept for
+/// trouble — because nobody's line asked for it either.
 ///
-/// Which check and what it said, and then whether anything was asked: a
-/// refusal with no stop beside it never reached a provider, and one with a
-/// stop is an answer that was made and that the check did not accept. A turn that
-/// ran says nothing here; it reported itself as it went.
+/// Which check and what it said, and then whose words it judged: a refusal
+/// with no stop beside it is of what the person said, which was never sent,
+/// and one with a stop is an answer the model made that the check did not
+/// accept. A turn that ran says nothing here; it reported itself as it went.
 ///
 /// # Errors
 ///
@@ -2001,7 +2044,7 @@ pub(crate) fn refused<T: Terminal>(
             if stop.is_some() {
                 "the answer"
             } else {
-                "this prompt, and nothing was asked"
+                "what you said, and it was not sent"
             },
             rejection.why(),
         ),
@@ -2010,7 +2053,7 @@ pub(crate) fn refused<T: Terminal>(
             if stop.is_some() {
                 ", so the answer is not one it accepted"
             } else {
-                ", and nothing was asked"
+                ", so what you said was not sent"
             },
         ),
     };

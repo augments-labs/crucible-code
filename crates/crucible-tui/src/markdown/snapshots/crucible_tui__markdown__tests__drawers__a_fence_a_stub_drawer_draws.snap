@@ -1,0 +1,19 @@
+---
+source: crates/crucible-tui/src/markdown/tests/drawers.rs
+expression: "dump(&laid(&[TWO_FILES], 40, Glyphs::Unicode, &holding(&stub)), 40)"
+---
+Before.                                 
+                                        
+<Quiet>»</><Added> --- a/x.rs</>                            
+<Quiet>»</><Added> +++ b/x.rs</>                            
+<Quiet>»</><Added> @@ -1,2 +1,2 @@</>                       
+<Quiet>»</><Added> -let a = 1;</>                           
+<Quiet>»</><Added> +let a = 2;</>                           
+<Quiet>»</><Added>  context</>                              
+<Quiet>»</><Added> --- a/y.rs</>                            
+<Quiet>»</><Added> +++ b/y.rs</>                            
+<Quiet>»</><Added> @@ -4 +4 @@</>                           
+<Quiet>»</><Added> -old</>                                  
+<Quiet>»</><Added> +new</>                                  
+                                        
+After.

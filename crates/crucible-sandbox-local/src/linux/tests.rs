@@ -43,7 +43,10 @@ pub(super) fn command(script: &str) -> SandboxCommand {
     .expect("command")
 }
 
-fn direct(program: &str, arguments: impl IntoIterator<Item = OsString>) -> SandboxCommand {
+pub(super) fn direct(
+    program: &str,
+    arguments: impl IntoIterator<Item = OsString>,
+) -> SandboxCommand {
     SandboxCommand::new(program, arguments, SandboxEnvironment::empty()).expect("command")
 }
 
@@ -1885,4 +1888,356 @@ fn a_refused_launch_shows_what_the_launcher_said() {
         "{silent:?}"
     );
     assert_eq!(silent.to_string(), "sandbox lifecycle failed");
+}
+
+/// The arguments Bubblewrap would be started with for `request`, running
+/// `/bin/sh -c :`, with each descriptor named by the role it plays.
+///
+/// A descriptor's number is whatever this test process had free when it opened
+/// the file, so two plans can agree only on the role; every other argument is
+/// kept as the planner wrote it.
+fn planned(request: &SandboxRequest) -> Vec<String> {
+    let view = super::command::prepare(request).expect("a view of the sample");
+    let backend =
+        super::probe::Bwrap::unspawned(PathBuf::from("/nonexistent/bwrap")).expect("a backend");
+    let image = std::fs::File::open("/dev/null").expect("a file to stand in for the broker");
+    let broker = super::broker::Broker::unexecuted(PathBuf::from("/nonexistent/broker"), image);
+    let status = std::fs::File::open("/dev/null").expect("a file to stand in for the status pipe");
+    let confined = command(":");
+    let process = super::command::build(super::command::Plan {
+        backend: &backend,
+        broker: &broker,
+        request,
+        command: &confined,
+        view: &view,
+        materialization: None,
+        projection: None,
+        status_descriptor: status.as_raw_fd(),
+        network: None,
+        proxy_socket: None,
+    })
+    .expect("a plan for the confined command");
+
+    let mut roles = vec![
+        (broker.descriptor().to_string(), "<broker>".to_owned()),
+        (status.as_raw_fd().to_string(), "<status>".to_owned()),
+    ];
+    roles.extend(
+        view.binds()
+            .iter()
+            .enumerate()
+            .map(|(at, bind)| (bind.descriptor().to_string(), format!("<bind {at}>"))),
+    );
+    let mut arguments = Vec::new();
+    let mut names_a_descriptor = false;
+    for argument in process.get_args() {
+        let argument = argument.to_string_lossy().into_owned();
+        let role = names_a_descriptor
+            .then(|| roles.iter().find(|(number, _)| *number == argument))
+            .flatten()
+            .map(|(_, role)| role.clone());
+        names_a_descriptor = matches!(
+            argument.as_str(),
+            "--ro-bind-fd" | "--bind-fd" | "--sync-fd" | "--status-fd"
+        );
+        arguments.push(role.unwrap_or(argument));
+    }
+    arguments
+}
+
+/// A read-only request on `root` with the standard ceilings, and `limits`
+/// changed on top of them.
+pub(super) fn read_only_request(
+    root: &std::path::Path,
+    limits: SandboxResourceLimits,
+) -> SandboxRequest {
+    let policy = SandboxPolicy::new(
+        true,
+        [SandboxFilesystemRule::new(
+            root.to_path_buf(),
+            SandboxFilesystemAccess::ReadOnly,
+            SandboxFilesystemProvenance::Workspace,
+        )
+        .expect("read-only rule")],
+        root.to_path_buf(),
+        SandboxNetworkPolicy::Closed,
+        limits,
+    )
+    .expect("a read-only policy");
+    SandboxRequest::new(
+        SandboxId::new(),
+        Ancestry::new(),
+        ToolId::new("plan"),
+        policy,
+        SandboxManifest::empty(),
+    )
+}
+
+#[test]
+fn a_request_without_a_disk_ceiling_is_planned_mount_for_mount_as_before() {
+    // The plan a request with no disk ceiling has always had, written out here
+    // rather than read back from the planner: a disk ceiling changes how the
+    // root and its writable places are mounted, and a request that does not
+    // ask for one must not see any of it. The host's runtime roots are the one
+    // part that depends on the machine, so they are listed the way the
+    // planner's own table names them and kept where they exist.
+    const RUNTIME: &[&str] = &[
+        "/usr",
+        "/bin",
+        "/sbin",
+        "/lib",
+        "/lib64",
+        "/nix/store",
+        "/run/current-system/sw",
+        "/etc/ld.so.cache",
+        "/etc/ld.so.conf",
+        "/etc/ld.so.conf.d",
+        "/etc/alternatives",
+        "/etc/passwd",
+        "/etc/group",
+        "/etc/nsswitch.conf",
+        "/etc/localtime",
+        "/etc/ssl/certs",
+        "/etc/pki",
+    ];
+    let sample = Sample::new("sandbox-plan-without-disk-ceiling");
+    let root = sample.root().clone();
+    let shown = |path: &std::path::Path| path.to_string_lossy().into_owned();
+    let runtime: Vec<&std::path::Path> = RUNTIME
+        .iter()
+        .map(std::path::Path::new)
+        .filter(|path| path.exists())
+        .collect();
+
+    let mut directories = std::collections::BTreeSet::new();
+    let mut make = |path: &std::path::Path, itself: bool| {
+        if itself {
+            directories.insert(path.to_path_buf());
+        }
+        for parent in path.ancestors().skip(1) {
+            if parent != std::path::Path::new("/") {
+                directories.insert(parent.to_path_buf());
+            }
+        }
+    };
+    for path in &runtime {
+        make(path, path.is_dir());
+    }
+    make(&root, true);
+    for fixed in ["/dev", "/proc", "/tmp", "/crucible-home", "/run/crucible"] {
+        directories.insert(PathBuf::from(fixed));
+    }
+
+    let mut expected: Vec<String> = [
+        "--die-with-parent",
+        "--new-session",
+        "--unshare-user",
+        "--unshare-pid",
+        "--unshare-ipc",
+        "--unshare-net",
+        "--unshare-uts",
+        "--disable-userns",
+        "--as-pid-1",
+        "--tmpfs",
+        "/",
+    ]
+    .map(String::from)
+    .to_vec();
+    for directory in &directories {
+        expected.extend(["--dir".to_owned(), shown(directory)]);
+    }
+    expected.extend(
+        [
+            "--dev",
+            "/dev",
+            "--proc",
+            "/proc",
+            "--tmpfs",
+            "/tmp",
+            "--chmod",
+            "1777",
+            "/tmp",
+            "--tmpfs",
+            "/crucible-home",
+            "--chmod",
+            "0700",
+            "/crucible-home",
+        ]
+        .map(String::from),
+    );
+    for path in &runtime {
+        expected.extend(["--ro-bind".to_owned(), shown(path), shown(path)]);
+    }
+    expected.extend(
+        [
+            "--ro-bind-fd",
+            "<broker>",
+            "/run/crucible/broker",
+            "--sync-fd",
+            "<status>",
+            "--ro-bind-fd",
+            "<bind 0>",
+        ]
+        .map(String::from),
+    );
+    expected.push(shown(&root));
+    expected.extend(["--cap-drop", "ALL", "--chdir"].map(String::from));
+    expected.push(shown(&root));
+    expected.extend(
+        [
+            "--",
+            "/run/crucible/broker",
+            "--status-fd",
+            "<status>",
+            "--limit-cpu-seconds",
+            "3600",
+            "--limit-open-files",
+            "4096",
+            "--",
+            "/bin/sh",
+            "-c",
+            ":",
+        ]
+        .map(String::from),
+    );
+
+    assert_eq!(
+        planned(&read_only_request(
+            &root,
+            SandboxResourceLimits::confining()
+        )),
+        expected
+    );
+}
+
+/// `arguments` with the one run of `old` in it replaced by `new`.
+fn replaced(arguments: &[String], old: &[&str], new: &[&str]) -> Vec<String> {
+    let at: Vec<usize> = arguments
+        .windows(old.len())
+        .enumerate()
+        .filter(|(_, window)| window.iter().zip(old).all(|(left, right)| left == right))
+        .map(|(at, _)| at)
+        .collect();
+    assert_eq!(at.len(), 1, "{old:?} is not in {arguments:?} exactly once");
+    let at = at.first().copied().unwrap_or_default();
+    let mut changed = arguments.get(..at).unwrap_or_default().to_vec();
+    changed.extend(new.iter().map(|argument| (*argument).to_owned()));
+    changed.extend_from_slice(arguments.get(at + old.len()..).unwrap_or_default());
+    changed
+}
+
+#[test]
+fn a_disk_ceiling_sizes_the_one_root_every_writable_place_is_made_in() {
+    // The total is held by one sized mount: the root, with `/tmp` and the home
+    // made as directories inside it rather than as tmpfs mounts of their own,
+    // each of which would hold the ceiling again. `/dev` is a tmpfs Bubblewrap
+    // makes, so it is made read-only. The broker is told to refuse attribute
+    // writes, whose values that root does not count. Nothing else in the plan
+    // moves.
+    let sample = Sample::new("sandbox-plan-disk-ceiling");
+    let unbounded = planned(&read_only_request(
+        sample.root(),
+        SandboxResourceLimits::confining(),
+    ));
+    let mut expected = replaced(
+        &unbounded,
+        &["--tmpfs", "/"],
+        &["--size", "8388608", "--tmpfs", "/"],
+    );
+    expected = replaced(
+        &expected,
+        &["--dev", "/dev"],
+        &["--dev", "/dev", "--remount-ro", "/dev"],
+    );
+    expected = replaced(&expected, &["--tmpfs", "/tmp"], &["--dir", "/tmp"]);
+    expected = replaced(
+        &expected,
+        &["--tmpfs", "/crucible-home"],
+        &["--dir", "/crucible-home"],
+    );
+    expected = replaced(
+        &expected,
+        &["4096", "--", "/bin/sh"],
+        &["4096", "--refuse-xattr-writes", "--", "/bin/sh"],
+    );
+
+    let sized = planned(&read_only_request(
+        sample.root(),
+        SandboxResourceLimits {
+            disk_bytes: Some(8 * 1024 * 1024),
+            ..SandboxResourceLimits::confining()
+        },
+    ));
+
+    assert_eq!(sized, expected);
+}
+
+/// This host's page size, which a tmpfs size is counted in.
+fn page() -> u64 {
+    u64::try_from(rustix::param::page_size()).expect("a page size that fits in u64")
+}
+
+#[test]
+fn a_disk_ceiling_that_is_not_whole_pages_is_held_to_the_pages_under_it() {
+    // tmpfs rounds the size it is given up to a whole page, which would let a
+    // run hold up to a page less one byte past its ceiling. The plan rounds it
+    // down instead, so a ceiling part way into a page is planned exactly as
+    // the whole pages under it are.
+    let sample = Sample::new("sandbox-plan-disk-pages");
+    let whole = 3 * page();
+    let at = |disk_bytes| {
+        planned(&read_only_request(
+            sample.root(),
+            SandboxResourceLimits {
+                disk_bytes: Some(disk_bytes),
+                ..SandboxResourceLimits::confining()
+            },
+        ))
+    };
+
+    let part_way = at(whole + 1);
+
+    assert!(
+        part_way
+            .windows(2)
+            .any(|pair| pair == ["--size".to_owned(), whole.to_string()]),
+        "{part_way:?}"
+    );
+    assert_eq!(part_way, at(whole));
+    assert_eq!(at(whole + page() - 1), at(whole));
+}
+
+#[test]
+fn a_disk_ceiling_under_one_page_is_refused_rather_than_left_unbounded() {
+    // Rounded down, a ceiling under one page is a size of zero, which tmpfs
+    // reads as no size at all. Nothing smaller than a page can be held, so the
+    // request is refused by name before anything starts.
+    let sample = Sample::new("sandbox-plan-disk-under-a-page");
+    for disk_bytes in [1, page() - 1] {
+        let refused = super::command::prepare(&read_only_request(
+            sample.root(),
+            SandboxResourceLimits {
+                disk_bytes: Some(disk_bytes),
+                ..SandboxResourceLimits::confining()
+            },
+        ));
+        assert!(
+            matches!(
+                refused,
+                Err(crucible_sandbox::SandboxError::Unsupported {
+                    feature: crucible_sandbox::SandboxFeature::DiskLimit
+                })
+            ),
+            "{disk_bytes}: {:?}",
+            refused.err()
+        );
+    }
+    let held = super::command::prepare(&read_only_request(
+        sample.root(),
+        SandboxResourceLimits {
+            disk_bytes: Some(page()),
+            ..SandboxResourceLimits::confining()
+        },
+    ));
+    assert!(held.is_ok(), "{:?}", held.err());
 }

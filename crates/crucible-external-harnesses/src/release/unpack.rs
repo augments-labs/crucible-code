@@ -331,9 +331,11 @@ pub enum UnpackError {
     /// It is not an archive of its format that can be read.
     #[error("the archive could not be read")]
     Corrupt(#[source] io::Error),
-    /// It is not a zip that can be read.
+    /// It is not a zip that can be read. The reader's error is boxed: it is
+    /// the largest thing this enum could hold, and every error that carries
+    /// this one is returned by value.
     #[error("the archive is not a zip that can be read")]
-    Zip(#[from] ZipError),
+    Zip(#[source] Box<ZipError>),
     /// What it unpacks to could not be written.
     #[error("the artifact could not be written at {}", .path.display())]
     Write {
@@ -343,6 +345,12 @@ pub enum UnpackError {
         #[source]
         source: io::Error,
     },
+}
+
+impl From<ZipError> for UnpackError {
+    fn from(error: ZipError) -> Self {
+        Self::Zip(Box::new(error))
+    }
 }
 
 impl Unpacker {

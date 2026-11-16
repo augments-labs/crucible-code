@@ -294,10 +294,15 @@ impl<T: Terminal> Renderer<T> {
     /// that first draws it, and a mark hung after that frame would find the
     /// divider gone and mark nothing.
     ///
+    /// A line of an answer that may still be the header of a table or the title of
+    /// a heading is ended as the prose it was said to be first, as
+    /// [`Renderer::present`] does: the divider is under it.
+    ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn divides(&mut self, label: &str) -> Result<(), TerminalError> {
+        self.undoubted()?;
         self.apart()?;
         let divider = divider(label, self.transcript_columns(), self.glyphs);
         if !self.terminal.is_terminal() {
@@ -439,7 +444,12 @@ impl<T: Terminal> Renderer<T> {
 
         let columns = self.size.columns.max(1);
         let bands = self.bands();
-        let room = bands.transcript.len();
+        // A block being held takes the region's last transcript row for the
+        // row that says so, and what is above it has one row fewer.
+        let held = self
+            .holding(columns)
+            .filter(|_| writes == Writes::Live && !bands.transcript.is_empty());
+        let room = bands.transcript.len() - usize::from(held.is_some());
         if native.replays && writes == Writes::Live {
             // Before what has gone out is worked out, so that a card only
             // partly gone out is given back whole, laid at this width, rather
@@ -532,7 +542,8 @@ impl<T: Terminal> Renderer<T> {
         let mut parked = 0;
         let mut column = 0;
         if writes == Writes::Live {
-            let showing = self.record.view(room);
+            let mut showing = self.record.view(room);
+            showing.extend(held);
             let shown = showing.len();
             let turn = self.standing.turn.iter().take(bands.turn.len());
             let turned = turn.len();
@@ -575,9 +586,15 @@ impl<T: Terminal> Renderer<T> {
             if rows > 0 {
                 let (row, at) = self
                     .standing
-                    .prompted
-                    .filter(|_| prompted > 0)
-                    .map(|caret| (pad + shown + turned + caret.row, caret.column))
+                    .written
+                    .filter(|caret| caret.row < turned)
+                    .map(|caret| (pad + shown + caret.row, caret.column))
+                    .or_else(|| {
+                        self.standing
+                            .prompted
+                            .filter(|_| prompted > 0)
+                            .map(|caret| (pad + shown + turned + caret.row, caret.column))
+                    })
                     .or_else(|| {
                         self.standing
                             .turned
