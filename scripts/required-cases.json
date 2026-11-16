@@ -14053,9 +14053,27 @@
       ]
     },
     {
+      "id": "CASE-TRANSCRIPT-MERMAID-PICTURE-PROBE-OWN-WIDTH",
+      "family": "transcript-blocks",
+      "obligation": "A picture narrower than the rasteriser holds is rasterised by the drawing probe at its own width, never scaled up.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-drawing"
+      },
+      "case": "tests::a_picture_narrower_than_the_rasteriser_holds_is_rasterised_at_its_own_width",
+      "source": "src/bin/bench-drawing.rs",
+      "body_sha256": "1fb05e894b173a78c5df3fe13064c38c73e4870afac223dd6d840d1146970c5e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
       "id": "CASE-TRANSCRIPT-MERMAID-PICTURE-PROBE-WIDTH",
       "family": "transcript-blocks",
-      "obligation": "The width the drawing probe rasterises a picture at keeps its pixels inside what the rasteriser holds, and one more column would not.",
+      "obligation": "A picture wider than the rasteriser holds is rasterised by the drawing probe at a width that keeps its pixels inside what the rasteriser holds, where one more column would not.",
       "package": "crucible-code",
       "target": {
         "kind": "bin",
@@ -14063,7 +14081,7 @@
       },
       "case": "tests::the_widest_raster_is_the_most_the_rasteriser_holds",
       "source": "src/bin/bench-drawing.rs",
-      "body_sha256": "13c1347483774571fb688e71675aae9e8ebe10cb107e04413bb83622c44a9c71",
+      "body_sha256": "7bbd6816c8b948aba08409c0ba4c2afcd58947c5a8c39ba4791d7519a278d4a4",
       "platforms": [
         "linux",
         "macos",
