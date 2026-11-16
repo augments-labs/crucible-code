@@ -1384,6 +1384,44 @@ fn fonts() -> Arc<fontdb::Database> {
         .clone()
 }
 
+/// Whether the one font any text is drawn in has a glyph for `letter`.
+///
+/// A letter it has none for is drawn as an empty box, so whatever lets text
+/// into a picture asks this, or holds what it lets in to agreeing with it.
+#[must_use]
+pub fn has_glyph(letter: char) -> bool {
+    // The letter is laid out as the tree parser lays out a picture's text, in
+    // the same font database; with no other font to fall back to, a letter
+    // the font lacks is laid out as its missing glyph, which is glyph zero.
+    // It stands between two letters the font has, because the parser lays out
+    // no text that draws nothing, and a space alone draws nothing.
+    let svg = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"><text xml:space=\"preserve\">A&#x{:x};A</text></svg>",
+        u32::from(letter)
+    );
+    let options = Options {
+        font_family: FONT_FAMILY.to_owned(),
+        fontdb: fonts(),
+        ..Options::default()
+    };
+    let Ok(tree) = Tree::from_str(&svg, &options) else {
+        return false;
+    };
+    let glyphs: Vec<u32> = tree
+        .root()
+        .children()
+        .iter()
+        .filter_map(|node| match node {
+            resvg::usvg::Node::Text(text) => Some(text),
+            _ => None,
+        })
+        .flat_map(|text| text.layouted())
+        .flat_map(|span| &span.positioned_glyphs)
+        .map(|glyph| glyph.id.0)
+        .collect();
+    glyphs.len() >= 3 && glyphs.iter().all(|id| *id != 0)
+}
+
 /// Encode pixels as a PNG file, which a terminal that draws PNG shows as it is.
 ///
 /// # Errors

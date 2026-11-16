@@ -105,6 +105,8 @@ mod fits;
 #[cfg(test)]
 mod tests;
 
+use std::ops::RangeInclusive;
+
 use crucible_tui::chrome::{Frame, Label, Undrawn};
 use crucible_tui::drawing::{Draws, Laid, Room, Svg};
 use crucible_tui::{Row, Slot, columns};
@@ -207,6 +209,30 @@ const fn most_bytes(all: &[Caps]) -> usize {
     }
     most
 }
+
+/// The letters a picture of a diagram writes; a diagram whose text holds any
+/// other is not drawn as a picture.
+///
+/// A picture is written in the one font whatever rasterises it carries, and
+/// a letter that font has no glyph for would be drawn as an empty box. The
+/// set is kept small enough to be sure of: printable ASCII, the printable
+/// Latin-1 letters and signs but the soft hyphen, Latin Extended-A, the
+/// dashes, curly quotes, bullet and ellipsis, the four arrows and the two
+/// comparisons a label or a gantt's dates are written with. The command line,
+/// which composes the drawers with the raster, holds its font to having a
+/// glyph for every one of them.
+pub const PICTURE_LETTERS: &[RangeInclusive<char>] = &[
+    ' '..='~',
+    '\u{a0}'..='\u{ac}',
+    '\u{ae}'..='\u{17f}',
+    '–'..='—',
+    '‘'..='’',
+    '“'..='”',
+    '•'..='•',
+    '…'..='…',
+    '←'..='↓',
+    '≤'..='≥',
+];
 
 /// A kind of Mermaid diagram drawn as text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

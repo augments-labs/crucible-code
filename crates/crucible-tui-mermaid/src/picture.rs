@@ -23,6 +23,10 @@
 //! - **Nothing outside itself.** The picture is `<svg>`, `<path>` and
 //!   `<text>` alone, with no reference, style sheet or address, and text is
 //!   escaped for XML, so a label holding markup is written as its characters.
+//! - **Only letters the font has.** A picture is written in one font, which
+//!   has no glyph for most of the world's scripts, so a row whose text holds
+//!   a letter outside [`PICTURE_LETTERS`] refuses the picture and the diagram
+//!   keeps its text drawing, which the terminal's own fonts draw.
 //! - **Bounded.** The picture is refused past [`Svg::MOST`] bytes, checked as
 //!   each row is written and once more whole.
 
@@ -31,6 +35,8 @@ use std::fmt::Write as _;
 use crucible_tui::chrome::Undrawn;
 use crucible_tui::drawing::Svg;
 use crucible_tui::{Slot, columns};
+
+use crate::PICTURE_LETTERS;
 
 /// The width of one cell of the layout, in the picture's units.
 const CELL_WIDTH: usize = 8;
@@ -227,12 +233,13 @@ struct Drawn {
 ///
 /// # Errors
 ///
-/// [`Undrawn::PastCap`] when the picture comes to more than [`Svg::MOST`]
-/// bytes.
+/// [`Undrawn::NotHere`] when a row writes a letter outside
+/// [`PICTURE_LETTERS`], and [`Undrawn::PastCap`] when the picture comes to
+/// more than [`Svg::MOST`] bytes.
 pub(crate) fn picture(lines: &[String], natural: usize) -> Result<Svg, Undrawn> {
     let mut drawn = Drawn::default();
     for (row, line) in lines.iter().enumerate() {
-        drawn.row(row, line);
+        drawn.row(row, line)?;
         if drawn.text.len() > Svg::MOST {
             return Err(Undrawn::PastCap);
         }
@@ -285,7 +292,12 @@ pub(crate) fn picture(lines: &[String], natural: usize) -> Result<Svg, Undrawn> 
 
 impl Drawn {
     /// Draws `line`, the row at `row`.
-    fn row(&mut self, row: usize, line: &str) {
+    ///
+    /// # Errors
+    ///
+    /// [`Undrawn::NotHere`] when `line` writes a letter outside
+    /// [`PICTURE_LETTERS`].
+    fn row(&mut self, row: usize, line: &str) -> Result<(), Undrawn> {
         let top = row.saturating_mul(CELL_HEIGHT);
         let mut column: usize = 0;
         let mut run = Run {
@@ -299,11 +311,13 @@ impl Drawn {
                     run.end(&mut self.text);
                     self.shape(shape, column.saturating_mul(CELL_WIDTH), top);
                 }
+                None if !written(character) => return Err(Undrawn::NotHere),
                 None => run.take(&mut self.text, column, width, character),
             }
             column = column.saturating_add(width);
         }
         run.end(&mut self.text);
+        Ok(())
     }
 
     /// Draws `shape` in the cell whose top left is at `x` and `y`.
@@ -510,6 +524,14 @@ impl Run {
             ..Self::default()
         };
     }
+}
+
+/// Whether a picture writes `character`: whether it is one of
+/// [`PICTURE_LETTERS`].
+fn written(character: char) -> bool {
+    PICTURE_LETTERS
+        .iter()
+        .any(|letters| letters.contains(&character))
 }
 
 /// `character` written into `text` as XML reads it back.

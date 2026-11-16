@@ -1061,3 +1061,28 @@ fn a_picture_is_refused_for_what_its_text_drawing_is_refused_for() {
         );
     }
 }
+
+#[test]
+fn a_label_holding_a_letter_the_picture_may_lack_keeps_the_diagram_text() {
+    let han = "graph LR\nA[漢字] --> B[ok]\n";
+    let latin = "graph LR\nA[Ĳ ÿ ž–“é”…] --> B[ok]\n";
+    for (source, glyphs) in [
+        (han, UNICODE),
+        (han, ASCII),
+        (latin, UNICODE),
+        (latin, ASCII),
+    ] {
+        assert!(block(source, 80, glyphs).is_ok(), "{source} {glyphs:?}");
+    }
+    for glyphs in [UNICODE, ASCII] {
+        assert_eq!(
+            picture(han, 80, glyphs).map(|_| ()),
+            Err(Undrawn::NotHere),
+            "{glyphs:?}"
+        );
+        let drawn = picture(latin, 80, glyphs);
+        assert!(drawn.is_ok(), "{glyphs:?}: {drawn:?}");
+        let drawn = drawn.unwrap_or_default();
+        assert!(drawn.contains("Ĳ ÿ ž–“é”…"), "{glyphs:?}: {drawn}");
+    }
+}

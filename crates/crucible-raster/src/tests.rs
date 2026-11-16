@@ -2819,3 +2819,15 @@ fn a_file_refused_for_its_work_is_refused_before_the_work_is_done() {
         assert_eq!((drawn, reached), (Err(*refused), *before), "{name}");
     }
 }
+
+#[test]
+fn the_font_has_glyphs_for_latin_letters_and_box_drawing_and_none_for_han() {
+    for letter in [
+        ' ', 'A', 'z', '~', 'é', 'ÿ', 'Ĳ', 'ž', '—', '…', '→', '≤', '─', '╭', '█',
+    ] {
+        assert!(has_glyph(letter), "{letter:?}");
+    }
+    for letter in ['漢', '字', 'あ', '한', '\u{e000}'] {
+        assert!(!has_glyph(letter), "{letter:?}");
+    }
+}

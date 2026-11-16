@@ -3896,3 +3896,17 @@ fn a_report_mid_answer_stands_apart_and_the_answer_resumes_under_it() {
         ),
     );
 }
+
+/// The letters the diagram drawer lets into a picture and the font the
+/// raster draws a picture's text in are owned by two crates that cannot see
+/// each other; the command line composes both, so it holds them to agreeing.
+#[test]
+fn the_raster_font_has_a_glyph_for_every_letter_a_diagram_picture_writes() {
+    let lacking: Vec<char> = crucible_tui_mermaid::PICTURE_LETTERS
+        .iter()
+        .cloned()
+        .flatten()
+        .filter(|letter| !crucible_raster::has_glyph(*letter))
+        .collect();
+    assert!(lacking.is_empty(), "no glyph for {lacking:?}");
+}
