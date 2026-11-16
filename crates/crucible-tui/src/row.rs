@@ -114,6 +114,21 @@ struct Span {
     /// middle of one. Escaped by [`address`] on the way in, because it is
     /// written inside a sequence where [`words`] cannot reach.
     link: Option<Box<str>>,
+    /// The picture this span's cells stand in for, where they stand in for
+    /// one: its text is then a space a cell, so it is measured, folded and
+    /// cut as the columns it covers.
+    image: Option<Placeholder>,
+}
+
+/// Which cells of which picture a run of placeholder cells stands for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Placeholder {
+    /// The picture, as the terminal was told it.
+    pub(crate) id: u32,
+    /// The picture's row these cells are on.
+    pub(crate) row: u16,
+    /// The picture's column the first of these cells is.
+    pub(crate) column: u16,
 }
 
 /// One row of a component: its spans, left to right.
@@ -217,7 +232,27 @@ impl Row {
             slot,
             structural,
             link,
+            image: None,
         });
+    }
+
+    /// Row `row` of picture `id`, `columns` cells across.
+    ///
+    /// Stands in the record where a block is shown as a picture: what paints
+    /// it writes the cells a terminal places the picture in, and anything that
+    /// cannot show a picture reads it as the spaces it is.
+    pub(crate) fn picture(id: u32, row: u16, columns: u16) -> Self {
+        let mut pictured = Self::new();
+        if columns > 0 {
+            pictured.0.push(Span {
+                text: " ".repeat(usize::from(columns)),
+                slot: Slot::Plain,
+                structural: Vec::new(),
+                link: None,
+                image: Some(Placeholder { id, row, column: 0 }),
+            });
+        }
+        pictured
     }
 
     /// The row with `other`'s spans appended.
@@ -339,6 +374,22 @@ impl Row {
 
             let (from, to) = (from.max(start), to.min(end));
             if from >= to {
+                continue;
+            }
+            if let Some(image) = span.image {
+                // A placeholder's text is a space a cell, so the bytes it is
+                // cut at are the columns it is cut at.
+                let column = u16::try_from(from - start).unwrap_or(u16::MAX);
+                cut.0.push(Span {
+                    text: span.text[from - start..to - start].to_owned(),
+                    slot: span.slot,
+                    structural: Vec::new(),
+                    link: None,
+                    image: Some(Placeholder {
+                        column: image.column.saturating_add(column),
+                        ..image
+                    }),
+                });
                 continue;
             }
             cut.push_span(

@@ -1221,3 +1221,61 @@ fn a_count_in_a_summary_of_a_change_is_bold_in_its_sides_hue_on_no_ground() {
     assert_eq!(off.open(Slot::AddedCount).as_str(), "");
     assert_eq!(off.open(Slot::RemovedCount).as_str(), "");
 }
+
+#[test]
+fn every_slot_a_picture_is_inked_in_is_every_slot_there_is() {
+    assert_eq!(Slot::EVERY, all());
+}
+
+#[test]
+fn an_ansi_picture_is_inked_in_xterms_sixteen_and_against_the_reported_ground() {
+    let truecolor = environment(&[("COLORTERM", "truecolor")]);
+    let ink = |ground, slot: Slot| {
+        let identity = Palette::resolve(true, Theme::Ansi, ground, &truecolor).identity();
+        identity
+            .inks()
+            .into_iter()
+            .find(|(class, _)| *class == slot.class())
+            .map(|(_, ink)| ink)
+    };
+
+    // The accent under ansi is the terminal's own cyan, which xterm draws as
+    // this; a picture has no terminal to ask, so it takes xterm's value.
+    assert_eq!(ink(None, Slot::Accent), Some([0, 205, 205]));
+    // The reader's own foreground stands out from the ground they reported,
+    // and from the dark ground ansi is drawn for where they reported none.
+    assert_eq!(ink(Some((255, 255, 255)), Slot::Plain), Some([0, 0, 0]));
+    assert_eq!(ink(Some((30, 30, 30)), Slot::Plain), Some([255, 255, 255]));
+    assert_eq!(ink(None, Slot::Plain), Some([255, 255, 255]));
+}
+
+#[test]
+fn a_picture_is_inked_in_the_exact_colour_its_slot_is_written_in() {
+    let truecolor = environment(&[("COLORTERM", "truecolor")]);
+    let palette = Palette::resolve(true, Theme::Dark, None, &truecolor);
+    let written = palette.open(Slot::Accent);
+    let inks = palette.identity().inks();
+    let accent = inks
+        .iter()
+        .find(|(class, _)| *class == "Accent")
+        .map(|(_, ink)| *ink);
+    let [red, green, blue] = accent.unwrap_or_default();
+
+    assert!(
+        written
+            .as_str()
+            .contains(&format!("38;2;{red};{green};{blue}")),
+        "{:?} against {accent:?}",
+        written.as_str()
+    );
+    assert_eq!(inks.len(), Slot::EVERY.len());
+}
+
+#[test]
+fn no_picture_is_drawn_where_no_colour_is_written() {
+    let palette = Palette::resolve(false, Theme::Dark, None, &environment(&[]));
+    assert!(!palette.identity().draws());
+    let truecolor = environment(&[("COLORTERM", "truecolor")]);
+    let coloured = Palette::resolve(true, Theme::Dark, None, &truecolor);
+    assert!(coloured.identity().draws());
+}

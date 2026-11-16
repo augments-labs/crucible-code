@@ -65,6 +65,10 @@ use std::time::Duration;
 use std::time::Instant;
 
 use crate::ScreenMode;
+use crate::chrome::Undrawn;
+use crate::color::PaletteIdentity;
+use crate::drawing::{Bucket, Svg};
+use crate::record::KeptPicture;
 
 /// How a picture is put on a terminal's screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -626,6 +630,7 @@ impl Deadline {
 pub struct Payload {
     protocol: Protocol,
     bytes: Vec<u8>,
+    pixels: (u32, u32),
     columns: u16,
     rows: u16,
 }
@@ -647,6 +652,7 @@ impl Payload {
         Self {
             protocol,
             bytes,
+            pixels: (width, height),
             columns: across(width, cell.width),
             rows: across(height, cell.height),
         }
@@ -669,6 +675,94 @@ impl Payload {
     pub const fn cells(&self) -> (u16, u16) {
         (self.columns, self.rows)
     }
+
+    /// The picture's size in pixels, across and down.
+    #[must_use]
+    pub const fn pixels(&self) -> (u32, u32) {
+        self.pixels
+    }
+}
+
+/// What a kept picture was drawn from, so it can be worn again without its
+/// drawer: a drawer's picture, or an encoded image a cache gave back.
+#[derive(Clone, PartialEq, Eq)]
+pub enum Form {
+    /// A drawer's picture, its inks still named by slot.
+    Svg(Svg),
+    /// A PNG, as the cache held it.
+    Png(Vec<u8>),
+}
+
+impl Form {
+    /// How many bytes it holds.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Svg(svg) => svg.len(),
+            Self::Png(bytes) => bytes.len(),
+        }
+    }
+
+    /// Whether it holds nothing.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+// A picture's text or bytes in a log are noise, and the text is model output.
+impl fmt::Debug for Form {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Svg(svg) => f.debug_tuple("Svg").field(&svg.len()).finish(),
+            Self::Png(bytes) => f.debug_tuple("Png").field(&bytes.len()).finish(),
+        }
+    }
+}
+
+/// Everything a picture's bytes depend on besides its source: what kind of
+/// block it is, the window's width bucket, the palette it is worn in, the
+/// protocol it is encoded for and the cell it is fitted to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PictureKey {
+    /// The kind of block.
+    pub kind: crate::markdown::Kind,
+    /// The width the picture is fitted to, to the nearest bucket.
+    pub bucket: Bucket,
+    /// The palette its inks are worn from.
+    pub palette: PaletteIdentity,
+    /// The protocol its payload is encoded for.
+    pub protocol: Protocol,
+    /// The cell its payload is placed in.
+    pub cell: Cell,
+}
+
+/// What turns a block's picture into a payload: the composition's, over a
+/// rasteriser this crate does not name.
+///
+/// Asked on the drawing thread, when a block closes and when its key changes.
+/// [`Pictures::cached`] is asked first, and a drawer's picture is drawn only
+/// when it answers nothing; a kind with no picture of its own, an image, is
+/// never asked for.
+pub trait Pictures {
+    /// The form and payload kept for `source` under `key`, where there is one.
+    fn cached(&mut self, source: &str, key: &PictureKey) -> Option<(Form, Payload)>;
+
+    /// `form`, drawn for `source`, rasterised and encoded under `key`, in the
+    /// inks [`PaletteIdentity::inks`] gives by slot class.
+    ///
+    /// # Errors
+    ///
+    /// Why it is drawn as text instead.
+    fn make(&mut self, source: &str, key: &PictureKey, form: &Form) -> Result<Payload, Undrawn>;
+
+    /// A kept picture, encoded again under `key`, from the form it keeps and
+    /// without its drawer: what a new palette or a new width asks for.
+    ///
+    /// # Errors
+    ///
+    /// Why it is drawn as text instead.
+    fn reencode(&mut self, kept: &KeptPicture, key: &PictureKey) -> Result<Payload, Undrawn>;
 }
 
 // The bytes are a picture, and a picture in a log is megabytes of noise.
@@ -676,6 +770,7 @@ impl fmt::Debug for Payload {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Payload")
             .field("protocol", &self.protocol)
+            .field("pixels", &self.pixels)
             .field("bytes", &self.bytes.len())
             .field("columns", &self.columns)
             .field("rows", &self.rows)

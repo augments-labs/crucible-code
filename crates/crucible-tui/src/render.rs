@@ -49,7 +49,7 @@ use crate::record::{Modes, Record, Source};
 use crate::row::Row;
 use crate::scroll_rail::{self, ScrollRail};
 use crate::select::{self, Place, Taken, View};
-use crate::terminal::graphics::Capability;
+use crate::terminal::graphics::{Capability, Pictures};
 use crate::terminal::keys::{Pressed, pressed, waiting};
 use crate::terminal::system::ResizeFlag;
 use crate::terminal::{Size, Terminal, TerminalError};
@@ -1229,8 +1229,7 @@ impl<T: Terminal> Renderer<T> {
     /// place.
     pub fn wears(&mut self, palette: Palette) {
         self.palette = palette;
-        self.record
-            .relay(self.folds(), self.glyphs, self.palette.theme());
+        self.relaid(self.glyphs);
         self.painted.forget();
     }
 
@@ -1250,8 +1249,7 @@ impl<T: Terminal> Renderer<T> {
     pub fn draws(&mut self, glyphs: Glyphs) {
         self.glyphs = glyphs;
         self.markdown.draws(glyphs);
-        self.record
-            .relay(self.folds(), glyphs, self.palette.theme());
+        self.relaid(glyphs);
         self.painted.forget();
     }
 
@@ -1271,8 +1269,7 @@ impl<T: Terminal> Renderer<T> {
             math: mode,
             diagrams: self.diagrams,
         });
-        self.record
-            .relay(self.folds(), self.glyphs, self.palette.theme());
+        self.relaid(self.glyphs);
         self.painted.forget();
     }
 
@@ -1296,8 +1293,7 @@ impl<T: Terminal> Renderer<T> {
             math: self.math,
             diagrams: mode,
         });
-        self.record
-            .relay(self.folds(), self.glyphs, self.palette.theme());
+        self.relaid(self.glyphs);
         self.painted.forget();
     }
 
@@ -1433,6 +1429,26 @@ impl<T: Terminal> Renderer<T> {
     /// stays text.
     pub fn images(&mut self, capability: Capability) {
         self.images = capability;
+        self.relaid(self.glyphs);
+    }
+
+    /// Hands this renderer what turns a block of an answer into a picture,
+    /// where the session draws pictures with a protocol it confirmed.
+    ///
+    /// Said once, at startup, for the reason [`Renderer::counts`] is. A
+    /// renderer handed none draws every block as text.
+    pub fn pictures(&mut self, pictures: Box<dyn Pictures>) {
+        self.record.pictures(pictures);
+        self.relaid(self.glyphs);
+    }
+
+    /// Lays the record out again in `glyphs`, with pictures in what the
+    /// terminal confirmed and the palette worn now.
+    fn relaid(&mut self, glyphs: Glyphs) {
+        self.record
+            .pictured_as(self.images, self.palette.identity());
+        self.record
+            .relay(self.folds(), glyphs, self.palette.theme());
     }
 
     /// What the session draws pictures with.
@@ -1455,8 +1471,7 @@ impl<T: Terminal> Renderer<T> {
         // scrollbar is the rail.
         self.rails = on && self.native.is_none();
         self.grip = None;
-        self.record
-            .relay(self.folds(), self.glyphs, self.palette.theme());
+        self.relaid(self.glyphs);
         self.unselects();
         self.painted.forget();
     }
@@ -2185,8 +2200,7 @@ impl<T: Terminal> Renderer<T> {
 
         self.native_resize(size);
         self.size = size;
-        self.record
-            .relay(self.folds(), self.glyphs, self.palette.theme());
+        self.relaid(self.glyphs);
         self.standing.repaint(self.folds(), size.columns);
         self.prompt_target = None;
         self.pointed_changed = false;

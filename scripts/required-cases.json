@@ -2789,7 +2789,7 @@
       },
       "case": "every_file_of_the_corpus_in_a_fence_of_an_answer_is_drawn_or_shown_as_written_safely",
       "source": "crates/crucible-tui-diff/tests/hostile.rs",
-      "body_sha256": "29622f111e5707613df1c8a0b023869054b02e3d8b2f45964761efb66215c064",
+      "body_sha256": "95f3be703d7c287a8b03ee404e70f698e9eea46804cc7fbfe0761503ee5c030c",
       "platforms": [
         "linux",
         "macos",

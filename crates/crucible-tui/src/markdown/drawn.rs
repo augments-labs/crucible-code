@@ -77,6 +77,7 @@ pub(super) fn asked(block: &Block, room: Room, drawers: &Drawers, offers: Offers
             refusal @ (Undrawn::PastCap
             | Undrawn::NotText
             | Undrawn::TooWide
+            | Undrawn::TooLargeToKeep
             | Undrawn::Unsupported(_)),
         ) => Asked::Written(Some(refusal)),
     }
@@ -105,7 +106,10 @@ pub(crate) fn lay_unoffered(
 /// `None` for anything but a fence or display math the answer closed: the
 /// source of a fence is its opening line, its lines, and the line that closed
 /// it, each ended.
-fn taken<'a>(block: &'a Block, drawers: &'a Drawers) -> Option<(&'a dyn Draws, &'a str)> {
+pub(crate) fn taken<'a>(
+    block: &'a Block,
+    drawers: &'a Drawers,
+) -> Option<(&'a dyn Draws, &'a str)> {
     if !block.closed || drawers.is_empty() {
         return None;
     }

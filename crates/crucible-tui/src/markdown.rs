@@ -179,7 +179,7 @@ mod strikes;
 mod table;
 mod told;
 
-pub(crate) use drawn::{Offers, lay_unoffered};
+pub(crate) use drawn::{Offers, lay_unoffered, taken};
 pub(crate) use links::SHORTENED_CAP;
 use links::spill;
 
