@@ -4072,7 +4072,7 @@ fn a_native_hostile_path_or_line_in_a_drawn_fence_writes_no_escape() {
 
 mod pictures {
     use super::*;
-    use crate::render::tests::{
+    use crate::render::tests::pictures::{
         DIAGRAM, Printed, commands, pictured_by, placeholders, printed_bytes, transmitted,
     };
 
