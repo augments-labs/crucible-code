@@ -458,6 +458,9 @@ impl<T: Terminal> Renderer<T> {
         }
         let first = self.record.first();
         let finished = self.record.finished();
+        // A picture's cells are drawn only where colour is, and every picture
+        // whose cells this frame writes is one the terminal must hold.
+        let pictured = self.palette.writes_color();
 
         // What goes out: what is sealed, and then whatever the region could
         // not show — a line that has scrolled off the top of the region would
@@ -499,6 +502,9 @@ impl<T: Terminal> Renderer<T> {
                 out.push_str("\r\n");
             }
             self.record.kept(self.glyphs, |row| {
+                if pictured {
+                    row.pictures().for_each(|id| self.sent.wants(id));
+                }
                 row.clipped(columns).paint_into(&self.palette, &mut out);
                 out.push_str("\r\n");
             });
@@ -521,6 +527,9 @@ impl<T: Terminal> Renderer<T> {
         let mut emitted = 0;
         for line in first..through {
             for row in self.record.folded(line) {
+                if pictured {
+                    row.pictures().for_each(|id| self.sent.wants(id));
+                }
                 row.clipped(columns).paint_into(&self.palette, &mut out);
                 out.push_str("\r\n");
                 emitted += 1;
@@ -563,6 +572,9 @@ impl<T: Terminal> Renderer<T> {
                 native.widths.push(0);
             }
             for row in showing {
+                if pictured {
+                    row.pictures().for_each(|id| self.sent.wants(id));
+                }
                 if !native.widths.is_empty() {
                     out.push_str("\r\n");
                 }
@@ -613,9 +625,18 @@ impl<T: Terminal> Renderer<T> {
         }
         let live = out.len();
 
+        // After the rows, which a picture's cells are among: the commands
+        // move no cursor, and nothing is drawn until a picture's are sent.
+        self.commands.clear();
+        let record = &self.record;
+        self.sent
+            .write(|id| record.payload(id), &mut self.commands);
+        out.push_str(&self.commands);
+
         // A frame that would leave the screen as it is costs nothing: a turn
         // is a great many frames in which only the clock moved.
         let unchanged = writes == Writes::Live
+            && self.commands.is_empty()
             && emitted == 0
             && rewound.is_none()
             && !replays

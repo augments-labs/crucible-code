@@ -68,7 +68,15 @@ impl Emulator {
     /// Replays `bytes` onto the buffer.
     fn feed(&mut self, bytes: &str) {
         let mut left = bytes.chars().peekable();
+        // The marks after a picture's placeholder name its row and column,
+        // and go into the placeholder's cell as a terminal puts them.
+        let mut placed = false;
         while let Some(character) = left.next() {
+            let mark = placed && unicode_width::UnicodeWidthChar::width(character) == Some(0);
+            placed = character == '\u{10EEEE}' || mark;
+            if mark {
+                continue;
+            }
             match character {
                 '\r' => {
                     self.at.1 = 0;
@@ -90,9 +98,9 @@ impl Emulator {
                         };
                         self.control(ending, &parameters);
                     }
-                    Some(']') => {
+                    Some(opened @ (']' | '_' | 'P' | '^' | 'X')) => {
                         while let Some(byte) = left.next() {
-                            if byte == '\x07' {
+                            if byte == '\x07' && opened == ']' {
                                 break;
                             }
                             if byte == '\x1b' && left.peek() == Some(&'\\') {
@@ -4057,5 +4065,115 @@ fn a_native_hostile_path_or_line_in_a_drawn_fence_writes_no_escape() {
                 );
             }
         }
+    }
+}
+
+// Diagrams drawn as Kitty pictures, into a terminal's own buffer.
+
+mod pictures {
+    use super::*;
+    use crate::render::tests::{
+        DIAGRAM, Printed, commands, pictured_by, placeholders, printed_bytes, transmitted,
+    };
+
+    /// A native renderer on `window` that draws pictures with `printed`,
+    /// with the box under it.
+    fn pictured(window: &Window, printed: Printed) -> Renderer<Window> {
+        let mut render = native(window);
+        pictured_by(&mut render, printed);
+        stands(&mut render);
+        render
+    }
+
+    /// An answer that is a diagram, and then enough lines to carry it into
+    /// the scrollback.
+    fn answered(render: &mut Renderer<Window>) {
+        render.stream(DIAGRAM).unwrap();
+        render.settle().unwrap();
+        for line in 0..12 {
+            render.commit(&format!("line {line}")).unwrap();
+        }
+        render.seal().unwrap();
+        stands(render);
+    }
+
+    #[test]
+    fn a_native_diagram_goes_into_the_scrollback_as_its_cells_and_is_sent_once() {
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, 300));
+        answered(&mut render);
+
+        let written = window.written();
+        let commands = commands(&written);
+        assert_eq!(transmitted(&commands), [(1, printed_bytes(0, 300))]);
+        assert_eq!(
+            commands
+                .iter()
+                .filter(|command| command.starts_with("a=p"))
+                .collect::<Vec<_>>(),
+            [&"a=p,U=1,i=1,c=3,r=2,q=2"]
+        );
+        // Nothing a terminal keeps in its scrollback is ever taken back.
+        assert!(commands.iter().all(|command| !command.starts_with("a=d")));
+        assert!(written.contains(&placeholders(1, 0, 3)), "{written:?}");
+        assert!(written.contains(&placeholders(1, 1, 3)), "{written:?}");
+        let back = window.scrollback();
+        assert_eq!(
+            back.iter()
+                .filter(|row| row.contains("\u{10EEEE}\u{10EEEE}\u{10EEEE}"))
+                .count(),
+            2,
+            "{back:#?}"
+        );
+    }
+
+    #[test]
+    fn a_native_repaint_sends_every_kept_picture_again_though_it_is_in_the_scrollback() {
+        // What the frame after a child had the terminal draws: the cells in
+        // the scrollback are still there, and the picture they stand for may
+        // not be.
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, 300));
+        answered(&mut render);
+        window.take();
+
+        render.repaint().unwrap();
+        let again = window.take();
+        assert_eq!(transmitted(&commands(&again)), [(1, printed_bytes(0, 300))]);
+        assert!(commands(&again).contains(&"a=p,U=1,i=1,c=3,r=2,q=2"));
+    }
+
+    #[test]
+    fn a_native_window_settled_at_a_new_width_gives_the_picture_back_placed_again() {
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, 300));
+        answered(&mut render);
+        window.take();
+
+        settles_at(&window, &mut render, 100, 8);
+        let after = window.take();
+        assert_eq!(transmitted(&commands(&after)), [(2, printed_bytes(1, 300))]);
+        assert!(after.contains(&placeholders(2, 0, 3)), "{after:?}");
+        assert!(after.contains(&placeholders(2, 1, 3)), "{after:?}");
+        assert!(
+            commands(&after)
+                .iter()
+                .all(|command| !command.starts_with("a=d"))
+        );
+    }
+
+    #[test]
+    fn a_redirected_native_session_draws_its_diagram_as_text() {
+        let window = Window::redirected(40, 8);
+        let mut render = native(&window);
+        pictured_by(&mut render, Printed::new(3, 2, 300));
+        render.stream(DIAGRAM).unwrap();
+        render.settle().unwrap();
+        drop(render);
+
+        let written = window.written();
+        assert!(!written.contains("\x1b_G"), "{written:?}");
+        assert!(!written.contains('\u{10EEEE}'), "{written:?}");
+        assert!(written.contains("graph"), "{written:?}");
     }
 }

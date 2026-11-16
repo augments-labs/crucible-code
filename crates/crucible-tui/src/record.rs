@@ -926,6 +926,12 @@ impl Record {
         self.picturing.pictures = Some(pictures);
     }
 
+    /// Numbers the next picture `first`, and those after it on from there.
+    #[cfg(test)]
+    pub(crate) fn numbers_from(&mut self, first: u32) {
+        self.picturing.next = first;
+    }
+
     /// Shows pictures in what `images` says the terminal shows, worn in
     /// `palette`: said at startup and whenever either changes, and a block
     /// already drawn is shown in them by the next [`Self::relay`].
@@ -1089,6 +1095,29 @@ impl Record {
                 .saturating_add(oldest.weight);
             self.remeasure_all();
         }
+    }
+
+    /// What the terminal is sent for picture `id`, while the record keeps it.
+    pub(crate) fn payload(&self, id: u32) -> Option<&Payload> {
+        self.kept_by_number()
+            .find(|picture| picture.id == id)
+            .map(|picture| &picture.kept.payload)
+    }
+
+    /// The number of every picture the record keeps, oldest first.
+    pub(crate) fn picture_ids(&self) -> impl Iterator<Item = u32> + '_ {
+        self.kept_by_number().map(|picture| picture.id)
+    }
+
+    /// Every picture the record keeps, oldest first.
+    fn kept_by_number(&self) -> impl Iterator<Item = &Pictured> {
+        self.lines.iter().filter_map(|line| match line {
+            Line::Drawn(Drawn {
+                picture: Some(picture),
+                ..
+            }) => Some(&**picture),
+            _ => None,
+        })
     }
 
     /// How many pictures the record keeps, and how many bytes they hold.

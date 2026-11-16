@@ -168,6 +168,7 @@ use crate::files::Files;
 use crate::forge::{DIGITS, Forge, named};
 use crate::glyphs::Glyphs;
 use crate::row::Row;
+use crate::terminal::graphics::PLACEHOLDER;
 use crate::width;
 
 mod drawn;
@@ -958,9 +959,6 @@ fn fence_name(info: &str) -> String {
         .unwrap_or_default()
         .to_owned()
 }
-
-/// The character an image is placed with, which no text from a model may use.
-const PLACEHOLDER: char = '\u{10EEEE}';
 
 /// A held block being gathered.
 #[derive(Debug)]

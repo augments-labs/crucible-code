@@ -49,12 +49,26 @@
 //! sent that much. What a user types while the exchange reads is consumed with
 //! the replies and never reaches the prompt.
 //!
+//! **What is sent is bounded and placed by the cells.** A picture goes to
+//! the terminal once, as a Kitty transmission and a virtual placement
+//! ([`Sent`]), and is shown where cells of [`PLACEHOLDER`] name it
+//! ([`placed`]): those cells are text, so they scroll, fold and clear with
+//! the rows around them, and a scrollback keeps them. A frame sends at most
+//! 64 KiB of commands, in chunks of at most 4096 encoded bytes, and a
+//! transmission it cut off goes on in the frames after it; one command is
+//! never written inside another. Inside tmux, where it passes sequences
+//! through, each command is wrapped for it. What the terminal holds is
+//! forgotten whenever it may have lost it, and a picture is sent again when
+//! its cells are next drawn. Nothing is sent where nothing is drawn: output
+//! redirected, no colour written.
+//!
 //! **The table is what was seen.** [`support`] holds the cells of the terminal
 //! support table that drew right in every step of their screen mode; every
 //! other cell is disabled, because a disabled cell is output that was seen to
 //! draw wrongly or was never seen at all. A terminal is identified only by what
 //! the table identified it by.
 
+use std::collections::VecDeque;
 use std::fmt;
 #[cfg(unix)]
 use std::io;
@@ -776,6 +790,249 @@ impl fmt::Debug for Payload {
             .field("rows", &self.rows)
             .finish()
     }
+}
+
+/// The character Kitty places a picture's cells with, which no text from a
+/// model may carry to the terminal.
+pub(crate) const PLACEHOLDER: char = '\u{10EEEE}';
+
+/// The marks that name a placeholder cell's row and column of its picture,
+/// the first naming 0: Kitty's own table, as its protocol gives it.
+pub(crate) const DIACRITICS: [char; 64] = [
+    '\u{0305}', '\u{030D}', '\u{030E}', '\u{0310}', '\u{0312}', '\u{033D}', '\u{033E}',
+    '\u{033F}', '\u{0346}', '\u{034A}', '\u{034B}', '\u{034C}', '\u{0350}', '\u{0351}',
+    '\u{0352}', '\u{0357}', '\u{035B}', '\u{0363}', '\u{0364}', '\u{0365}', '\u{0366}',
+    '\u{0367}', '\u{0368}', '\u{0369}', '\u{036A}', '\u{036B}', '\u{036C}', '\u{036D}',
+    '\u{036E}', '\u{036F}', '\u{0483}', '\u{0484}', '\u{0485}', '\u{0486}', '\u{0487}',
+    '\u{0592}', '\u{0593}', '\u{0594}', '\u{0595}', '\u{0597}', '\u{0598}', '\u{0599}',
+    '\u{059C}', '\u{059D}', '\u{059E}', '\u{059F}', '\u{05A0}', '\u{05A1}', '\u{05A8}',
+    '\u{05A9}', '\u{05AB}', '\u{05AC}', '\u{05AF}', '\u{05C4}', '\u{0610}', '\u{0611}',
+    '\u{0612}', '\u{0613}', '\u{0614}', '\u{0615}', '\u{0616}', '\u{0617}', '\u{0657}',
+    '\u{0658}',
+];
+
+/// The most bytes of graphics commands one frame writes, wrappers included:
+/// a picture larger than this goes out over the frames after it, so a frame
+/// that sends one still draws the text around it at once.
+const MOST_SENT_A_FRAME: usize = 64 * 1024;
+
+/// The most base64 one transmission command carries, as Kitty's protocol
+/// bounds a chunk.
+const MOST_CHUNK: usize = 4096;
+
+/// The most pictures the terminal is counted as holding. Twice what the
+/// record keeps, so every kept picture fits with room for those it replaced;
+/// one counted out is sent again if it is shown again.
+const MOST_HELD: usize = 2 * crate::record::MOST_KEPT_IMAGES;
+
+/// What has been sent to a Kitty terminal, and what it is still owed.
+///
+/// A frame says which pictures it shows with [`Sent::wants`], and
+/// [`Sent::write`] sends those the terminal does not hold: each transmitted
+/// once, in chunks, and then given the virtual placement its placeholder
+/// cells name. A transmission is never interleaved with another command, so
+/// one cut short by a frame's budget is carried on by the next frame before
+/// anything else is sent, and one whose picture the record has let go of is
+/// ended with an empty last chunk. Nothing is ever deleted: a terminal keeps a
+/// native session's pictures in its scrollback, and a full screen's are
+/// replaced by number when they are encoded again.
+#[derive(Debug, Default)]
+pub(crate) struct Sent {
+    /// What the terminal holds, oldest first, at most [`MOST_HELD`].
+    held: VecDeque<u32>,
+    /// What a frame showed and the terminal does not hold, oldest first.
+    waiting: VecDeque<u32>,
+    /// The picture going out, and how far.
+    sending: Option<Sending>,
+    /// Whether a transmission was cut off and its last chunk is still owed.
+    ending: bool,
+    /// Whether every command is wrapped for tmux to pass through.
+    passthrough: bool,
+}
+
+/// A picture part way out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Sending {
+    id: u32,
+    /// How many of its bytes are sent.
+    sent: usize,
+    /// Whether they all are, and only its placement is left.
+    whole: bool,
+}
+
+impl Sent {
+    /// Wraps every command for tmux to pass through, or stops.
+    pub(crate) fn passes_through(&mut self, passthrough: Passthrough) {
+        self.passthrough = passthrough == Passthrough::On;
+    }
+
+    /// Says a frame shows picture `id`: sent by the next [`Sent::write`]
+    /// unless the terminal holds it or it is already on its way.
+    pub(crate) fn wants(&mut self, id: u32) {
+        let going = self.sending.is_some_and(|sending| sending.id == id);
+        if going
+            || self.held.contains(&id)
+            || self.waiting.contains(&id)
+            || self.waiting.len() >= MOST_HELD
+        {
+            return;
+        }
+        self.waiting.push_back(id);
+    }
+
+    /// Whether anything is still owed to the terminal.
+    pub(crate) fn pending(&self) -> bool {
+        self.ending || self.sending.is_some() || !self.waiting.is_empty()
+    }
+
+    /// Counts nothing as held: the terminal may have lost every picture, as
+    /// when a child had it or its alternate screen was given back and taken
+    /// again. A transmission still going out is ended first.
+    pub(crate) fn forget(&mut self) {
+        self.held.clear();
+        self.waiting.clear();
+        if self.sending.take().is_some_and(|sending| !sending.whole) {
+            self.ending = true;
+        }
+    }
+
+    /// Appends to `into` the commands owed, up to [`MOST_SENT_A_FRAME`] of
+    /// them, with `payload` giving each picture's bytes by number.
+    pub(crate) fn write<'a>(
+        &mut self,
+        payload: impl Fn(u32) -> Option<&'a Payload>,
+        into: &mut String,
+    ) {
+        let start = into.len();
+        if self.ending {
+            self.command(into, "m=0,q=2", Some(&[]));
+            self.ending = false;
+        }
+        loop {
+            let mut sending = match self.sending.take() {
+                Some(sending) => sending,
+                None => match self.waiting.pop_front() {
+                    Some(id) => Sending {
+                        id,
+                        sent: 0,
+                        whole: false,
+                    },
+                    None => return,
+                },
+            };
+            let Some(payload) = payload(sending.id) else {
+                // Let go of mid-way: ended, so the next command is not read
+                // as more of it.
+                if sending.sent > 0 && !sending.whole {
+                    self.command(into, "m=0,q=2", Some(&[]));
+                }
+                continue;
+            };
+            let bytes = payload.bytes();
+            while !sending.whole {
+                let left = bytes.get(sending.sent..).unwrap_or_default();
+                let take = left.len().min(MOST_CHUNK / 4 * 3);
+                let more = u8::from(take < left.len());
+                let keys = if sending.sent == 0 {
+                    format!("a=t,f=100,i={},q=2,m={more}", sending.id)
+                } else {
+                    format!("m={more},q=2")
+                };
+                let chunk = left.get(..take).unwrap_or_default();
+                if self.cost(&keys, Some(take)) > room(into, start) {
+                    self.sending = Some(sending);
+                    return;
+                }
+                self.command(into, &keys, Some(chunk));
+                sending.sent += take;
+                sending.whole = more == 0;
+            }
+            let (columns, rows) = payload.cells();
+            let keys = format!("a=p,U=1,i={},c={columns},r={rows},q=2", sending.id);
+            if self.cost(&keys, None) > room(into, start) {
+                self.sending = Some(sending);
+                return;
+            }
+            self.command(into, &keys, None);
+            self.held.push_back(sending.id);
+            if self.held.len() > MOST_HELD {
+                self.held.pop_front();
+            }
+        }
+    }
+
+    /// The bytes [`Sent::command`] writes for `keys` and `data` raw bytes.
+    fn cost(&self, keys: &str, data: Option<usize>) -> usize {
+        let body = APC_GRAPHICS.len()
+            + keys.len()
+            + data.map_or(0, |data| 1 + data.div_ceil(3) * 4)
+            + STRING_END.len();
+        if self.passthrough {
+            // Each escape is doubled, and the wrapper opened and closed.
+            body + 2 + TMUX_OPENS.len() + STRING_END.len()
+        } else {
+            body
+        }
+    }
+
+    /// Appends one graphics command: `keys`, and `data` in base64 after a
+    /// `;` where it carries any, wrapped for tmux where it passes them.
+    fn command(&self, into: &mut String, keys: &str, data: Option<&[u8]>) {
+        use base64::Engine as _;
+
+        if self.passthrough {
+            into.push_str(TMUX_OPENS);
+            into.push('\x1b');
+        }
+        into.push_str(APC_GRAPHICS);
+        into.push_str(keys);
+        if let Some(data) = data {
+            into.push(';');
+            base64::engine::general_purpose::STANDARD.encode_string(data, into);
+        }
+        if self.passthrough {
+            into.push('\x1b');
+        }
+        into.push_str(STRING_END);
+        if self.passthrough {
+            into.push_str(STRING_END);
+        }
+    }
+}
+
+/// What is left of a frame's budget for graphics, which began at `start`.
+fn room(into: &str, start: usize) -> usize {
+    MOST_SENT_A_FRAME.saturating_sub(into.len().saturating_sub(start))
+}
+
+/// What opens a Kitty graphics command.
+const APC_GRAPHICS: &str = "\x1b_G";
+
+/// What ends a string sequence.
+const STRING_END: &str = "\x1b\\";
+
+/// What asks tmux to pass the sequence inside to the terminal outside it.
+const TMUX_OPENS: &str = "\x1bPtmux;";
+
+/// The cells of row `row` of a picture numbered `id`, from its column
+/// `column`, `across` cells, appended to `into`: the number written as the
+/// colour the cells are drawn in, the first cell marked with its row and
+/// column, and the rest following on from it.
+pub(crate) fn placed(into: &mut String, id: u32, row: u16, column: u16, across: usize) {
+    use std::fmt::Write as _;
+
+    let [_, red, green, blue] = id.to_be_bytes();
+    let mark = |at: u16| DIACRITICS.get(usize::from(at)).copied().unwrap_or(DIACRITICS[0]);
+    let _ = write!(into, "\x1b[38;2;{red};{green};{blue}m");
+    if across > 0 {
+        into.push(PLACEHOLDER);
+        into.push(mark(row));
+        into.push(mark(column));
+        for _ in 1..across {
+            into.push(PLACEHOLDER);
+        }
+    }
+    into.push_str("\x1b[39m");
 }
 
 /// The longest sequence whose bytes are kept to be read. A longer one is still
