@@ -16,9 +16,9 @@ tree. The packages below carry a C++ compiler because that is how they are
 shipped, not because a build asks for one.
 
 **A POSIX shell and Python 3.11, to run the gate.** `scripts/sh/check.sh` is bash,
-and some of the checks it runs are Python scripts; the crate-layering one needs
-Python 3.11 or later. On Windows the shell means Git Bash or a Windows Subsystem
-for Linux shell; the build itself needs neither.
+and some of the checks it runs are Python scripts; the crate-layering, tests
+and required-cases ones need Python 3.11 or later. On Windows the shell means Git
+Bash or a Windows Subsystem for Linux shell; the build itself needs neither.
 
 Nothing else: no OpenSSL, no `pkg-config`, no cmake, no node, and no Python for
 the build. A dependency that wanted one would need the justification comment
@@ -121,8 +121,9 @@ and against a corrupted fixture, which must fail, and checks that a candidate of
 another version is refused. CI runs
 the drill and its self-test on Linux, both macOS and both Windows cells with a
 30-minute timeout. Each cell builds the previous release once and hands that
-binary to both. A run on `dev` keeps it in the Actions cache, and pull requests
-restore it from there instead of building it again until the tag moves. The tag
+binary to both. A push to `dev` or `main`, or a manual run, keeps it in the
+Actions cache, and a pull request restores it from its base branch, or failing
+that from `main`, instead of building it again until the tag moves. The tag
 fetch and that build are each tried three times, 30 and then 60 seconds apart,
 so a runner that loses the network for a minute does not fail the drill. When
 the build still fails, the self-test is skipped rather than reporting a binary

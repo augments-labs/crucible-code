@@ -101,6 +101,11 @@ close_section() {
     fi
 }
 
+# Git Bash on Windows has `python`; its Linux and macOS peers have `python3`,
+# and either reads the same files.
+python=python3
+command -v python3 >/dev/null 2>&1 || python=python
+
 # One selection, read twice: the suite runs under it, and the required-case
 # manifest is checked against what it built. Narrowing it to skip a package
 # therefore loses the obligations that package owns instead of shrinking a
@@ -178,16 +183,41 @@ for package in sorted(metadata["packages"], key=lambda one: one["name"]):
     done
 }
 
-# cargo-nextest runs each test in a process of its own, as many at once as
-# there are cores, and `.config/nextest.toml` names the tests that share state
-# and so wait for each other. It runs no documentation example, so rustdoc's
-# own harness runs those in the next section.
+# How many processors nextest runs on, counted by Rust's standard library as
+# nextest counts them: under a CPU quota, that is fewer than Python counts.
+# The program is named count.exe so that Windows runs it too.
+nextest_processors() {
+    mkdir -p generated/processors &&
+        printf 'fn main() { print!("{}", std::thread::available_parallelism().map_or(1, |count| count.get())) }\n' |
+        rustc -o generated/processors/count.exe - &&
+        generated/processors/count.exe
+}
+
+# cargo-nextest runs each test in a process of its own. `.config/nextest.toml`
+# names the tests that share state and so wait for each other, and its gate
+# profile says how many slots each test holds. The run has that many slots per
+# processor, so the tests that keep a processor busy run at most one per
+# processor and the tests that mostly wait fill the time they leave; the few
+# that assert crucible-raster refused work within 100 ms hold every slot, so
+# they run alone. It runs no documentation example, so rustdoc's own harness
+# runs those in the next section.
 check_tests() {
     section "tests"
+    local processors threads
     if ! cargo nextest --version >/dev/null 2>&1; then
         printf '    FAIL cargo-nextest is not installed; CONTRIBUTING.md says how to install it\n'
         failed=1
-    elif ! cargo nextest run "${TEST_SELECTION[@]}" ${partition[@]+"${partition[@]}"} --no-fail-fast; then
+    elif ! processors=$(nextest_processors); then
+        printf '    FAIL rustc could not count the processors nextest runs on\n'
+        failed=1
+    elif ! threads=$("$python" scripts/python/required-cases.py --gate-threads "$processors"); then
+        # What it printed says why.
+        [[ -z $threads ]] || printf '%s\n' "$threads"
+        printf '    FAIL scripts/python/required-cases.py --gate-threads did not say how many slots the run has\n'
+        failed=1
+    # Python on Windows ends the line it prints with a carriage return.
+    elif ! cargo nextest run "${TEST_SELECTION[@]}" --profile gate --test-threads "${threads%$'\r'}" \
+        ${partition[@]+"${partition[@]}"} --no-fail-fast; then
         printf '    FAIL read the assertion, not the count\n'
         failed=1
     fi
@@ -213,10 +243,6 @@ native_path() {
 
 check_required() {
     section "required cases"
-    # Git Bash on Windows has `python`; its Linux and macOS peers have
-    # `python3`, and either reads the same manifest.
-    local python=python3
-    command -v python3 >/dev/null 2>&1 || python=python
     artifacts=$(mktemp)
     examples=$(mktemp)
     silenced=$(mktemp)
