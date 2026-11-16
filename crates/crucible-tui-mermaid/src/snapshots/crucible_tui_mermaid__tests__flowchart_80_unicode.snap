@@ -1,0 +1,29 @@
+---
+source: crates/crucible-tui-mermaid/src/tests.rs
+expression: "dump(&rows, 80)"
+---
+<Quiet>┌─ mermaid · flowchart</>                                                          
+<Quiet>│ </>           ┌───────┐                                                          
+<Quiet>│ </>           │ Start │◂┄┄┄┐                                                     
+<Quiet>│ </>           └───────┘    ┆                                                     
+<Quiet>│ </>               │        ┆                                                     
+<Quiet>│ </>               │        ┆                                                     
+<Quiet>│ </>               │        ┆                                                     
+<Quiet>│ </>               │        ┆                                                     
+<Quiet>│ </>               │        ┆                                                     
+<Quiet>│ </>               │        ┆                                                     
+<Quiet>│ </>               │        ┆                                                     
+<Quiet>│ </>          ╱────▾───╲    ┆                                                     
+<Quiet>│ </>          │ Is it? │    ┆                                                     
+<Quiet>│ </>          ╲────────╱    ┆                                                     
+<Quiet>│ </>         ┌────┘ └──┐    ┆                                                     
+<Quiet>│ </>         │         │    ┆                                                     
+<Quiet>│ </>         │         │    ┆                                                     
+<Quiet>│ </>     Yes │         │No  ┆                                                     
+<Quiet>│ </>         │         │    ┆                                                     
+<Quiet>│ </>         │         │    ┆                                                     
+<Quiet>│ </>         │         │    ┆                                                     
+<Quiet>│ </>      ┌──▾─┐   ┌───▾───┐┆                                                     
+<Quiet>│ </>      │ OK │   │ Retry ├┆                                                     
+<Quiet>│ </>      └────┘   └───────┘                                                      
+<Quiet>└─</>

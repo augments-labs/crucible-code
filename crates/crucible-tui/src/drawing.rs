@@ -12,7 +12,10 @@
 //! own tests and the fit sweep do:
 //!
 //! - It runs on the drawing thread when a block closes. It never writes to a
-//!   terminal and never starts a thread or a process.
+//!   terminal and never starts a thread or a process. Where it catches a
+//!   panic, it holds [`Catching`] around the code whose panic it catches, so
+//!   the panic is kept for the transcript rather than written in the middle
+//!   of a frame.
 //! - It counts the input's structure against the caps it states before any
 //!   engine runs, and answers [`Undrawn::PastCap`] for a block past them,
 //!   rather than spending the frame finding out.
@@ -22,7 +25,13 @@
 //!   give the same rows.
 //! - Its input is hostile: a block is model output, and a path or a name in it
 //!   is drawn safe.
+//! - A row of its that offers a key says so in [`EXPAND`], and
+//!   [`Draws::unoffered`] takes every such offer out of rows it laid out and
+//!   leaves what else they say. The reader asks it to where no key is read,
+//!   so a row reads there as one whose offer was withdrawn on a screen does.
 
+use std::cell::Cell;
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 use crate::chrome::Undrawn;
@@ -33,10 +42,56 @@ use crate::row::Row;
 
 /// The words that name the key an offer to show more is made with.
 ///
-/// One action has one name: a row that cut what came back offers the rest in
-/// these words, so the reader learns the key once. A drawer that folds what
-/// it was given names no key, since nothing yet shows every line it kept.
+/// One action has one name: a drawer that folds what it was given offers the
+/// rest in these words, and so does a row that cut what came back, so the
+/// reader learns the key once. Where no key is read the drawer takes them
+/// out again, through [`Draws::unoffered`].
 pub const EXPAND: &str = "ctrl+o to expand";
+
+thread_local! {
+    /// How many [`Catching`] guards this thread holds.
+    static CATCHING: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Held by a drawer around code whose panic it catches and answers for.
+///
+/// A panic hook runs before unwinding reaches the `catch_unwind` that stops
+/// it, so the hook cannot see the catch; it can ask [`catching`]. A panic on
+/// the drawing thread is otherwise one that ends the session, written at
+/// once; one under this guard is caught, the session goes on, and the hook
+/// keeps it for the transcript instead of writing it into a frame. The mark
+/// is this thread's alone, so the guard cannot be sent to another, and it is
+/// let go of when the guard is dropped, by unwinding or otherwise.
+#[derive(Debug)]
+pub struct Catching {
+    /// Keeps the guard on the thread whose mark it holds.
+    thread: PhantomData<*const ()>,
+}
+
+impl Catching {
+    /// Marks this thread as catching what panics in it until the guard is
+    /// dropped.
+    #[must_use]
+    pub fn begin() -> Self {
+        let _ = CATCHING.try_with(|held| held.set(held.get().saturating_add(1)));
+        Self {
+            thread: PhantomData,
+        }
+    }
+}
+
+impl Drop for Catching {
+    fn drop(&mut self) {
+        let _ = CATCHING.try_with(|held| held.set(held.get().saturating_sub(1)));
+    }
+}
+
+/// Whether this thread holds a [`Catching`] guard: whether a panic here now is
+/// one a drawer catches.
+#[must_use]
+pub fn catching() -> bool {
+    CATCHING.try_with(|held| held.get() > 0).unwrap_or(false)
+}
 
 /// What a drawer is handed to lay a block out in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,6 +253,14 @@ pub trait Draws: Send + Sync {
     /// not something it draws.
     fn block(&self, source: &str, room: &Room) -> Result<Laid, Undrawn>;
 
+    /// Takes out of `rows`, which this drawer laid out, each offer of a key
+    /// they make and leaves the rest of what they say: the rows are going
+    /// where no key is read. The default changes nothing, for a drawer whose
+    /// rows offer none.
+    fn unoffered(&self, rows: &mut [Row]) {
+        let _ = rows;
+    }
+
     /// A display block as a picture. The default draws none.
     ///
     /// # Errors
@@ -238,6 +301,14 @@ impl Drawers {
                     .any(|taken| taken.eq_ignore_ascii_case(name))
             })
             .map(AsRef::as_ref)
+    }
+
+    /// An inline span as the runs the first registered drawer that draws it
+    /// lays out, asked in order; `None` where none does, and the span is shown
+    /// as written.
+    #[must_use]
+    pub fn inline(&self, span: &str, room: &Room) -> Option<Vec<Run>> {
+        self.0.iter().find_map(|drawer| drawer.inline(span, room))
     }
 
     /// Whether nothing is registered, so every block is shown as written.
@@ -398,6 +469,37 @@ mod tests {
                 link: None
             }
         ));
+    }
+
+    #[test]
+    fn a_thread_is_catching_only_while_it_holds_a_guard() {
+        assert!(!catching());
+        let outer = Catching::begin();
+        let inner = Catching::begin();
+        drop(inner);
+        assert!(
+            catching(),
+            "letting go of a nested guard let go of the outer one"
+        );
+        let elsewhere = std::thread::spawn(catching).join();
+        assert_eq!(
+            elsewhere.ok(),
+            Some(false),
+            "another thread read this thread's guard"
+        );
+        drop(outer);
+        assert!(!catching());
+    }
+
+    #[test]
+    fn a_guard_unwound_past_is_let_go_of() {
+        let caught = std::panic::catch_unwind(|| {
+            let _catching = Catching::begin();
+            assert!(catching());
+            std::panic::resume_unwind(Box::new("unwound"));
+        });
+        assert!(caught.is_err());
+        assert!(!catching(), "a guard unwound past left the thread catching");
     }
 
     #[test]

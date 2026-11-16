@@ -1,0 +1,9 @@
+---
+source: crates/crucible-tui-math/src/tests.rs
+expression: "dump(&rows, 64)"
+---
+<Quiet>+- math</>                                                         
+<Quiet>| </>     -b ± √(b² - 4ac)                                         
+<Quiet>| </>x = ------------------                                        
+<Quiet>| </>            2a                                                
+<Quiet>+-</>

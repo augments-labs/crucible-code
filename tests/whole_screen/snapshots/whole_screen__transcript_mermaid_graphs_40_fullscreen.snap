@@ -3,25 +3,23 @@ source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
 40x47 cursor 44,4 scrolled 0
-|A flow chart:                          │|
+|│           │                          │|
+|│       ┌───▾──┐                       ●|
+|│       │ Done │                       │|
+|│       └──────┘                       │|
+|└─                                     │|
 |                                       │|
-|┌─ mermaid                             ●|
-|│ graph TD                             │|
-|│   A[Start] --> B{Ok?}                ┃|
-|│   B -->|yes| C[Done]                 ┃|
-|│   B -->|no| A                        ┃|
-|└─                                     ┃|
-|                                       ┃|
-|A state diagram:                       ┃|
-|                                       ┃|
-|┌─ mermaid                             ┃|
-|│ stateDiagram                         ┃|
-|│   [*] --> Idle                       ┃|
-|└─                                     ┃|
-|                                       ┃|
-|And the versioned spelling:            ┃|
-|                                       ┃|
-|┌─ mermaid                             ┃|
+|A state diagram:                       │|
+|                                       │|
+|┌─ mermaid · state diagram             │|
+|│ ╭─────╮     ╭──────╮                 │|
+|│ (  ●  )────▸│ Idle │                 │|
+|│ ╰─────╯     ╰──────╯                 │|
+|└─                                     │|
+|                                       │|
+|And the versioned spelling:            │|
+|                                       │|
+|┌─ mermaid · too wide to draw at this w┃|
 |│ stateDiagram-v2                      ┃|
 |│   [*] --> Idle                       ┃|
 |│   Idle --> Running: start            ┃|
@@ -30,7 +28,7 @@ expression: window.picture()
 |                                       ┃|
 |A class diagram:                       ┃|
 |                                       ┃|
-|┌─ mermaid                             ┃|
+|┌─ mermaid · class diagram · not drawn ┃|
 |│ classDiagram                         ┃|
 |│   class Reader                       ┃|
 |│   Reader : +read(delta)              ┃|
@@ -38,9 +36,11 @@ expression: window.picture()
 |                                       ┃|
 |An entity relationship diagram:        ┃|
 |                                       ┃|
-|┌─ mermaid                             ┃|
-|│ erDiagram                            ┃|
-|│   ANSWER ||--o{ BLOCK : draws        ┃|
+|┌─ mermaid · er diagram                ┃|
+|│               draws                  ┃|
+|│ ┌──────────┐         ┌─────────┐     ┃|
+|│ │  ANSWER  ┤1───────*├  BLOCK  │     ┃|
+|│ └──────────┘         └─────────┘     ┃|
 |└─                                     ┃|
 |                                       ┃|
 |The corpus ends here.                  ┃|

@@ -183,6 +183,9 @@ pub enum Slot {
     Link,
     /// A phrase the answer leant on rather than raised its voice for.
     Emphasis,
+    /// A phrase the answer both raised and leant on: weight and a slant
+    /// together, so neither of the two it was written with is lost.
+    BoldEmphasis,
     /// A phrase the answer wrote and then took back.
     Struck,
     /// A span of inline code: a command, a path, a name written in backticks.
@@ -1031,6 +1034,7 @@ impl Slot {
             Self::Cut => "Cut",
             Self::Link => "Link",
             Self::Emphasis => "Emphasis",
+            Self::BoldEmphasis => "BoldEmphasis",
             Self::Struck => "Struck",
             Self::Code => "Code",
             Self::AllowEdits => "AllowEdits",
@@ -1102,6 +1106,15 @@ impl Slot {
                 exact: "\x1b[3m",
                 indexed: "\x1b[3m",
                 basic: "\x1b[3m",
+            },
+            // Both of the attributes above, in one sequence, for the reason
+            // each is one: no colour to spend, and the same bytes at every
+            // rung. A terminal that has only one of the two still shows that
+            // one.
+            Self::BoldEmphasis => Ink {
+                exact: "\x1b[1;3m",
+                indexed: "\x1b[1;3m",
+                basic: "\x1b[1;3m",
             },
             // A line under the words, in the second colour: underline is what
             // a terminal has always meant a link by, and a colour of its own

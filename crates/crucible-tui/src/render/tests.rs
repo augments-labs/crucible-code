@@ -3712,9 +3712,14 @@ fn a_rule_narrowed_is_still_one_row() {
     );
 }
 
+mod diagrams;
+pub(super) mod drawers;
 mod escapes;
 mod headings;
+mod links;
+mod math;
 mod notes;
+mod strikes;
 
 /// The words of an item that wraps at thirty columns, three rows or more.
 const LONG: &str = "long enough that it has to wrap onto another row, and then one more";

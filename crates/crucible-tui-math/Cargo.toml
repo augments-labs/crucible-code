@@ -1,0 +1,30 @@
+[package]
+name = "crucible-tui-math"
+description = "TeX math in an answer drawn as text: compact text in a line, rows of text for a block."
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# The drawing contract this crate implements, and the rows, slots, glyphs and
+# column widths it lays a formula out in.
+[dependencies]
+crucible-tui.workspace = true
+
+[lints]
+workspace = true
+
+# The fit sweep's widths and rooms and the reader a test answers through, for
+# this crate's own tests only; a release build of the crate never turns
+# `testing` on. `insta` compares the pictures of a formula checked in beside
+# the drawer.
+[dev-dependencies]
+crucible-tui = { workspace = true, features = ["testing"] }
+insta.workspace = true
+
+# A named pipe the hostile sweep watches on Windows, where a FIFO is not one.
+[target.'cfg(windows)'.dev-dependencies]
+tokio = { workspace = true, features = ["net", "rt", "time"] }

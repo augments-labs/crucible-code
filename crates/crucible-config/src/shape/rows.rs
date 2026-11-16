@@ -18,9 +18,9 @@
 //! widening.
 
 use super::{
-    COLOR, COMPACTION_WHEN, DOCUMENT, Field, GLYPHS, IMAGES, PIN_AFTER, PROMPT_CACHE_ISOLATION,
-    PROMPT_CACHE_MODE, PROMPT_CACHE_PERSISTENT, PROMPT_CACHE_RETENTION, SCREEN, SCROLL_SPEED, SEND,
-    THEME, TONE, TOOL_DETAIL, TRANSCRIPT_COLOURS, UPDATE_CHECK,
+    COLOR, COMPACTION_WHEN, DIAGRAMS, DOCUMENT, Field, GLYPHS, IMAGES, MATH, PIN_AFTER,
+    PROMPT_CACHE_ISOLATION, PROMPT_CACHE_MODE, PROMPT_CACHE_PERSISTENT, PROMPT_CACHE_RETENTION,
+    SCREEN, SCROLL_SPEED, SEND, THEME, TONE, TOOL_DETAIL, TRANSCRIPT_COLOURS, UPDATE_CHECK,
 };
 
 #[cfg(test)]
@@ -90,6 +90,10 @@ pub enum RowId {
     CachePersistent,
     /// `output.images`.
     Images,
+    /// `output.math`.
+    Math,
+    /// `output.diagrams`.
+    Diagrams,
 }
 
 /// One setting a menu lists.
@@ -297,6 +301,15 @@ const ROWS: &[Row] = &[
         "output.images",
         "Images",
         Values::Choice(IMAGES),
+    ),
+    // After the pictures, for the same reason.
+    Row::new(RowId::Math, "output.math", "Math", Values::Choice(MATH)),
+    // After math, for the same reason.
+    Row::new(
+        RowId::Diagrams,
+        "output.diagrams",
+        "Diagrams",
+        Values::Choice(DIAGRAMS),
     ),
 ];
 

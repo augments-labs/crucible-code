@@ -9,14 +9,14 @@ An ampersand written as &, a tag as <tag>, a copy as © and a number as ©.
                                                                                 
 An empty reference &#0; and an override &#x202E; are written as they came.      
                                                                                 
-~one~ is struck under GitHub's rules, and <Struck>two</> is struck under both.             
+<Struck>one</> is struck under GitHub's rules, and <Struck>two</> is struck under both.               
                                                                                 
-A pair may cross a line break: ~the phrase goes                                 
-on~ here.                                                                       
+A pair may cross a line break: <Struck>the phrase goes</>                                  
+<Struck>on</> here.                                                                        
                                                                                 
 And these strike nothing: edit ~/.config/crucible/config.json then ~/bin/run,   
 between ~/a and ~/b, about ~5 minutes or ~10.                                   
                                                                                 
-Nested emphasis: <Bold>both</>, <Bold>bold </><Bold>italic</><Bold> bold</>, and <Emphasis>leant </><Bold>and raised</><Emphasis> again</>.            
+Nested emphasis: <BoldEmphasis>both</>, <Bold>bold </><BoldEmphasis>italic</><Bold> bold</>, and <Emphasis>leant </><BoldEmphasis>and raised</><Emphasis> again</>.            
                                                                                 
 The corpus ends here.

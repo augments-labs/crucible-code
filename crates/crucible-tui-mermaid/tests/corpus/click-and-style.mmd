@@ -1,0 +1,7 @@
+graph TD
+    A[Open] --> B[Close]
+    click A "https://example.com/clicked" "a tip"
+    click B call callback()
+    style A fill:#f9f,stroke:#333
+    classDef hot fill:#f00
+    class B hot

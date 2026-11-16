@@ -867,17 +867,17 @@ fn remember(directory: &Path, file: &str, line: &[u8]) {
 /// Beats into `directory` until stopped, or until [`LINGER`] has passed. Each
 /// beat is written beside the file and renamed over it, so a reader sees the
 /// last beat whole and never a file that is being truncated or half written.
+///
+/// A beat that cannot be written is skipped, not an end: Windows refuses a
+/// write or a rename while another process (a test reading the beat, a virus
+/// scanner) holds the file, and a grandchild that ended there would read as
+/// one its stop had ended. [`LINGER`] still bounds it.
 fn linger(directory: &Path) -> ExitCode {
     let path = directory.join(LINGERING);
     let writing = directory.join(format!("{LINGERING}.writing"));
     let beats = LINGER.as_millis() / BEAT.as_millis();
     for beat in 0..beats {
-        if fs::write(&writing, beat.to_string())
-            .and_then(|()| fs::rename(&writing, &path))
-            .is_err()
-        {
-            return ExitCode::FAILURE;
-        }
+        let _ = fs::write(&writing, beat.to_string()).and_then(|()| fs::rename(&writing, &path));
         std::thread::sleep(BEAT);
     }
     ExitCode::SUCCESS

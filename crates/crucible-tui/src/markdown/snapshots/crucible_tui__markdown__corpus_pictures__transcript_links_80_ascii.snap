@@ -4,7 +4,7 @@ expression: "pictured(\"links\", 80, Glyphs::Ascii)"
 ---
 <Link>https://example.com/docs</>                                                        
                                                                                 
-A reference to <Link>the documentation</> defined before it.                             
+A reference to <Link>the documentation</><Quiet> (example.com/docs)</> defined before it.          
                                                                                 
 A reference to [the changelog][notes] defined after it.                         
                                                                                 
@@ -12,12 +12,10 @@ A reference to [nothing][missing] that is defined never.
                                                                                 
 An address in brackets, <Link>https://example.com/a</>, and one without, <Link>www.example.com</>.
                                                                                 
-An ordinary link to <Link>the issue list</>.                                             
+An ordinary link to <Link>the issue list</><Quiet> (example.com/issues)</>.                        
                                                                                 
-Forge references: <Link>https://github.com/augments-labs/crucible-code/pull/1324</>,     
-<Link>https://github.com/augments-labs/crucible-code/issues/1288</> and                  
-<Link>https://github.com/augments-labs/crucible-code/commit/0a1b2c3d4e5f60718293a4b5c6</>
-<Link>d7e8f901234567</>.                                                                 
+Forge references: <Link>augments-labs/crucible-code#1324</>,                             
+<Link>augments-labs/crucible-code#1288</> and <Link>augments-labs/crucible-code@0a1b2c3</>.       
                                                                                 
 <Link>https://example.com/changelog</>                                                   
                                                                                 

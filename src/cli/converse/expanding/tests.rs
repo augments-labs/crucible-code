@@ -1823,3 +1823,174 @@ fn the_rows_of_a_source_are_counted_once_for_each_width() {
     assert_eq!(opened(&mut standing).counted.columns, 20);
     assert_eq!(opened(&mut standing).counted.rows.len(), 1);
 }
+
+#[test]
+fn two_addresses_on_one_line_of_one_length_are_counted_apart() {
+    // As many bytes each, and on the same line, but the wide one is two
+    // columns a character where the other is one, so at 20 columns it folds
+    // into fewer rows. Each is counted at its own rows, and the view reaches
+    // as far down as it does with them on lines of their own, where no two
+    // can share a count.
+    let wide = format!("https://example.com/{}", "語".repeat(20));
+    let narrow = format!("https://example.com/{}", "a".repeat(60));
+    assert_eq!(wide.len(), narrow.len());
+    let kept = Kept::default();
+    let reach = |lines: [usize; 2]| {
+        let sources = [
+            Source {
+                line: lines[0],
+                word: "address",
+                text: &wide,
+            },
+            Source {
+                line: lines[1],
+                word: "address",
+                text: &narrow,
+            },
+        ];
+        let mut standing = Standing::default();
+        standing.open(&kept, 2);
+        laying(
+            &kept,
+            &sources,
+            opened(&mut standing),
+            Glyphs::Unicode,
+            Size {
+                columns: 20,
+                rows: 6,
+            },
+        );
+        let view = opened(&mut standing);
+        let counts: Vec<usize> = view
+            .counted
+            .addresses
+            .iter()
+            .map(|(_, _, rows)| *rows)
+            .collect();
+        (view.laid, counts)
+    };
+
+    let apart = reach([0, 1]);
+    let (laid, counts) = reach([0, 0]);
+    assert_eq!(counts.len(), 2);
+    assert!(counts.iter().all(|rows| *rows > 1));
+    assert_ne!(counts.first(), counts.get(1));
+    assert_eq!(counts, apart.1);
+    assert_eq!(laid, apart.0);
+}
+
+#[test]
+fn ctrl_o_lists_the_whole_of_every_address_drawn_shorter_after_the_blocks() {
+    let here = "https://github.com/augments-labs/crucible-code";
+    let mut render = Renderer::new(Recording::new(100, 24));
+    render.wears(Style::coloured().palette());
+    render.counts(Some(crucible_tui::Forge::new(
+        "https://github.com",
+        "augments-labs/crucible-code",
+        "/issues/",
+    )));
+    render
+        .stream(&format!(
+            "a {here}/pull/1324 b #7 c [d](https://example.com/docs/guide/intro)\n\n\
+             | a | b |\n|---|---|\n| 1 | 2 |\n\nafter\n"
+        ))
+        .expect("a recording cannot fail");
+    render.settle().expect("a recording cannot fail");
+
+    let sources: Vec<Source<'_>> = render.sources().collect();
+    let kept = Kept::default();
+    let mut standing = Standing::default();
+    standing.open(&kept, render.sourced());
+    let rows = frame_of(&kept, &sources, &mut standing, 40);
+
+    let at = |wanted: &str| {
+        rows.iter()
+            .position(|row| row == wanted)
+            .unwrap_or_else(|| panic!("no row {wanted:?} in {rows:#?}"))
+    };
+    let pull = format!("{here}/pull/1324");
+    let order = [
+        at("table"),
+        at("| 1 | 2 |"),
+        at("https://example.com/docs/guide/intro"),
+        at(&pull),
+    ];
+    assert!(
+        order
+            .windows(2)
+            .all(|pair| matches!(pair, [before, after] if before < after)),
+        "{rows:#?}"
+    );
+    assert_eq!(
+        rows.iter().filter(|row| *row == "address").count(),
+        2,
+        "{rows:#?}"
+    );
+    assert!(
+        !rows.iter().any(|row| row.contains("issues/7")),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn ctrl_o_lists_an_address_a_table_cell_draws_shorter_newest_first() {
+    let here = "https://github.com/augments-labs/crucible-code";
+    let mut render = Renderer::new(Recording::new(100, 24));
+    render.wears(Style::coloured().palette());
+    render.counts(Some(crucible_tui::Forge::new(
+        "https://github.com",
+        "augments-labs/crucible-code",
+        "/issues/",
+    )));
+    render
+        .stream(&format!(
+            "a {here}/pull/1\n\n| a | b |\n|---|---|\n| {here}/pull/2 | {here}/pull/3 |\n\nafter\n"
+        ))
+        .expect("a recording cannot fail");
+    render.settle().expect("a recording cannot fail");
+
+    let sources: Vec<Source<'_>> = render.sources().collect();
+    let kept = Kept::default();
+    let mut standing = Standing::default();
+    standing.open(&kept, render.sourced());
+    let rows = frame_of(&kept, &sources, &mut standing, 60);
+
+    let at = |wanted: &str| {
+        rows.iter()
+            .position(|row| row == wanted)
+            .unwrap_or_else(|| panic!("no row {wanted:?} in {rows:#?}"))
+    };
+    let order = [
+        at(&format!("{here}/pull/3")),
+        at(&format!("{here}/pull/2")),
+        at(&format!("{here}/pull/1")),
+    ];
+    assert!(
+        order
+            .windows(2)
+            .all(|pair| matches!(pair, [before, after] if before < after)),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn ctrl_o_opens_for_an_address_drawn_shorter_with_nothing_else_to_stand() {
+    let mut render = Renderer::new(Recording::new(100, 24));
+    render.wears(Style::coloured().palette());
+    render
+        .stream("see [the guide](https://example.com/docs/guide/intro) now\n")
+        .expect("a recording cannot fail");
+    render.settle().expect("a recording cannot fail");
+
+    let sources: Vec<Source<'_>> = render.sources().collect();
+    let kept = Kept::default();
+    let mut standing = Standing::default();
+    standing.open(&kept, render.sourced());
+    let rows = frame_of(&kept, &sources, &mut standing, 40);
+
+    assert!(
+        rows.iter()
+            .any(|row| row == "https://example.com/docs/guide/intro"),
+        "{rows:#?}"
+    );
+}

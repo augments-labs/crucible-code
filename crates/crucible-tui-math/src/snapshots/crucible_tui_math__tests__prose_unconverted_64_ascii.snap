@@ -1,0 +1,6 @@
+---
+source: crates/crucible-tui-math/src/tests.rs
+expression: "dump(&prose(answer, 64, glyphs), 64)"
+---
+Here $\unknown{x}*y*$ stays as written, and so does             
+\(\foo_1 + b_2\) beside <Emphasis>emphasis</> and $5 of money.

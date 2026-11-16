@@ -1,0 +1,11 @@
+stateDiagram-v2
+    direction TB
+    state "Waiting key" as Wait
+    [*] --> Wait
+    Wait --> Busy : key
+    state Busy {
+        [*] --> Reading
+        Reading --> [*]
+    }
+    Busy --> [*]
+    note right of Wait : idle

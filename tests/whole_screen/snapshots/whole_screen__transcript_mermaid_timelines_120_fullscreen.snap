@@ -22,7 +22,7 @@ expression: window.picture()
 |                                                                                                                        |
 |A sequence diagram:                                                                                                     |
 |                                                                                                                        |
-|┌─ mermaid                                                                                                              |
+|┌─ mermaid · sequence diagram · not drawn as text · shown as written                                                    |
 |│ sequenceDiagram                                                                                                       |
 |│   Alice->>Bob: Hello                                                                                                  |
 |│   Bob-->>Alice: Hi                                                                                                    |
@@ -30,7 +30,7 @@ expression: window.picture()
 |                                                                                                                        |
 |A gantt chart:                                                                                                          |
 |                                                                                                                        |
-|┌─ mermaid                                                                                                              |
+|┌─ mermaid · gantt · not drawn as text · shown as written                                                               |
 |│ gantt                                                                                                                 |
 |│   title Release                                                                                                       |
 |│   section Tests                                                                                                       |
@@ -39,7 +39,7 @@ expression: window.picture()
 |                                                                                                                        |
 |A git graph:                                                                                                            |
 |                                                                                                                        |
-|┌─ mermaid                                                                                                              |
+|┌─ mermaid · git graph · not drawn as text · shown as written                                                           |
 |│ gitGraph                                                                                                              |
 |│   commit id: "one"                                                                                                    |
 |│   branch feature                                                                                                      |
@@ -50,7 +50,7 @@ expression: window.picture()
 |                                                                                                                        |
 |A kind with no drawing of its own:                                                                                      |
 |                                                                                                                        |
-|┌─ mermaid                                                                                                              |
+|┌─ mermaid · pie · not drawn as text · shown as written                                                                 |
 |│ pie                                                                                                                   |
 |│   "drawn" : 1                                                                                                         |
 |└─                                                                                                                      |
