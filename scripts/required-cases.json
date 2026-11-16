@@ -8765,6 +8765,24 @@
       ]
     },
     {
+      "id": "CASE-TRANSCRIPT-PICTURES-FONT-GLYPHS",
+      "family": "transcript-pictures",
+      "obligation": "The embedded font has a glyph for a space, Latin letters, dashes, arrows, comparison signs and box drawing, and none for Han, kana, Hangul or a private-use letter.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::the_font_has_glyphs_for_latin_letters_and_box_drawing_and_none_for_han",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "f5b3ca3872713fe5dbb36856a7c66811b80afe09828ad8b09dcbc8a017c75ee8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
       "id": "CASE-TRANSCRIPT-PICTURES-CORPUS-ELEMENT-AS-GROUP",
       "family": "transcript-pictures",
       "obligation": "A corpus file refused for an element is drawn once that element is made a group, so the element is what refused it.",
@@ -13830,6 +13848,204 @@
       "case": "tests::every_diagram_timed_is_laid_out",
       "source": "src/bin/bench-drawing.rs",
       "body_sha256": "9a0325e314312386e5a2b0fde0c4b93e47911fc599403f2b0e9da486b450409f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-SVG-NATURAL-SIZE",
+      "family": "transcript-blocks",
+      "obligation": "A picture of every kind in each glyph set is one outermost svg as many cells wide and high as its text layout's rows, eight units by sixteen to a cell, with a view box of the same size.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_picture_is_its_layout_at_natural_size",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "53e753e77cdc0619bca1be0b4c6e63c810a351f95b27fefc18526fc6dd16ecb3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-SVG-SLOT-INKS",
+      "family": "transcript-blocks",
+      "obligation": "Every path and text of a picture of every kind in each glyph set carries a slot class and paints with none or currentColor alone, with no literal colour, style or opacity anywhere.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_picture_inks_by_slot_class_and_never_by_colour",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "06419e0fbf9e5a8af62376b8ef540baae660b6fb30bb764140ade660c42064a2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-SVG-NOTHING-OUTSIDE",
+      "family": "transcript-blocks",
+      "obligation": "A picture of every kind in each glyph set holds only svg, path and text elements, and no href, url(, style sheet, declaration or processing instruction.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_picture_names_nothing_outside_itself",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "040d5791547997cc19dbfe29b37ba5d26ec0034af8de41424ae19f30bf598a36",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-SVG-ESCAPED",
+      "family": "transcript-blocks",
+      "obligation": "A label holding <, &, \", > and ' is written escaped for XML and reads back as its characters.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_label_holding_markup_is_written_as_its_characters",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "4aae2d2a18a1d48abf60358067e93edb7a0a6c20e4204278e7326eba2a33e1d4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-SVG-CAP",
+      "family": "transcript-blocks",
+      "obligation": "Rows whose picture would pass the picture cap are refused as past it, and a small picture under it is drawn.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "picture::tests::a_picture_past_its_cap_is_refused",
+      "source": "crates/crucible-tui-mermaid/src/picture/tests.rs",
+      "body_sha256": "6d2fd6938b15dde685a6a84d2de6f262556025b7520d75d6f45a0301718aa1d8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-SVG-EVERY-KIND",
+      "family": "transcript-blocks",
+      "obligation": "A picture of every kind in each glyph set writes, row by row, the letters its text drawing writes at the columns it writes them, with only the line-drawing characters drawn as shapes.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_picture_of_every_kind_writes_what_its_text_drawing_writes_where_it_writes_it",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "6dba9663e895c7514fe23410cabbdebbc195c0ccca24b42ac313ed3ea308afa8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-SVG-REFUSED-ALIKE",
+      "family": "transcript-blocks",
+      "obligation": "A source the text drawing refuses, as an unsupported kind, too wide, grouped, empty, unparsed or past its bytes, is refused as a picture with the same refusal.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_picture_is_refused_for_what_its_text_drawing_is_refused_for",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "1fd16bc5fb3bdd783607f55e963329de7cdbb1c36c1523807036157dc9c662ee",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-SVG-LACKING-LETTER",
+      "family": "transcript-blocks",
+      "obligation": "A label holding Han letters keeps its text drawing and is refused as a picture in each glyph set, while a Latin label with accents and typographic punctuation is drawn as a picture holding those letters.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_label_holding_a_letter_the_picture_may_lack_keeps_the_diagram_text",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "56f28e256851656be7acbd1e1ed73b5f6f1fde17c60d4c60b74516da70f900af",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-SVG-FONT-AGREEMENT",
+      "family": "transcript-blocks",
+      "obligation": "The raster font has a glyph for every letter a diagram picture may write as text.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::draw::tests::the_raster_font_has_a_glyph_for_every_letter_a_diagram_picture_writes",
+      "source": "src/cli/draw/tests.rs",
+      "body_sha256": "5ff37969cd5062cd989d48952536a27f9a8953dc89a520444910ec8de5b6b052",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-PICTURE-PROBE",
+      "family": "transcript-blocks",
+      "obligation": "The drawing probe times one picture for each of the six kinds, each made a picture by the drawer in every room and glyph set at a size the rasteriser's pixels hold.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-drawing"
+      },
+      "case": "tests::every_picture_timed_is_drawn_as_a_picture",
+      "source": "src/bin/bench-drawing.rs",
+      "body_sha256": "36b75502c4330ba24ccde555429781ae048a1a7fb17109a1ecf0c83ddefc9e71",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-PICTURE-PROBE-WIDTH",
+      "family": "transcript-blocks",
+      "obligation": "The width the drawing probe rasterises a picture at keeps its pixels inside what the rasteriser holds, and one more column would not.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-drawing"
+      },
+      "case": "tests::the_widest_raster_is_the_most_the_rasteriser_holds",
+      "source": "src/bin/bench-drawing.rs",
+      "body_sha256": "13c1347483774571fb688e71675aae9e8ebe10cb107e04413bb83622c44a9c71",
       "platforms": [
         "linux",
         "macos",
