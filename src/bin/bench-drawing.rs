@@ -61,11 +61,11 @@
 //! picture's font lacks keeps its text drawing and is never rasterised, and
 //! each label as long as the caps leave room for, so a picture carries as many
 //! letters as the caps let in, and every letter is outlines the rasteriser
-//! draws. It is rasterised
-//! in every slot's ink, as a theme hands them, at the widest the most pixels a
-//! picture may hold allow for its proportions, in a window wide enough to draw
-//! it, since a picture is drawn at its own size whatever the room, and in both
-//! glyph sets. A picture the drawer or the rasteriser refuses fails the probe
+//! draws. It is rasterised in every slot's ink, as a theme hands them, at its
+//! own width, or narrower at its proportions when its pixels would be more
+//! than a picture may hold, in a window wide enough to draw it, since a
+//! picture is drawn at its own size whatever the room, and in both glyph
+//! sets. A picture the drawer or the rasteriser refuses fails the probe
 //! rather than timing the refusal. Thirty milliseconds is the budget for a
 //! picture: half as much again as the first frame's whole budget, which a
 //! picture spends once, when its fence closes.
@@ -1204,15 +1204,16 @@ fn attribute(svg: &str, name: &str) -> Option<u64> {
     rest.get(..rest.find('"')?)?.parse().ok()
 }
 
-/// The widest a picture `width` by `height` across may be rasterised at:
-/// the most pixels, at its proportions and with the height rounded up as the
-/// rasteriser rounds it, that [`MOST_DECODED`] holds.
+/// The width a picture `width` by `height` across is rasterised at: its own,
+/// since a picture is never scaled up, unless that is more pixels than
+/// [`MOST_DECODED`] holds, and then the most it holds at its proportions, with
+/// the height rounded up as the rasteriser rounds it.
 fn widest(width: u64, height: u64) -> Option<u32> {
     let most = u64::try_from(MOST_DECODED).ok()? / 4;
     let held = |across: u64| {
         across.saturating_mul((across.saturating_mul(height)).div_ceil(width.max(1))) <= most
     };
-    let (mut low, mut high) = (1_u64, most);
+    let (mut low, mut high) = (1_u64, most.min(width.max(1)));
     while low < high {
         let middle = high - (high - low) / 2;
         if held(middle) {
@@ -1225,7 +1226,7 @@ fn widest(width: u64, height: u64) -> Option<u32> {
 }
 
 /// `text` drawn as a picture in `room`: laid out, rasterised in every slot's
-/// ink as wide as [`widest`] allows, and encoded as a PNG; the PNG's bytes,
+/// ink at the width [`widest`] gives, and encoded as a PNG; the PNG's bytes,
 /// or why it was not made.
 fn picture(text: &str, room: &Room) -> Result<usize, String> {
     let svg = Diagrams
@@ -1534,12 +1535,27 @@ mod tests {
         );
     }
 
-    /// The widest a picture is rasterised at keeps its pixels inside what the
-    /// rasteriser holds, and one more column would not.
+    /// A picture narrower than the most pixels the rasteriser holds allow is
+    /// rasterised at its own width, never scaled up: a gantt in one section
+    /// is 776 across, where its proportions would let 840 in.
+    #[test]
+    fn a_picture_narrower_than_the_rasteriser_holds_is_rasterised_at_its_own_width() {
+        for (width, height) in [(776, 576), (8, 16), (3216, 16), (1, 1)] {
+            assert_eq!(
+                widest(width, height).map(u64::from),
+                Some(width),
+                "{width}x{height}"
+            );
+        }
+    }
+
+    /// A picture wider than the rasteriser holds is rasterised at a width
+    /// that keeps its pixels inside what the rasteriser holds, where one more
+    /// column would not.
     #[test]
     fn the_widest_raster_is_the_most_the_rasteriser_holds() {
         let most = MOST_DECODED as u64 / 4;
-        for (width, height) in [(3216, 16), (3216, 4000), (8, 16), (1, 100_000)] {
+        for (width, height) in [(848, 624), (3216, 4000), (100_000, 16), (4, 1_000_000)] {
             let across = u64::from(widest(width, height).unwrap_or(0));
             let pixels = |across: u64| across * (across * height).div_ceil(width);
             assert!(pixels(across) <= most, "{width}x{height} at {across}");

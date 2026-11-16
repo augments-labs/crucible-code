@@ -46,9 +46,9 @@ const STEP_NS: u64 = 140;
 /// window cell, a convolution per matrix cell, a merge per input) counts that
 /// many, and a shape counts [`PIXELS_PER_STEP`] of the pixels it reaches as
 /// one. The number holds a picture of every diagram kind at its caps, in every
-/// shape the drawing probe times, but one: a gantt in one section asks for
-/// about 354 000 steps at the widest its pixels allow, and is refused. The
-/// dearest it holds, a git graph on few branches, asks for about 301 000. In a
+/// shape the drawing probe times, each rasterised at its own width or, where
+/// that would be more pixels than are decoded, narrower: the dearest, a git
+/// graph on few branches at 843 pixels across, asks for 301 488 steps. In a
 /// release build, over 320 000 pixels a drop shadow took 44 ms, a Gaussian
 /// blur 36 ms and a one-octave turbulence 36 ms. A merge input is a copy of
 /// the region and took 10 ms at that total.
