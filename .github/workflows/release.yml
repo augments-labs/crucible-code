@@ -120,6 +120,12 @@ jobs:
         with:
           tool: cargo-nextest@0.9.146
       - uses: ./.github/actions/enforcing-sandbox
+      # The check that a drawer or raster crate reaches no network asks
+      # `cargo tree --offline` for each one's graph on every target, which
+      # needs every target's locked sources; building for this host fetches
+      # only its own.
+      - name: Populate the locked Cargo cache
+        run: cargo fetch --locked
       - run: scripts/sh/check.sh
         env:
           CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
