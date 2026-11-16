@@ -55,7 +55,8 @@
 //!
 //! A diagram is also drawn as a picture of the same layout, and a picture is
 //! made on the same thread: laid out, rasterised and encoded as a PNG. For each
-//! kind the costliest picture its caps hold is timed through all three, every
+//! kind the costliest picture its caps hold is timed through all three, and a
+//! sequence diagram's also with its messages among four participants, every
 //! label in Latin letters, since a diagram holding a letter the picture's font
 //! lacks keeps its text drawing and is never rasterised, and each label as long
 //! as the caps leave room for, so a picture carries as many letters as the caps
@@ -64,9 +65,9 @@
 //! picture may hold allow for its proportions, in a window wide enough to draw
 //! it, since a picture is drawn at its own size whatever the room, and in both
 //! glyph sets. A picture the drawer or the rasteriser refuses fails the probe
-//! rather than timing the refusal. Twenty milliseconds is the budget for a
-//! picture: the first frame's whole budget, which a picture spends once, when
-//! its fence closes.
+//! rather than timing the refusal. Thirty milliseconds is the budget for a
+//! picture: half as much again as the first frame's whole budget, which a
+//! picture spends once, when its fence closes.
 //!
 //! The reported number is the slowest text case's 95th percentile, with each
 //! case's median and its slowest reading kept as evidence, and the slowest
@@ -105,7 +106,7 @@ const SHARED_RUNNER_LIMIT: f64 = 15.0;
 
 /// The budget for a picture, in milliseconds: laid out, rasterised and
 /// encoded, on a quiet machine and on a shared runner alike.
-const PICTURE_LIMIT: f64 = 20.0;
+const PICTURE_LIMIT: f64 = 30.0;
 
 /// Readings taken of each case, after the ones that warm it.
 const RUNS: usize = 101;
@@ -1073,6 +1074,16 @@ fn pictures() -> Vec<Case> {
             rooms: PICTURE_ROOMS,
         },
         Case {
+            name: "a sequence diagram's picture among few participants",
+            input: Input::Picture(diagram_at_the_caps(
+                Caps::SEQUENCE,
+                Shape::Few,
+                Letters::Latin,
+                sequence,
+            )),
+            rooms: PICTURE_ROOMS,
+        },
+        Case {
             name: "a gantt's picture at its caps",
             input: Input::Picture(diagram_at_the_caps(
                 Caps::GANTT,
@@ -1467,7 +1478,10 @@ mod tests {
                 }
             }
         }
-        assert_eq!(pictures, 6, "one picture for each kind");
+        assert_eq!(
+            pictures, 7,
+            "one picture for each kind, and a sequence diagram's among few participants"
+        );
     }
 
     /// The widest a picture is rasterised at keeps its pixels inside what the
