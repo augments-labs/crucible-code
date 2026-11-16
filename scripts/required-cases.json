@@ -8307,7 +8307,7 @@
       },
       "case": "tests::filter_work_is_refused_one_row_past_its_ceiling",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "cb2927e8704efb4eca24ce56325471fcb7f0397e387ae736be3a6aa491a7113b",
+      "body_sha256": "50ece65c3206a86648c454deb22c5454a5335927fb026a8802534197aeb4ad20",
       "platforms": [
         "linux",
         "macos",
@@ -8325,7 +8325,7 @@
       },
       "case": "tests::filter_work_is_added_up_over_the_whole_drawing",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "3a2a1a19d1898fb00b788762c9dfd9faf4ffc3c5e7b6b104636dab5dc1600540",
+      "body_sha256": "6f09ad96f5ddc8832be01bd5dc75b05a6b46f0a674488fe4fbdb1c743ee53fe9",
       "platforms": [
         "linux",
         "macos",
@@ -8361,7 +8361,7 @@
       },
       "case": "tests::a_merge_is_counted_by_the_inputs_it_draws",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "677355607b3f0d500381087c30804acc5242c7f112e614b85df3418dbc1d7d85",
+      "body_sha256": "b031a489fabc3fbdd3364fd58d0cb676122a2c82eb4b41edbc50bd1715344c17",
       "platforms": [
         "linux",
         "macos",
@@ -8379,7 +8379,7 @@
       },
       "case": "tests::a_shape_is_counted_by_the_pixels_it_covers_inside_the_canvas",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "34b2c922dcb34c33ced542cb5ba867316579248abc230b0b46e5327328be907b",
+      "body_sha256": "8925863a2e286a7e58d34f67cc92cb9dcea34db08eadfc166d24c3c0b678a381",
       "platforms": [
         "linux",
         "macos",
@@ -8397,7 +8397,7 @@
       },
       "case": "tests::a_stroke_and_a_fill_are_counted_apart",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "e12ee04f60b01c0a0007ac6e2b68dee3cc41ed339446e8cd122b38f7d8284798",
+      "body_sha256": "8b9cc557e76dd86a337b7d1b879046b19df099a9f5f99e23ed1048d59ab828c9",
       "platforms": [
         "linux",
         "macos",
@@ -8433,7 +8433,7 @@
       },
       "case": "tests::a_dashed_stroke_is_counted_by_the_dashes_it_makes",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "22c203a87e379114fb0acc669c488de61db68932a48858cd354bddf2810cff96",
+      "body_sha256": "623b731ce7160683b8c126c3370d5dc5f9e43a262a5ca5b3d97fecc60ad087f1",
       "platforms": [
         "linux",
         "macos",
@@ -8487,7 +8487,7 @@
       },
       "case": "tests::a_path_in_a_clip_is_counted_by_the_pixels_it_fills",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "e33e37043f2b43dc1c04c5c5baff9d388c024b16c17d3fe75fcd3dd32ced955e",
+      "body_sha256": "2b046fbf32721ad73f9fe3bbea809fc0d4e98e8b109ba9a1fcb250eeb129fa7c",
       "platforms": [
         "linux",
         "macos",
@@ -8523,7 +8523,7 @@
       },
       "case": "tests::a_path_is_counted_by_the_rows_each_segment_crosses",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "bd56c5823d847f164ce76853292abd4ee0563de56e9c7427f39bb61849c9f785",
+      "body_sha256": "f7081bf159cd58b4e62bbc37a1e504d346afcb7653eb824a8a6adb39cc464b51",
       "platforms": [
         "linux",
         "macos",
@@ -8631,7 +8631,7 @@
       },
       "case": "tests::a_gradient_costs_its_pixels_and_its_stops_together",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "c8b50e83c61b6264ec43c11bc04249465089bcbf0fae65ec1dd85b1419651c03",
+      "body_sha256": "3afb009543190f3a1efc2a56a7eacf76bdcd54efb9051395ed916e2a4398a9a8",
       "platforms": [
         "linux",
         "macos",
@@ -8649,7 +8649,7 @@
       },
       "case": "tests::edges_of_a_stroke_crowded_along_a_row_are_counted_by_the_pixels_each_can_walk",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "f05099e7854cde98bab568b2a0f2ab9e4fae2a8c1006d370bd74372e02e96700",
+      "body_sha256": "7369e48aef70e1246d7a8215070608b63a3d819a1003213f75185dc5f1133f0f",
       "platforms": [
         "linux",
         "macos",
@@ -13947,7 +13947,7 @@
     {
       "id": "CASE-TRANSCRIPT-MERMAID-SVG-EVERY-KIND",
       "family": "transcript-blocks",
-      "obligation": "A picture of every kind in each glyph set writes, row by row, the letters its text drawing writes at the columns it writes them, with only the line-drawing characters drawn as shapes.",
+      "obligation": "A picture of every kind writes, row by row, the letters its Unicode text drawing writes at the columns it writes them, with only the line-drawing characters drawn as shapes.",
       "package": "crucible-tui-mermaid",
       "target": {
         "kind": "lib",
@@ -13955,7 +13955,25 @@
       },
       "case": "tests::a_picture_of_every_kind_writes_what_its_text_drawing_writes_where_it_writes_it",
       "source": "crates/crucible-tui-mermaid/src/tests.rs",
-      "body_sha256": "6dba9663e895c7514fe23410cabbdebbc195c0ccca24b42ac313ed3ea308afa8",
+      "body_sha256": "5087e4716b7e1fe9a439a628b70c7096eaad38080ca7bb6f1e58cb1055117abb",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-SVG-UNICODE-LAYOUT",
+      "family": "transcript-blocks",
+      "obligation": "A picture of every kind is drawn, and is the same picture under the ASCII glyph set as under the Unicode one.",
+      "package": "crucible-tui-mermaid",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_mermaid"
+      },
+      "case": "tests::a_picture_is_drawn_from_the_unicode_layout_whatever_the_glyph_set",
+      "source": "crates/crucible-tui-mermaid/src/tests.rs",
+      "body_sha256": "298200c5d172ebbb671d1c2d342074e7c0fa7f3e691c0133d4c4ddf12d8d02e8",
       "platforms": [
         "linux",
         "macos",
@@ -14019,7 +14037,7 @@
     {
       "id": "CASE-TRANSCRIPT-MERMAID-PICTURE-PROBE",
       "family": "transcript-blocks",
-      "obligation": "The drawing probe times one picture for each of the six kinds, each made a picture by the drawer in every room and glyph set at a size the rasteriser's pixels hold.",
+      "obligation": "The drawing probe times one picture for each of the six kinds and a sequence diagram's among few participants, each made a picture by the drawer in every room and glyph set at a size the rasteriser's pixels hold.",
       "package": "crucible-code",
       "target": {
         "kind": "bin",
@@ -14027,7 +14045,7 @@
       },
       "case": "tests::every_picture_timed_is_drawn_as_a_picture",
       "source": "src/bin/bench-drawing.rs",
-      "body_sha256": "36b75502c4330ba24ccde555429781ae048a1a7fb17109a1ecf0c83ddefc9e71",
+      "body_sha256": "4f5329cf2ba368f76f31989caf8088787ff2cb66cfaea43155be32dcea7614ab",
       "platforms": [
         "linux",
         "macos",
