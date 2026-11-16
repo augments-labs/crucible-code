@@ -14037,7 +14037,7 @@
     {
       "id": "CASE-TRANSCRIPT-MERMAID-PICTURE-PROBE",
       "family": "transcript-blocks",
-      "obligation": "The drawing probe times one picture for each of the six kinds and a sequence diagram's among few participants, each made a picture by the drawer in every room and glyph set at a size the rasteriser's pixels hold.",
+      "obligation": "The drawing probe times one picture for each of the six kinds, and a sequence diagram's, a gantt's and a git graph's in their second shape, each made a picture by the drawer in every room and glyph set at a size the rasteriser's pixels hold.",
       "package": "crucible-code",
       "target": {
         "kind": "bin",
@@ -14045,7 +14045,7 @@
       },
       "case": "tests::every_picture_timed_is_drawn_as_a_picture",
       "source": "src/bin/bench-drawing.rs",
-      "body_sha256": "4f5329cf2ba368f76f31989caf8088787ff2cb66cfaea43155be32dcea7614ab",
+      "body_sha256": "bab6c0a9daa5df32306cc5c5ff4fa4f9c2da283cc3454bcbad8ac6980544f482",
       "platforms": [
         "linux",
         "macos",
@@ -14064,6 +14064,24 @@
       "case": "tests::the_widest_raster_is_the_most_the_rasteriser_holds",
       "source": "src/bin/bench-drawing.rs",
       "body_sha256": "13c1347483774571fb688e71675aae9e8ebe10cb107e04413bb83622c44a9c71",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-PICTURE-PROBE-READING",
+      "family": "transcript-blocks",
+      "obligation": "When the text holds and a picture does not, the drawing probe reports the picture's 95th percentile against the picture limit, with the text's reading beside it; otherwise it reports the text's, with the picture's beside it.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-drawing"
+      },
+      "case": "tests::a_picture_over_its_limit_is_the_reading_reported",
+      "source": "src/bin/bench-drawing.rs",
+      "body_sha256": "cb9c1836d9565cb9a3eab181e534201c7a4abb2340bfc15ccd6ad30a7ac2858b",
       "platforms": [
         "linux",
         "macos",
