@@ -113,7 +113,7 @@ const MOST_SHORTENED: usize = markdown::SHORTENED_CAP;
 /// A picture is kept twice over, as what it was drawn from and as what the
 /// terminal is sent, so it is held to a count of its own beside the record's
 /// lines; the oldest past it is drawn as text again.
-pub(crate) const MOST_KEPT_IMAGES: usize = 16;
+pub const MOST_KEPT_IMAGES: usize = 16;
 
 /// The most bytes every kept picture may come to together, what each was
 /// drawn from and what the terminal is sent counted once each.

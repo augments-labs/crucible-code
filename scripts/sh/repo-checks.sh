@@ -1877,7 +1877,16 @@ fi
 # are timed drawn as a session draws them, and `bench-live-burst` names them for
 # the drawers that draw the answers its band stands over, so a frame is timed
 # over a record that keeps a drawer's rows; each builds the drawers in its own
-# file, where this list reads what it names.
+# file, where this list reads what it names. Both name `crucible_raster` for
+# the pictures their renderer is handed, as a session on a terminal that
+# confirmed Kitty is, so a frame is timed with diagrams drawn to pixels and
+# sent as pictures; each draws them in its own file for the same reason.
+# `bench-session-rss-colour` names `crucible_tui` for the count of pictures a
+# session keeps, which its last answer's gantts go one past, and in its test
+# for the room, glyphs and refusal the drawer is asked in; it names
+# `crucible_tui_mermaid` for the caps those gantts are built at, and in its
+# test for the drawer that shows each is drawn as a picture as wide as the
+# measured window takes.
 # `bench-first-input-colour-silent` names `crucible_tui` in its test alone, for
 # the reply wait its budget is held to the sum of, and measures the built
 # binary like every other startup probe.
@@ -1892,6 +1901,7 @@ src/bin/bench-grep.rs crucible_runtime
 src/bin/bench-grep.rs crucible_tools
 src/bin/bench-grep.rs crucible_types
 src/bin/bench-grep.rs crucible_workspace
+src/bin/bench-live-burst.rs crucible_raster
 src/bin/bench-live-burst.rs crucible_tui
 src/bin/bench-live-burst.rs crucible_tui_diff
 src/bin/bench-live-burst.rs crucible_tui_math
@@ -1899,6 +1909,7 @@ src/bin/bench-live-burst.rs crucible_tui_mermaid
 src/bin/bench-read-back.rs crucible_session
 src/bin/bench-read-back.rs crucible_types
 src/bin/bench-read-back.rs crucible_workspace
+src/bin/bench-render-burst.rs crucible_raster
 src/bin/bench-render-burst.rs crucible_tui
 src/bin/bench-render-burst.rs crucible_tui_diff
 src/bin/bench-render-burst.rs crucible_tui_math
@@ -1907,6 +1918,8 @@ src/bin/bench-session-rss.rs crucible_attachments
 src/bin/bench-session-rss.rs crucible_config
 src/bin/bench-session-rss-colour.rs crucible_attachments
 src/bin/bench-session-rss-colour.rs crucible_config
+src/bin/bench-session-rss-colour.rs crucible_tui
+src/bin/bench-session-rss-colour.rs crucible_tui_mermaid
 src/bin/bench-tools.rs crucible_builtins
 src/bin/bench-tools.rs crucible_runtime
 src/bin/bench-tools.rs crucible_sandbox_local
