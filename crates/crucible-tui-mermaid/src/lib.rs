@@ -84,8 +84,9 @@
 //!   out with none, a day of a gantt to a cell and a git graph's labels
 //!   whole, so each is drawn as it is or refused as too wide, never squeezed.
 //! - **A picture is the same layout.** [`Diagrams`] also draws a diagram as
-//!   an SVG picture, from the one layout its text drawing is drawn from and
-//!   refused for the same reasons: the characters lines, blocks and
+//!   an SVG picture, from the one layout its text drawing is drawn from
+//!   under the Unicode glyph set, whatever the set in force, and refused for
+//!   the same reasons: the characters lines, blocks and
 //!   arrowheads are drawn with become strokes and shapes, every other one is
 //!   written as text in the cell the text drawing puts it in, and every ink
 //!   is a slot's class, never a colour. Nothing here rasterises it.
@@ -109,7 +110,7 @@ use std::ops::RangeInclusive;
 
 use crucible_tui::chrome::{Frame, Label, Undrawn};
 use crucible_tui::drawing::{Draws, Laid, Room, Svg};
-use crucible_tui::{Row, Slot, columns};
+use crucible_tui::{Glyphs, Row, Slot, columns};
 
 use lay::Unlaid;
 use scan::Refused;
@@ -354,7 +355,13 @@ impl Draws for Diagrams {
     }
 
     fn picture(&self, source: &str, room: &Room) -> Result<Svg, Undrawn> {
-        let (_, drawing) = laid(source, room)?;
+        // A picture is drawn from the Unicode layout whatever the glyph set:
+        // its lines become strokes, and no terminal font is asked for them.
+        let unicode = Room {
+            columns: room.columns,
+            glyphs: Glyphs::Unicode,
+        };
+        let (_, drawing) = laid(source, &unicode)?;
         picture::picture(&drawing.lines, drawing.natural)
     }
 }

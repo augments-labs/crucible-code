@@ -14,8 +14,8 @@
 //!   arrowhead, a diamond and a circle become their shape. Every other
 //!   character is written as text, a run of it at the cell it starts in and
 //!   stretched to the cells it takes, so a label stands where the text
-//!   drawing puts it whatever the font. Under the ASCII glyph set the rows
-//!   hold none of those characters, so the whole picture is text.
+//!   drawing puts it whatever the font. The rows are always the Unicode
+//!   layout, so a picture under the ASCII glyph set is the same picture.
 //! - **Inks are slot classes.** Every shape and run of text is inked by a
 //!   [`Slot::class`] name, carried as `class` with `currentColor` as its
 //!   paint, so whatever rasterises the picture applies the palette in force.

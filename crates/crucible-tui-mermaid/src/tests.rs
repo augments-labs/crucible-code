@@ -865,24 +865,22 @@ fn shaped(character: char) -> bool {
 #[test]
 fn a_picture_of_every_kind_writes_what_its_text_drawing_writes_where_it_writes_it() {
     for (name, source, _) in KINDS {
-        for glyphs in [UNICODE, ASCII] {
-            let svg = picture(source, 80, glyphs);
-            assert!(svg.is_ok(), "{name} {glyphs:?}: {svg:?}");
-            let svg = svg.unwrap_or_default();
-            let drawn: Vec<String> = inner(source, 80, glyphs)
-                .iter()
-                .map(|row| {
-                    row.chars()
-                        .map(|character| if shaped(character) { ' ' } else { character })
-                        .collect::<String>()
-                        .trim_end()
-                        .to_owned()
-                })
-                .collect();
-            let mut said = lettered(&svg);
-            said.resize(drawn.len(), String::new());
-            assert_eq!(said, drawn, "{name} {glyphs:?}\n{svg}");
-        }
+        let svg = picture(source, 80, UNICODE);
+        assert!(svg.is_ok(), "{name}: {svg:?}");
+        let svg = svg.unwrap_or_default();
+        let drawn: Vec<String> = inner(source, 80, UNICODE)
+            .iter()
+            .map(|row| {
+                row.chars()
+                    .map(|character| if shaped(character) { ' ' } else { character })
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect();
+        let mut said = lettered(&svg);
+        said.resize(drawn.len(), String::new());
+        assert_eq!(said, drawn, "{name}\n{svg}");
     }
 }
 
@@ -1030,11 +1028,11 @@ fn a_sequence_picture_strokes_its_lifelines_dashed_and_writes_its_messages() {
 }
 
 #[test]
-fn an_ascii_picture_writes_every_character_it_draws() {
+fn a_picture_is_drawn_from_the_unicode_layout_whatever_the_glyph_set() {
     for (name, source, _) in KINDS {
-        let svg = picture(source, 80, ASCII).unwrap_or_default();
-        assert!(!svg.is_empty(), "{name}");
-        assert!(!svg.contains("<path"), "{name}: {svg}");
+        let unicode = picture(source, 80, UNICODE);
+        assert!(unicode.is_ok(), "{name}: {unicode:?}");
+        assert_eq!(picture(source, 80, ASCII), unicode, "{name}");
     }
 }
 
