@@ -119,7 +119,7 @@ tokio = { version = "=1.54.1", default-features = false }
 
 # Argument parsing. `derive` keeps the CLI surface declared next to the type it
 # produces rather than in a builder chain that drifts from it.
-clap = { version = "=4.6.7", features = ["derive"] }
+clap = { version = "=4.6.8", features = ["derive"] }
 
 # Shell completion scripts written from the command tree `clap` already holds.
 # `std` has no notion of a command tree, and a script written by hand for five
