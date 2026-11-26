@@ -53,9 +53,20 @@ pub(in crate::render) struct Printed {
     /// Whether each picture's bytes count up from the red of the ground it
     /// is laid over, rather than from how many came before it.
     worn: bool,
-    /// Whether a picture is `bytes` bytes for each row it covers, rather
-    /// than `bytes` in all.
-    per_row: bool,
+    /// What a picture's `bytes` are for.
+    grows: Grows,
+}
+
+/// What each `bytes` of a [`Printed`] picture is for.
+#[derive(Clone, Copy)]
+enum Grows {
+    /// The whole picture.
+    Not,
+    /// Each row it covers.
+    ByRow,
+    /// Each row it covers and each column of the width it is fitted to, as a
+    /// bitmap drawn for a wider window is larger.
+    ByCell,
 }
 
 impl Printed {
@@ -67,15 +78,24 @@ impl Printed {
             made: 0,
             hostile: false,
             worn: false,
-            per_row: false,
+            grows: Grows::Not,
         }
     }
 
     /// Pictures whose bytes grow with the rows they cover, `bytes` a row.
     pub(in crate::render) fn per_row(across: u16, down: u16, bytes: usize) -> Self {
         Self {
-            per_row: true,
+            grows: Grows::ByRow,
             ..Self::new(across, down, bytes)
+        }
+    }
+
+    /// Pictures whose bytes grow with the rows they cover and the width they
+    /// are fitted to, `bytes` a row for each column.
+    pub(in crate::render) fn per_cell(across: u16, down: u16, bytes: usize) -> Self {
+        Self {
+            grows: Grows::ByCell,
+            ..Self::per_row(across, down, bytes)
         }
     }
 
@@ -113,10 +133,10 @@ impl Printed {
             }
             _ => (self.across, self.down),
         };
-        let size = if self.per_row {
-            self.bytes * usize::from(down)
-        } else {
-            self.bytes
+        let size = match self.grows {
+            Grows::Not => self.bytes,
+            Grows::ByRow => self.bytes * usize::from(down),
+            Grows::ByCell => self.bytes * usize::from(down) * key.bucket.columns(),
         };
         let bytes = match key.protocol {
             graphics::Protocol::Sixel if self.hostile => {
@@ -1419,36 +1439,37 @@ fn a_sixel_picture_cycled_to_a_size_that_needs_room_another_keeps_goes_on_and_th
 }
 
 #[test]
-fn a_sixel_picture_resized_and_then_made_again_for_a_taller_window_is_text_only_where_fit_is() {
-    // Forty KiB a row and sixty rows of its own: Large fits a window thirty
-    // rows tall, and in a taller one even Fit may be too large to keep. A
-    // picture the reader resized is drawn as text only where one never
-    // resized is too: the window decides that, not the size chosen.
-    for rows in [40, 60, 70, 76, 80] {
-        let [left, cycled] = [false, true].map(|cycled| {
-            let mut drawn = pictured_as(
-                60,
-                30,
-                graphics::Protocol::Sixel,
-                Printed::per_row(20, 60, 40 * 1024),
-            );
-            drawn.answer(DIAGRAM);
-            drawn.take();
-            let (line, _) = picture_cell(&drawn.render).unwrap();
-            if cycled {
-                assert!(drawn.render.resizes(line).unwrap());
-                drawn.take();
-                assert!(drawn.render.resizable(line), "drawn as text at Large");
-            }
-            drawn.resize(60, rows);
-            drawn.take();
-            drawn.render.resizable(line)
-        });
-        assert!(
-            cycled || !left,
-            "at {rows} rows: left at Fit {left}, cycled {cycled}"
-        );
-    }
+fn a_sixel_picture_resized_and_made_again_too_large_for_a_wider_window_steps_on_to_fit() {
+    // Half a KiB a row for each column it is fitted to: at sixty columns the
+    // band's forty rows are kept, and at a hundred they are too large to keep
+    // while Fit's twenty are not. The picture the reader made Large is made
+    // again for the wider window once it is in view, and goes on past Large
+    // and Full, both forty rows there, to Fit rather than to text.
+    let mut drawn = pictured_as(
+        60,
+        40,
+        graphics::Protocol::Sixel,
+        Printed::per_cell(20, 100, 512),
+    );
+    drawn.answer(DIAGRAM);
+    drawn.take();
+    let (line, _) = picture_cell(&drawn.render).unwrap();
+    assert_eq!(shown(&drawn.render), (4, 20), "Fit");
+    assert!(drawn.render.resizes(line).unwrap());
+    drawn.take();
+    assert_eq!(shown(&drawn.render), (8, 40), "Large");
+    let large = drawn.render.record.picture_ids().collect::<Vec<_>>();
+
+    drawn.resize(100, 40);
+    drawn.take();
+
+    assert!(drawn.render.resizable(line), "drawn as text");
+    assert_ne!(
+        drawn.render.record.picture_ids().collect::<Vec<_>>(),
+        large,
+        "never made again"
+    );
+    assert_eq!(shown(&drawn.render), (4, 20), "at Fit");
 }
 
 #[test]
