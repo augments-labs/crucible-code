@@ -54,7 +54,10 @@
 //! held, and the reader stays on the line they were reading, as they do for
 //! any block that changes height.
 //! A block refused its picture is not asked for one again at a new width, so
-//! a resize encodes the kept pictures and no more.
+//! a resize encodes the kept pictures and no more. Each picture made is told
+//! to the terminal by a number of its own, counted on from one drawn at
+//! random, since the terminal's numbers are shared with every other program
+//! writing to it: see [`MOST_PICTURE_ID`].
 //!
 //! The opening is responsive for the same reason. It is drawn from facts read
 //! once at launch and kept for the whole session, so what laid it is still here
@@ -65,6 +68,8 @@
 use std::fmt;
 
 use std::collections::VecDeque;
+use std::collections::hash_map::RandomState;
+use std::hash::BuildHasher as _;
 use std::ops::Range;
 
 use crate::chrome::Undrawn;
@@ -129,9 +134,16 @@ pub(crate) const MOST_KEPT_IMAGE_BYTES: usize = 1536 * 1024;
 /// picture past them is drawn as text.
 pub const MOST_PLACED: u16 = 64;
 
-/// The largest number a picture is told to the terminal by: it is written as
-/// a 24-bit colour, and one past it is never given out, so a picture already
-/// sent is never named by another.
+/// The largest number a picture is told to the terminal by, since it is
+/// written as a 24-bit colour, and how many numbers one record gives out.
+///
+/// The terminal's numbers are one namespace for every program writing to it,
+/// another session in the same window or another pane under the same tmux,
+/// and a picture sent under a number replaces the one the terminal held by
+/// it. So a record starts at a number drawn at random, goes on up to this one
+/// and round from 1, never 0, and gives out no more than this many: a picture
+/// it sent is never named by another of its own, and two sessions sharing a
+/// terminal are unlikely to name pictures by the same numbers.
 const MOST_PICTURE_ID: u32 = 0x00FF_FFFF;
 
 /// How large a block's picture is shown.
@@ -191,6 +203,8 @@ struct Picturing {
     palette: Option<PaletteIdentity>,
     /// The number the next picture is told to the terminal by.
     next: u32,
+    /// How many numbers are left to give out.
+    left: u32,
 }
 
 impl fmt::Debug for Picturing {
@@ -200,6 +214,7 @@ impl fmt::Debug for Picturing {
             .field("images", &self.images)
             .field("palette", &self.palette)
             .field("next", &self.next)
+            .field("left", &self.left)
             .finish()
     }
 }
@@ -210,8 +225,26 @@ impl Default for Picturing {
             pictures: None,
             images: Capability::Text,
             palette: None,
-            next: 1,
+            next: Self::first_number(),
+            left: MOST_PICTURE_ID,
         }
+    }
+}
+
+impl Picturing {
+    /// A number at random from 1 to [`MOST_PICTURE_ID`], the first a record
+    /// gives out.
+    fn first_number() -> u32 {
+        let drawn = RandomState::new().hash_one(()) % u64::from(MOST_PICTURE_ID);
+        u32::try_from(drawn).map_or(1, |drawn| drawn + 1)
+    }
+
+    /// Gives out the next number, going round from [`MOST_PICTURE_ID`] to 1.
+    fn number(&mut self) -> u32 {
+        let id = self.next;
+        self.next = if id >= MOST_PICTURE_ID { 1 } else { id + 1 };
+        self.left = self.left.saturating_sub(1);
+        id
     }
 }
 
@@ -934,6 +967,12 @@ impl Record {
         self.picturing.next = first;
     }
 
+    /// Leaves `left` numbers to give out.
+    #[cfg(test)]
+    pub(crate) fn numbers_left(&mut self, left: u32) {
+        self.picturing.left = left;
+    }
+
     /// Shows pictures in what `images` says the terminal shows, worn in
     /// `palette`: said at startup and whenever either changes, and a block
     /// already drawn is shown in them by the next [`Self::relay`].
@@ -1014,11 +1053,10 @@ impl Record {
         self.make_room(kept.bytes(), columns, glyphs);
         drawn.refused = None;
         drawn.picture = Some(Box::new(Pictured {
-            id: self.picturing.next,
+            id: self.picturing.number(),
             key,
             kept,
         }));
-        self.picturing.next += 1;
         true
     }
 
@@ -1030,7 +1068,7 @@ impl Record {
         glyphs: Glyphs,
         columns: usize,
     ) -> Result<KeptPicture, Undrawn> {
-        if self.picturing.next > MOST_PICTURE_ID {
+        if self.picturing.left == 0 {
             return Err(Undrawn::PastCap);
         }
         let Some(pictures) = self.picturing.pictures.as_mut() else {
@@ -3449,11 +3487,12 @@ mod tests {
 
     #[test]
     fn once_every_number_is_given_out_a_diagram_is_drawn_as_text() {
-        // A number is a 24-bit colour: the last one is given out, and the
-        // picture after it is never named by one already sent.
+        // A record gives out as many numbers as a 24-bit colour holds: the
+        // last one is given out, and the picture after it is never named by
+        // one already sent.
         let (fake, _) = fake(100, 3, vec![]);
         let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
-        record.numbers_from(MOST_PICTURE_ID);
+        record.numbers_left(1);
 
         record.drawn(picturing::diagram("last"), Glyphs::Unicode, Theme::Dark);
         record.drawn(picturing::diagram("past"), Glyphs::Unicode, Theme::Dark);
@@ -3461,6 +3500,24 @@ mod tests {
         assert!(picturing::shown(&record, 0));
         assert!(!picturing::shown(&record, 1));
         assert_eq!(picturing::refused(&record, 1), Some(Undrawn::PastCap));
+    }
+
+    #[test]
+    fn numbers_go_on_from_the_largest_to_one_and_never_to_zero() {
+        // A record's numbers start anywhere: from the largest a 24-bit
+        // colour holds, the next picture is 1, since no cell names a
+        // picture 0.
+        let (fake, _) = fake(100, 3, vec![]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+        record.numbers_from(MOST_PICTURE_ID);
+
+        record.drawn(picturing::diagram("last"), Glyphs::Unicode, Theme::Dark);
+        record.drawn(picturing::diagram("first"), Glyphs::Unicode, Theme::Dark);
+
+        assert_eq!(
+            record.picture_ids().collect::<Vec<_>>(),
+            [MOST_PICTURE_ID, 1]
+        );
     }
 
     #[test]

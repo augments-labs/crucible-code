@@ -109,11 +109,16 @@ pub(in crate::render) const DIAGRAM: &str = "```mermaid\ngraph\n```\n";
 /// `render` on a terminal that confirmed Kitty, in colour, drawing diagrams
 /// with [`Sketched`] and pictures with `printed`, numbering them from one.
 pub(in crate::render) fn pictured_by<T: Terminal>(render: &mut Renderer<T>, printed: Printed) {
+    numbered_as_shipped(render, printed);
+    render.record.numbers_from(1);
+}
+
+/// [`pictured_by`], with the numbers `render` was built to give out.
+fn numbered_as_shipped<T: Terminal>(render: &mut Renderer<T>, printed: Printed) {
     render.wears(colourful());
     render.images(kitty_in(PICTURE_CELL.0, PICTURE_CELL.1));
     render.drawers(crate::drawing::Drawers::default().with(std::sync::Arc::new(Sketched)));
     render.pictures(Box::new(printed));
-    render.record.numbers_from(1);
 }
 
 /// [`pictured_by`] the renderer `drawn` tests.
@@ -201,6 +206,34 @@ pub(in crate::render) fn printed_bytes(made: u8, bytes: usize) -> Vec<u8> {
     (0..bytes)
         .map(|at| made.wrapping_add(u8::try_from(at % 251).unwrap_or(0)))
         .collect()
+}
+
+#[test]
+fn two_renderers_built_as_shipped_do_not_both_number_their_pictures_from_one() {
+    // The terminal's picture numbers are one namespace for every program
+    // writing to it: two sessions in one window, or two panes under one
+    // tmux, that both began at 1 would each replace the other's pictures.
+    let first_sent = || {
+        let mut drawn = Drawn::new(40, 12);
+        numbered_as_shipped(&mut drawn.render, Printed::new(3, 2, 300));
+        drawn.answer(DIAGRAM);
+        let written = drawn.take();
+        commands(&written)
+            .iter()
+            .find_map(|command| command.strip_prefix("a=t,f=100,i="))
+            .and_then(|rest| rest.split_once(',').map(|(id, _)| id.parse::<u32>()))
+            .and_then(Result::ok)
+            .unwrap_or_else(|| panic!("no picture sent: {written:.80?}"))
+    };
+    let (one, two) = (first_sent(), first_sent());
+
+    assert!(one != 1 || two != 1, "both numbered from 1");
+    for id in [one, two] {
+        assert!(
+            (1..=0x00FF_FFFF).contains(&id),
+            "{id} is not a 24-bit colour"
+        );
+    }
 }
 
 #[test]

@@ -14727,7 +14727,7 @@
     {
       "id": "CASE-TRANSCRIPT-PICTURES-KITTY-NUMBERS-SPENT",
       "family": "transcript-pictures",
-      "obligation": "Numbered from MOST_PICTURE_ID, the diagram given that last number is shown, and the one after it is not shown and is refused as Undrawn::PastCap.",
+      "obligation": "With one number left to give out, the diagram given it is shown, and the one after it is not shown and is refused as Undrawn::PastCap.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
@@ -14735,7 +14735,7 @@
       },
       "case": "record::tests::once_every_number_is_given_out_a_diagram_is_drawn_as_text",
       "source": "crates/crucible-tui/src/record.rs",
-      "body_sha256": "ca80ef51694edfd0f37080629a7e656180ddea222935ff94dc6e642a9effcac5",
+      "body_sha256": "c67434f3880b3439a4d97e31f347ad4091cfac62661ddc24aba10707ddda43de",
       "platforms": [
         "linux",
         "macos",
@@ -14880,6 +14880,42 @@
       "case": "render::native::tests::pictures::no_native_picture_is_drawn_where_colour_is_not_written",
       "source": "crates/crucible-tui/src/render/native/tests.rs",
       "body_sha256": "583e62aa06729484beddf9584ea81782e986446dec5000b594abdb3d69ad3901",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-NUMBERS-RANDOM",
+      "family": "transcript-pictures",
+      "obligation": "Two renderers built as the session builds them, each sending a diagram to a terminal that confirmed Kitty, do not both send it as picture 1, and each number is within the 24-bit colour a placeholder carries.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::two_renderers_built_as_shipped_do_not_both_number_their_pictures_from_one",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "70d112f931c75a660f895c9b1e69091bfa9b4246207d62b51e9dd0c2a35d9cec",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-NUMBERS-WRAP",
+      "family": "transcript-pictures",
+      "obligation": "A record numbering from 0xFFFFFF numbers the picture after it 1: numbers go round within the 24-bit colour and never name a picture 0.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::numbers_go_on_from_the_largest_to_one_and_never_to_zero",
+      "source": "crates/crucible-tui/src/record.rs",
+      "body_sha256": "bb0a474db6c9702ad569123bc9310b35c143ed74059cc0e2e771d97eb2534a8a",
       "platforms": [
         "linux",
         "macos",
