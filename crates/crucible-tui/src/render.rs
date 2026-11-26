@@ -2744,9 +2744,19 @@ impl<T: Terminal> Renderer<T> {
     /// and answers whether there was one to resize: what a click on it and
     /// Enter on its source in the view of what was cut ask.
     ///
-    /// Never in native mode, where every picture is shown at Fit.
-    pub fn resizes(&mut self, line: usize) -> bool {
-        self.native.is_none() && self.record.cycles(line)
+    /// Never in native mode, where every picture is shown at Fit. The frame
+    /// is drawn again where it was, so a Sixel picture is encoded for its new
+    /// size by the frame that shows it.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be redrawn.
+    pub fn resizes(&mut self, line: usize) -> Result<bool, TerminalError> {
+        if self.native.is_some() || !self.terminal.is_terminal() || !self.record.cycles(line) {
+            return Ok(false);
+        }
+        self.draw()?;
+        Ok(true)
     }
 
     /// Whether [`Self::resizes`] would resize line `line`'s picture, for a

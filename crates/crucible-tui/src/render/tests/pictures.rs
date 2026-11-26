@@ -1187,8 +1187,7 @@ fn a_tall_kitty_picture_fits_half_the_window_and_a_click_on_it_goes_large_full_a
     // Each click goes on to the next size: the same image, placed again in
     // the cells that size gives it, and never sent again.
     for (columns, rows) in [(15, 30), (20, 40), (8, 15)] {
-        assert!(drawn.render.resizes(line));
-        drawn.render.draw().unwrap();
+        assert!(drawn.render.resizes(line).unwrap());
         let after = drawn.take();
         let placed = format!("a=p,U=1,i=1,c={columns},r={rows},q=2");
         assert_eq!(
@@ -1243,8 +1242,7 @@ fn an_iterm2_picture_clicked_is_written_again_from_the_same_image_at_its_new_siz
     );
 
     let (line, _) = picture_cell(&drawn.render).unwrap();
-    assert!(drawn.render.resizes(line));
-    drawn.render.draw().unwrap();
+    assert!(drawn.render.resizes(line).unwrap());
     let after = drawn.take();
     // The bytes it was made with, at the cells its new size gives it.
     assert_eq!(
@@ -1259,7 +1257,7 @@ fn an_iterm2_picture_clicked_is_written_again_from_the_same_image_at_its_new_siz
 }
 
 #[test]
-fn a_sixel_picture_clicked_is_encoded_again_for_its_new_size_on_the_frame_after() {
+fn a_sixel_picture_clicked_is_encoded_again_for_its_new_size_by_the_frame_that_shows_it() {
     let mut drawn = pictured_as(60, 30, graphics::Protocol::Sixel, Printed::new(20, 20, 300));
     drawn.answer(DIAGRAM);
     drawn.take();
@@ -1267,8 +1265,7 @@ fn a_sixel_picture_clicked_is_encoded_again_for_its_new_size_on_the_frame_after(
     assert_eq!(shown(&drawn.render), (15, 15));
 
     let (line, _) = picture_cell(&drawn.render).unwrap();
-    assert!(drawn.render.resizes(line));
-    drawn.render.draw().unwrap();
+    assert!(drawn.render.resizes(line).unwrap());
     let after = drawn.take();
     // Encoded again, for its own twenty rows, under a new number.
     assert_eq!(drawn.render.record.picture_ids().collect::<Vec<_>>(), [2]);
@@ -1300,16 +1297,14 @@ fn a_sixel_picture_too_large_to_keep_at_a_larger_size_goes_on_to_the_next_and_is
     // Large and Full are both too large: it goes back to Fit as it was
     // encoded, and stays a picture.
     let (line, _) = picture_cell(&drawn.render).unwrap();
-    assert!(drawn.render.resizes(line));
-    drawn.render.draw().unwrap();
+    assert!(drawn.render.resizes(line).unwrap());
     drawn.take();
     assert_eq!(drawn.render.record.picture_ids().collect::<Vec<_>>(), [1]);
     assert_eq!(shown(&drawn.render), (8, 15));
     assert!(drawn.render.resizable(line), "drawn as text");
 
     // And a click after that tries Large again.
-    assert!(drawn.render.resizes(line));
-    drawn.render.draw().unwrap();
+    assert!(drawn.render.resizes(line).unwrap());
     assert_eq!(drawn.render.record.picture_ids().collect::<Vec<_>>(), [1]);
 }
 

@@ -847,7 +847,7 @@ fn conversing<T: Terminal>(
             }
 
             // Taken above, by the state that holds what it stands over.
-            Asked::Expand | Asked::Clicked(_) => continue,
+            Asked::Expand | Asked::Clicked(_) | Asked::Labelled(_) => continue,
 
             Asked::Untyped => {
                 match unboxed(renderer, conversation.settled(), style, held.answers.input)? {

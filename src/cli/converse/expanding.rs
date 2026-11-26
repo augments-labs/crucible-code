@@ -14,7 +14,8 @@
 //! the view, and the rows each comes to are counted once for each width and
 //! kept, so a frame lays out only what its window reaches. Like the results,
 //! the blocks are those drawn when the view opened, and a click on a row that
-//! offered one result stands that result alone.
+//! offered one result stands that result alone, and a click on a block's
+//! label stands that block's source alone.
 //!
 //! After the blocks it stands the whole of each address the transcript drew
 //! shorter than it was written, newest first, under the word `address`: a
@@ -104,6 +105,12 @@ enum Over {
     /// makes the view close on its own when the ceiling drops that result:
     /// there is then no row to find, and nothing to stand.
     One(usize),
+    /// The source of the block held as this line, whose label was clicked.
+    ///
+    /// The line rather than the source, for the same reason; and the view
+    /// closes on its own when the ceiling drops the block, as it does for a
+    /// result.
+    Block(usize),
 }
 
 /// Where the window over what is standing is open.
@@ -271,6 +278,7 @@ impl Standing {
         match asked {
             Asked::Expand => self.open(kept, blocks),
             Asked::Clicked(at) => self.one(kept, *at),
+            Asked::Labelled(line) => self.block(*line),
 
             // Not this one's. A line, a turn nobody typed, the dock's answers
             // and the end of a session are the loop's.
@@ -317,6 +325,13 @@ impl Standing {
         }
 
         *self = Self::Open(View::onto(Over::One(at)));
+    }
+
+    /// Opens the view over the source of the block held as record line
+    /// `line`, whose label was clicked: the one block, as a click on a cut
+    /// result stands the one result.
+    pub(super) fn block(&mut self, line: usize) {
+        *self = Self::Open(View::onto(Over::Block(line)));
     }
 
     /// Gives one key to the view, and answers whether a frame is owed.
@@ -641,6 +656,15 @@ fn entries<'a>(kept: &'a Kept, sources: &[Source<'a>], over: &Over) -> Vec<Entry
         // opens on all of them — a reader who was given a count is owed
         // everything it counted.
         Over::One(at) => cut(Some(at)),
+
+        // The one block whose label was clicked, where the record still
+        // holds it.
+        Over::Block(line) => sources
+            .iter()
+            .filter(|source| source.line == line)
+            .copied()
+            .map(Entry::Block)
+            .collect(),
     }
 }
 

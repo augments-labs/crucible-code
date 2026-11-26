@@ -1798,6 +1798,184 @@ fn a_click_on_the_second_row_of_a_wrapped_result_opens_it_only_on_its_drawn_cell
     }
 }
 
+// A click on a block's label opens its source, and a click on a picture's own
+// cells lands on the picture; a click anywhere else in the block lands where
+// it did before.
+
+/// A palette in full colour, which is what draws markdown as more than its
+/// text.
+fn colourful() -> crucible_tui::Palette {
+    crucible_tui::Palette::resolve(true, crucible_tui::Theme::Dark, None, &|name| {
+        (name == "COLORTERM").then(|| "truecolor".to_owned())
+    })
+}
+
+/// The window row whose text begins with `opens`, after any blank.
+fn row_starting(renderer: &Renderer<Recording>, opens: &str) -> usize {
+    (0..renderer.rows())
+        .find(|row| {
+            renderer
+                .terminal()
+                .picture()
+                .row(*row)
+                .trim_start()
+                .starts_with(opens)
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "no row opening {opens:?} in {:#?}",
+                renderer.terminal().picture().said()
+            )
+        })
+}
+
+#[test]
+fn a_click_on_a_diagrams_label_opens_its_source_and_a_click_on_its_source_does_not() {
+    // Nothing here draws a diagram, so it stands as its source under a label
+    // that says why: a refusal label, on the frame's top edge.
+    let mut renderer = roomy();
+    renderer.wears(colourful());
+    renderer.stream("```mermaid\ngraph\n```\n").unwrap();
+    renderer.settle().unwrap();
+    let line = renderer
+        .sources()
+        .find(|source| source.text.starts_with("```mermaid"))
+        .map(|source| source.line)
+        .expect("the diagram's source");
+
+    let label = row_starting(&renderer, "┌─ mermaid");
+    for column in drawn_cells(&renderer, label) {
+        assert!(
+            matches!(clicked_at(&renderer, label, column), Landed::Label(at) if at == line),
+            "cell {column} of {:?} did not open the source",
+            renderer.terminal().picture().row(label)
+        );
+    }
+    let source = row_starting(&renderer, "│ graph");
+    for column in drawn_cells(&renderer, source) {
+        assert!(
+            matches!(clicked_at(&renderer, source, column), Landed::Record(at) if at == line),
+            "cell {column} of {:?} did not land on the block as before",
+            renderer.terminal().picture().row(source)
+        );
+    }
+}
+
+/// A drawer that draws every diagram as one picture, an empty SVG.
+struct Diagrams;
+
+impl crucible_tui::drawing::Draws for Diagrams {
+    fn names(&self) -> &'static [&'static str] {
+        &["mermaid"]
+    }
+
+    fn block(
+        &self,
+        source: &str,
+        _: &crucible_tui::drawing::Room,
+    ) -> Result<crucible_tui::drawing::Laid, crucible_tui::chrome::Undrawn> {
+        let rows: Vec<Row> = source.lines().map(Row::plain).collect();
+        Ok(crucible_tui::drawing::Laid {
+            natural: (8, rows.len()),
+            rows,
+            narrow: None,
+        })
+    }
+
+    fn picture(
+        &self,
+        _: &str,
+        _: &crucible_tui::drawing::Room,
+    ) -> Result<crucible_tui::drawing::Svg, crucible_tui::chrome::Undrawn> {
+        crucible_tui::drawing::Svg::new("<svg></svg>".to_owned())
+    }
+}
+
+/// Pictures 80 by 64 pixels, encoded for Kitty: ten by four cells of eight by
+/// sixteen.
+struct Encoded;
+
+impl crucible_tui::graphics::Pictures for Encoded {
+    fn cached(
+        &mut self,
+        _: &str,
+        _: &crucible_tui::graphics::PictureKey,
+    ) -> Option<(
+        crucible_tui::graphics::Form,
+        crucible_tui::graphics::Payload,
+    )> {
+        None
+    }
+
+    fn make(
+        &mut self,
+        _: &str,
+        key: &crucible_tui::graphics::PictureKey,
+        _: &crucible_tui::graphics::Form,
+    ) -> Result<crucible_tui::graphics::Payload, crucible_tui::chrome::Undrawn> {
+        Ok(crucible_tui::graphics::Payload::new(
+            key.protocol,
+            b"picture".to_vec(),
+            (80, 64),
+            key.cell,
+        ))
+    }
+
+    fn reencode(
+        &mut self,
+        _: &crucible_tui::KeptPicture,
+        key: &crucible_tui::graphics::PictureKey,
+    ) -> Result<crucible_tui::graphics::Payload, crucible_tui::chrome::Undrawn> {
+        self.make("", key, &crucible_tui::graphics::Form::Png(Vec::new()))
+    }
+}
+
+/// The cell Kitty draws a placed picture's cells as.
+const PLACEHOLDER: char = '\u{10EEEE}';
+
+#[test]
+fn a_click_on_a_pictures_own_cells_lands_on_it_and_one_beside_it_does_not() {
+    let mut renderer = roomy();
+    renderer.wears(colourful());
+    renderer.images(crucible_tui::graphics::Capability::Graphics {
+        protocol: crucible_tui::graphics::Protocol::Kitty,
+        cell: crucible_tui::graphics::Cell {
+            width: 8,
+            height: 16,
+        },
+    });
+    renderer.drawers(crucible_tui::drawing::Drawers::default().with(Arc::new(Diagrams)));
+    renderer.pictures(Box::new(Encoded));
+    renderer.stream("```mermaid\ngraph\n```\n").unwrap();
+    renderer.settle().unwrap();
+    let line = renderer
+        .sources()
+        .find(|source| source.text.starts_with("```mermaid"))
+        .map(|source| source.line)
+        .expect("the diagram's source");
+
+    let picture = renderer.terminal().picture();
+    let (row, said) = (0..renderer.rows())
+        .map(|row| (row, picture.row(row).to_owned()))
+        .find(|(_, said)| said.contains(PLACEHOLDER))
+        .unwrap_or_else(|| panic!("no picture in {:#?}", picture.said()));
+    // Each cell is the placeholder and the marks that number it, which take
+    // no column of their own.
+    let first = crucible_tui::columns(&said[..said.find(PLACEHOLDER).unwrap()]);
+    let last = crucible_tui::columns(&said[..said.rfind(PLACEHOLDER).unwrap()]);
+
+    for column in [first, last] {
+        assert!(
+            matches!(clicked_at(&renderer, row, column), Landed::Picture(at) if at == line),
+            "cell {column} of the picture's row did not land on it"
+        );
+    }
+    assert!(
+        !matches!(clicked_at(&renderer, row, last + 1), Landed::Picture(_)),
+        "the cell after the picture landed on it"
+    );
+}
+
 #[test]
 fn a_hidden_leading_command_is_committed_and_sent_but_not_selected_locally() {
     let source = format!("/help {}", "x".repeat(1_001));

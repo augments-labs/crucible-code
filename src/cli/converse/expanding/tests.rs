@@ -1994,3 +1994,44 @@ fn ctrl_o_opens_for_an_address_drawn_shorter_with_nothing_else_to_stand() {
         "{rows:#?}"
     );
 }
+
+#[test]
+fn a_click_on_a_blocks_label_stands_that_blocks_source_alone() {
+    // As a click on a cut result stands that result: the results and the
+    // other blocks are not what was clicked.
+    let kept = cut(&["Read(one)"]);
+    let sources = blocks_of(
+        "| a | b |\n|---|---|\n| 1 | 2 |\n",
+        "$$\nx^2\n$$\n",
+        "```diff\n-old\n+new\n```\n",
+    );
+
+    let mut standing = Standing::default();
+    assert!(standing.asked(&Asked::Labelled(5), &kept, sources.len()));
+    let rows = frame_of(&kept, &sources, &mut standing, 80);
+
+    assert!(rows.iter().any(|row| row == "x^2"), "{rows:#?}");
+    for other in ["Read(one)", "-old", "| 1 | 2 |"] {
+        assert!(!rows.iter().any(|row| row == other), "{other}: {rows:#?}");
+    }
+    assert_eq!(
+        rows.last().map(String::as_str),
+        Some("esc to close"),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_label_clicked_whose_block_is_no_longer_held_stands_nothing() {
+    let kept = cut(&["Read(one)"]);
+    let sources = blocks_of("| a |\n|---|\n", "$$\nx\n$$\n", "```diff\n-a\n```\n");
+
+    let mut standing = Standing::default();
+    standing.asked(&Asked::Labelled(7), &kept, sources.len());
+    let rows = frame_of(&kept, &sources, &mut standing, 80);
+
+    assert!(
+        !rows.iter().any(|row| row == "Read(one)" || row == "x"),
+        "{rows:#?}"
+    );
+}

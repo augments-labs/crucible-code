@@ -145,6 +145,10 @@ pub(super) enum Asked {
     /// them to answer a click would put the transcript's half of the session
     /// inside the box's.
     Clicked(usize),
+    /// A click on the label of the block this line of the record is drawn
+    /// as, which stands that block's source as a click on a cut result
+    /// stands the result. Reported for the reason [`Asked::Clicked`] is.
+    Labelled(usize),
     /// There is nothing here to type into. The caller reads a line instead.
     Untyped,
     /// A command left running has ended, and this is the turn it asks for.
@@ -779,9 +783,16 @@ pub(crate) fn ask<T: Terminal>(
             // which is the loop above's to answer because what was cut is
             // there. Anywhere else — the border, a blank row, the shell's own
             // output — it moves nothing, the same as a key that moved nothing.
+            // A picture in the record is resized where it is, and draws its
+            // own frame, as the wheel does.
             Pressed::Clicked { row, column } => {
                 match landed(renderer, editor, &says, Pointed { row, column }) {
                     Landed::Record(at) => return Ok(Asked::Clicked(at)),
+                    Landed::Label(at) => return Ok(Asked::Labelled(at)),
+                    Landed::Picture(at) => {
+                        renderer.resizes(at)?;
+                        offered.is_some()
+                    }
                     Landed::Line => true,
 
                     Landed::Counted => stood(renderer, style, &mut listing, left, &terms.ending)?,
@@ -1553,6 +1564,13 @@ pub(super) fn during<T: Terminal>(
                 Landed::Record(one) => {
                     opened.one(kept, one);
                     moved |= opened.is_open();
+                }
+                Landed::Label(line) => {
+                    opened.block(line);
+                    moved |= opened.is_open();
+                }
+                Landed::Picture(line) => {
+                    renderer.resizes(line)?;
                 }
                 Landed::Line => moved = true,
                 // The count is the one door on that row, and it is the door it

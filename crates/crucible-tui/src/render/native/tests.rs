@@ -4604,7 +4604,7 @@ mod pictures {
         assert!(!lines.is_empty());
         for line in lines {
             assert!(!render.resizable(line));
-            assert!(!render.resizes(line));
+            assert!(!render.resizes(line).unwrap());
         }
         for row in 0..8 {
             for column in 0..40 {

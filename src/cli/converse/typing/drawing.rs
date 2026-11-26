@@ -406,6 +406,14 @@ pub(super) enum Landed {
     /// cell the row drew. What was cut is held by the loop that owns the
     /// transcript, so the answer is there.
     Record(usize),
+    /// A cell of the picture this line of the record is shown as, which a
+    /// click resizes. Only in a full screen: native mode has no picture
+    /// under the pointer, so a click there is whatever it was.
+    Picture(usize),
+    /// The label over the block this line of the record is drawn as, which
+    /// a click opens the block's source from, as a click on a cut result
+    /// opens the result. Pressed on a cell the label drew.
+    Label(usize),
     /// The line being typed, which now has the cursor where the pointer was.
     Line,
     /// The count on the row under the box naming what is still running, which
@@ -432,11 +440,17 @@ pub(super) fn landed<T: Terminal>(
     says: &Says,
     at: Pointed,
 ) -> Landed {
+    // A picture's cells are blanks as text, so it is asked of before them.
+    if let Some(line) = renderer.pictured(at.row, at.column) {
+        return Landed::Picture(line);
+    }
     let row = match renderer.aimed(at.row) {
         // A line of the record only on a cell its row drew: the indent under
         // the call and the blank after the last character are no part of it.
         Some(Aimed::Line(line)) if renderer.cells(at.row).contains(&at.column) => {
-            return Landed::Record(line);
+            return renderer
+                .labelled(at.row)
+                .map_or(Landed::Record(line), Landed::Label);
         }
         Some(Aimed::Boxed(row)) => row,
         // A list or a plan standing over the box. Answered where it is drawn,
