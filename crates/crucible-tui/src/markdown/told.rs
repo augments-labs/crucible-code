@@ -46,16 +46,20 @@ impl Holding {
 impl Markdown {
     /// The name of the fence being gathered and the first line inside it,
     /// once that line has ended; `None` for a block that is no fence, and for
-    /// one whose first line has not ended.
-    pub(crate) fn opened(&self) -> Option<(&str, &str)> {
+    /// one whose first line has not ended. Both are read past the indentation
+    /// of the item the block is written under, as the block is handed on.
+    pub(crate) fn opened<'a>(&'a self) -> Option<(&'a str, &'a str)> {
         let source = &self.gathering.as_ref()?.source;
+        let fenced = self.fenced;
+        let unindented = |line: &'a str| line.get(fenced.margin(line)..);
         let (opening, rest) = source.split_once('\n')?;
+        let opening = unindented(opening)?;
         let mark = opening
             .chars()
             .next()
             .filter(|mark| matches!(mark, '`' | '~'))?;
         let name = opening.trim_start_matches(mark).split_whitespace().next()?;
         let (first, _) = rest.split_once('\n')?;
-        Some((name, first))
+        Some((name, unindented(first)?))
     }
 }
