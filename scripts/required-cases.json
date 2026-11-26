@@ -15895,15 +15895,15 @@
     {
       "id": "CASE-TRANSCRIPT-PICTURE-SIZES-SIXEL-REMADE",
       "family": "transcript-picture-sizes",
-      "obligation": "A Sixel picture cycled to another size and then made again for a taller window falls to text only where the same picture left at Fit would.",
+      "obligation": "A Sixel picture cycled to Large and made again for a wider window, where Large and Full are too large to keep, goes on to Fit and stays a picture rather than being drawn as text.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "render::tests::pictures::a_sixel_picture_resized_and_then_made_again_for_a_taller_window_is_text_only_where_fit_is",
+      "case": "render::tests::pictures::a_sixel_picture_resized_and_made_again_too_large_for_a_wider_window_steps_on_to_fit",
       "source": "crates/crucible-tui/src/render/tests/pictures.rs",
-      "body_sha256": "74dc1570036855051a3581e0ff00defd0e7584ddb53f5c3d7394a0261d0472f8",
+      "body_sha256": "dc90e4d662f58c3549ed8aee9bf228d53c63d6a40f24a7265b740d37717775fa",
       "platforms": [
         "linux",
         "macos",
@@ -15921,7 +15921,43 @@
       },
       "case": "render::tests::pictures::a_right_press_on_a_picture_or_a_drag_from_it_leaves_its_size_until_let_go_where_it_went_down",
       "source": "crates/crucible-tui/src/render/tests/pictures.rs",
-      "body_sha256": "a7bde5de0380b02a90cac67436664ef6d170db1a7d95300bfccad687c9ba9ea0",
+      "body_sha256": "624c44861cd382cf7a9b172d0f77e394b8ec595ab7985eb1d6b006cd02ea149c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-ENTER-HELD",
+      "family": "transcript-picture-sizes",
+      "obligation": "Enter on a picture's source shows it at its next size at once, each time it is asked, even while a press whose release never came is still held.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::enter_on_a_picture_resizes_it_at_once_after_a_press_whose_release_never_came",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "04f174bfe2800ec180908fed8f1235965a9788ad877c08c770093cc667e99922",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-NATIVE-UNSIZED",
+      "family": "transcript-picture-sizes",
+      "obligation": "A picture kept in the rows it was first shown in, shown before the window said its height, keeps its number, rows and cells when the window then says one, and nothing is made again.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::a_kept_picture_first_shown_before_the_window_said_its_height_keeps_those_rows",
+      "source": "crates/crucible-tui/src/record.rs",
+      "body_sha256": "ddaaf0aa5d5ca20ec85762e7800ce911f69126e79d33fb29e1c3ad589c7a654f",
       "platforms": [
         "linux",
         "macos",
