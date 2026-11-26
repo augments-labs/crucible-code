@@ -51,8 +51,8 @@
 //!
 //! **What is sent is bounded and placed by the cells.** A picture goes to
 //! the terminal once, as a Kitty transmission and a virtual placement
-//! ([`Sent`]), and is shown where cells of [`PLACEHOLDER`] name it
-//! ([`placed`]): those cells are text, so they scroll, fold and clear with
+//! (`Sent`), and is shown where cells of `PLACEHOLDER` name it
+//! (`placed`): those cells are text, so they scroll, fold and clear with
 //! the rows around them, and a scrollback keeps them. A frame sends at most
 //! 64 KiB of commands, in chunks of at most 4096 encoded bytes, and a
 //! transmission it cut off goes on in the frames after it; one command is
@@ -833,11 +833,16 @@ const MOST_HELD: usize = 2 * crate::record::MOST_KEPT_IMAGES;
 /// anything else is sent, and one whose picture the record has let go of is
 /// ended with an empty last chunk.
 ///
-/// A full screen has the terminal delete each picture it was sent and placed
-/// once the record lets it go, encoded again under a new number or drawn as
-/// text, since nothing on that screen names it again ([`Sent::keeps`]); one
-/// the terminal is told of while it reads another is deleted after it.
-/// Nothing a native session sent is deleted, since the cells in the
+/// A full screen has the terminal delete the pictures it is counted as
+/// holding once the record lets them go, encoded again under a new number or
+/// drawn as text, since nothing on that screen names them again
+/// ([`Sent::keeps`]); one the terminal is told of while it reads another is
+/// deleted after it. Some are left to the terminal's own quota: one let go
+/// of after it was sent whole but before it was placed, which is never
+/// counted as held; the kept pictures a repaint does not show again, since
+/// [`Sent::forget`] counts none as held; and one let go of while
+/// [`MOST_HELD`] deletes are already owed. Nothing a native session sent is
+/// deleted, since the cells in the
 /// terminal's scrollback still name it. What the terminal holds of one grows
 /// by each diagram drawn and, each time the width's bucket, the palette or
 /// the cell changes, by the at most

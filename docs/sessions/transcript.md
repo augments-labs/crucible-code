@@ -678,7 +678,10 @@ stays on the line you were reading. A diagram whose picture alone is more than
 1.5 MiB, or would take more than 64 cells across or down, is drawn as text,
 and stays text when the window is resized or the theme changes. In the full
 screen the terminal is told to let go of each picture the session stops
-keeping or draws again. In native mode it keeps every picture it was sent,
+keeping or draws again. A few are left to the terminal's own limit instead:
+one let go of after it was sent but before it was shown, pictures still kept
+but not shown again after the screen is redrawn, and any let go of while 32
+are already waiting to be. In native mode it keeps every picture it was sent,
 since the scrollback still shows them, up to its own limit; past that it lets
 the oldest go, and their place in the scrollback is left blank.
 

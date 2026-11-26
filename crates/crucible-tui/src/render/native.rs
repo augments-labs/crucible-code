@@ -329,7 +329,8 @@ impl<T: Terminal> Renderer<T> {
     /// since what is written after would be read as more of it.
     ///
     /// Nothing where output is redirected, where nothing was drawn, and the
-    /// second time; in the full screen, only that end.
+    /// second time; in the full screen, only that end and the deletes still
+    /// owed.
     ///
     /// # Errors
     ///
@@ -378,7 +379,8 @@ impl<T: Terminal> Renderer<T> {
     /// those write on their way out, and anything held back to be said then,
     /// lands on the clean row this leaves rather than inside a region that
     /// dropping the renderer would rewind into. In the full screen only a
-    /// picture part way out is ended. Nothing is drawn after it.
+    /// picture part way out is ended and the deletes still owed are written.
+    /// Nothing is drawn after it.
     ///
     /// # Errors
     ///
