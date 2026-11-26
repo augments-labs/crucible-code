@@ -15065,6 +15065,42 @@
         "macos",
         "windows"
       ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-KEY-ONE-FIELD",
+      "family": "transcript-pictures",
+      "obligation": "A picture key equals itself, and differs from it when only its kind, width bucket, palette theme, design, depth or ground, protocol, cell width or cell height differs.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::a_key_differing_in_any_one_thing_a_picture_depends_on_is_another_key",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "3fff370583555febf23dac82fc891b663edcad078bd59931a0457e41fe38323f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-IDENTITY-ONE-FIELD",
+      "family": "transcript-pictures",
+      "obligation": "Two palettes in one theme that differ only in their design, their colour depth or the ground the terminal reported give different picture identities.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "color::tests::palettes_differing_only_in_design_depth_or_ground_wear_a_picture_differently",
+      "source": "crates/crucible-tui/src/color/tests.rs",
+      "body_sha256": "5350a35e7108bb273f55ec4af4f8a32dd48cb876082c0898f91c06f4b9872618",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
     }
   ]
 }

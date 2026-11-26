@@ -2323,6 +2323,103 @@ mod tests {
         assert_eq!(then, "");
     }
 
+    #[test]
+    fn a_key_differing_in_any_one_thing_a_picture_depends_on_is_another_key() {
+        // A picture kept under one key is never shown under another, so each
+        // thing its bytes depend on parts two keys on its own.
+        use crate::color::{Design, Palette, Theme};
+        use crate::markdown::Kind;
+
+        let truecolour = environment(&[("COLORTERM", "truecolor")]);
+        let indexed = environment(&[("TERM", "xterm-256color")]);
+        let worn = |theme, ground, from: &dyn Fn(&str) -> Option<String>| {
+            Palette::resolve(true, theme, ground, from)
+        };
+        let cell = Cell {
+            width: 8,
+            height: 16,
+        };
+        let key = PictureKey {
+            kind: Kind::Mermaid,
+            bucket: Bucket::of(80),
+            palette: worn(Theme::Dark, None, &truecolour).identity(),
+            protocol: Protocol::Kitty,
+            cell,
+        };
+        let others = [
+            (
+                "kind",
+                PictureKey {
+                    kind: Kind::DisplayMath,
+                    ..key
+                },
+            ),
+            (
+                "bucket",
+                PictureKey {
+                    bucket: Bucket::of(80 + Bucket::CELLS),
+                    ..key
+                },
+            ),
+            (
+                "theme",
+                PictureKey {
+                    palette: worn(Theme::Light, None, &truecolour).identity(),
+                    ..key
+                },
+            ),
+            (
+                "design",
+                PictureKey {
+                    palette: worn(Theme::Dark, None, &truecolour)
+                        .designing(Design::Rich)
+                        .identity(),
+                    ..key
+                },
+            ),
+            (
+                "depth",
+                PictureKey {
+                    palette: worn(Theme::Dark, None, &indexed).identity(),
+                    ..key
+                },
+            ),
+            (
+                "ground",
+                PictureKey {
+                    palette: worn(Theme::Dark, Some((255, 255, 255)), &truecolour).identity(),
+                    ..key
+                },
+            ),
+            (
+                "protocol",
+                PictureKey {
+                    protocol: Protocol::Sixel,
+                    ..key
+                },
+            ),
+            (
+                "cell width",
+                PictureKey {
+                    cell: Cell { width: 9, ..cell },
+                    ..key
+                },
+            ),
+            (
+                "cell height",
+                PictureKey {
+                    cell: Cell { height: 17, ..cell },
+                    ..key
+                },
+            ),
+        ];
+
+        assert_eq!(key, PictureKey { ..key }, "a key is itself");
+        for (differs, other) in others {
+            assert_ne!(other, key, "differing in its {differs} alone");
+        }
+    }
+
     // -----------------------------------------------------------------------
     // The reply parser: a hostile corpus, then generated input.
 

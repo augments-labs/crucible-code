@@ -1272,6 +1272,35 @@ fn a_picture_is_inked_in_the_exact_colour_its_slot_is_written_in() {
 }
 
 #[test]
+fn palettes_differing_only_in_design_depth_or_ground_wear_a_picture_differently() {
+    // Each changes an ink a picture is drawn in, so each parts two
+    // identities, and so the keys pictures are kept under, on its own.
+    let truecolor = environment(&[("COLORTERM", "truecolor")]);
+    let indexed = environment(&[("TERM", "xterm-256color")]);
+    let identity = Palette::resolve(true, Theme::Dark, None, &truecolor).identity();
+    let others = [
+        (
+            "design",
+            Palette::resolve(true, Theme::Dark, None, &truecolor)
+                .designing(Design::Rich)
+                .identity(),
+        ),
+        (
+            "depth",
+            Palette::resolve(true, Theme::Dark, None, &indexed).identity(),
+        ),
+        (
+            "ground",
+            Palette::resolve(true, Theme::Dark, Some((255, 255, 255)), &truecolor).identity(),
+        ),
+    ];
+
+    for (differs, other) in others {
+        assert_ne!(other, identity, "differing in its {differs} alone");
+    }
+}
+
+#[test]
 fn no_picture_is_drawn_where_no_colour_is_written() {
     let palette = Palette::resolve(false, Theme::Dark, None, &environment(&[]));
     assert!(!palette.identity().draws());
