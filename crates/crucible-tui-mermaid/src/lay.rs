@@ -387,13 +387,18 @@ fn rendered(
     };
     let drawn = match reading {
         Reading::Lines(labelled) => {
+            // Drawn with the glyphs the engine knows, so the hold reads the
+            // lines as it draws them, and only then in plain glyphs, as the
+            // engine draws them in plain glyphs.
             let painted = labels::painted(&scanned.source, labelled.len());
             let options = RenderOptions {
                 color: true,
+                ascii: false,
                 ..options
             };
             let drawn = render_with_options(&painted, &options).map_err(unread)?;
-            labels::held(&drawn, &labelled)?
+            let drawn = labels::held(&drawn, &labelled)?;
+            if ascii { to_ascii(&drawn) } else { drawn }
         }
         Reading::Entities(diagram) => {
             let (diagram, room) = chains::chained(diagram, room).ok_or(Unlaid::Tangled)?;
