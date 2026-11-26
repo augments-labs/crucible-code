@@ -1,0 +1,5 @@
+---
+source: crates/crucible-tui-mermaid/src/tests.rs
+expression: shown
+---
+refused: TooWide

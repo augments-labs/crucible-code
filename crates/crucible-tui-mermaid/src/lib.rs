@@ -21,7 +21,10 @@
 //!   labels and its messages, their ends and labels, in order; a gantt's
 //!   sections and its tasks' names, in order, and that a bar is drawn for
 //!   every task; a git graph's branches and its commits, each with the branch
-//!   it is made on, its id, its tag and the branch it merges, in order.
+//!   it is made on, its id, its tag and the branch it merges, in order. So is
+//!   a diagram the engine would set out to say what it does not, whatever its
+//!   room: an entity-relationship diagram whose relationships do not chain
+//!   its entities, which the engine would draw with a line through a box.
 //! - **Bounded before the engine.** A source past [`MOST_BYTES`] is refused
 //!   before it is read, and one past its kind's [`Caps`] (bytes, boxes, lines
 //!   or the columns of one label) is refused as the read reaches the one past
@@ -42,25 +45,26 @@
 //!   state diagram, whose states and events are mostly one word, keeps eight
 //!   transitions at 12 columns; an entity-relationship diagram, whose layout
 //!   costs far less, caps no label and holds 48 entities and 64
-//!   relationships in 4096 bytes. The drawing probe builds each kind's
-//!   costliest shape from these caps, four boxes with every line the caps
-//!   allow going out from one and back, so a loosened cap is timed at what it
-//!   admits; on a quiet machine its 95th percentile was 1.15 ms for a
-//!   flowchart, 1.05 ms for a state diagram and 0.20 ms for an
-//!   entity-relationship diagram. A sequence diagram, a gantt and a git graph
-//!   cost far less: a release build timing each 31 times in a room of 80
-//!   columns found a sequence diagram of 16 participants and 64 messages
-//!   with labels of 40 columns, in 3830 bytes, at 0.56 ms (95th percentile),
-//!   and a gantt of 96 tasks and a git graph of 12 branches, each in more
-//!   bytes than its cap, under 0.2 ms. So their caps are set by what a
-//!   terminal shows rather than by time: a sequence diagram holds 8
+//!   relationships in 4096 bytes, though one drawn has fewer relationships
+//!   than entities, since its relationships must chain them. The drawing
+//!   probe builds each kind's costliest shape from these caps, four boxes
+//!   with every line the caps allow going out from one and back, so a
+//!   loosened cap is timed at what it admits; on a quiet machine its 95th
+//!   percentile was 1.15 ms for a flowchart, 1.05 ms for a state diagram and
+//!   0.20 ms for an entity-relationship diagram. A sequence diagram, a gantt
+//!   and a git graph cost far less: a release build timing each 31 times in a
+//!   room of 80 columns found a sequence diagram of 16 participants and 64
+//!   messages with labels of 40 columns, in 3830 bytes, at 0.56 ms (95th
+//!   percentile), and a gantt of 96 tasks and a git graph of 12 branches,
+//!   each in more bytes than its cap, under 0.2 ms. So their caps are set by
+//!   what a terminal shows rather than by time: a sequence diagram holds 8
 //!   participants and 32 messages with labels of 24 columns, a gantt 32
-//!   sections and tasks with names of 15 columns, the widest the engine
-//!   draws whole, and a git graph 32 commits and 8 branches beside `main`,
-//!   each in 2048 bytes. The drawing probe builds each of these from its caps
-//!   too, with every box and line they hold and labels as wide as they allow;
-//!   on the same machine its 95th percentile was 0.79 ms for a sequence
-//!   diagram, 0.16 ms for a gantt and 0.16 ms for a git graph.
+//!   sections and tasks with names of 15 columns, the widest the engine draws
+//!   whole, and a git graph 32 commits and 8 branches beside `main`, each in
+//!   2048 bytes. The drawing probe builds each of these from its caps too,
+//!   with every box and line they hold and labels as wide as they allow; on
+//!   the same machine its 95th percentile was 0.79 ms for a sequence diagram,
+//!   0.16 ms for a gantt and 0.16 ms for a git graph.
 //! - **Hostile text taken out, not drawn.** Control, format and invisible
 //!   characters, and the characters boxes are drawn with, are taken out of a
 //!   label before the engine sees it, so a label neither acts on the terminal
@@ -381,6 +385,7 @@ fn laid(source: &str, room: &Room) -> Result<(Kind, lay::Drawing), Undrawn> {
     let drawing = lay::lay(&scanned, inside, room.glyphs).map_err(|unlaid| match unlaid {
         Unlaid::Unread => Undrawn::NotText,
         Unlaid::TooWide => Undrawn::TooWide,
+        Unlaid::Tangled => Undrawn::Unsupported("tangled relationships"),
     })?;
     Ok((scanned.kind, drawing))
 }

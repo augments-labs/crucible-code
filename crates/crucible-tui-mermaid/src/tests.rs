@@ -1084,3 +1084,155 @@ fn a_label_holding_a_letter_the_picture_may_lack_keeps_the_diagram_text() {
         assert!(drawn.contains("Ĳ ÿ ž–“é”…"), "{glyphs:?}: {drawn}");
     }
 }
+
+/// An entity-relationship diagram whose relationships chain its entities in
+/// another order than it names them in: set in a row in the order it names
+/// them, the line between two entities not side by side runs through the
+/// boxes between them.
+const UNCHAINED: &str = "erDiagram
+    SESSION ||--o{ TURN : records
+    TURN ||--o{ ATTACHMENT : carries
+    SESSION ||--|| ROUTE : runs_on
+    ROUTE {
+        string driver
+        string instance
+        int generation
+    }
+    ATTACHMENT {
+        string path
+        string media_type
+        string hash
+    }
+";
+
+/// [`UNCHAINED`] naming its entities in the order its relationships chain
+/// them in.
+const CHAINED: &str = "erDiagram
+    ATTACHMENT {
+        string path
+        string media_type
+        string hash
+    }
+    TURN {
+    }
+    SESSION {
+    }
+    ROUTE {
+        string driver
+        string instance
+        int generation
+    }
+    SESSION ||--o{ TURN : records
+    TURN ||--o{ ATTACHMENT : carries
+    SESSION ||--|| ROUTE : runs_on
+";
+
+#[test]
+fn pictures_of_diagrams_the_engine_sets_out_wrong_as_written() {
+    for (name, source) in [("unchained_entities", UNCHAINED)] {
+        for columns in [160, 80] {
+            let shown = match block(source, columns, UNICODE) {
+                Ok(rows) => dump(&rows, columns),
+                Err(undrawn) => format!("refused: {undrawn:?}"),
+            };
+            insta::assert_snapshot!(format!("{name}_{columns}"), shown);
+        }
+    }
+}
+
+/// Whether `name` stands in a box on a row of `rows`, with nothing but
+/// spaces between it and the box's sides.
+fn boxed(rows: &[String], name: &str) -> bool {
+    let side = ['│', '┤', '├'];
+    rows.iter().any(|row| {
+        row.match_indices(name).any(|(at, _)| {
+            let before = row.get(..at).unwrap_or_default().trim_end_matches(' ');
+            let after = row
+                .get(at + name.len()..)
+                .unwrap_or_default()
+                .trim_start_matches(' ');
+            before.ends_with(side) && after.starts_with(side)
+        })
+    })
+}
+
+/// The glyphs at each end of the line on `row` joining `left`'s box to
+/// `right`'s, standing side by side with that line alone between them:
+/// `left`'s end first.
+fn joined(row: &str, left: &str, right: &str) -> Option<(char, char)> {
+    let (_, rest) = row.split_once(left)?;
+    let mut rest = rest.trim_start_matches(' ').strip_prefix('┤')?.chars();
+    let near = rest.next()?;
+    let mut rest = rest.as_str().trim_start_matches('─').chars();
+    let far = rest.next()?;
+    let rest = rest.as_str().strip_prefix('├')?.trim_start_matches(' ');
+    rest.starts_with(right).then_some((near, far))
+}
+
+/// The glyphs at each end of the line in `rows` joining `from`'s box to
+/// `to`'s, whichever stands on the left: `from`'s end first.
+fn ends(rows: &[String], from: &str, to: &str) -> Option<(char, char)> {
+    rows.iter().find_map(|row| {
+        joined(row, from, to).or_else(|| joined(row, to, from).map(|(near, far)| (far, near)))
+    })
+}
+
+#[test]
+fn an_entity_relationship_diagram_is_set_out_so_each_line_joins_boxes_side_by_side() {
+    let rows = inner(UNCHAINED, 160, UNICODE);
+    let shown = rows.join("\n");
+    for name in ["SESSION", "TURN", "ROUTE", "ATTACHMENT"] {
+        assert!(boxed(&rows, name), "{name} in\n{shown}");
+    }
+    let words: Vec<&str> = rows.iter().flat_map(|row| row.split_whitespace()).collect();
+    for label in ["records", "carries", "runs_on"] {
+        assert!(words.contains(&label), "{label} in\n{shown}");
+    }
+    for (from, to, drawn) in [
+        ("SESSION", "TURN", ('1', '*')),
+        ("TURN", "ATTACHMENT", ('1', '*')),
+        ("SESSION", "ROUTE", ('1', '1')),
+    ] {
+        assert_eq!(
+            ends(&rows, from, to),
+            Some(drawn),
+            "{from} {to} in\n{shown}"
+        );
+    }
+    assert_eq!(block(UNCHAINED, 160, UNICODE), block(CHAINED, 160, UNICODE));
+    // Set in the one row that sets each line between boxes side by side, it
+    // is wider than 80 columns.
+    assert_eq!(
+        block(UNCHAINED, 80, UNICODE).map(|_| ()),
+        Err(Undrawn::TooWide)
+    );
+}
+
+#[test]
+fn an_entity_relationship_diagram_no_row_of_boxes_joins_side_by_side_is_refused_whole() {
+    for source in [
+        // An entity joined to three others.
+        "erDiagram\nA ||--o{ B : x\nA ||--o{ C : y\nA ||--o{ D : z\n",
+        // Entities joined round in a ring.
+        "erDiagram\nA ||--o{ B : x\nB ||--o{ C : y\nC ||--o{ A : z\n",
+        // An entity joined to itself.
+        "erDiagram\nA ||--o{ A : x\n",
+        // Two entities joined twice.
+        "erDiagram\nA ||--o{ B : x\nB ||--o{ A : y\n",
+    ] {
+        assert_eq!(
+            block(source, 160, UNICODE).map(|_| ()),
+            Err(Undrawn::Unsupported("tangled relationships")),
+            "{source}"
+        );
+    }
+    // An entity joined to two others, named before both, is set between them.
+    let rows = inner("erDiagram\nA ||--o{ B : x\nA ||--o{ C : y\n", 160, UNICODE);
+    let shown = rows.join("\n");
+    for name in ["A", "B", "C"] {
+        assert!(boxed(&rows, name), "{name} in\n{shown}");
+    }
+    for to in ["B", "C"] {
+        assert_eq!(ends(&rows, "A", to), Some(('1', '*')), "{to} in\n{shown}");
+    }
+}

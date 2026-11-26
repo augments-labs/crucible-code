@@ -282,14 +282,44 @@ const LEFT_ENDS: &[&str] = &["||", "|o", "}o", "}|"];
 const RIGHT_ENDS: &[&str] = &["||", "o|", "o{", "|{"];
 const TYPES: &[&str] = &["string", "int", "float", "date", "bool"];
 
-/// An entity-relationship diagram written whole inside its caps.
+/// An entity-relationship diagram written whole inside its caps: half along
+/// chains, each relationship between two entities next to each other on one,
+/// listed in any order, and half between any two entities.
 fn entities(rng: &mut Rng) -> String {
     let caps = Caps::ENTITIES;
     let entities = rng.between(2, caps.nodes.min(8));
     let mut out = String::from("erDiagram\n");
-    for _ in 0..rng.between(1, caps.edges.min(10)) {
-        let from = rng.below(entities);
-        let to = (from + 1 + rng.below(entities - 1)) % entities;
+    let pairs: Vec<(usize, usize)> = if rng.chance(2) {
+        let mut along: Vec<usize> = (0..entities).collect();
+        for at in (1..entities).rev() {
+            along.swap(at, rng.below(at + 1));
+        }
+        let mut pairs = Vec::new();
+        for (at, pair) in along.windows(2).enumerate() {
+            // A chain broken in two or more is still made of chains.
+            if let [one, other] = pair
+                && (at == 0 || !rng.chance(4))
+            {
+                pairs.push(if rng.chance(2) {
+                    (*one, *other)
+                } else {
+                    (*other, *one)
+                });
+            }
+        }
+        for at in (1..pairs.len()).rev() {
+            pairs.swap(at, rng.below(at + 1));
+        }
+        pairs
+    } else {
+        (0..rng.between(1, caps.edges.min(10)))
+            .map(|_| {
+                let from = rng.below(entities);
+                (from, (from + 1 + rng.below(entities - 1)) % entities)
+            })
+            .collect()
+    };
+    for (from, to) in pairs {
         let line = format!(
             "{}{}{}",
             rng.pick(LEFT_ENDS),
@@ -662,16 +692,89 @@ fn this_crate(source: &str, room: &Room) -> Result<Laid, Undrawn> {
     Diagrams.block(source, room)
 }
 
+/// The reason a diagram written whole is refused in any room it is given.
+const TANGLED: &str = "tangled relationships";
+
+/// What a diagram written whole is owed, read from what the generator
+/// writes rather than from the drawer it judges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Owed {
+    /// Drawn wherever it fits.
+    Drawn,
+    /// Refused whatever its room: an entity-relationship diagram whose
+    /// relationships do not chain its entities.
+    Refused,
+}
+
+fn owed(source: &str) -> Owed {
+    if source.starts_with("erDiagram") && tangled(source) {
+        Owed::Refused
+    } else {
+        Owed::Drawn
+    }
+}
+
+/// Whether the relationships of an entity-relationship diagram the generator
+/// wrote fail to make chains: an entity related to itself, two relationships
+/// between one pair, an entity in three, or a ring. Each relationship joins
+/// two groups of entities already joined, and one that joins a group to
+/// itself closes a ring.
+fn tangled(source: &str) -> bool {
+    let mut groups: Vec<Vec<&str>> = Vec::new();
+    let mut related: Vec<&str> = Vec::new();
+    for line in source.lines() {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let &[from, _, to, ":", ..] = words.as_slice() else {
+            continue;
+        };
+        related.extend([from, to]);
+        let group = |name: &str| groups.iter().position(|group| group.contains(&name));
+        match (group(from), group(to)) {
+            (Some(one), Some(other)) if one == other => return true,
+            (Some(one), Some(other)) => {
+                let joined = groups.swap_remove(one.max(other));
+                if let Some(group) = groups.get_mut(one.min(other)) {
+                    group.extend(joined);
+                }
+            }
+            (Some(one), None) => {
+                if let Some(group) = groups.get_mut(one) {
+                    group.push(to);
+                }
+            }
+            (None, Some(other)) => {
+                if let Some(group) = groups.get_mut(other) {
+                    group.push(from);
+                }
+            }
+            (None, None) if from == to => return true,
+            (None, None) => groups.push(vec![from, to]),
+        }
+    }
+    related
+        .iter()
+        .any(|name| related.iter().filter(|other| *other == name).count() > 2)
+}
+
 fn judge(case: &Case, drawer: Drawer) -> Result<(), String> {
     let room = case.room;
-    match drawer(&case.source, &room) {
-        Ok(laid) => check_rows(&laid.rows, room.columns),
-        // Too wide for its room is the one refusal a written diagram may meet.
-        Err(Undrawn::TooWide) => Ok(()),
-        Err(undrawn) if case.whole => Err(format!(
+    let drawn = drawer(&case.source, &room);
+    if !case.whole {
+        return drawn.map_or(Ok(()), |laid| check_rows(&laid.rows, room.columns));
+    }
+    match (owed(&case.source), drawn) {
+        (Owed::Refused, Err(Undrawn::Unsupported(TANGLED))) => Ok(()),
+        (Owed::Refused, drawn) => Err(format!(
+            "a diagram whose relationships do not chain was not refused for it: {:?}",
+            drawn.map(|_| "drawn")
+        )),
+        (_, Ok(laid)) => check_rows(&laid.rows, room.columns),
+        // Too wide for its room is the one refusal a written diagram that
+        // owes nothing else may meet.
+        (_, Err(Undrawn::TooWide)) => Ok(()),
+        (_, Err(undrawn)) => Err(format!(
             "a diagram written whole was not drawn: {undrawn:?}"
         )),
-        Err(_) => Ok(()),
     }
 }
 
@@ -798,26 +901,38 @@ const WIDE: usize = 400;
 #[test]
 fn every_written_diagram_is_drawn_in_a_room_wide_enough_for_it() {
     let mut wrong = Vec::new();
+    // Entity-relationship diagrams, drawn and refused.
+    let (mut chained, mut tangled) = (0_usize, 0_usize);
     for index in (0..DEFAULT_CASES).filter(|index| index % 3 == 0) {
         let (_, case) = case(index);
+        let owed = owed(&case.source);
         for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
             let room = Room {
                 columns: WIDE,
                 glyphs,
             };
-            if let Err(why) = this_crate(&case.source, &room) {
-                wrong.push(format!(
-                    "case {index} in {glyphs:?}: {why:?}\n{}",
+            match (owed, this_crate(&case.source, &room)) {
+                (Owed::Refused, Err(Undrawn::Unsupported(TANGLED))) => tangled += 1,
+                (Owed::Drawn, Ok(_)) => {
+                    chained += usize::from(case.source.starts_with("erDiagram"));
+                }
+                (_, drawn) => wrong.push(format!(
+                    "case {index} in {glyphs:?}, owed {owed:?}: {:?}\n{}",
+                    drawn.map(|_| "drawn"),
                     case.source
-                ));
+                )),
             }
         }
     }
     assert!(
         wrong.is_empty(),
-        "{} not drawn, the first:\n{}",
+        "{} not as owed, the first:\n{}",
         wrong.len(),
         wrong.first().map_or("", String::as_str)
+    );
+    assert!(
+        chained > 0 && tangled > 0,
+        "{chained} chained and {tangled} tangled drawn"
     );
 }
 
@@ -871,6 +986,37 @@ fn a_planted_drawer_that_refuses_what_it_knows_is_found_by_the_generated_run() {
     }
     let found = run(0, 256, refuses_a_hexagon).expect_err("the planted refusal");
     assert!(found.contains("written whole was not drawn"), "{found}");
+}
+
+#[test]
+fn a_planted_drawer_that_refuses_a_diagram_it_owes_or_draws_a_tangled_one_is_found_by_the_generated_run()
+ {
+    fn refuses_every_relationship(source: &str, room: &Room) -> Result<Laid, Undrawn> {
+        if source.starts_with("erDiagram") {
+            return Err(Undrawn::Unsupported(TANGLED));
+        }
+        this_crate(source, room)
+    }
+    fn draws_what_is_tangled(source: &str, room: &Room) -> Result<Laid, Undrawn> {
+        match this_crate(source, room) {
+            Err(Undrawn::Unsupported(TANGLED)) => Ok(Laid {
+                rows: Vec::new(),
+                natural: (0, 0),
+                narrow: None,
+            }),
+            drawn => drawn,
+        }
+    }
+    let found = run(0, 256, refuses_every_relationship).expect_err("a chained diagram refused");
+    assert!(
+        found.contains("not drawn: Unsupported(\"tangled relationships\")\nerDiagram"),
+        "{found}"
+    );
+    let found = run(0, 256, draws_what_is_tangled).expect_err("a tangled diagram drawn");
+    assert!(
+        found.contains("not refused for it: Ok(\"drawn\")"),
+        "{found}"
+    );
 }
 
 #[test]

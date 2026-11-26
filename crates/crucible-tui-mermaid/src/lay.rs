@@ -35,6 +35,11 @@
 //!   days. Without its room the engine draws a gantt a day to a cell, up to
 //!   [`DAYS_A_CELL_EACH`] days; past them it draws more days to a cell, can
 //!   draw a one-day task with no bar, and a gantt with one is refused.
+//! - An entity-relationship diagram's entities are handed to the engine in
+//!   the order their relationships chain them, and one whose relationships do
+//!   not chain is refused, as [`chains`] says.
+
+mod chains;
 
 use std::collections::BTreeSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -43,7 +48,7 @@ use crucible_tui::drawing::Catching;
 use crucible_tui::{Glyphs, columns};
 use mermaid_text::{
     CommitKind, ErDiagram, Error, GanttDiagram, GitGraph, Graph, RenderOptions, SequenceDiagram,
-    parser, render_with_options,
+    parser, render, render_with_options, to_ascii,
 };
 
 use crate::scan::{Read, Scanned, Step};
@@ -60,6 +65,17 @@ pub(crate) enum Unlaid {
     Unread,
     /// It is wider than the room it was laid out for.
     TooWide,
+    /// It is an entity-relationship diagram whose relationships do not chain
+    /// its entities, so the engine would draw one through a box.
+    Tangled,
+}
+
+/// What of the engine's reading the drawing is laid out from and held to.
+enum Reading {
+    /// An entity-relationship diagram as the engine read it.
+    Entities(ErDiagram),
+    /// Any other kind, drawn as the engine lays it.
+    AsLaid,
 }
 
 /// The lines of a diagram's drawing, each fitting its room, and the columns
@@ -85,8 +101,8 @@ pub(crate) fn lay(scanned: &Scanned, room: usize, glyphs: Glyphs) -> Result<Draw
 }
 
 fn drawn(scanned: &Scanned, room: usize, glyphs: Glyphs) -> Result<Drawing, Unlaid> {
-    agrees(scanned).then_some(()).ok_or(Unlaid::Unread)?;
-    let lines = rendered(scanned, room, glyphs)?;
+    let reading = agrees(scanned).ok_or(Unlaid::Unread)?;
+    let lines = rendered(scanned, reading, room, glyphs)?;
     let natural = widest(&lines);
     if natural > room {
         return Err(Unlaid::TooWide);
@@ -94,28 +110,32 @@ fn drawn(scanned: &Scanned, room: usize, glyphs: Glyphs) -> Result<Drawing, Unla
     Ok(Drawing { lines, natural })
 }
 
-/// Whether the engine reads `scanned` as it was read.
-fn agrees(scanned: &Scanned) -> bool {
+/// The engine's reading of `scanned`, if it reads it as it was read.
+fn agrees(scanned: &Scanned) -> Option<Reading> {
     let source = scanned.source.as_str();
+    let read = &scanned.read;
     match scanned.kind {
-        Kind::Flowchart => {
-            parser::flowchart::parse(source).is_ok_and(|graph| same(&graph, &scanned.read))
-        }
-        Kind::State => {
-            parser::state::parse(source).is_ok_and(|graph| state_alike(&graph, &scanned.read))
-        }
+        Kind::Flowchart => parser::flowchart::parse(source)
+            .is_ok_and(|graph| same(&graph, read))
+            .then_some(Reading::AsLaid),
+        Kind::State => parser::state::parse(source)
+            .is_ok_and(|graph| state_alike(&graph, read))
+            .then_some(Reading::AsLaid),
         // The scan refuses a class diagram before it reaches the engine.
-        Kind::Class => false,
-        Kind::EntityRelationship => {
-            parser::er::parse(source).is_ok_and(|diagram| entities_alike(&diagram, &scanned.read))
-        }
+        Kind::Class => None,
+        Kind::EntityRelationship => parser::er::parse(source)
+            .ok()
+            .filter(|diagram| entities_alike(diagram, read))
+            .map(Reading::Entities),
         Kind::Sequence => parser::sequence::parse(source)
-            .is_ok_and(|diagram| sequence_alike(&diagram, &scanned.read)),
-        Kind::Gantt => {
-            parser::gantt::parse(source).is_ok_and(|diagram| gantt_alike(&diagram, &scanned.read))
-        }
+            .is_ok_and(|diagram| sequence_alike(&diagram, read))
+            .then_some(Reading::AsLaid),
+        Kind::Gantt => parser::gantt::parse(source)
+            .is_ok_and(|diagram| gantt_alike(&diagram, read))
+            .then_some(Reading::AsLaid),
         Kind::GitGraph => parser::git_graph::parse(source)
-            .is_ok_and(|graph| git_graph_alike(&graph, &scanned.read)),
+            .is_ok_and(|graph| git_graph_alike(&graph, read))
+            .then_some(Reading::AsLaid),
     }
 }
 
@@ -311,15 +331,21 @@ fn plain(label: &str) -> String {
 /// in one, as `mermaid-text` lays one out unasked.
 const SPACING: (usize, usize) = (6, 2);
 
-/// The engine's drawing of `scanned` for `room` columns, trimmed, and
-/// checked.
+/// The engine's drawing of `scanned`, as it read it, for `room` columns,
+/// trimmed, and checked.
 ///
 /// Given its spacing, the engine lays a flowchart or a state diagram out once
 /// rather than again at tighter spacing while it is wider than `room`; an
 /// entity-relationship diagram's entities are set in rows as wide as `room`,
-/// in one pass. The engine lays a sequence diagram out at its own width
+/// in one pass, when no row would break a chain of them, and in one row
+/// otherwise. The engine lays a sequence diagram out at its own width
 /// whatever the room, and a git graph and a gantt are handed none.
-fn rendered(scanned: &Scanned, room: usize, glyphs: Glyphs) -> Result<Vec<String>, Unlaid> {
+fn rendered(
+    scanned: &Scanned,
+    reading: Reading,
+    room: usize,
+    glyphs: Glyphs,
+) -> Result<Vec<String>, Unlaid> {
     let ascii = glyphs == Glyphs::Ascii;
     let options = RenderOptions {
         max_width: (!matches!(scanned.kind, Kind::GitGraph | Kind::Gantt)).then_some(room),
@@ -327,10 +353,18 @@ fn rendered(scanned: &Scanned, room: usize, glyphs: Glyphs) -> Result<Vec<String
         gaps_override: Some(SPACING),
         ..RenderOptions::default()
     };
-    let drawn = render_with_options(&scanned.source, &options).map_err(|error| match error {
+    let unread = |error| match error {
         Error::TooWide { .. } => Unlaid::TooWide,
         Error::EmptyInput | Error::UnsupportedDiagram(_) | Error::ParseError(_) => Unlaid::Unread,
-    })?;
+    };
+    let drawn = match reading {
+        Reading::Entities(diagram) => {
+            let (diagram, room) = chains::chained(diagram, room).ok_or(Unlaid::Tangled)?;
+            let drawn = render::er::render(&diagram, Some(room));
+            if ascii { to_ascii(&drawn) } else { drawn }
+        }
+        Reading::AsLaid => render_with_options(&scanned.source, &options).map_err(unread)?,
+    };
     let drawn = if ascii { in_ascii(&drawn) } else { drawn };
     let stray = |character: char| {
         character.is_control() && character != '\n'
