@@ -114,16 +114,23 @@ use rustix::termios::{self, OptionalActions, Winsize};
 
 /// The budget, in megabytes.
 ///
-/// Ten above the no-colour probe's, for what reading code in colour and
+/// Fifteen above the no-colour probe's, for what reading code in colour and
 /// drawing the model's math and diagrams cost. Each language a session reads
 /// compiles its patterns and keeps them, about 5 MB for the one this session
 /// reads, and no way of loading the definitions removes that: a set read whole
 /// and a set read a language at a time come to the same patterns compiled.
 /// The answers this session reads carry math and a diagram, and drawing them
 /// keeps about 2 MB more; the diagram's part does not grow with the number of
-/// blocks. That brought the full record to 42.1 MB at its highest, and the
-/// rest is room for the noise between runs and for more kinds of diagram.
-const LIMIT: f64 = 45.0;
+/// blocks. That brought the full record to 42.1 MB at its highest.
+///
+/// A terminal that shows pictures keeps more. Each diagram it is shown as a
+/// picture is kept twice, as what it was drawn from and as what the terminal
+/// was sent, up to the count the record keeps and 1.5 MiB together, and every
+/// span a row is drawn in carries room for the picture cell it may stand in.
+/// With the record full and every kept picture at its caps, an idle run of
+/// November 26, 2026 read 44.4 MB at its highest; the rest is room for the
+/// noise between runs.
+const LIMIT: f64 = 50.0;
 
 /// How much resident memory may grow across one more full lifecycle after the
 /// retained record has already rolled past its ceiling.
