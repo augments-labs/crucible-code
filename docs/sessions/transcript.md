@@ -675,7 +675,8 @@ A session keeps at most 16 pictures, and at most 1.5 MiB of them, what each
 was drawn from and what the terminal was sent counted once each. Past either,
 the oldest is drawn as its text again, and in the full screen the transcript
 stays on the line you were reading. A diagram whose picture alone is more than
-1.5 MiB, or would take more than 64 cells across or down, is drawn as text.
+1.5 MiB, or would take more than 64 cells across or down, is drawn as text,
+and stays text when the window is resized.
 
 A picture the transcript turns into pixels, whether an SVG diagram or a PNG,
 JPEG, GIF or WebP file, is bounded before it is read, and a picture past any

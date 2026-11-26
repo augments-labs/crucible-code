@@ -53,6 +53,8 @@
 //! Past either, the oldest is drawn as its text again for as long as it is
 //! held, and the reader stays on the line they were reading, as they do for
 //! any block that changes height.
+//! A block refused its picture is not asked for one again at a new width, so
+//! a resize encodes the kept pictures and no more.
 //!
 //! The opening is responsive for the same reason. It is drawn from facts read
 //! once at launch and kept for the whole session, so what laid it is still here
@@ -973,6 +975,11 @@ impl Record {
     /// would pass [`MOST_KEPT_IMAGES`] or [`MOST_KEPT_IMAGE_BYTES`], the
     /// oldest kept is drawn as text instead, laid out again at `columns` in
     /// `glyphs`, until it fits.
+    ///
+    /// A block refused its picture is asked again in a new palette, protocol
+    /// or cell, and not at a new width: a width change encodes again only the
+    /// pictures kept, so it costs what they do, however many diagrams the
+    /// session has drawn as text.
     fn settle(&mut self, drawn: &mut Drawn, columns: usize, glyphs: Glyphs) -> bool {
         let key = if drawn.fallen || !drawn.block.closed {
             None
@@ -986,10 +993,12 @@ impl Record {
             .picture
             .as_ref()
             .is_some_and(|picture| picture.key == key)
-            || drawn
-                .refused
-                .as_ref()
-                .is_some_and(|refused| refused.0 == key)
+            || drawn.refused.as_ref().is_some_and(|refused| {
+                PictureKey {
+                    bucket: key.bucket,
+                    ..refused.0
+                } == key
+            })
         {
             return false;
         }
@@ -3452,6 +3461,24 @@ mod tests {
         assert!(picturing::shown(&record, 0));
         assert!(!picturing::shown(&record, 1));
         assert_eq!(picturing::refused(&record, 1), Some(Undrawn::PastCap));
+    }
+
+    #[test]
+    fn a_diagram_refused_its_picture_is_not_drawn_again_at_another_width() {
+        // A width change encodes again only the pictures kept: a block
+        // refused one is laid out again as its text, and neither the cache,
+        // its drawer nor the pictures are asked for it again.
+        let (drawer, asked) = fake(100, MOST_PLACED + 1, vec![]);
+        let mut record = picturing::record(40, drawer, &picturing::coloured(Theme::Dark));
+        record.drawn(picturing::diagram("a"), Glyphs::Unicode, Theme::Dark);
+        assert_eq!(picturing::refused(&record, 0), Some(Undrawn::TooWide));
+        let before = picturing::asked(&asked);
+
+        record.resized(80, Glyphs::Unicode);
+
+        assert_eq!(picturing::asked(&asked), before);
+        assert_eq!(picturing::refused(&record, 0), Some(Undrawn::TooWide));
+        assert_eq!(record.folded(0).len(), 1, "laid out as its text");
     }
 
     #[test]
