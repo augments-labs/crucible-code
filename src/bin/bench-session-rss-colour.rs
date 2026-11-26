@@ -191,6 +191,13 @@ const SPAN: usize = 24;
 /// The tasks of each of the last measured answer's gantts: the most that
 /// leave a gantt that wide small enough for the record to keep as many
 /// pictures of it as it keeps of any.
+///
+/// Measured, not held by a test here, since what a picture keeps is what the
+/// binary's rasteriser makes of it: at this span and this window, one task
+/// more made each picture about 99.4 KB kept, sixteen of which pass the
+/// 1.5 MiB the record keeps together, and fewer than sixteen were kept. The
+/// binary's own test of a width change at the caps keeps sixteen gantts of
+/// this shape.
 #[cfg(target_os = "linux")]
 const TASKS: usize = 26;
 
