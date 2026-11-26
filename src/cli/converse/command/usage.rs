@@ -71,7 +71,7 @@ use crucible_app::startup::ProviderAuth;
 use crucible_client_api::{self as api, Cost, Limit, Reading, Window};
 use crucible_tui::{Bar, Fill, Glyphs, Part, Pressed, Renderer, Row, Slot, Terminal};
 use jiff::tz::TimeZone;
-use jiff::{Timestamp, Zoned};
+use jiff::{Timestamp, ZonedDateTime};
 
 use crate::cli::Fatal;
 use crate::cli::client::{Out, astray};
@@ -218,16 +218,16 @@ impl Clock {
     }
 
     /// `at` in the reader's zone.
-    fn zoned(&self, at: u64) -> Option<Zoned> {
+    fn zoned(&self, at: u64) -> Option<ZonedDateTime> {
         Some(
             Timestamp::from_second(i64::try_from(at).ok()?)
                 .ok()?
-                .to_zoned(self.zone.clone()),
+                .to_zoned_datetime(self.zone.clone()),
         )
     }
 
     /// `at` in `shape`, saying UTC where the zone is a guess.
-    fn read(&self, at: &Zoned, shape: &str) -> String {
+    fn read(&self, at: &ZonedDateTime, shape: &str) -> String {
         let read = at.strftime(shape).to_string();
         if self.guessed {
             format!("{read} UTC")

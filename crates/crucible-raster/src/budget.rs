@@ -327,7 +327,10 @@ impl Walk {
             return Ok(());
         };
         let transform = inverse.pre_concat(transform);
-        let Some(bbox) = group.layer_bounding_box().transform(transform) else {
+        let Some(bbox) = group
+            .layer_bounding_box()
+            .and_then(|bbox| bbox.transform(transform))
+        else {
             return Ok(());
         };
         let grown = if group.filters().is_empty() {
@@ -595,7 +598,9 @@ fn shape(path: &Path, transform: Transform, pixmap: (u32, u32)) -> Result<u64, R
         }
     }
     if let Some(stroke) = path.stroke() {
-        let outline = path.stroke_bounding_box().transform(transform);
+        let outline = path
+            .stroke_bounding_box()
+            .and_then(|outline| outline.transform(transform));
         let near = outline.is_some_and(|outline| {
             [
                 outline.left(),
@@ -687,8 +692,13 @@ fn largest(pixels: u64, nanos: u64, stops: u64, runs: u64) -> u64 {
 }
 
 /// The part of a pixmap a shape with this bounding box reaches, as the
-/// renderer clips it: none where it is off the pixmap.
-fn reaches(bounds: Rect, transform: Transform, pixmap: Option<IntRect>) -> Option<IntRect> {
+/// renderer clips it: none where it is off the pixmap. A shape the parser
+/// gives no bounding box is still drawn, so it is counted as reaching the
+/// whole pixmap.
+fn reaches(bounds: Option<Rect>, transform: Transform, pixmap: Option<IntRect>) -> Option<IntRect> {
+    let Some(bounds) = bounds else {
+        return pixmap;
+    };
     bounds
         .transform(transform)
         .and_then(|rect| rect.round_out())

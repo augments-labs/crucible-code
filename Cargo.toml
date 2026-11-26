@@ -41,7 +41,7 @@ image = { version = "=0.25.10", default-features = false, features = ["png", "jp
 # raster image embedded in an SVG is skipped rather than drawn; the `image`
 # crate decodes image files, never an SVG's. Fonts and every `href` are the
 # caller's: nothing it names is read from the machine.
-resvg = { version = "=0.49.0", default-features = false, features = ["text"] }
+resvg = { version = "=0.50.0", default-features = false, features = ["text"] }
 # Encodes pixels as a Sixel payload for terminals that draw one, which `std`
 # cannot do: Sixel is a six-pixel-row text format over a palette, so the work is
 # choosing at most 256 colours and dithering to them, in a quantiser written for
@@ -119,7 +119,7 @@ tokio = { version = "=1.54.1", default-features = false }
 
 # Argument parsing. `derive` keeps the CLI surface declared next to the type it
 # produces rather than in a builder chain that drifts from it.
-clap = { version = "=4.6.7", features = ["derive"] }
+clap = { version = "=4.6.8", features = ["derive"] }
 
 # Shell completion scripts written from the command tree `clap` already holds.
 # `std` has no notion of a command tree, and a script written by hand for five
@@ -286,7 +286,7 @@ getrandom = "=0.4.3"
 # one process. The version and variant bit layout, the monotonic tie-break
 # counter, and the timestamp recovery are format machinery this crate owns;
 # `std` cannot mint one and hand-rolling it would be a second partial codec.
-uuid = { version = "=1.29.2", features = ["v7"] }
+uuid = { version = "=1.29.3", features = ["v7"] }
 
 # SHA-256, wherever a one-way digest is needed. Browser OAuth uses RFC 7636
 # S256. Prompt-cache scope identity needs a digest of credential-owned material
@@ -477,7 +477,7 @@ windows-sys = { version = "=0.61.2", features = [
 # its times in UTC, and says so. The provider crate takes it for the other
 # side of that hour: reading the RFC 3339 instant a vendor writes it as, which
 # `std` has no parser for.
-jiff = { version = "=0.2.42", default-features = false, features = [
+jiff = { version = "=1.0.1", default-features = false, features = [
     "std",
     "tz-system",
     "tzdb-zoneinfo",
