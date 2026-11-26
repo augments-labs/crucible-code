@@ -4181,8 +4181,8 @@ mod pictures {
         let named = format!(",i={id},");
         assert!(
             commands(&after).iter().all(|command| {
-                !command.starts_with("a=d")
-                    && !(command.starts_with("a=p") && command.contains(&named))
+                let placed_again = command.starts_with("a=p") && command.contains(&named);
+                !(command.starts_with("a=d") || placed_again)
             }),
             "{after:?}"
         );

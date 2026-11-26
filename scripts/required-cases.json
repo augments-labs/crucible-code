@@ -15867,7 +15867,7 @@
       },
       "case": "render::native::tests::pictures::a_native_window_settled_at_a_new_height_leaves_a_picture_where_it_was_placed",
       "source": "crates/crucible-tui/src/render/native/tests.rs",
-      "body_sha256": "4759307849072ca9a9a0ead57b7964b6489289870a77a511d19ec6afa0ef87e7",
+      "body_sha256": "540f3feb39690634565ed7bc3b19723260f332b2abf1e3e942312ae23a93fb8f",
       "platforms": [
         "linux",
         "macos",
@@ -15903,7 +15903,7 @@
       },
       "case": "render::tests::pictures::a_sixel_picture_resized_and_then_made_again_for_a_taller_window_is_text_only_where_fit_is",
       "source": "crates/crucible-tui/src/render/tests/pictures.rs",
-      "body_sha256": "4a5f0b00661fd87c326945935c2e41cba7af1dfe80be223e4d12a195a33c139a",
+      "body_sha256": "74dc1570036855051a3581e0ff00defd0e7584ddb53f5c3d7394a0261d0472f8",
       "platforms": [
         "linux",
         "macos",

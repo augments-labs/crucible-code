@@ -1404,29 +1404,29 @@ fn a_sixel_picture_resized_and_then_made_again_for_a_taller_window_is_text_only_
     // picture the reader resized is drawn as text only where one never
     // resized is too: the window decides that, not the size chosen.
     for rows in [40, 60, 70, 76, 80] {
-        let ended: Vec<bool> = [false, true]
-            .into_iter()
-            .map(|cycled| {
-                let mut drawn = pictured_as(
-                    60,
-                    30,
-                    graphics::Protocol::Sixel,
-                    Printed::per_row(20, 60, 40 * 1024),
-                );
-                drawn.answer(DIAGRAM);
+        let [left, cycled] = [false, true].map(|cycled| {
+            let mut drawn = pictured_as(
+                60,
+                30,
+                graphics::Protocol::Sixel,
+                Printed::per_row(20, 60, 40 * 1024),
+            );
+            drawn.answer(DIAGRAM);
+            drawn.take();
+            let (line, _) = picture_cell(&drawn.render).unwrap();
+            if cycled {
+                assert!(drawn.render.resizes(line).unwrap());
                 drawn.take();
-                let (line, _) = picture_cell(&drawn.render).unwrap();
-                if cycled {
-                    assert!(drawn.render.resizes(line).unwrap());
-                    drawn.take();
-                    assert!(drawn.render.resizable(line), "drawn as text at Large");
-                }
-                drawn.resize(60, rows);
-                drawn.take();
-                drawn.render.resizable(line)
-            })
-            .collect();
-        assert!(ended[1] || !ended[0], "at {rows} rows: {ended:?}");
+                assert!(drawn.render.resizable(line), "drawn as text at Large");
+            }
+            drawn.resize(60, rows);
+            drawn.take();
+            drawn.render.resizable(line)
+        });
+        assert!(
+            cycled || !left,
+            "at {rows} rows: left at Fit {left}, cycled {cycled}"
+        );
     }
 }
 
