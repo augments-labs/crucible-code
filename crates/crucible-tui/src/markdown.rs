@@ -56,7 +56,7 @@
 //! nothing of a fence's opening line is said before its break, so it is read
 //! as prose from that backtick on. The closing line is one of the marks
 //! the fence opened with, at least as many of them, indented three spaces at
-//! most and followed by nothing but spaces and tabs ([`Fenced`]). Inside a
+//! most and followed by nothing but spaces and tabs (`Fenced`). Inside a
 //! quote every line of the block is read past the quote's mark and one space
 //! after it, which are drawn as the quote's bar, so the quote's own fence
 //! closes it; the first line that is no row of the quote ends the block and
