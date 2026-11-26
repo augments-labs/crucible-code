@@ -14121,6 +14121,716 @@
       "platforms": [
         "linux"
       ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-PLACED",
+      "family": "transcript-pictures",
+      "obligation": "On a full screen that confirmed Kitty, a diagram is sent as exactly one transmission a=t,f=100,i=1,q=2,m=0 of its whole payload and one placement a=p,U=1,i=1,c=3,r=2,q=2, its two rows are painted as U+10EEEE cells coloured with its number and marked by row, and the frame after it sends no graphics command.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_diagram_on_a_kitty_terminal_is_sent_once_and_placed_in_the_cells_it_covers",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "2c7f9e5b0333fe9ec085acf3d06a75188ae0bd0cd61379c94657fc854e5c5f4b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-CHUNKED",
+      "family": "transcript-pictures",
+      "obligation": "A 200 KiB picture goes out over the frames after it, each frame carrying at most 64 KiB of graphics commands and each chunk at most 4096 bytes of data, the first a=t,f=100,i=1,q=2,m=1, the middle ones m=1,q=2, the last m=0,q=2 and then its placement; the chunks decode to the picture's bytes whole, and the renderer stops asking to wake once it is sent.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_picture_larger_than_a_frame_may_send_goes_out_in_chunks_over_the_frames_after_it",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "9857236eb7ae9deeda326d723cdc276b29080fdebc0c656083963acd803617c4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-SCROLLED",
+      "family": "transcript-pictures",
+      "obligation": "A picture scrolled up by the lines under it is painted at a new position on the full screen, and no frame of that scroll transmits it again.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_picture_moves_with_the_transcript_and_is_not_sent_again_for_it",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "789df1d6ea2ca1b4eba054135dfa7bd4b061946f461fb447166b4f49a70ce79c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-SCROLLED-BACK",
+      "family": "transcript-pictures",
+      "obligation": "After a repaint while a picture is out of view, nothing is transmitted; scrolled back into view, its cells are painted and it is transmitted again whole.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_picture_scrolled_back_into_view_is_sent_where_the_terminal_lost_it",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "4c4108fc4da9065598fbe9f43e6a5332318eadf09ed0f7bbc309142a35829c72",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-REPAINT",
+      "family": "transcript-pictures",
+      "obligation": "A full-screen repaint, the frame after a child had the terminal or the alternate screen was taken again, transmits the picture on screen again whole, places it again and paints its cells.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_repaint_sends_every_picture_on_screen_again",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "ec7421fb51f61c4cf062ef0b359134e879031ecc71ff705a13bc2ab313ed413b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-RESIZE",
+      "family": "transcript-pictures",
+      "obligation": "A full screen resized from 40 to 100 columns encodes the picture again under a new number, 2, transmits that payload and places and paints it as picture 2.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_resize_places_the_picture_again_at_the_new_width",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "3e14d61e795c6c57b4f912294a48e835c152111b5e680fd4f5e0b645f5f47dec",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-THEME",
+      "family": "transcript-pictures",
+      "obligation": "After the palette changes from dark to light, the next frame transmits a newly encoded picture 2 and paints its cells, and no cell of picture 1 is painted.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_theme_changed_draws_the_picture_again_in_its_colours",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "efd3e47f78963b7f31067e174092683cd1f4b8e0321df81de0f356dcfca9ad84",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-TMUX",
+      "family": "transcript-pictures",
+      "obligation": "With passthrough forced on, the transmission opens ESC P tmux; ESC ESC _G a=t,f=100,i=1,q=2,m=0; and the placement is written as ESC P tmux; ESC ESC _G a=p,U=1,i=1,c=3,r=2,q=2 ESC ESC \\ ESC \\, every ESC inside doubled and closed by tmux's own ESC \\, and the U+10EEEE cells are written as plain text.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::inside_tmux_passing_sequences_through_a_command_is_wrapped_for_it",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "6ec15a3e94a94db8ceff764528ee486eeb816f011a678a872204830cba850867",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-NO-COLOUR",
+      "family": "transcript-pictures",
+      "obligation": "On a terminal that confirmed Kitty, under a palette resolved with colour off and under the plain palette, no ESC _G and no U+10EEEE is written, and the diagram's text is drawn.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::no_picture_is_drawn_where_colour_is_not_written",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "9019c9de5bf5ccddd43f738c7683d18ecd3ba3c33e7d0ba722bb4093d2263dc1",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-REDIRECTED",
+      "family": "transcript-pictures",
+      "obligation": "A full-screen renderer on redirected output, handed Kitty and pictures, writes no ESC _G and no U+10EEEE.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::no_picture_is_drawn_where_output_is_redirected",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "b25cc98be9bc2dc48dc19abed345441b433b762aab3d28d6100ec3be65c416a8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-TEXT-MODES",
+      "family": "transcript-pictures",
+      "obligation": "With diagrams at text and at written, a renderer handed Kitty and pictures writes no ESC _G and no U+10EEEE.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::diagrams_drawn_as_text_or_as_written_never_draw_a_picture",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "bd25f4a5f566a509aef3461600e58ceb69dce189c9cec572a109016b4402aa3d",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-HOSTILE-PLACEHOLDER",
+      "family": "transcript-pictures",
+      "obligation": "An answer whose text around a diagram carries U+10EEEE with row and column marks, a bare U+10EEEE and a raw ESC _G placement writes exactly the picture's six U+10EEEE cells and exactly its two graphics commands, and the text is drawn with the model's cells taken out.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_placeholder_a_model_wrote_never_reaches_the_terminal_beside_a_picture",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "355d2f1753ec1c1870869560fa109b6a388adcf000a362baf37bb53c434ebd09",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-NATIVE-SCROLLBACK",
+      "family": "transcript-pictures",
+      "obligation": "In native mode a diagram carried into the scrollback is transmitted once and placed once as a=p,U=1,i=1,c=3,r=2,q=2, no a=d is ever written, and the scrollback holds its two rows of U+10EEEE cells.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::pictures::a_native_diagram_goes_into_the_scrollback_as_its_cells_and_is_sent_once",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "5e6f84176a7e8cb844a125a732f95adfde41e3054b3997522ccbf2d091f61976",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-NATIVE-REPAINT",
+      "family": "transcript-pictures",
+      "obligation": "A native repaint transmits a kept picture whose cells are in the scrollback again whole, and places it again.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::pictures::a_native_repaint_sends_every_kept_picture_again_though_it_is_in_the_scrollback",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "1104875288426e77ffa165a8e1c11425351e530ad1918e5729be595ba94844b5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-NATIVE-RESIZE",
+      "family": "transcript-pictures",
+      "obligation": "A native window settled at 100 columns from 40 transmits the picture encoded again as picture 2, paints both its rows as picture 2's cells, and writes no a=d.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::pictures::a_native_window_settled_at_a_new_width_gives_the_picture_back_placed_again",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "3cd00e2889e4e5ee84014b37e57a60db4dca9b19af89ea572e2cd57fe729c0fd",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-NATIVE-REDIRECTED",
+      "family": "transcript-pictures",
+      "obligation": "A native renderer on redirected output, handed Kitty and pictures, writes no ESC _G and no U+10EEEE, and writes the diagram's text.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::pictures::a_redirected_native_session_draws_its_diagram_as_text",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "f92def4f0bc5343ff54a6585a449da32ad2aeb9d23bdfb52c45272c8e2c78d48",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-RECORD-SHOWN",
+      "family": "transcript-pictures",
+      "obligation": "Where the record pictures for Kitty in colour, a diagram is shown as its picture and folds to the picture's three rows of blank cells.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::a_diagram_is_shown_as_its_picture_where_the_terminal_confirmed_kitty",
+      "source": "crates/crucible-tui/src/record.rs",
+      "body_sha256": "938a7a63f3e43240f779183071f270ca81c9fbfcb2de2afe3fa418bc9ba68d17",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-CACHE-FIRST",
+      "family": "transcript-pictures",
+      "obligation": "For a miss the record asks the cache, then the drawer's picture, then make; for a source the cache holds it asks the cache alone, and that block is shown as a picture.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::the_cache_is_asked_before_the_drawer_and_a_hit_draws_nothing",
+      "source": "crates/crucible-tui/src/record.rs",
+      "body_sha256": "8241169c0276b6c07653a27016117894d232b3baa61713c41c9a85d8e02e8aa6",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-RECORD-TEXT-MODES",
+      "family": "transcript-pictures",
+      "obligation": "With diagrams at text and at written, a diagram is not shown as a picture and neither the cache, the drawer's picture nor make is asked.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::a_diagram_drawn_as_text_is_never_shown_as_a_picture",
+      "source": "crates/crucible-tui/src/record.rs",
+      "body_sha256": "08301902d6999c3d2c2d4d073f5250919de2d61feb449a279510ab0fd49fa027",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-COUNT-CAP",
+      "family": "transcript-pictures",
+      "obligation": "Past MOST_KEPT_IMAGES pictures the record keeps exactly MOST_KEPT_IMAGES, the oldest is laid out as its one-row text again, and every later one is still shown.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::past_the_count_the_oldest_picture_is_drawn_as_text",
+      "source": "crates/crucible-tui/src/record.rs",
+      "body_sha256": "1716a91dabd2d16e1854a956a835ac3b3025d8bd888e53b04eeae4e6b973c086",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-BYTE-CAP",
+      "family": "transcript-pictures",
+      "obligation": "Three cached pictures of a third of MOST_KEPT_IMAGE_BYTES each, form and payload the same PNG, are kept and counted at three thirds; a fourth makes the oldest fall back to text, leaving three kept at the same bytes.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::past_the_bytes_the_oldest_falls_back_and_a_png_is_counted_once",
+      "source": "crates/crucible-tui/src/record.rs",
+      "body_sha256": "5586094d7fc93bdd4552d85b06c847a5ea1cf23e30e2c9fa19b84d2ee2d6ec8f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-TOO-LARGE",
+      "family": "transcript-pictures",
+      "obligation": "A picture whose kept form and payload together pass MOST_KEPT_IMAGE_BYTES is not shown, is refused as Undrawn::TooLargeToKeep, and is laid out as its one-row text.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::a_picture_larger_than_every_kept_picture_together_is_drawn_as_text",
+      "source": "crates/crucible-tui/src/record.rs",
+      "body_sha256": "e2e1be88c4c24f63640a5f8dd9ef0b3af57c06145c60092f6f8f27899cb3e572",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-REENCODE",
+      "family": "transcript-pictures",
+      "obligation": "Relaid under a light palette, a kept picture is encoded again from what was kept with reencode alone, no drawer or make asked again, and is still shown.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::a_new_theme_encodes_a_kept_picture_again_without_its_drawer",
+      "source": "crates/crucible-tui/src/record.rs",
+      "body_sha256": "965811385ff11681ad7bf12c2eb6e375c02717dbfc62c570ed2687ab1ad7a078",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-ANCHOR",
+      "family": "transcript-pictures",
+      "obligation": "When one picture more than MOST_KEPT_IMAGES makes the oldest fall back to its one-row text, the record's view stays on the line the reader was on, the one under the second picture, and shows the same rows from it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::a_picture_falling_back_to_text_leaves_the_reader_on_the_line_they_were_on",
+      "source": "crates/crucible-tui/src/record.rs",
+      "body_sha256": "22295252bf6664469a71b2d8eb1e151fe1ea9c450aba0bcc073e578b4a2e3176",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-ANSI-INKS",
+      "family": "transcript-pictures",
+      "obligation": "Under the ansi theme a picture's accent ink is xterm's cyan 0,205,205, and its plain ink is black against a reported white ground and white against a reported dark ground or none.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "color::tests::an_ansi_picture_is_inked_in_xterms_sixteen_and_against_the_reported_ground",
+      "source": "crates/crucible-tui/src/color/tests.rs",
+      "body_sha256": "8a4eb32fa06a9a33890591d65c28a198c1355ddc87493098f295dcf5625f14d3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-SLOT-WAIT",
+      "family": "transcript-pictures",
+      "obligation": "While another thread holds the raster slot, make gives up with Undrawn::NotHere after at least the 40 ms wait and under 240 ms, and once the slot is free the same picture is made.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::pictures::tests::a_held_slot_delays_a_picture_by_no_more_than_the_wait_and_then_it_is_text",
+      "source": "src/cli/pictures.rs",
+      "body_sha256": "9f0f86255b537f8d2ff17d84e0dfd423e1aa24222a3aabfb899da74e12aca3de",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-RASTER-WIDTH",
+      "family": "transcript-pictures",
+      "obligation": "A 40 by 20 picture in a room wider than it is rasterised at 40 by 20, never scaled up, and a 400 by 200 one in a ten-column room at 64 by 32 pixels, eight cells by two.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::pictures::tests::a_picture_is_drawn_at_its_own_width_or_its_rooms_whichever_is_less",
+      "source": "src/cli/pictures.rs",
+      "body_sha256": "fb2526e41be4889eeb3a675802d80ac31026d98ef6e8f003c0b2870080d6dc44",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-SESSION-SENDS",
+      "family": "transcript-pictures",
+      "obligation": "The session's own furnished screen, on a terminal that confirmed Kitty, sends a diagram in an answer as a picture and places it.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::pictures::tests::a_sessions_screen_sends_a_diagram_to_a_terminal_that_confirmed_kitty",
+      "source": "src/cli/pictures.rs",
+      "body_sha256": "75f71396d9051faf1fd0a124361b5a6a3d9f9db769c4cf461e4585f8b2373879",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-RENDER-BURST",
+      "family": "transcript-pictures",
+      "obligation": "One cycle of the render burst on the measured window, by a renderer handed Kitty, transmits one picture for each mermaid fence of its answer and places exactly the pictures it transmitted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-render-burst"
+      },
+      "case": "tests::every_diagram_of_the_burst_is_sent_as_a_picture_and_placed_where_kitty_was_confirmed",
+      "source": "src/bin/bench-render-burst.rs",
+      "body_sha256": "5a53f0b756236bb2223eacdaa7405b46a959de3714d17ac34cd718b637890084",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-LIVE-BURST",
+      "family": "transcript-pictures",
+      "obligation": "The live burst's answers on the measured window transmit at least one picture, place exactly the pictures transmitted, and the band's frame stands over a row that begins with a U+10EEEE cell.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-live-burst"
+      },
+      "case": "tests::the_band_stands_over_a_picture_sent_and_placed_where_kitty_was_confirmed",
+      "source": "src/bin/bench-live-burst.rs",
+      "body_sha256": "49fd8ffac1774db865dc43c46198ffff313e7b61e523560eac1b5f7ea1b58d21",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-COLOUR-GANTTS",
+      "family": "transcript-pictures",
+      "obligation": "The colour session's last measured answer ends in MOST_KEPT_IMAGES + 1 distinct gantt fences, each one section and TASKS tasks, within the gantt caps' bytes and nodes.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-session-rss-colour"
+      },
+      "case": "tests::the_last_measured_answer_ends_in_one_more_gantt_than_the_record_keeps_pictures_of",
+      "source": "src/bin/bench-session-rss-colour.rs",
+      "body_sha256": "70cf6363ad29a2c3efe750eafbc91fa6e887b3d22204021e3b7dbe26fde19c72",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-COLOUR-WIDTH",
+      "family": "transcript-pictures",
+      "obligation": "Every gantt of the colour session's last answer is drawn as a picture at most MOST_PLACED cells across in the measured window's room, and one a day longer is drawn more than MOST_PLACED cells across.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-session-rss-colour"
+      },
+      "case": "tests::every_gantt_of_the_last_answer_is_a_picture_as_wide_as_the_record_places",
+      "source": "src/bin/bench-session-rss-colour.rs",
+      "body_sha256": "aecd8f324f85dd1bd84ab4349056dacae51c240b9bfc2d68a369070c58c8c59e",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-COLOUR-PLACEMENTS",
+      "family": "transcript-pictures",
+      "obligation": "The colour probe counts a Kitty placement once however its bytes are split and when a sequence is started again, and counts none for a transmission, for placement words in text or for the sequence's bytes out of order.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-session-rss-colour"
+      },
+      "case": "tests::a_placement_is_counted_across_the_pieces_it_arrives_in_and_nothing_else_is",
+      "source": "src/bin/bench-session-rss-colour.rs",
+      "body_sha256": "5d26cb9daced2673928d8783eabdc3f2016316ef77ebc9494cec26a4581eb08c",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-PLACE-MARKS",
+      "family": "transcript-pictures",
+      "obligation": "A picture MOST_PLACED cells down is shown; one a cell more is not shown, is refused as Undrawn::TooWide and is laid out as its one-row text, and one wider than the record's columns is refused the same way.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::a_picture_more_than_its_marks_can_place_is_drawn_as_text",
+      "source": "crates/crucible-tui/src/record.rs",
+      "body_sha256": "27505ed3e93722bf32359360ebb927719938c3cfdcabbe36a63cc0c7b76eb6ed",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-NUMBERS-SPENT",
+      "family": "transcript-pictures",
+      "obligation": "Numbered from MOST_PICTURE_ID, the diagram given that last number is shown, and the one after it is not shown and is refused as Undrawn::PastCap.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::once_every_number_is_given_out_a_diagram_is_drawn_as_text",
+      "source": "crates/crucible-tui/src/record.rs",
+      "body_sha256": "ca80ef51694edfd0f37080629a7e656180ddea222935ff94dc6e642a9effcac5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-ABORT-FORGOTTEN",
+      "family": "transcript-pictures",
+      "obligation": "A picture larger than a frame sends its first chunk m=1 and no placement; once the terminal is forgotten, the next frame writes ESC _G m=0,q=2; ESC \\ before any other command, exactly once, then the next picture whole, and the frame after writes nothing.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::a_transmission_the_terminal_is_forgotten_during_is_ended_before_the_next_command",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "b5ef5292a6f235b1c1964b431c9a08e33f946766f703a26ff89e0b57853fadc9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-ABORT-LET-GO",
+      "family": "transcript-pictures",
+      "obligation": "Through tmux, a picture let go of part way through its transmission is ended first in the next frame by ESC P tmux; ESC ESC _G m=0,q=2; ESC ESC \\ ESC \\, exactly once, before the next picture's first chunk, and nothing is owed after it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::a_transmission_whose_picture_is_let_go_of_part_way_is_ended_and_wrapped_for_tmux",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "42af09d12cdc42c976ba66ab6708506f944553c6ee91974eb471accf4f66734c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-ABORT-NEVER-BEGAN",
+      "family": "transcript-pictures",
+      "obligation": "A picture owed with none of its bytes sent, because the frame's budget ran out before its first chunk, is not ended when the terminal is forgotten: the next frame opens with the next picture's a=t,f=100,i=3,q=2,m=0 and writes no ESC _G m=0,q=2; ESC \\, and nothing is owed after it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::a_transmission_that_never_began_is_not_ended_when_the_terminal_is_forgotten",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "ef2458330a0d1e9c2682a10997f49feab95a5689b4b48cb5bdb7a4dead359fed",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-TIMED-RESIZE",
+      "family": "transcript-pictures",
+      "obligation": "In both screen modes, with four times MOST_KEPT_IMAGES gantts streamed, two refused their picture as too wide, MOST_KEPT_IMAGES + 1 drawn as pictures and the rest as text, a width change from 80 to 120 columns makes no picture, encodes exactly MOST_KEPT_IMAGES again and, built optimised, returns within 500 ms.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::pictures::tests::a_width_change_at_the_caps_encodes_again_the_kept_pictures_and_no_more",
+      "source": "src/cli/pictures.rs",
+      "body_sha256": "e69de0c1383fb656f426e38870d717b66e91b1c86ce9ccffbcf13cfca21197bc",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-REFUSED-WIDTH",
+      "family": "transcript-pictures",
+      "obligation": "A diagram refused its picture as Undrawn::TooWide at 40 columns is, after a resize to 80, still refused as Undrawn::TooWide and laid out as its one-row text, and neither the cache, its drawer nor make is asked again.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::a_diagram_refused_its_picture_is_not_drawn_again_at_another_width",
+      "source": "crates/crucible-tui/src/record.rs",
+      "body_sha256": "0562c78730df89331283ef6dde8930d3bc8bff9b275ab6ded3b0748c982e231b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
     }
   ]
 }
