@@ -1012,6 +1012,7 @@ impl Record {
             palette,
             protocol,
             cell,
+            rows: MOST_PLACED,
         })
     }
 

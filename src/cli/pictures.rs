@@ -154,6 +154,7 @@ mod tests {
             palette: Palette::resolve(true, theme, ground, &truecolour).identity(),
             protocol,
             cell: CELL,
+            rows: crucible_tui::MOST_PLACED,
         }
     }
 

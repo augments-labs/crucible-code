@@ -652,12 +652,18 @@ impl Deadline {
 }
 
 /// A picture's bytes, encoded for one protocol, and the cells it covers.
+///
+/// It covers the cells its pixels reach into, and fewer where it is shown in
+/// fewer rows ([`Payload::shown_in`]): Kitty and iTerm2 scale the one image
+/// into whatever cells it is placed in, so a new size is the same bytes.
 pub struct Payload {
     protocol: Protocol,
     bytes: Vec<u8>,
     pixels: (u32, u32),
-    columns: u16,
-    rows: u16,
+    /// The cells its pixels reach into, across and down.
+    natural: (u16, u16),
+    /// The cells it is shown in, across and down.
+    shown: (u16, u16),
 }
 
 impl Payload {
@@ -674,12 +680,13 @@ impl Payload {
             let cells = pixels.div_ceil(u32::from(size.max(1)));
             u16::try_from(cells).unwrap_or(u16::MAX)
         };
+        let natural = (across(width, cell.width), across(height, cell.height));
         Self {
             protocol,
             bytes,
             pixels: (width, height),
-            columns: across(width, cell.width),
-            rows: across(height, cell.height),
+            natural,
+            shown: natural,
         }
     }
 
@@ -695,16 +702,35 @@ impl Payload {
         &self.bytes
     }
 
-    /// The cells the picture covers, across and down.
+    /// The cells the picture is shown in, across and down.
     #[must_use]
     pub const fn cells(&self) -> (u16, u16) {
-        (self.columns, self.rows)
+        self.shown
     }
 
     /// The picture's size in pixels, across and down.
     #[must_use]
     pub const fn pixels(&self) -> (u32, u32) {
         self.pixels
+    }
+
+    /// Shows the picture in at most `rows` rows, and never at least one, as
+    /// many columns fewer as keep its shape; never in more cells than its
+    /// pixels reach into. A Sixel bitmap is drawn cell for cell, so it keeps
+    /// the cells it was encoded for and a new size encodes it again.
+    pub(crate) fn shown_in(&mut self, rows: u16) {
+        self.shown = self.shown_at(rows);
+    }
+
+    /// The cells [`Payload::shown_in`] would show it in for `rows`.
+    pub(crate) fn shown_at(&self, rows: u16) -> (u16, u16) {
+        let (across, down) = self.natural;
+        if self.protocol == Protocol::Sixel || down <= rows {
+            return self.natural;
+        }
+        let rows = rows.max(1);
+        let narrowed = (u32::from(across) * u32::from(rows)).div_ceil(u32::from(down));
+        (u16::try_from(narrowed).unwrap_or(across).max(1), rows)
     }
 }
 
@@ -760,6 +786,8 @@ pub struct PictureKey {
     pub protocol: Protocol,
     /// The cell its payload is placed in.
     pub cell: Cell,
+    /// The most rows its payload is encoded to cover.
+    pub rows: u16,
 }
 
 /// What turns a block's picture into a payload: the composition's, over a
@@ -797,8 +825,8 @@ impl fmt::Debug for Payload {
             .field("protocol", &self.protocol)
             .field("pixels", &self.pixels)
             .field("bytes", &self.bytes.len())
-            .field("columns", &self.columns)
-            .field("rows", &self.rows)
+            .field("natural", &self.natural)
+            .field("shown", &self.shown)
             .finish()
     }
 }
@@ -842,7 +870,10 @@ const MOST_HELD: usize = 2 * crate::record::MOST_KEPT_IMAGES;
 /// cells name. A transmission is never interleaved with another command, so
 /// one cut short by a frame's budget is carried on by the next frame before
 /// anything else is sent, and one whose picture the record has let go of is
-/// ended with an empty last chunk.
+/// ended with an empty last chunk. A picture held that is shown in other
+/// cells now, as one whose size the reader changed, is not sent again: its
+/// placement is deleted and one for the new cells given, between
+/// transmissions.
 ///
 /// A full screen has the terminal delete the pictures it is counted as
 /// holding once the record lets them go, encoded again under a new number or
@@ -862,8 +893,9 @@ const MOST_HELD: usize = 2 * crate::record::MOST_KEPT_IMAGES;
 /// lets the oldest go and their cells show nothing.
 #[derive(Debug, Default)]
 pub(crate) struct Sent {
-    /// What the terminal holds, oldest first, at most [`MOST_HELD`].
-    held: VecDeque<u32>,
+    /// What the terminal holds, oldest first, at most [`MOST_HELD`], and
+    /// the cells each was last placed in.
+    held: VecDeque<(u32, (u16, u16))>,
     /// What a frame showed and the terminal does not hold, oldest first.
     waiting: VecDeque<u32>,
     /// The picture going out, and how far.
@@ -898,7 +930,7 @@ impl Sent {
     pub(crate) fn wants(&mut self, id: u32) {
         let going = self.sending.is_some_and(|sending| sending.id == id);
         if going
-            || self.held.contains(&id)
+            || self.held.iter().any(|&(held, _)| held == id)
             || self.waiting.contains(&id)
             || self.waiting.len() >= MOST_HELD
         {
@@ -913,12 +945,12 @@ impl Sent {
     pub(crate) fn keeps(&mut self, kept: impl IntoIterator<Item = u32>) {
         let kept: Vec<u32> = kept.into_iter().collect();
         let deleting = &mut self.deleting;
-        self.held.retain(|id| {
-            if kept.contains(id) {
+        self.held.retain(|&(id, _)| {
+            if kept.contains(&id) {
                 return true;
             }
             if deleting.len() < MOST_HELD {
-                deleting.push_back(*id);
+                deleting.push_back(id);
             }
             false
         });
@@ -993,6 +1025,9 @@ impl Sent {
                     self.command(into, &keys, None);
                     self.deleting.pop_front();
                 }
+                if !self.placed_again(&payload, into, start) {
+                    return;
+                }
                 let Some(id) = self.waiting.pop_front() else {
                     return;
                 };
@@ -1036,11 +1071,45 @@ impl Sent {
                 return;
             }
             self.command(into, &keys, None);
-            self.held.push_back(sending.id);
+            self.held.push_back((sending.id, (columns, rows)));
             if self.held.len() > MOST_HELD {
                 self.held.pop_front();
             }
         }
+    }
+
+    /// Appends to `into` a placement in its new cells for each picture held
+    /// that is shown in other cells than it was placed in, its old one
+    /// deleted first and its bytes kept, so a new size sends no image again;
+    /// answers whether every one owed fitted in the frame begun at `start`.
+    fn placed_again<'a>(
+        &mut self,
+        payload: &impl Fn(u32) -> Option<&'a Payload>,
+        into: &mut String,
+        start: usize,
+    ) -> bool {
+        for at in 0..self.held.len() {
+            let Some(&(id, placed)) = self.held.get(at) else {
+                break;
+            };
+            let Some((columns, rows)) = payload(id).map(Payload::cells) else {
+                continue;
+            };
+            if (columns, rows) == placed {
+                continue;
+            }
+            let unplaced = format!("a=d,d=i,i={id},q=2");
+            let keys = format!("a=p,U=1,i={id},c={columns},r={rows},q=2");
+            if self.cost(&unplaced, None) + self.cost(&keys, None) > room(into, start) {
+                return false;
+            }
+            self.command(into, &unplaced, None);
+            self.command(into, &keys, None);
+            if let Some(held) = self.held.get_mut(at) {
+                held.1 = (columns, rows);
+            }
+        }
+        true
     }
 
     /// Appends to `into` the image `payload` is, written whole where the
@@ -2440,6 +2509,57 @@ mod tests {
     }
 
     #[test]
+    fn a_payload_shown_in_fewer_rows_keeps_its_shape_and_a_sixel_keeps_its_bitmaps() {
+        // Twenty cells across and ten down, at the fallback cell.
+        let mut shown = Payload::new(Protocol::Kitty, Vec::new(), (160, 160), Cell::FALLBACK);
+        assert_eq!(shown.cells(), (20, 10));
+        // Held to five rows, it is half as wide as well.
+        shown.shown_in(5);
+        assert_eq!(shown.cells(), (10, 5));
+        // Never larger than its own size, however many rows there are.
+        shown.shown_in(40);
+        assert_eq!(shown.cells(), (20, 10));
+        // And never less than a cell either way.
+        shown.shown_in(0);
+        assert_eq!(shown.cells(), (2, 1));
+        let mut iterm2 = Payload::new(Protocol::Iterm2, Vec::new(), (160, 160), Cell::FALLBACK);
+        iterm2.shown_in(5);
+        assert_eq!(iterm2.cells(), (10, 5));
+        // A Sixel bitmap covers the cells it was encoded for: what it is
+        // shown in changes only by encoding it again.
+        let mut sixel = Payload::new(Protocol::Sixel, Vec::new(), (160, 160), Cell::FALLBACK);
+        sixel.shown_in(5);
+        assert_eq!(sixel.cells(), (20, 10));
+    }
+
+    #[test]
+    fn a_held_picture_shown_in_other_cells_is_placed_again_and_never_sent_again() {
+        let mut resized = picture_of(3, 1);
+        let mut sent = Sent::default();
+        sent.wants(1);
+        let mut first = String::new();
+        sent.write(|id| (id == 1).then_some(&resized), &mut first);
+        assert!(first.contains("\x1b_Ga=p,U=1,i=1,c=10,r=2,q=2\x1b\\"), "{first:?}");
+
+        // Shown in one row now: its placement goes and one for the new
+        // cells takes its place, and the bytes the terminal holds stay.
+        resized.shown_in(1);
+        sent.wants(1);
+        let mut next = String::new();
+        sent.write(|id| (id == 1).then_some(&resized), &mut next);
+        assert_eq!(
+            next,
+            "\x1b_Ga=d,d=i,i=1,q=2\x1b\\\x1b_Ga=p,U=1,i=1,c=5,r=1,q=2\x1b\\"
+        );
+        assert!(!next.contains("a=t"), "sent again: {next:?}");
+
+        // Placed once at those cells: the frame after owes nothing.
+        let mut then = String::new();
+        sent.write(|id| (id == 1).then_some(&resized), &mut then);
+        assert_eq!(then, "");
+    }
+
+    #[test]
     fn a_key_differing_in_any_one_thing_a_picture_depends_on_is_another_key() {
         // A picture kept under one key is never shown under another, so each
         // thing its bytes depend on parts two keys on its own.
@@ -2461,6 +2581,7 @@ mod tests {
             palette: worn(Theme::Dark, None, &truecolour).identity(),
             protocol: Protocol::Kitty,
             cell,
+            rows: 64,
         };
         let others = [
             (
@@ -2528,6 +2649,7 @@ mod tests {
                     ..key
                 },
             ),
+            ("rows", PictureKey { rows: 32, ..key }),
         ];
 
         assert_eq!(key, PictureKey { ..key }, "a key is itself");
