@@ -49,11 +49,15 @@
 //!   costs far less, caps no label and holds 48 entities and 64
 //!   relationships in 4096 bytes, though one drawn has fewer relationships
 //!   than entities, since its relationships must chain them. The drawing
-//!   probe builds each kind's costliest shape from these caps, four boxes
-//!   with every line the caps allow going out from one and back, so a
-//!   loosened cap is timed at what it admits; on a quiet machine its 95th
-//!   percentile was 1.15 ms for a flowchart, 1.05 ms for a state diagram and
-//!   0.20 ms for an entity-relationship diagram. A sequence diagram, a gantt
+//!   probe builds each kind's costliest shape from these caps, so a loosened
+//!   cap is timed at what it admits: for a flowchart and a state diagram,
+//!   four boxes with every line the caps allow going out from one and back,
+//!   which the engine sets with labels away from their lines and so is
+//!   timed through that refusal, and for an entity-relationship diagram, 48
+//!   entities in seven chains joined by 41 relationships, the most one drawn
+//!   may have. On a quiet machine its 95th percentile was 1.17 ms for a
+//!   flowchart, 1.10 ms for a state diagram and 0.65 ms for an
+//!   entity-relationship diagram. A sequence diagram, a gantt
 //!   and a git graph cost far less: a release build timing each 31 times in a
 //!   room of 80 columns found a sequence diagram of 16 participants and 64
 //!   messages with labels of 40 columns, in 3830 bytes, at 0.56 ms (95th
@@ -65,8 +69,8 @@
 //!   whole, and a git graph 32 commits and 8 branches beside `main`, each in
 //!   2048 bytes. The drawing probe builds each of these from its caps too,
 //!   with every box and line they hold and labels as wide as they allow; on
-//!   the same machine its 95th percentile was 0.79 ms for a sequence diagram,
-//!   0.16 ms for a gantt and 0.16 ms for a git graph.
+//!   the same machine its 95th percentile was 0.83 ms for a sequence diagram,
+//!   0.15 ms for a gantt and 0.15 ms for a git graph.
 //! - **Hostile text taken out, not drawn.** Control, format and invisible
 //!   characters, and the characters boxes are drawn with, are taken out of a
 //!   label before the engine sees it, so a label neither acts on the terminal
