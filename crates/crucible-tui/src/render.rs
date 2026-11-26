@@ -515,6 +515,38 @@ pub struct Renderer<T: Terminal> {
     sent: Sent,
     /// Reused across frames: the graphics commands one frame sends.
     commands: String,
+    /// The iTerm2 and Sixel images the last frame left on screen, each with
+    /// what the rows under it were painted as. Emptied wherever the screen
+    /// is forgotten, since a row written again erases what was over it.
+    overlaid: Vec<Over>,
+}
+
+/// An iTerm2 or Sixel image on screen, wholly inside the transcript band.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Over {
+    /// The picture, by its number.
+    id: u32,
+    /// The screen row its first row is on.
+    top: usize,
+    /// The screen column its first column is on.
+    column: usize,
+    /// How many cells it covers, across and down.
+    cells: (u16, u16),
+    /// What each row under it was painted as, and what of it is selected.
+    under: Vec<(String, Option<Range<usize>>)>,
+}
+
+impl Over {
+    /// Whether this is the same picture, at the same place and size.
+    fn stands_as(&self, other: &Self) -> bool {
+        (self.id, self.top, self.column, self.cells)
+            == (other.id, other.top, other.column, other.cells)
+    }
+
+    /// The screen rows it covers.
+    fn rows(&self) -> Range<usize> {
+        self.top..self.top + usize::from(self.cells.1)
+    }
 }
 
 impl<T: Terminal> Renderer<T> {
@@ -576,6 +608,7 @@ impl<T: Terminal> Renderer<T> {
             images: Capability::Text,
             sent: Sent::default(),
             commands: String::new(),
+            overlaid: Vec::new(),
         }
     }
 
@@ -1237,6 +1270,7 @@ impl<T: Terminal> Renderer<T> {
         self.palette = palette;
         self.relaid(self.glyphs);
         self.painted.forget();
+        self.overlaid.clear();
     }
 
     /// Tells this renderer which characters it may draw with.
@@ -1257,6 +1291,7 @@ impl<T: Terminal> Renderer<T> {
         self.markdown.draws(glyphs);
         self.relaid(glyphs);
         self.painted.forget();
+        self.overlaid.clear();
     }
 
     /// Tells this renderer how math in an answer is drawn.
@@ -1277,6 +1312,7 @@ impl<T: Terminal> Renderer<T> {
         });
         self.relaid(self.glyphs);
         self.painted.forget();
+        self.overlaid.clear();
     }
 
     /// How math in an answer is drawn.
@@ -1301,6 +1337,7 @@ impl<T: Terminal> Renderer<T> {
         });
         self.relaid(self.glyphs);
         self.painted.forget();
+        self.overlaid.clear();
     }
 
     /// How a diagram in an answer is drawn.
@@ -1496,6 +1533,7 @@ impl<T: Terminal> Renderer<T> {
         self.relaid(self.glyphs);
         self.unselects();
         self.painted.forget();
+        self.overlaid.clear();
     }
 
     /// Appends streamed output and puts a frame on screen.
@@ -2232,6 +2270,7 @@ impl<T: Terminal> Renderer<T> {
         // Every row of the window is now showing something drawn for a size it
         // no longer has, so the next frame may not skip any of them.
         self.painted.forget();
+        self.overlaid.clear();
 
         self.draw()
     }
@@ -2260,6 +2299,7 @@ impl<T: Terminal> Renderer<T> {
         // down afresh on every frame already.
         if self.native.is_none() {
             self.painted.forget();
+            self.overlaid.clear();
         } else {
             for id in self.record.picture_ids() {
                 self.sent.wants(id);
@@ -2314,6 +2354,7 @@ impl<T: Terminal> Renderer<T> {
         // Every row of the band is showing a line that is no longer in the
         // record, so the next frame may not skip any of them.
         self.painted.forget();
+        self.overlaid.clear();
 
         self.draw()
     }
@@ -2794,6 +2835,11 @@ impl<T: Terminal> Renderer<T> {
         }
 
         let bands = self.bands();
+        // A Sixel picture kept for another width is encoded for this one
+        // only once the band is about to show it, and before anything is
+        // worked out from how tall what it shows is.
+        let record_rows = self.record_rows(&bands);
+        self.record.freshens(record_rows);
         // Worked out once for the whole frame, and it names rows rather than
         // setting a mode: the result under the pointer is painted from the lit
         // palette and everything else on screen from the plain one.
@@ -2801,7 +2847,7 @@ impl<T: Terminal> Renderer<T> {
         let palette = self.palette;
         let pointed = self.palette.pointing(true);
         let view = self.view(&bands);
-        self.painted.selects(self.taken, view);
+        self.painted.selects(self.taken, view.clone());
         self.painted.open(self.size.rows, self.size.columns);
 
         // The rail's cells, one a band row, set after the row beside them has
@@ -2818,7 +2864,7 @@ impl<T: Terminal> Renderer<T> {
         // A block being held stands at the foot as one row saying so, under
         // what is above it, for as long as the reader is at the foot to see it.
         let held = self.holding(folds).filter(|_| self.holds_row(&bands));
-        let mut showing = self.record.view(self.record_rows(&bands));
+        let mut showing = self.record.view(record_rows);
         showing.extend(held);
         // The pictures this frame shows are the ones the terminal must hold,
         // and only where their cells are drawn.
@@ -2827,6 +2873,22 @@ impl<T: Terminal> Renderer<T> {
                 self.sent.wants(id);
             }
         }
+        // An iTerm2 or Sixel image is written over its rows only where the
+        // band shows every one of them; one partly shown is its blank rows.
+        // The rows an image stood on that no image stands on in the same
+        // place now are written again, which erases what was over them.
+        let mut over = if self.palette.writes_color() {
+            self.placed_over(&showing, bands.transcript.start, folds)
+        } else {
+            Vec::new()
+        };
+        let gone: Vec<Range<usize>> = self
+            .overlaid
+            .iter()
+            .filter(|was| !over.iter().any(|now| now.stands_as(was)))
+            .map(Over::rows)
+            .collect();
+        let covering = (!over.is_empty()).then(|| view.clone());
         let mut showing = showing.into_iter();
         for at in bands.transcript.start..bands.transcript.end {
             let row = match (showing.next(), rail.next()) {
@@ -2840,6 +2902,22 @@ impl<T: Terminal> Renderer<T> {
                 }
                 (row, None) => row,
             };
+            if gone.iter().any(|rows| rows.contains(&at)) {
+                self.painted.blank(at);
+            }
+            if let (Some(row), Some(view)) = (&row, &covering)
+                && let Some(image) = over.iter_mut().find(|image| image.rows().contains(&at))
+            {
+                let worn = if lit.contains(&at) {
+                    &pointed
+                } else {
+                    &palette
+                };
+                let covered = self
+                    .taken
+                    .and_then(|taken| taken.covers(at, self.size.columns, view));
+                image.under.push((row.paint(worn), covered));
+            }
             match row {
                 Some(row) if lit.contains(&at) => self.painted.paint(at, &row, &pointed),
                 Some(row) => self.painted.paint(at, &row, &palette),
@@ -2885,6 +2963,24 @@ impl<T: Terminal> Renderer<T> {
         self.commands.clear();
         let record = &self.record;
         self.sent.write(|id| record.payload(id), &mut self.commands);
+        // After every row, so each image is written over rows already blank
+        // for it, and only where they or it changed.
+        for image in &mut over {
+            if self.overlaid.contains(image) {
+                continue;
+            }
+            let mut written = format!("\x1b[{};{}H", image.top + 1, image.column + 1);
+            let drawn = record
+                .payload(image.id)
+                .is_some_and(|payload| self.sent.image(payload, &mut written));
+            if drawn {
+                self.commands.push_str(&written);
+            } else {
+                // Not written, so not on screen: asked again next frame.
+                image.under.clear();
+            }
+        }
+        self.overlaid = over;
         self.painted.graphics(&self.commands);
 
         let (row, column) = self.parked(&bands);
@@ -2899,6 +2995,49 @@ impl<T: Terminal> Renderer<T> {
 
         self.terminal.write(self.painted.sealed())?;
         self.terminal.flush()
+    }
+
+    /// Every iTerm2 or Sixel image `showing` stands wholly in, its first
+    /// row on screen row `start`: rows held blank for one picture, from its
+    /// first row to its last, each at the same column and all of its width
+    /// inside `folds`, under nothing yet.
+    fn placed_over(&self, showing: &[Row], start: usize, folds: usize) -> Vec<Over> {
+        let mut over = Vec::new();
+        let mut at = 0;
+        while let Some(row) = showing.get(at) {
+            let placed = row.held().and_then(|(column, held, across)| {
+                let payload = self.record.payload(held.id)?;
+                let cells = payload.cells();
+                let fits = held.row == 0
+                    && held.column == 0
+                    && across == usize::from(cells.0)
+                    && column + across <= folds;
+                let whole = (1..cells.1).all(|down| {
+                    showing
+                        .get(at + usize::from(down))
+                        .and_then(Row::held)
+                        .is_some_and(|(at_column, below, wide)| {
+                            (at_column, below.id, below.row, below.column, wide)
+                                == (column, held.id, down, 0, across)
+                        })
+                });
+                (fits && whole).then(|| Over {
+                    id: held.id,
+                    top: start + at,
+                    column,
+                    cells,
+                    under: Vec::new(),
+                })
+            });
+            match placed {
+                Some(image) => {
+                    at += usize::from(image.cells.1).max(1);
+                    over.push(image);
+                }
+                None => at += 1,
+            }
+        }
+        over
     }
 
     /// Where the cursor goes, in window rows and columns.

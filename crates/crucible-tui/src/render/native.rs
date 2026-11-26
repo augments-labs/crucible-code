@@ -81,6 +81,16 @@
 //! stale copy of the region in the scrollback on every terminal that does
 //! rewrap, which is most of them.
 //!
+//! A picture goes into the scrollback with the rows it stands in. Kitty's
+//! cells name it, so they place it wherever the terminal keeps them. An iTerm2
+//! or Sixel picture's rows go out blank, and once its last row has gone out
+//! the image is written back over them, from the cursor saved and taken up to
+//! its first row, and the cursor put back: once, since what the terminal keeps
+//! of it scrolls with the rows. In the live region its rows stay blank, since
+//! the region is drawn again over itself and an image written there would be
+//! left behind. A Sixel picture kept for another width is encoded for this one
+//! when the settled rewrite gives the scrollback back, and not before.
+//!
 //! The rewind also trusts that a row crucible counted as fitting the window
 //! takes one row of it. A terminal that draws a symbol wider than crucible
 //! counts it, as some draw one that has a picture form, would carry the end
@@ -99,7 +109,9 @@ use super::Renderer;
 use super::frame::{BEGIN_SYNC, END_SYNC, HIDE, SHOW};
 use crate::color::Slot;
 use crate::glyphs::Glyphs;
+use crate::record::Record;
 use crate::row::Row;
+use crate::terminal::graphics::Sent;
 use crate::terminal::system::ResizeFlag;
 use crate::terminal::{Size, Terminal, TerminalError};
 use crate::width;
@@ -522,12 +534,19 @@ impl<T: Terminal> Renderer<T> {
                     .paint_into(&self.palette, &mut out);
                 out.push_str("\r\n");
             }
+            self.record.freshens_all();
+            let mut over = Going::default();
+            let window = self.size.rows;
             self.record.kept(self.glyphs, |row| {
                 if pictured {
                     row.pictures().for_each(|id| self.sent.wants(id));
                 }
-                row.clipped(columns).paint_into(&self.palette, &mut out);
+                let row = row.clipped(columns);
+                row.paint_into(&self.palette, &mut out);
                 out.push_str("\r\n");
+                if pictured && let Some(image) = over.went(&row, window, &self.record, &self.sent) {
+                    out.push_str(&image);
+                }
             });
             native.widths.clear();
             native.parked = 0;
@@ -546,13 +565,20 @@ impl<T: Terminal> Renderer<T> {
 
         self.record.hangs_through(through);
         let mut emitted = 0;
+        let mut over = Going::default();
         for line in first..through {
             for row in self.record.folded(line) {
                 if pictured {
                     row.pictures().for_each(|id| self.sent.wants(id));
                 }
-                row.clipped(columns).paint_into(&self.palette, &mut out);
+                let row = row.clipped(columns);
+                row.paint_into(&self.palette, &mut out);
                 out.push_str("\r\n");
+                if pictured
+                    && let Some(image) = over.went(&row, self.size.rows, &self.record, &self.sent)
+                {
+                    out.push_str(&image);
+                }
                 emitted += 1;
             }
         }
@@ -688,6 +714,56 @@ impl<T: Terminal> Renderer<T> {
         // twice for as long as the session lasts instead of for one write.
         native.frame = if replays { String::new() } else { out };
         written
+    }
+}
+
+/// How much of an iTerm2 or Sixel picture's rows have gone out in a row, as
+/// they go into the scrollback.
+#[derive(Debug, Default)]
+struct Going {
+    /// The picture, the column its rows start at, and how many have gone.
+    going: Option<(u32, usize, u16)>,
+}
+
+impl Going {
+    /// Counts `row`, which has just gone out, and where it is the last of a
+    /// picture's rows to, all of them whole and in order, gives the image
+    /// written back over them: the cursor saved, taken up to the picture's
+    /// first row and column, and put back after it. None where the picture is
+    /// as tall as a `window` that many rows, since the top of it has left the
+    /// screen.
+    fn went(&mut self, row: &Row, window: usize, record: &Record, sent: &Sent) -> Option<String> {
+        let Some((column, held, across)) = row.held().filter(|(_, held, _)| held.column == 0)
+        else {
+            self.going = None;
+            return None;
+        };
+        let Some(payload) = record.payload(held.id) else {
+            self.going = None;
+            return None;
+        };
+        let (wide, down) = payload.cells();
+        let seen = match self.going {
+            _ if held.row == 0 => Some(1),
+            Some((id, at, seen)) if (id, at, seen) == (held.id, column, held.row) => Some(seen + 1),
+            _ => None,
+        };
+        self.going = seen
+            .filter(|_| across == usize::from(wide))
+            .map(|seen| (held.id, column, seen));
+        if seen != Some(down) {
+            return None;
+        }
+        self.going = None;
+        if usize::from(down) >= window {
+            return None;
+        }
+        let mut out = format!("\x1b7\x1b[{down}A\x1b[{}G", column + 1);
+        if !sent.image(payload, &mut out) {
+            return None;
+        }
+        out.push_str("\x1b8");
+        Some(out)
     }
 }
 

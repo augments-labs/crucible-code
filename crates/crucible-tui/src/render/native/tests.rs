@@ -4073,9 +4073,10 @@ fn a_native_hostile_path_or_line_in_a_drawn_fence_writes_no_escape() {
 mod pictures {
     use super::*;
     use crate::render::tests::pictures::{
-        DIAGRAM, Printed, commands, graphics_bytes, pictured_by, placeholders, printed_bytes,
-        transmitted,
+        DIAGRAM, Printed, commands, graphics_bytes, images, pictured_by, pictured_in, placeholders,
+        printed_bytes, printed_iterm2, printed_sixel, transmitted,
     };
+    use crate::terminal::graphics;
 
     /// A native renderer on `window` that draws pictures with `printed`,
     /// with the box under it.
@@ -4161,6 +4162,134 @@ mod pictures {
                 .iter()
                 .all(|command| !command.starts_with("a=d"))
         );
+    }
+
+    /// The protocols whose images are written over cells held for them.
+    const WRITTEN_OVER: [graphics::Protocol; 2] =
+        [graphics::Protocol::Iterm2, graphics::Protocol::Sixel];
+
+    /// What is written for the `made`th picture [`Printed`] makes, three by
+    /// two cells of `bytes` bytes, in `protocol`.
+    fn image(protocol: graphics::Protocol, made: u8, bytes: usize) -> String {
+        match protocol {
+            graphics::Protocol::Sixel => String::from_utf8(printed_sixel(made, bytes)).unwrap(),
+            graphics::Protocol::Iterm2 | graphics::Protocol::Kitty => {
+                printed_iterm2(made, bytes, 3, 2)
+            }
+        }
+    }
+
+    /// A native renderer on `window` that draws `protocol`'s pictures with
+    /// `printed`, with the box under it.
+    fn pictured_as(
+        window: &Window,
+        protocol: graphics::Protocol,
+        printed: Printed,
+    ) -> Renderer<Window> {
+        let mut render = native(window);
+        pictured_in(&mut render, protocol, printed);
+        stands(&mut render);
+        render
+    }
+
+    /// Each image `written` holds, where it was written straight after the
+    /// rows held for it: the cursor kept, taken up the picture's two rows to
+    /// its first column, and put back after it.
+    fn over_its_rows(written: &str) -> Vec<String> {
+        images(written)
+            .into_iter()
+            .map(|(before, image)| {
+                let after = &written[before.len() + image.len()..];
+                assert!(
+                    before.ends_with("\r\n\x1b7\x1b[2A\x1b[1G") && after.starts_with("\x1b8"),
+                    "not written over its rows: {:?} {:.40?}",
+                    &before[before.len().saturating_sub(40)..],
+                    after
+                );
+                image.to_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_native_iterm2_or_sixel_diagram_is_written_into_the_scrollback_once() {
+        for protocol in WRITTEN_OVER {
+            let window = Window::new(40, 8);
+            let mut render = pictured_as(&window, protocol, Printed::new(3, 2, 300));
+            render.stream(DIAGRAM).unwrap();
+            render.settle().unwrap();
+            stands(&mut render);
+            // Standing in the live region it is held blank, and not written.
+            let live = window.take();
+            assert!(images(&live).is_empty(), "{protocol:?}: {live:?}");
+
+            for line in 0..12 {
+                render.commit(&format!("line {line}")).unwrap();
+            }
+            render.seal().unwrap();
+            stands(&mut render);
+            let written = window.take();
+            assert_eq!(
+                over_its_rows(&written),
+                [image(protocol, 0, 300)],
+                "{protocol:?}"
+            );
+            assert!(!written.contains('\u{10EEEE}'), "{protocol:?}");
+            assert!(!written.contains("\x1b_G"), "{protocol:?}");
+
+            render.commit("one more").unwrap();
+            stands(&mut render);
+            assert!(images(&window.take()).is_empty(), "{protocol:?}");
+        }
+    }
+
+    #[test]
+    fn a_native_iterm2_or_sixel_picture_is_written_again_in_the_settled_rewrite() {
+        // Sixel's quantising is put off until the rewrite that gives the
+        // scrollback back at the new width, and then done.
+        for protocol in WRITTEN_OVER {
+            let window = Window::new(40, 8);
+            let mut render = pictured_as(&window, protocol, Printed::new(3, 2, 300));
+            answered(&mut render);
+            window.take();
+
+            settles_at(&window, &mut render, 100, 8);
+            let after = window.take();
+            assert_eq!(
+                over_its_rows(&after),
+                [image(protocol, 1, 300)],
+                "{protocol:?}"
+            );
+            assert_eq!(render.record.picture_ids().collect::<Vec<_>>(), [2]);
+        }
+    }
+
+    #[test]
+    fn a_native_session_writes_no_iterm2_or_sixel_image_without_colour_or_redirected() {
+        for protocol in WRITTEN_OVER {
+            for palette in [
+                Palette::resolve(false, Theme::Dark, None, &|_| None),
+                Palette::plain(),
+            ] {
+                let window = Window::new(40, 8);
+                let mut render = pictured_as(&window, protocol, Printed::new(3, 2, 300));
+                render.wears(palette);
+                answered(&mut render);
+                let written = window.written();
+                assert!(images(&written).is_empty(), "{protocol:?}: {written:?}");
+                assert!(written.contains("graph"), "{protocol:?}");
+            }
+
+            let window = Window::redirected(40, 8);
+            let mut render = native(&window);
+            pictured_in(&mut render, protocol, Printed::new(3, 2, 300));
+            render.stream(DIAGRAM).unwrap();
+            render.settle().unwrap();
+            drop(render);
+            let written = window.written();
+            assert!(images(&written).is_empty(), "{protocol:?}: {written:?}");
+            assert!(written.contains("graph"), "{protocol:?}");
+        }
     }
 
     #[test]

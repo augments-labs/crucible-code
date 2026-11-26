@@ -44,11 +44,15 @@
 //! clipped rather than pretending it can be rebuilt.
 //!
 //! A drawn block may be shown as a picture instead of its rows: a diagram
-//! drawn as an image, on a terminal that confirmed the Kitty protocol, where
+//! drawn as an image, on a terminal that confirmed a picture protocol, where
 //! colour is written. It is then laid out as rows of cells the picture is
-//! placed in, and keeps what it was drawn from beside what the terminal is
+//! placed in, by Kitty, or held blank for an iTerm2 or Sixel image written
+//! over them, and keeps what it was drawn from beside what the terminal is
 //! sent, so a new width or a new palette encodes it again without asking its
-//! drawer. Those two cost far more than a row, so pictures have caps of their
+//! drawer. A Sixel picture is quantised, which costs far more than a PNG, so
+//! a new width alone encodes one again only once the band shows it
+//! ([`Record::freshens`]) or a native session gives its scrollback back
+//! ([`Record::freshens_all`]); until then it keeps the cells it had. Those two cost far more than a row, so pictures have caps of their
 //! own: [`MOST_KEPT_IMAGES`] of them and [`MOST_KEPT_IMAGE_BYTES`] together.
 //! Past either, the oldest is drawn as its text again for as long as it is
 //! held, and the reader stays on the line they were reading, as they do for
@@ -208,6 +212,9 @@ struct Picturing {
     left: u32,
     /// Whether a picture kept was let go of since the drawing last asked.
     let_go: bool,
+    /// Whether a Sixel picture kept for another width is encoded for this
+    /// one now, as it is where it is in view, rather than left until it is.
+    now: bool,
 }
 
 impl fmt::Debug for Picturing {
@@ -219,6 +226,7 @@ impl fmt::Debug for Picturing {
             .field("next", &self.next)
             .field("left", &self.left)
             .field("let_go", &self.let_go)
+            .field("now", &self.now)
             .finish()
     }
 }
@@ -232,6 +240,7 @@ impl Default for Picturing {
             next: Self::first_number(),
             left: MOST_PICTURE_ID,
             let_go: false,
+            now: false,
         }
     }
 }
@@ -392,11 +401,12 @@ impl Drawn {
     fn pictured(&self, columns: usize) -> Option<Vec<Row>> {
         let picture = self.picture.as_ref()?;
         let (across, down) = picture.kept.payload.cells();
-        (usize::from(across) <= columns).then(|| {
-            (0..down)
-                .map(|row| Row::picture(picture.id, row, across))
-                .collect()
-        })
+        let row = match picture.kept.payload.protocol() {
+            Protocol::Kitty => Row::picture,
+            Protocol::Iterm2 | Protocol::Sixel => Row::reserved,
+        };
+        (usize::from(across) <= columns)
+            .then(|| (0..down).map(|at| row(picture.id, at, across)).collect())
     }
 
     /// Lays the block out again for `columns` in `glyphs`, by what `by`
@@ -992,11 +1002,7 @@ impl Record {
         if kind != Kind::Mermaid || self.modes.of(kind) != Some(Mode::Image) {
             return None;
         }
-        let Capability::Graphics {
-            protocol: Protocol::Kitty,
-            cell,
-        } = self.picturing.images
-        else {
+        let Capability::Graphics { protocol, cell } = self.picturing.images else {
             return None;
         };
         let palette = self.picturing.palette.filter(PaletteIdentity::draws)?;
@@ -1004,7 +1010,7 @@ impl Record {
             kind,
             bucket: Bucket::of(columns),
             palette,
-            protocol: Protocol::Kitty,
+            protocol,
             cell,
         })
     }
@@ -1025,7 +1031,9 @@ impl Record {
     /// pictures kept, so it costs what they do, however many diagrams the
     /// session has drawn as text. Nor is one refused for its size asked again
     /// in a new palette, which changes no size; one not drawn here is, since
-    /// that is also what a picture refused for want of time is told.
+    /// that is also what a picture refused for want of time is told. A Sixel
+    /// picture kept under a key that differs from this one by its width alone
+    /// is kept as it is, unless it is wanted now.
     fn settle(&mut self, drawn: &mut Drawn, columns: usize, glyphs: Glyphs) -> bool {
         let key = if drawn.fallen || !drawn.block.closed {
             None
@@ -1037,6 +1045,17 @@ impl Record {
             self.picturing.let_go |= had;
             return had;
         };
+        let put_off = !self.picturing.now
+            && drawn.picture.as_ref().is_some_and(|picture| {
+                picture.key.protocol == Protocol::Sixel
+                    && PictureKey {
+                        bucket: picture.key.bucket,
+                        ..key
+                    } == picture.key
+            });
+        if put_off {
+            return false;
+        }
         if drawn
             .picture
             .as_ref()
@@ -1162,6 +1181,129 @@ impl Record {
                 .saturating_sub(was)
                 .saturating_add(oldest.weight);
             self.remeasure_all();
+        }
+    }
+
+    /// Encodes again for the width there is now each Sixel picture a band
+    /// `rows` tall shows that was kept for another, and answers whether any
+    /// was.
+    ///
+    /// Asked before the band is drawn. One encoded again may change height
+    /// and so what the band shows, so the band is looked at again after each;
+    /// each is encoded at most once, so this ends within the pictures kept.
+    pub(crate) fn freshens(&mut self, rows: usize) -> bool {
+        let mut any = false;
+        for _ in 0..=MOST_KEPT_IMAGES {
+            let from = if self.following {
+                self.foot(rows)
+            } else {
+                self.top
+            };
+            let mut at = from.line.saturating_sub(self.gone);
+            let mut into = usize::from(from.into);
+            let mut left = rows;
+            let mut stale = None;
+            while left > 0 {
+                let Some(&tall) = self.tall.get(at) else {
+                    break;
+                };
+                if self.stale(at) {
+                    stale = Some(at);
+                    break;
+                }
+                left = left.saturating_sub(usize::from(tall).saturating_sub(into));
+                into = 0;
+                at += 1;
+            }
+            let Some(at) = stale else {
+                break;
+            };
+            self.freshen(at);
+            any = true;
+        }
+        if any {
+            self.spill();
+        }
+        any
+    }
+
+    /// Encodes again for the width there is now every Sixel picture kept for
+    /// another, and answers whether any was: for a native session about to
+    /// give back every line it keeps.
+    pub(crate) fn freshens_all(&mut self) -> bool {
+        let mut any = false;
+        for at in 0..self.lines.len() {
+            if self.stale(at) {
+                self.freshen(at);
+                any = true;
+            }
+        }
+        if any {
+            self.spill();
+        }
+        any
+    }
+
+    /// Whether line `at` of those held is a Sixel picture kept for a width
+    /// other than the one there is now.
+    fn stale(&self, at: usize) -> bool {
+        let bucket = Bucket::of(self.columns);
+        matches!(
+            self.lines.get(at),
+            Some(Line::Drawn(Drawn { picture: Some(picture), .. }))
+                if picture.key.protocol == Protocol::Sixel && picture.key.bucket != bucket
+        )
+    }
+
+    /// Settles line `at`'s picture as one wanted now, and lays it out again
+    /// where that changed it.
+    fn freshen(&mut self, at: usize) {
+        let Some(Line::Drawn(mut drawn)) = self
+            .lines
+            .get_mut(at)
+            .map(|line| std::mem::replace(line, Line::Set(Row::new())))
+        else {
+            return;
+        };
+        let (columns, glyphs) = (self.columns, drawn.laid.1);
+        self.picturing.now = true;
+        let settled = self.settle(&mut drawn, columns, glyphs);
+        self.picturing.now = false;
+        if settled {
+            let by = By {
+                links: &self.links,
+                drawers: &self.drawers,
+                modes: self.modes,
+                offers: self.offers,
+            };
+            let was = drawn.weight;
+            drawn.lay(columns, glyphs, by);
+            self.weight = self.weight.saturating_sub(was).saturating_add(drawn.weight);
+        }
+        if let Some(line) = self.lines.get_mut(at) {
+            *line = Line::Drawn(drawn);
+        }
+        self.remeasure_at(at);
+    }
+
+    /// Works out line `at`'s height again, after its rows were laid again,
+    /// keeping the band on the row it was at within the line where it can.
+    fn remeasure_at(&mut self, at: usize) {
+        let (Some(line), Some(&was)) = (self.lines.get(at), self.tall.get(at)) else {
+            return;
+        };
+        let now = Self::measure(line, self.columns);
+        if let Some(tall) = self.tall.get_mut(at) {
+            *tall = now;
+        }
+        let (was, now16) = (usize::from(was), now);
+        let now = usize::from(now);
+        self.rows = self.rows.saturating_sub(was).saturating_add(now);
+        for end in self.ends.iter_mut().skip(at) {
+            *end = end.saturating_sub(was).saturating_add(now);
+        }
+        if self.top.line == self.gone + at {
+            self.top.into = self.top.into.min(now16.saturating_sub(1));
         }
     }
 
