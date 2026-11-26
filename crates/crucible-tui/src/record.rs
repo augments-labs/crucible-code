@@ -53,8 +53,9 @@
 //! Past either, the oldest is drawn as its text again for as long as it is
 //! held, and the reader stays on the line they were reading, as they do for
 //! any block that changes height.
-//! A block refused its picture is not asked for one again at a new width, so
-//! a resize encodes the kept pictures and no more. Each picture made is told
+//! A block refused its picture is not asked for one again at a new width, nor
+//! in a new palette where it was refused for its size, so a resize or a new
+//! theme encodes the kept pictures and no more. Each picture made is told
 //! to the terminal by a number of its own, counted on from one drawn at
 //! random, since the terminal's numbers are shared with every other program
 //! writing to it: see [`MOST_PICTURE_ID`].
@@ -1019,10 +1020,12 @@ impl Record {
     /// oldest kept is drawn as text instead, laid out again at `columns` in
     /// `glyphs`, until it fits.
     ///
-    /// A block refused its picture is asked again in a new palette, protocol
-    /// or cell, and not at a new width: a width change encodes again only the
+    /// A block refused its picture is asked again in a new protocol or cell,
+    /// and not at a new width: a width change encodes again only the
     /// pictures kept, so it costs what they do, however many diagrams the
-    /// session has drawn as text.
+    /// session has drawn as text. Nor is one refused for its size asked again
+    /// in a new palette, which changes no size; one not drawn here is, since
+    /// that is also what a picture refused for want of time is told.
     fn settle(&mut self, drawn: &mut Drawn, columns: usize, glyphs: Glyphs) -> bool {
         let key = if drawn.fallen || !drawn.block.closed {
             None
@@ -1039,9 +1042,19 @@ impl Record {
             .as_ref()
             .is_some_and(|picture| picture.key == key)
             || drawn.refused.as_ref().is_some_and(|refused| {
+                let (was, why) = (refused.0, refused.1);
+                let palette = match why {
+                    Undrawn::NotHere => was.palette,
+                    Undrawn::PastCap
+                    | Undrawn::NotText
+                    | Undrawn::TooWide
+                    | Undrawn::Unsupported(_)
+                    | Undrawn::TooLargeToKeep => key.palette,
+                };
                 PictureKey {
                     bucket: key.bucket,
-                    ..refused.0
+                    palette,
+                    ..was
                 } == key
             })
         {
@@ -3237,12 +3250,14 @@ mod tests {
         }
 
         /// Pictures `rows` cells down and two across, each payload `bytes`
-        /// long, with what the cache holds by source.
+        /// long, with what the cache holds by source, and why it refuses to
+        /// make one, where it does.
         pub(super) struct Fake {
             pub(super) asked: Asked,
             pub(super) bytes: usize,
             pub(super) rows: u16,
             pub(super) cached: Vec<&'static str>,
+            pub(super) refuses: Option<Undrawn>,
         }
 
         impl Fake {
@@ -3274,7 +3289,7 @@ mod tests {
                 _: &Form,
             ) -> Result<Payload, Undrawn> {
                 self.note(format!("make {}", source.trim()));
-                Ok(self.payload(key))
+                self.refuses.map_or_else(|| Ok(self.payload(key)), Err)
             }
 
             fn reencode(&mut self, _: &KeptPicture, key: &PictureKey) -> Result<Payload, Undrawn> {
@@ -3366,6 +3381,7 @@ mod tests {
             bytes,
             rows,
             cached,
+            refuses: None,
         };
         (fake, asked)
     }
@@ -3614,6 +3630,54 @@ mod tests {
         assert_eq!(picturing::asked(&asked), before);
         assert_eq!(picturing::refused(&record, 0), Some(Undrawn::TooWide));
         assert_eq!(record.folded(0).len(), 1, "laid out as its text");
+    }
+
+    #[test]
+    fn a_diagram_refused_its_picture_for_its_size_is_not_drawn_again_in_a_new_palette() {
+        // No palette changes a picture's size, so a block refused one for it
+        // is laid out again as its text in the new colours, and nothing is
+        // asked for it; one not drawn here may be drawn now, and is asked.
+        let refusals = [
+            (fake(100, MOST_PLACED + 1, vec![]), Undrawn::TooWide),
+            (
+                fake(MOST_KEPT_IMAGE_BYTES, 3, vec![]),
+                Undrawn::TooLargeToKeep,
+            ),
+            (fake(100, 3, vec![]), Undrawn::PastCap),
+            (fake(100, 3, vec![]), Undrawn::NotHere),
+        ];
+        let light = picturing::coloured(Theme::Light);
+        for ((mut fake, asked), why) in refusals {
+            if matches!(why, Undrawn::PastCap | Undrawn::NotHere) {
+                fake.refuses = Some(why);
+            }
+            let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+            record.drawn(picturing::diagram("a"), Glyphs::Unicode, Theme::Dark);
+            assert_eq!(picturing::refused(&record, 0), Some(why));
+            let before = picturing::asked(&asked);
+
+            record.pictured_as(
+                Capability::Graphics {
+                    protocol: Protocol::Kitty,
+                    cell: picturing::CELL,
+                },
+                light.identity(),
+            );
+            record.relay(40, Glyphs::Unicode, Theme::Light);
+
+            let after = picturing::asked(&asked);
+            if why == Undrawn::NotHere {
+                assert_eq!(
+                    after.get(before.len()..),
+                    Some(before.as_slice()),
+                    "{why:?}: not asked again"
+                );
+            } else {
+                assert_eq!(after, before, "{why:?}: asked again");
+            }
+            assert_eq!(picturing::refused(&record, 0), Some(why), "{why:?}");
+            assert_eq!(record.folded(0).len(), 1, "{why:?}: laid out as its text");
+        }
     }
 
     #[test]

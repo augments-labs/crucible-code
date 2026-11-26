@@ -431,6 +431,22 @@ mod tests {
                     "{screen:?}: a width change took {took:?}"
                 );
             }
+
+            // A new palette encodes the kept pictures again, and draws none
+            // a picture was refused for its size.
+            renderer.wears(Palette::resolve(true, Theme::Light, None, &truecolour));
+            renderer.settle().unwrap();
+
+            assert_eq!(
+                asked.made.load(Ordering::Relaxed),
+                TOO_WIDE + pictured,
+                "{screen:?}: a new palette drew a picture refused for its size"
+            );
+            assert_eq!(
+                asked.reencoded.load(Ordering::Relaxed),
+                2 * MOST_KEPT_IMAGES,
+                "{screen:?}: a new palette did not encode every kept picture again"
+            );
         }
     }
 }

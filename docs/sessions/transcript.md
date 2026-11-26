@@ -676,11 +676,11 @@ was drawn from and what the terminal was sent counted once each. Past either,
 the oldest is drawn as its text again, and in the full screen the transcript
 stays on the line you were reading. A diagram whose picture alone is more than
 1.5 MiB, or would take more than 64 cells across or down, is drawn as text,
-and stays text when the window is resized. In the full screen the terminal is
-told to let go of each picture the session stops keeping or draws again. In
-native mode it keeps every picture it was sent, since the scrollback still
-shows them, up to its own limit; past that it lets the oldest go, and their
-place in the scrollback is left blank.
+and stays text when the window is resized or the theme changes. In the full
+screen the terminal is told to let go of each picture the session stops
+keeping or draws again. In native mode it keeps every picture it was sent,
+since the scrollback still shows them, up to its own limit; past that it lets
+the oldest go, and their place in the scrollback is left blank.
 
 A picture the transcript turns into pixels, whether an SVG diagram or a PNG,
 JPEG, GIF or WebP file, is bounded before it is read, and a picture past any

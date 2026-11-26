@@ -14799,7 +14799,7 @@
     {
       "id": "CASE-TRANSCRIPT-PICTURES-KITTY-TIMED-RESIZE",
       "family": "transcript-pictures",
-      "obligation": "In both screen modes, with four times MOST_KEPT_IMAGES gantts streamed, two refused their picture as too wide, MOST_KEPT_IMAGES + 1 drawn as pictures and the rest as text, a width change from 80 to 120 columns makes no picture, encodes exactly MOST_KEPT_IMAGES again and, built optimised, returns within 500 ms.",
+      "obligation": "In both screen modes, with four times MOST_KEPT_IMAGES gantts streamed, two refused their picture as too wide, MOST_KEPT_IMAGES + 1 drawn as pictures and the rest as text, a width change from 80 to 120 columns makes no picture, encodes exactly MOST_KEPT_IMAGES again and, built optimised, returns within 500 ms; a change to the light theme after it makes no picture either and encodes exactly MOST_KEPT_IMAGES again.",
       "package": "crucible-code",
       "target": {
         "kind": "bin",
@@ -14807,7 +14807,7 @@
       },
       "case": "cli::pictures::tests::a_width_change_at_the_caps_encodes_again_the_kept_pictures_and_no_more",
       "source": "src/cli/pictures.rs",
-      "body_sha256": "e69de0c1383fb656f426e38870d717b66e91b1c86ce9ccffbcf13cfca21197bc",
+      "body_sha256": "12131d81dddc9191409f23f28d5b85b98e1aa71ee41f1f5131db90863acb4710",
       "platforms": [
         "linux",
         "macos",
@@ -15042,6 +15042,24 @@
       "case": "render::native::tests::pictures::a_native_picture_encoded_again_or_drawn_as_text_is_never_deleted",
       "source": "crates/crucible-tui/src/render/native/tests.rs",
       "body_sha256": "d58f08def615f0a16543a2f51bf660a2a813f06e303cc2112e8959dd1c925788",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-SIZE-REFUSAL-PALETTE",
+      "family": "transcript-pictures",
+      "obligation": "A block refused its picture as too wide, too large to keep or past its cap is laid out again as its text in a new palette with nothing asked for it, and one not drawn here is asked again.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::a_diagram_refused_its_picture_for_its_size_is_not_drawn_again_in_a_new_palette",
+      "source": "crates/crucible-tui/src/record.rs",
+      "body_sha256": "12b485ed8103b4adb32d786c55fe234260178fea109315ff8820cfb01b1f92ff",
       "platforms": [
         "linux",
         "macos",
