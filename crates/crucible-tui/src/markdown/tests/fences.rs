@@ -156,6 +156,48 @@ fn a_closing_run_with_more_blanks_after_it_than_are_kept_is_a_line_of_code() {
 }
 
 #[test]
+fn a_closing_run_with_only_blanks_after_it_closes_the_block_however_many_there_are() {
+    // On both paths, on either side of the blanks a line that may close a
+    // block keeps.
+    for blanks in [MOST - 1, MOST, MOST + 1, 5000] {
+        let closer = format!("```{}", " ".repeat(blanks));
+        assert_eq!(
+            streamed(&format!("```\ninner\n{closer}\nafter\n")),
+            "┌─\n│ inner\n└─\nafter\n",
+            "{blanks} blanks"
+        );
+
+        let fence = format!("```diff\n-a\n{closer}\n");
+        assert_eq!(
+            held(&format!("{fence}after\n")),
+            closed_diff(&fence),
+            "{blanks} blanks"
+        );
+    }
+}
+
+#[test]
+fn the_blanks_past_those_a_closing_line_keeps_are_given_back_as_they_were() {
+    // Past what is kept, the blanks are counted, so a line of code draws every
+    // one of them, a tab as a tab.
+    let line = format!("```{}{}x", " ".repeat(MOST), "\t".repeat(MOST));
+    assert_eq!(
+        streamed(&format!("```\ninner\n{line}\n```\nafter\n")),
+        format!("┌─\n│ inner\n│ {line}\n└─\nafter\n")
+    );
+
+    // Where spaces and tabs mix past what is kept, the count cannot say them,
+    // so the line is code on both paths, drawn as it was written.
+    let line = format!("```{}\t \t", " ".repeat(MOST));
+    assert_eq!(
+        streamed(&format!("```\ninner\n{line}\n```\nafter\n")),
+        format!("┌─\n│ inner\n│ {line}\n└─\nafter\n")
+    );
+    let fence = format!("```diff\n-a\n{line}\n```\n");
+    assert_eq!(held(&format!("{fence}after\n")), closed_diff(&fence));
+}
+
+#[test]
 fn backticks_never_close_a_block_fenced_with_tildes_nor_tildes_one_of_backticks() {
     assert_eq!(streamed("~~~\n```\n~~~\nafter\n"), "┌─\n│ ```\n└─\nafter\n");
     assert_eq!(streamed("```\n~~~\n```\nafter\n"), "┌─\n│ ~~~\n└─\nafter\n");

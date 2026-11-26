@@ -197,7 +197,7 @@ mod table;
 mod ticks;
 mod told;
 
-use code::{Fenced, fence_name};
+use code::{Counted, Fenced, fence_name};
 pub(crate) use code::{continuation, framed, framed_height};
 pub(crate) use drawn::{Offers, lay_unoffered};
 pub(crate) use links::SHORTENED_CAP;
@@ -1789,6 +1789,9 @@ pub struct Markdown {
     /// a line that may close the block, held to be given back where it does
     /// not. Bounded by [`MOST`].
     language: String,
+    /// The blanks of a line that may close the block past the [`MOST`] kept in
+    /// `language`, counted rather than kept.
+    counted: Option<Counted>,
     /// The reader for this block, where the language was one this build knows.
     ///
     /// `None` for a fence that named nothing, named something unrecognised, or

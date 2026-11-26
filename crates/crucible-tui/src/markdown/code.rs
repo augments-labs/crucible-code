@@ -20,6 +20,15 @@ use crate::glyphs::Glyphs;
 use crate::row::Row;
 use crate::width;
 
+/// The blanks after the marks of a line that may close the block, past the
+/// [`MOST`] of them kept as they were written: all one character, so how many
+/// there were is all there is to give back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Counted {
+    blank: char,
+    count: usize,
+}
+
 /// What stands in front of a row of code that carries on the one above it,
 /// where a line of code wrapped: a mark and a space, as wide as the gutter.
 #[must_use]
@@ -217,6 +226,10 @@ pub(super) struct Fenced {
 
 impl Fenced {
     /// Whether `line`, with or without its break, closes the block.
+    ///
+    /// Past the first [`MOST`] blanks after its marks, the reader counts them
+    /// rather than keeping them, which says them only while they are all one
+    /// character: a line whose blanks mix past there is code on both paths.
     pub(super) fn closes(self, line: &str) -> bool {
         let line = line.strip_suffix('\n').unwrap_or(line);
         let line = line.get(self.margin(line)..).unwrap_or_default();
@@ -225,6 +238,12 @@ impl Fenced {
         line.len().saturating_sub(marks.len()) < CODE
             && marks.len().saturating_sub(rest.len()) >= self.count
             && rest.trim_start_matches([' ', '\t']).is_empty()
+            && rest.get(MOST..).is_none_or(|past| {
+                let mut blanks = past.chars();
+                blanks
+                    .next()
+                    .is_none_or(|blank| blanks.all(|other| other == blank))
+            })
     }
 
     /// How many of the spaces `line` opens with are the item's.
@@ -277,16 +296,16 @@ impl Markdown {
     /// What follows a run of backticks may hold no backtick, so one there
     /// says the run opened no block: see [`Markdown::unopens`]. Past [`MOST`]
     /// bytes of what follows, the bound on what is kept, an opening line is
-    /// read as the fence it opened as, and a closing one as a line of code,
-    /// its kept blanks given back so that none is lost; a run with more
-    /// blanks than that after it closes nothing.
+    /// read as the fence it opened as, and a closing one counts its blanks
+    /// rather than keeping them ([`Counted`]): its break still closes the
+    /// block, and anything else gives every one of them back.
     pub(super) fn keeps_fence(
         &mut self,
         character: char,
         room: usize,
         say: &mut dyn FnMut(Slot, &str, Option<&str>),
     ) -> bool {
-        if self.inside == Inside::Closing && !matches!(character, ' ' | '\t') {
+        if self.inside == Inside::Closing && !self.keeps_blank(character) {
             self.unfence(say);
             self.previous = character;
             return false;
@@ -302,11 +321,33 @@ impl Markdown {
         if self.language.len() < MOST {
             self.language.push(character);
         }
-        if self.inside == Inside::Closing && self.language.len() >= MOST {
-            self.unfence(say);
-            self.previous = character;
-        }
         true
+    }
+
+    /// Whether a line that may close the block can take `character` and still
+    /// close it: a blank, kept below, as written, while fewer than [`MOST`]
+    /// are, and counted past that while it is the one already counted.
+    fn keeps_blank(&mut self, character: char) -> bool {
+        if !matches!(character, ' ' | '\t') {
+            return false;
+        }
+        if self.language.len() < MOST {
+            return true;
+        }
+        match &mut self.counted {
+            None => {
+                self.counted = Some(Counted {
+                    blank: character,
+                    count: 1,
+                });
+                true
+            }
+            Some(counted) if counted.blank == character => {
+                counted.count = counted.count.saturating_add(1);
+                true
+            }
+            Some(_) => false,
+        }
     }
 
     /// Reads the line a run of backticks opened a block on as the prose it
@@ -409,9 +450,12 @@ impl Markdown {
     }
 
     /// Gives back a line that could have closed the fenced block and did not,
-    /// because something other than a space or a tab followed its marks, or
-    /// more of them than are kept: its spaces, its marks and what stood after
-    /// them are a line of code.
+    /// because something other than a space or a tab followed its marks, or a
+    /// blank other than the one counted past those kept: its spaces, its marks
+    /// and the blanks after them, kept and counted, are a line of code.
+    ///
+    /// The counted ones are said in pieces built in what held the kept ones,
+    /// so saying them builds nothing longer than [`MOST`].
     pub(super) fn unfence(&mut self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         self.inside = Inside::Fence;
         if let Some((opened, count)) = self.fence.take() {
@@ -422,8 +466,21 @@ impl Markdown {
             };
             self.unmark(held, say);
         }
-        let after = std::mem::take(&mut self.language);
+        let mut after = std::mem::take(&mut self.language);
         self.say(&after, say);
+        if let Some(counted) = self.counted.take() {
+            after.clear();
+            after.extend(std::iter::repeat_n(counted.blank, counted.count.min(MOST)));
+            let mut left = counted.count;
+            while left > 0 {
+                let piece = left.min(after.len());
+                if piece == 0 {
+                    break;
+                }
+                self.say(after.get(..piece).unwrap_or_default(), say);
+                left = left.saturating_sub(piece);
+            }
+        }
     }
 
     /// Hands on the gutter of the line of code being read, once.
