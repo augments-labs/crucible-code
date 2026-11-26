@@ -125,9 +125,9 @@ struct Span {
     /// middle of one. Escaped by [`address`] on the way in, because it is
     /// written inside a sequence where [`words`] cannot reach.
     link: Option<Box<str>>,
-    /// The picture this span's cells stand in for, where they stand in for
-    /// one: its text is then a space a cell, so it is measured, folded and
-    /// cut as the columns it covers.
+    /// The picture this span's cells stand in for, or are held blank for,
+    /// where they are either: its text is then a space a cell, so it is
+    /// measured, folded and cut as the columns it covers.
     image: Option<Placeholder>,
 }
 
@@ -140,6 +140,10 @@ pub(crate) struct Placeholder {
     pub(crate) row: u16,
     /// The picture's column the first of these cells is.
     pub(crate) column: u16,
+    /// Whether the cells name the picture, as Kitty's do, or are held blank
+    /// for an image written over them afterwards, as iTerm2's and Sixel's
+    /// are.
+    pub(crate) named: bool,
 }
 
 /// One row of a component: its spans, left to right.
@@ -260,10 +264,43 @@ impl Row {
                 slot: Slot::Plain,
                 structural: Vec::new(),
                 link: None,
-                image: Some(Placeholder { id, row, column: 0 }),
+                image: Some(Placeholder {
+                    id,
+                    row,
+                    column: 0,
+                    named: true,
+                }),
             });
         }
         pictured
+    }
+
+    /// Row `row` of picture `id`, `columns` cells held blank for it.
+    ///
+    /// Stands in the record where a block is shown as an image written over
+    /// cells rather than placed by them: every painter writes the spaces it
+    /// is, and what writes the image finds where by [`Self::held`].
+    pub(crate) fn reserved(id: u32, row: u16, columns: u16) -> Self {
+        let mut held = Self::picture(id, row, columns);
+        for span in &mut held.0 {
+            if let Some(image) = &mut span.image {
+                image.named = false;
+            }
+        }
+        held
+    }
+
+    /// Where the row holds cells blank for a picture: the display column
+    /// they start at, which of the picture's cells they are, and how many.
+    pub(crate) fn held(&self) -> Option<(usize, Placeholder, usize)> {
+        let mut at = 0;
+        for span in &self.0 {
+            match span.image {
+                Some(image) if !image.named => return Some((at, image, span.text.len())),
+                _ => at += width::columns(&span.text),
+            }
+        }
+        None
     }
 
     /// The row with `other`'s spans appended.
@@ -414,11 +451,11 @@ impl Row {
         cut
     }
 
-    /// The number of every picture the row stands in cells of.
+    /// The number of every picture the row's cells name.
     pub(crate) fn pictures(&self) -> impl Iterator<Item = u32> + '_ {
         self.0
             .iter()
-            .filter_map(|span| span.image.map(|image| image.id))
+            .filter_map(|span| span.image.filter(|image| image.named).map(|image| image.id))
     }
 
     /// What the row says, with no colour in it.
@@ -549,9 +586,13 @@ impl Row {
             }
 
             // A picture's cells are drawn only where colour is written, since
-            // the colour is what names the picture; elsewhere they are the
-            // spaces they are.
-            if let Some(image) = span.image.filter(|_| palette.writes_color()) {
+            // the colour is what names the picture; elsewhere, and where they
+            // are held for an image written over them, they are the spaces
+            // they are.
+            if let Some(image) = span
+                .image
+                .filter(|image| image.named && palette.writes_color())
+            {
                 graphics::placed(painted, image.id, image.row, image.column, span.text.len());
                 continue;
             }

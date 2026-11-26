@@ -1,7 +1,9 @@
 //! Diagrams drawn as Kitty pictures: sent once and placed by their cells,
 //! sent again where the terminal may have lost them, in chunks a frame can
 //! carry, wrapped for tmux where it passes them through, and never where no
-//! colour is written or nobody is looking.
+//! colour is written or nobody is looking. And as iTerm2 and Sixel images,
+//! written over cells held blank for them, only while the band shows every
+//! one of those cells.
 
 use super::*;
 
@@ -38,11 +40,19 @@ impl crate::drawing::Draws for Sketched {
 
 /// Pictures `across` by `down` cells, each `bytes` bytes that count up from
 /// how many were made before it, so two pictures never carry the same bytes.
+///
+/// A Sixel picture is those bytes as Sixel's characters, inside the one
+/// device control string a Sixel payload is.
 pub(in crate::render) struct Printed {
     across: u16,
     down: u16,
     bytes: usize,
     made: u8,
+    /// Whether a Sixel picture carries an escape of its own in the middle.
+    hostile: bool,
+    /// Whether each picture's bytes count up from the red of the ground it
+    /// is laid over, rather than from how many came before it.
+    worn: bool,
 }
 
 impl Printed {
@@ -52,15 +62,46 @@ impl Printed {
             down,
             bytes,
             made: 0,
+            hostile: false,
+            worn: false,
+        }
+    }
+
+    /// Pictures that say which ground they were encoded for.
+    pub(in crate::render) fn worn(across: u16, down: u16, bytes: usize) -> Self {
+        Self {
+            worn: true,
+            ..Self::new(across, down, bytes)
+        }
+    }
+
+    /// Pictures whose Sixel ends its string part way and opens another.
+    pub(in crate::render) fn hostile(across: u16, down: u16, bytes: usize) -> Self {
+        Self {
+            hostile: true,
+            ..Self::new(across, down, bytes)
         }
     }
 
     fn payload(&mut self, key: &graphics::PictureKey) -> graphics::Payload {
-        let start = self.made;
+        let start = if self.worn {
+            key.palette.ground()[0]
+        } else {
+            self.made
+        };
         self.made = self.made.wrapping_add(1);
-        let bytes = (0..self.bytes)
-            .map(|at| start.wrapping_add(u8::try_from(at % 251).unwrap_or(0)))
-            .collect();
+        let bytes = match key.protocol {
+            graphics::Protocol::Sixel if self.hostile => {
+                let mut bytes = printed_sixel(start, self.bytes);
+                let middle = bytes.len() / 2;
+                bytes.splice(middle..middle, b"\x1b\\\x1b]52;c;aGk=\x07".iter().copied());
+                bytes
+            }
+            graphics::Protocol::Sixel => printed_sixel(start, self.bytes),
+            graphics::Protocol::Kitty | graphics::Protocol::Iterm2 => {
+                printed_bytes(start, self.bytes)
+            }
+        };
         graphics::Payload::new(
             key.protocol,
             bytes,
@@ -206,6 +247,495 @@ pub(in crate::render) fn printed_bytes(made: u8, bytes: usize) -> Vec<u8> {
     (0..bytes)
         .map(|at| made.wrapping_add(u8::try_from(at % 251).unwrap_or(0)))
         .collect()
+}
+
+/// The Sixel [`Printed`] gives the `made`th picture it makes: `bytes` of
+/// Sixel's own characters, counting up from `made`, in one string.
+pub(in crate::render) fn printed_sixel(made: u8, bytes: usize) -> Vec<u8> {
+    let mut sixel = b"\x1bPq".to_vec();
+    sixel.extend(
+        printed_bytes(made, bytes)
+            .into_iter()
+            .map(|byte| b'?' + byte % 63),
+    );
+    sixel.extend_from_slice(b"\x1b\\");
+    sixel
+}
+
+/// The inline image iTerm2 is written for the `made`th picture [`Printed`]
+/// makes, `across` by `down` cells.
+pub(in crate::render) fn printed_iterm2(made: u8, bytes: usize, across: u16, down: u16) -> String {
+    use base64::Engine as _;
+
+    let data = base64::engine::general_purpose::STANDARD.encode(printed_bytes(made, bytes));
+    format!("\x1b]1337;File=inline=1;width={across};height={down};preserveAspectRatio=1:{data}\x07")
+}
+
+/// `render` on a terminal that confirmed `protocol`, in colour, drawing
+/// diagrams with [`Sketched`] and pictures with `printed`, numbering them
+/// from one.
+pub(in crate::render) fn pictured_in<T: Terminal>(
+    render: &mut Renderer<T>,
+    protocol: graphics::Protocol,
+    printed: Printed,
+) {
+    pictured_by(render, printed);
+    render.images(graphics::Capability::Graphics {
+        protocol,
+        cell: graphics::Cell {
+            width: PICTURE_CELL.0,
+            height: PICTURE_CELL.1,
+        },
+    });
+}
+
+/// Every iTerm2 or Sixel image `written` holds, whole, wrapped for tmux or
+/// not, with what was written just before it.
+pub(in crate::render) fn images(written: &str) -> Vec<(&str, &str)> {
+    let mut found = Vec::new();
+    let mut at = 0;
+    while let Some(start) = ["\x1b]1337;File=", "\x1bPq", "\x1bPtmux;"]
+        .iter()
+        .filter_map(|opens| written[at..].find(opens).map(|found| at + found))
+        .min()
+    {
+        let rest = &written[start..];
+        let end = if rest.starts_with("\x1b]") {
+            rest.find('\x07').map(|end| end + 1)
+        } else if rest.starts_with("\x1bPtmux;") {
+            // Every escape inside is doubled, so the first one standing alone
+            // before a backslash is the wrapper's own end.
+            rest.match_indices("\x1b\\")
+                .map(|(end, _)| end)
+                .find(|&end| !rest[..end].ends_with('\x1b'))
+                .map(|end| end + 2)
+        } else {
+            rest.find("\x1b\\").map(|end| end + 2)
+        };
+        let Some(end) = end else {
+            break;
+        };
+        found.push((&written[..start], &rest[..end]));
+        at = start + end;
+    }
+    found
+}
+
+/// The screen row and column the last cursor address in `before` puts the
+/// cursor at, counted from nought; none where something else follows it.
+pub(in crate::render) fn placed_at(before: &str) -> Option<(usize, usize)> {
+    let start = before.rfind("\x1b[")?;
+    let (row, column) = before[start + 2..].strip_suffix('H')?.split_once(';')?;
+    Some((
+        row.parse::<usize>().ok()? - 1,
+        column.parse::<usize>().ok()? - 1,
+    ))
+}
+
+/// A full screen this size on a terminal that confirmed `protocol`.
+fn pictured_as(
+    columns: usize,
+    rows: usize,
+    protocol: graphics::Protocol,
+    printed: Printed,
+) -> Drawn {
+    let mut drawn = Drawn::new(columns, rows);
+    pictured_in(&mut drawn.render, protocol, printed);
+    drawn
+}
+
+/// The two protocols whose images are written over cells held for them.
+const WRITTEN_OVER: [graphics::Protocol; 2] =
+    [graphics::Protocol::Iterm2, graphics::Protocol::Sixel];
+
+/// What a frame writes for the first picture [`Printed`] makes, three by two
+/// cells of `bytes` bytes, in `protocol`.
+fn first_image(protocol: graphics::Protocol, made: u8, bytes: usize) -> String {
+    match protocol {
+        graphics::Protocol::Sixel => String::from_utf8(printed_sixel(made, bytes)).unwrap(),
+        graphics::Protocol::Iterm2 | graphics::Protocol::Kitty => printed_iterm2(made, bytes, 3, 2),
+    }
+}
+
+#[test]
+fn an_iterm2_or_sixel_diagram_is_written_over_the_cells_held_for_it() {
+    for protocol in WRITTEN_OVER {
+        let mut drawn = pictured_as(40, 12, protocol, Printed::new(3, 2, 300));
+        drawn.answer(DIAGRAM);
+        let written = drawn.take();
+
+        let &[(before, image)] = images(&written).as_slice() else {
+            panic!("{protocol:?}: not one image: {written:?}");
+        };
+        assert_eq!(image, first_image(protocol, 0, 300), "{protocol:?}");
+        // At the first cell held for it: the first held row's screen row,
+        // and the column its cells start at.
+        let band = drawn.render.bands().transcript;
+        let first_held = drawn
+            .render
+            .record
+            .view(band.len())
+            .iter()
+            .enumerate()
+            .find_map(|(at, row)| row.held().map(|(column, _, _)| (band.start + at, column)));
+        assert!(first_held.is_some(), "{protocol:?}: no cell held");
+        assert_eq!(
+            placed_at(before),
+            first_held,
+            "{protocol:?}: not placed at the first held cell: {before:?}"
+        );
+        // No cell names it, and nothing is sent the Kitty way.
+        assert!(!written.contains('\u{10EEEE}'), "{protocol:?}: {written:?}");
+        assert!(!written.contains("\x1b_G"), "{protocol:?}: {written:?}");
+        // The rows it stands on read as blank.
+        assert!(
+            !drawn.rows().iter().any(|row| row.contains("graph")),
+            "{protocol:?}"
+        );
+    }
+}
+
+#[test]
+fn an_iterm2_or_sixel_image_is_written_only_while_every_row_of_it_is_in_the_band() {
+    // Scrolled down a row at a time from the top, the picture comes up
+    // through the band's foot and leaves through its head. It is written in
+    // every frame it is wholly inside, a row higher each time, and in none
+    // where a row of it is past either edge.
+    for protocol in WRITTEN_OVER {
+        let mut drawn = pictured_as(40, 12, protocol, Printed::new(3, 2, 300));
+        for line in 0..20 {
+            drawn.commit(&format!("before {line}")).unwrap();
+        }
+        drawn.answer(DIAGRAM);
+        for line in 0..20 {
+            drawn.commit(&format!("after {line}")).unwrap();
+        }
+        drawn.scrolled(-1000).unwrap();
+        drawn.take();
+        let band = drawn.render.bands().transcript;
+
+        let mut frames = Vec::new();
+        for _ in 0..60 {
+            drawn.scrolled(1).unwrap();
+            let written = drawn.take();
+            let images = images(&written);
+            assert!(images.len() <= 1, "{protocol:?}: {written:?}");
+            frames.push(images.first().map(|(before, image)| {
+                assert_eq!(*image, first_image(protocol, 0, 300), "{protocol:?}");
+                placed_at(before).unwrap_or_else(|| panic!("{protocol:?}: {before:?}"))
+            }));
+        }
+
+        let first = frames.iter().position(Option::is_some);
+        let Some(first) = first else {
+            panic!("{protocol:?}: never written: {frames:?}");
+        };
+        let shown: Vec<(usize, usize)> = frames
+            .iter()
+            .skip(first)
+            .map_while(|frame| *frame)
+            .collect();
+        let tops: Vec<usize> = shown.iter().map(|(row, _)| *row).collect();
+        let expected: Vec<usize> = (band.start..=band.end - 2).rev().collect();
+        assert_eq!(tops, expected, "{protocol:?}: {frames:?}");
+        assert!(shown.iter().all(|(_, column)| *column == 0), "{protocol:?}");
+        assert!(
+            frames.iter().skip(first + shown.len()).all(Option::is_none),
+            "{protocol:?}: written again after it left: {frames:?}"
+        );
+    }
+}
+
+#[test]
+fn the_rows_an_image_left_are_written_again_when_the_box_grows_over_them() {
+    // The box grows over the foot of the band, where the image stood, with
+    // rows that paint exactly as the rows held for it did: only writing
+    // them again erases the image that was over them.
+    for protocol in WRITTEN_OVER {
+        let mut drawn = pictured_as(40, 12, protocol, Printed::new(3, 2, 300));
+        let (rows, caret) = boxed();
+        drawn.live(&rows, caret, colourful()).unwrap();
+        for line in 0..20 {
+            drawn.commit(&format!("before {line}")).unwrap();
+        }
+        drawn.answer(DIAGRAM);
+        let written = drawn.take();
+        let &[(before, _)] = images(&written).as_slice() else {
+            panic!("{protocol:?}: not one image: {written:?}");
+        };
+        let (top, _) = placed_at(before).unwrap();
+        let band = drawn.render.bands().transcript;
+        assert!(top + 2 <= band.end, "{protocol:?}: {top} {band:?}");
+        let held: Vec<Row> = drawn
+            .render
+            .record
+            .view(band.len())
+            .into_iter()
+            .filter(|row| row.held().is_some())
+            .collect();
+        let [first, second] = held.as_slice() else {
+            panic!("{protocol:?}: not two rows held: {held:?}");
+        };
+
+        let from = top - 1;
+        let grown: Vec<Row> = (from..12)
+            .map(|at| {
+                if at == top {
+                    first.clone()
+                } else if at == top + 1 {
+                    second.clone()
+                } else {
+                    Row::plain("│    │")
+                }
+            })
+            .collect();
+        drawn.live(&grown, caret, colourful()).unwrap();
+        assert_eq!(drawn.render.bands().prompt, from..12, "{protocol:?}");
+        let after = drawn.take();
+
+        for at in [top, top + 1] {
+            assert!(
+                after.contains(&format!("\x1b[{};1H\x1b[m\x1b[K", at + 1)),
+                "{protocol:?}: row {at} not written again: {after:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_iterm2_or_sixel_image_is_written_again_after_a_repaint_and_not_before() {
+    for protocol in WRITTEN_OVER {
+        let mut drawn = pictured_as(40, 12, protocol, Printed::new(3, 2, 300));
+        drawn.answer(DIAGRAM);
+        drawn.take();
+        // Scrolled back to its top, so what comes after it leaves it alone.
+        drawn.commit("one line under it").unwrap();
+        drawn.scrolled(-1000).unwrap();
+        drawn.take();
+        drawn.commit("and another").unwrap();
+        assert!(images(&drawn.take()).is_empty(), "{protocol:?}");
+
+        drawn.repaint().unwrap();
+        let again = drawn.take();
+        assert_eq!(
+            images(&again)
+                .iter()
+                .map(|(_, image)| *image)
+                .collect::<Vec<_>>(),
+            [first_image(protocol, 0, 300)],
+            "{protocol:?}"
+        );
+    }
+}
+
+#[test]
+fn a_theme_changed_writes_the_iterm2_or_sixel_image_again_as_it_was_encoded_in_it() {
+    for protocol in WRITTEN_OVER {
+        let mut drawn = pictured_as(40, 12, protocol, Printed::new(3, 2, 300));
+        drawn.answer(DIAGRAM);
+        drawn.take();
+
+        drawn
+            .render
+            .wears(Palette::resolve(true, Theme::Light, None, &|name| {
+                (name == "COLORTERM").then(|| "truecolor".to_owned())
+            }));
+        drawn.commit("after the change").unwrap();
+        let after = drawn.take();
+
+        assert_eq!(
+            images(&after)
+                .iter()
+                .map(|(_, image)| *image)
+                .collect::<Vec<_>>(),
+            [first_image(protocol, 1, 300)],
+            "{protocol:?}: {after:?}"
+        );
+    }
+}
+
+#[test]
+fn a_sixel_image_out_of_view_is_encoded_for_a_new_width_only_once_it_is_in_view() {
+    // Quantising is what costs, so a width change encodes again only the
+    // Sixel pictures the band shows; iTerm2's PNG is encoded again at once,
+    // as Kitty's is.
+    for protocol in WRITTEN_OVER {
+        let mut drawn = pictured_as(40, 12, protocol, Printed::new(3, 2, 300));
+        drawn.answer(DIAGRAM);
+        for line in 0..30 {
+            drawn.commit(&format!("line {line}")).unwrap();
+        }
+        drawn.take();
+        assert_eq!(drawn.render.record.picture_ids().collect::<Vec<_>>(), [1]);
+
+        drawn.resize(100, 12);
+        let resized = drawn.take();
+        assert!(images(&resized).is_empty(), "{protocol:?}: {resized:?}");
+        let encoded = match protocol {
+            graphics::Protocol::Sixel => 1,
+            graphics::Protocol::Iterm2 | graphics::Protocol::Kitty => 2,
+        };
+        assert_eq!(
+            drawn.render.record.picture_ids().collect::<Vec<_>>(),
+            [encoded],
+            "{protocol:?}"
+        );
+
+        drawn.scrolled(-1000).unwrap();
+        let back = drawn.take();
+        assert_eq!(drawn.render.record.picture_ids().collect::<Vec<_>>(), [2]);
+        assert_eq!(
+            images(&back)
+                .iter()
+                .map(|(_, image)| *image)
+                .collect::<Vec<_>>(),
+            [first_image(protocol, 1, 300)],
+            "{protocol:?}: {back:?}"
+        );
+    }
+}
+
+#[test]
+fn a_sixel_payload_carrying_an_escape_of_its_own_is_never_written() {
+    let mut drawn = pictured_as(
+        40,
+        12,
+        graphics::Protocol::Sixel,
+        Printed::hostile(3, 2, 300),
+    );
+    drawn.answer(DIAGRAM);
+    let written = drawn.take();
+
+    assert!(!written.contains("\x1bPq"), "{written:?}");
+    assert!(!written.contains("\x1b]52"), "{written:?}");
+}
+
+#[test]
+fn an_inline_image_a_model_wrote_never_reaches_the_terminal_beside_a_picture() {
+    let hostile = "a \x1b]1337;File=inline=1:AAAA\x07 b \x1bPq#0;2;0;0;0~~\x1b\\ c\n\n";
+    for protocol in WRITTEN_OVER {
+        let mut drawn = pictured_as(40, 12, protocol, Printed::new(3, 2, 300));
+        drawn.answer(&format!("{hostile}{DIAGRAM}{hostile}"));
+        let written = drawn.take();
+
+        assert_eq!(
+            images(&written)
+                .iter()
+                .map(|(_, image)| *image)
+                .collect::<Vec<_>>(),
+            [first_image(protocol, 0, 300)],
+            "{protocol:?}: {written:?}"
+        );
+    }
+}
+
+#[test]
+fn inside_tmux_passing_sequences_through_an_image_is_wrapped_for_it() {
+    for protocol in WRITTEN_OVER {
+        let mut drawn = Drawn::new(40, 12);
+        drawn.render.passes_through(graphics::Passthrough::On);
+        pictured_in(&mut drawn.render, protocol, Printed::new(3, 2, 30));
+        drawn.answer(DIAGRAM);
+        let written = drawn.take();
+
+        let wrapped = format!(
+            "\x1bPtmux;{}\x1b\\",
+            first_image(protocol, 0, 30).replace('\x1b', "\x1b\x1b")
+        );
+        assert_eq!(
+            images(&written)
+                .iter()
+                .map(|(_, image)| *image)
+                .collect::<Vec<_>>(),
+            [wrapped.as_str()],
+            "{protocol:?}: {written:?}"
+        );
+    }
+}
+
+#[test]
+fn no_iterm2_or_sixel_image_is_written_where_colour_is_not_written_or_output_is_redirected() {
+    for protocol in WRITTEN_OVER {
+        for palette in [
+            Palette::resolve(false, Theme::Dark, None, &|_| None),
+            Palette::plain(),
+        ] {
+            let mut drawn = pictured_as(40, 12, protocol, Printed::new(3, 2, 300));
+            drawn.render.wears(palette);
+            drawn.answer(DIAGRAM);
+            let rows = drawn.rows();
+            let written = drawn.take();
+
+            assert!(images(&written).is_empty(), "{protocol:?}: {written:?}");
+            assert!(rows.iter().any(|row| row.contains("graph")), "{rows:#?}");
+        }
+
+        let mut drawn = Drawn {
+            render: Renderer::new(Recording::redirected(40, 12)),
+        };
+        pictured_in(&mut drawn.render, protocol, Printed::new(3, 2, 300));
+        drawn.answer(DIAGRAM);
+        let written = drawn.take();
+        assert!(images(&written).is_empty(), "{protocol:?}: {written:?}");
+        assert!(written.contains("graph"), "{protocol:?}: {written:?}");
+    }
+}
+
+/// Pictures refused as too wide for Sixel, counting how often they are
+/// asked for.
+struct Refusing(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+impl graphics::Pictures for Refusing {
+    fn cached(
+        &mut self,
+        _: &str,
+        _: &graphics::PictureKey,
+    ) -> Option<(graphics::Form, graphics::Payload)> {
+        None
+    }
+
+    fn make(
+        &mut self,
+        _: &str,
+        _: &graphics::PictureKey,
+        _: &graphics::Form,
+    ) -> Result<graphics::Payload, crate::chrome::Undrawn> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Err(crate::chrome::Undrawn::TooWide)
+    }
+
+    fn reencode(
+        &mut self,
+        _: &crate::KeptPicture,
+        _: &graphics::PictureKey,
+    ) -> Result<graphics::Payload, crate::chrome::Undrawn> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Err(crate::chrome::Undrawn::TooWide)
+    }
+}
+
+#[test]
+fn a_sixel_picture_refused_as_too_wide_is_text_and_is_not_asked_for_again_in_a_new_theme() {
+    let asked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut drawn = pictured_as(40, 12, graphics::Protocol::Sixel, Printed::new(3, 2, 300));
+    drawn
+        .render
+        .pictures(Box::new(Refusing(std::sync::Arc::clone(&asked))));
+    drawn.answer(DIAGRAM);
+    assert!(drawn.rows().iter().any(|row| row.contains("graph")));
+    assert_eq!(asked.load(std::sync::atomic::Ordering::Relaxed), 1);
+
+    drawn
+        .render
+        .wears(Palette::resolve(true, Theme::Light, None, &|name| {
+            (name == "COLORTERM").then(|| "truecolor".to_owned())
+        }));
+    drawn.commit("after the change").unwrap();
+    let rows = drawn.rows();
+    let after = drawn.take();
+    assert_eq!(asked.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert!(images(&after).is_empty(), "{after:?}");
+    assert!(rows.iter().any(|row| row.contains("graph")), "{rows:#?}");
 }
 
 #[test]

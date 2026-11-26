@@ -1888,6 +1888,18 @@ impl PaletteIdentity {
         self.depth != Depth::Off
     }
 
+    /// The ground a picture is laid over where it cannot be transparent: the
+    /// one the terminal reported, or where it reported none the one the theme
+    /// was drawn for.
+    #[must_use]
+    pub const fn ground(&self) -> [u8; 3] {
+        let (red, green, blue) = match self.ground {
+            Some(ground) => ground,
+            None => Palette::nominal(self.theme),
+        };
+        [red, green, blue]
+    }
+
     /// The colour each slot's class is drawn in, for every slot.
     ///
     /// What the palette would write for the slot, read back as a colour: a

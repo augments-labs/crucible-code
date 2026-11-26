@@ -331,8 +331,8 @@ boxes are drawn with, is left out of the label.
 
 [`output.diagrams`](../configuration/configuration.md#output) says how a
 diagram of any of the six kinds is drawn. `image`, the default, draws a
-diagram as a picture where one can be shown, which is where the terminal
-confirmed Kitty's protocol, and as text everywhere else; `text` draws it as
+diagram as a picture where one can be shown, which is where the session draws
+pictures with Kitty's or iTerm2's protocol, and as text everywhere else; `text` draws it as
 text; `written` shows every diagram exactly as the model wrote it, in its
 fence. It is set apart from
 `output.math`, so either can be written while the other is drawn. A change in
@@ -671,18 +671,31 @@ with each cell folded into the room its column has, however narrow.
 
 ## Pictures and image files
 
-Where a session draws pictures with Kitty's protocol, as [Where pictures are
+Where a session draws pictures, as [Where pictures are
 drawn](../configuration/configuration.md#where-pictures-are-drawn) says, a
-[diagram](#diagrams) drawn as text is shown as a picture of that drawing, in
-both [`output.screen`](../configuration/configuration.md#output) modes. It is
-drawn in the theme's colours, never wider than the window and never larger
-than the diagram's own size. It stands in the transcript's cells, so it
-scrolls with the rows around it, and in native mode it goes into your
-terminal's scrollback with them. A change of theme draws it again in the new
+[diagram](#diagrams) drawn as text is shown as a picture of that drawing. It
+is drawn in the theme's colours, never wider than the window and never larger
+than the diagram's own size. A change of theme draws it again in the new
 colours, and a resize draws it again to fit the new width; in native mode a
 picture already in the scrollback changes only when the scrollback is written
-again, once the window has been resized. A diagram with a letter the
-picture's one font has none for keeps its text drawing. Everywhere else, and
+again, once the window has been resized.
+
+How it is drawn depends on the protocol and the
+[`output.screen`](../configuration/configuration.md#output) mode:
+
+- **Kitty's protocol** draws in both modes where the table draws it. The
+  picture stands in the transcript's cells, so it scrolls with the rows around
+  it, and in native mode it goes into your terminal's scrollback with them.
+- **iTerm2's protocol** draws in the full screen only, in WezTerm or iTerm2
+  where the table draws it; in native mode its place is text. The picture's
+  rows are left blank and the picture is written over them, and only while
+  every one of its rows is in the transcript: a picture partly scrolled out of
+  view, or partly under the prompt, keeps its rows blank until it is wholly in
+  view again.
+- **Sixel** is drawn by no terminal yet, so its place is always text.
+
+A diagram with a letter the picture's one font has none for keeps its text
+drawing. Everywhere else, and
 for every formula and image file, what the transcript shows in a picture's
 place is text. No picture is drawn, and nothing is sent to the terminal for
 one, with `output.diagrams` at `text` or `written`, with no colour, or when

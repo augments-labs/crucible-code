@@ -15119,6 +15119,384 @@
         "macos",
         "windows"
       ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ITERM2-ENCODED",
+      "family": "transcript-pictures",
+      "obligation": "A diagram drawn for iTerm2's protocol is the PNG of its picture, the same bytes Kitty is sent.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::pictures::tests::an_iterm2_picture_is_the_png_its_protocol_names",
+      "source": "src/cli/pictures.rs",
+      "body_sha256": "a22f092c4d6f1994e39061ba40c2989d204a2c6d3da2c6fa9651be45a3e3979c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SIXEL-ONE-STRING",
+      "family": "transcript-pictures",
+      "obligation": "A diagram drawn for Sixel is one device control string, opened as Sixel by its numeric parameters and q, with only printable bytes inside it, and the record counts its form and its payload apart.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::pictures::tests::a_sixel_picture_is_one_device_control_string_and_carries_no_escape_of_its_own",
+      "source": "src/cli/pictures.rs",
+      "body_sha256": "75994a980f0a98e7174fd76f268c98f6b78146dc139aa310b8ab52cf0f8baf3b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SIXEL-GROUND",
+      "family": "transcript-pictures",
+      "obligation": "A Sixel picture is laid over the ground of the theme it is drawn in, so a dark and a light theme give different bytes.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::pictures::tests::a_sixel_picture_is_laid_over_the_ground_of_the_theme_it_is_worn_in",
+      "source": "src/cli/pictures.rs",
+      "body_sha256": "89bfd8a29b8bf5d5256bb3adfa856e435e056442dd7dd7114e0cd2fab0886875",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SIXEL-TOO-WIDE",
+      "family": "transcript-pictures",
+      "obligation": "A Sixel picture 601 pixels wide is refused as too wide rather than clamped, and one 600 pixels wide is drawn.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::pictures::tests::a_sixel_picture_wider_than_six_hundred_pixels_is_too_wide_and_is_text",
+      "source": "src/cli/pictures.rs",
+      "body_sha256": "d706da5786bf49bf50fadef46c60d44d73eeedb7497bfcc9e704fb611abdef9b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ITERM2-SIXEL-OVER-HELD",
+      "family": "transcript-pictures",
+      "obligation": "In the full screen an iTerm2 or Sixel diagram's cells are painted blank and its image is written once, addressed to the first of them, for both protocols.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::an_iterm2_or_sixel_diagram_is_written_over_the_cells_held_for_it",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "ae92dbf6926f89eb48a7ba054aaa97b8fe8cd4203cdaad89368913c5b5ba038f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ITERM2-SIXEL-WHOLLY-IN-BAND",
+      "family": "transcript-pictures",
+      "obligation": "Scrolled a row at a time through the transcript, an iTerm2 or Sixel image is written at every top that keeps all its rows in the band and at no other, so one row past the top or the bottom writes no image.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::an_iterm2_or_sixel_image_is_written_only_while_every_row_of_it_is_in_the_band",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "2188c0eea9770dfb9be4870db61e7878815602b51667e944ffb7252654f29eb0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ITERM2-SIXEL-REPAINT",
+      "family": "transcript-pictures",
+      "obligation": "An iTerm2 or Sixel image already on screen is not written again by a frame that changes nothing under it, and is written again once the screen is repainted.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::an_iterm2_or_sixel_image_is_written_again_after_a_repaint_and_not_before",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "62113eefb2dc83b75b97a9127cb13fe03627866f431d44e9582abbb1fddbca37",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ITERM2-SIXEL-THEME",
+      "family": "transcript-pictures",
+      "obligation": "A theme change writes the iTerm2 or Sixel image again, encoded in the new theme.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_theme_changed_writes_the_iterm2_or_sixel_image_again_as_it_was_encoded_in_it",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "8308fc7068d52ab096cf51f41e6a7d8a943d18c7a49f13ee80e5ab44cdd8335b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SIXEL-DEFERRED-WIDTH",
+      "family": "transcript-pictures",
+      "obligation": "After a resize a Sixel picture out of view keeps the encoding it had and is encoded for the new width only once it is next in view, while an iTerm2 picture is encoded again at once.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_sixel_image_out_of_view_is_encoded_for_a_new_width_only_once_it_is_in_view",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "6e5f10479171463760e5cf01d396409171f0a9f549a8af6e718a825ef418ae3e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SIXEL-HOSTILE-PAYLOAD",
+      "family": "transcript-pictures",
+      "obligation": "A Sixel payload carrying an escape of its own between its opening and its terminator is never written to the terminal.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_sixel_payload_carrying_an_escape_of_its_own_is_never_written",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "ddb5c089ba6cd18f792ba580e4c8d4fa6aad5d7290c2fbeeadc38ca3c0073938",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ITERM2-SIXEL-MODEL-IMAGE",
+      "family": "transcript-pictures",
+      "obligation": "An inline image sequence written by the model in an answer beside a picture never reaches the terminal; only the picture's own image is written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::an_inline_image_a_model_wrote_never_reaches_the_terminal_beside_a_picture",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "0a03bee9e840c688b418173d2a75f4825a6e6a182df0201914567354316a844b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ITERM2-SIXEL-TMUX",
+      "family": "transcript-pictures",
+      "obligation": "Inside tmux passing sequences through, an iTerm2 or Sixel image is wrapped for tmux with every escape inside it doubled.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::inside_tmux_passing_sequences_through_an_image_is_wrapped_for_it",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "583c9a185771a1cf7d19ddb25c977f473e3dd3f961a84ab629ccffe930d27f95",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ITERM2-SIXEL-NO-COLOUR",
+      "family": "transcript-pictures",
+      "obligation": "No iTerm2 or Sixel image is written in the full screen where colour is not written or output is redirected.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::no_iterm2_or_sixel_image_is_written_where_colour_is_not_written_or_output_is_redirected",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "7ae2473580f2fc21905d60d8222e41145f177243ba7d66cba6c883bd0784ad26",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SIXEL-TOO-WIDE-THEME",
+      "family": "transcript-pictures",
+      "obligation": "A Sixel picture refused as too wide is drawn as text and is not asked for again when the theme changes.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_sixel_picture_refused_as_too_wide_is_text_and_is_not_asked_for_again_in_a_new_theme",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "1553a6cb5802ab10ac9020fc2a49b740b8aefa170b36bbc47f1b1ed924f3aad8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ITERM2-SIXEL-NATIVE-SCROLLBACK",
+      "family": "transcript-pictures",
+      "obligation": "In native mode an iTerm2 or Sixel image is written once, over its rows as they go into the scrollback, never in the live region and never again on later commits.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::pictures::a_native_iterm2_or_sixel_diagram_is_written_into_the_scrollback_once",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "6558aaa3ed6218cd594b9754cc378662ee9e4f2f8702e012906d36c15953afcf",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ITERM2-SIXEL-NATIVE-REWRITE",
+      "family": "transcript-pictures",
+      "obligation": "In native mode the settled rewrite after a resize writes an iTerm2 or Sixel image again, encoded for the new width.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::pictures::a_native_iterm2_or_sixel_picture_is_written_again_in_the_settled_rewrite",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "f6cd0e4a6d3c5076981426c372c51c3c5032689821a3ad0d8db30941e68f3f0d",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ITERM2-SIXEL-NATIVE-NO-COLOUR",
+      "family": "transcript-pictures",
+      "obligation": "In native mode no iTerm2 or Sixel image is written where colour is not written or output is redirected.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::pictures::a_native_session_writes_no_iterm2_or_sixel_image_without_colour_or_redirected",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "74862985c7c0d260e26e411ec5f4b8ea522f4e64371ef51deeb1d53852d90584",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ITERM2-SIXEL-NATIVE-REPAINT",
+      "family": "transcript-pictures",
+      "obligation": "In native mode a repaint sends no iTerm2 or Sixel picture as a Kitty graphics command and names none by placeholder cells.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::pictures::a_native_repaint_sends_no_iterm2_or_sixel_picture_the_kitty_way",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "6a0d1b931406b7c4134acc26de5f9bf02f6c09e910c8cc99e0ff9ff28a133610",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ITERM2-SIXEL-ROWS-LEFT",
+      "family": "transcript-pictures",
+      "obligation": "In the full screen the rows an iTerm2 or Sixel image stood on are written again when the box grows over them, even where the box's rows paint exactly as the rows held for the image did.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::the_rows_an_image_left_are_written_again_when_the_box_grows_over_them",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "76cae90d51651e777f9627ca90abf4f59760d28173cda6918fe22aa336f1330e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SIXEL-OPENS-AS-SIXEL",
+      "family": "transcript-pictures",
+      "obligation": "Only a Sixel payload whose device control string opens with numeric parameters and q is written; a printable request for a setting or a capability is refused.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::only_a_device_control_string_that_opens_as_sixel_is_written",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "6ebc2b91041af3987a3b64b2a9ae8817f44fd0311897d69afe4656f405ce4e18",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ITERM2-SIXEL-NATIVE-THEME",
+      "family": "transcript-pictures",
+      "obligation": "In native mode, after a theme change, the settled rewrite writes the iTerm2 or Sixel image encoded over the new theme's ground.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::pictures::a_native_theme_change_writes_the_iterm2_or_sixel_image_anew_in_the_settled_rewrite",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "4632402aecddb6b8e60b7b63fced32a83a81a041cdb5877fc1607f954f57ae46",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
     }
   ]
 }
