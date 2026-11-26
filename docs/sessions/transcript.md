@@ -285,11 +285,13 @@ frame, whose top edge says why, when:
   draws it; one whose relationships chain its entities, such as
   `A ||--o{ B : has` and `B ||--o{ C : holds`, is drawn where it fits;
 - it is a flowchart or a state diagram with a labelled line whose label the
-  layout would leave out or set nearer another line than its own, which is
+  layout would leave out, set nearer another line than its own, or set across
+  another line, which is
   `┌─ mermaid · misplaced labels · not drawn as text · shown as written`.
-  This comes of many labelled lines running among a few boxes, out and back
-  between the same ones. The layout does not change with the window, so no
-  width draws it, and the source shown says which line each label is on;
+  Crucible also refuses to draw it wherever it cannot tell which line a label
+  is on. This comes of many labelled lines running among a few boxes, out and
+  back between the same ones. The layout does not change with the window, so
+  no width draws it, and the source shown says which line each label is on;
 - it holds a statement crucible does not read, which is `not drawn as text`.
   In a sequence diagram that is a note, an activation, numbering
   (`autonumber`), a group (`box`) or a block such as `loop`, `alt` or `rect`;
