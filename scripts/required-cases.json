@@ -13847,7 +13847,7 @@
       },
       "case": "tests::every_diagram_timed_is_laid_out",
       "source": "src/bin/bench-drawing.rs",
-      "body_sha256": "9a0325e314312386e5a2b0fde0c4b93e47911fc599403f2b0e9da486b450409f",
+      "body_sha256": "8eaa7fa7e4af90d56094b5ba3d65d699616618df031e563efcc746f598dd70f4",
       "platforms": [
         "linux",
         "macos",
