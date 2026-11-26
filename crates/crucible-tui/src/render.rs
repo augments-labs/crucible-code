@@ -930,9 +930,10 @@ impl<T: Terminal> Renderer<T> {
         self.standing.running.len().min(bands.turn.len())
     }
 
-    /// Whether the row that tells of a held block stands at the foot of the
-    /// transcript band: while a block is held, for as long as the reader is at
-    /// the foot to see it, in a band with a row to put it in.
+    /// Whether the row that tells of what the reader holds stands at the foot
+    /// of the transcript band: while a block, a phrase after a single tilde or
+    /// a span of math or of code is held, for as long as the reader is at the
+    /// foot to see it, in a band with a row to put it in.
     fn holds_row(&self, bands: &Bands) -> bool {
         (self.markdown.holding().is_some()
             || self.markdown.holds_a_phrase()
@@ -1537,7 +1538,8 @@ impl<T: Terminal> Renderer<T> {
 
     /// Reads a line that may still be the header of a table or the title of a
     /// heading as the prose it was said to be, and settles a phrase or a span
-    /// of math it holds, for a call that is about to end the line it is on.
+    /// of math or of code it holds, for a call that is about to end the line it
+    /// is on.
     fn undoubted(&mut self) -> Result<(), TerminalError> {
         if !self.markdown.in_doubt()
             && !self.markdown.holds_a_phrase()
@@ -2710,8 +2712,8 @@ impl<T: Terminal> Renderer<T> {
     }
 
     /// The row that tells of a block the reader is holding, or shows the
-    /// phrase it holds after a single tilde or the span of math it holds,
-    /// drawn `columns` wide; `None` while nothing is held.
+    /// phrase it holds after a single tilde or the span of math or of code it
+    /// holds, drawn `columns` wide; `None` while nothing is held.
     ///
     /// Shown in place of what is held until it settles, in both screen modes:
     /// none of it is drawn until it can be drawn as it will stand.
