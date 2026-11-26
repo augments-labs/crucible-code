@@ -1225,6 +1225,50 @@ fn an_entity_relationship_diagram_is_set_out_so_each_line_joins_boxes_side_by_si
 }
 
 #[test]
+fn an_entity_relationship_chain_turned_down_the_right_side_to_its_last_entity_is_set_in_rows() {
+    // Too narrow for its three boxes in one row, it is set two above one,
+    // the line from the second to the third run down the right side. The
+    // engine's room is the block's less its frame's two columns, from the
+    // narrowest that holds the drawing to the widest the engine still sets
+    // in rows.
+    for columns in 44..=54 {
+        let drawn = block(ENTITIES, columns, UNICODE).map(|_| ());
+        assert_eq!(drawn, Ok(()), "{columns}");
+        let rows = inner(ENTITIES, columns, UNICODE);
+        let shown = rows.join("\n");
+        // No line runs through a name, which stands alone between its
+        // box's sides.
+        for name in ["CUSTOMER", "ORDER", "LINE-ITEM"] {
+            assert!(boxed(&rows, name), "{columns}: {name} in\n{shown}");
+        }
+        let words: Vec<&str> = rows.iter().flat_map(|row| row.split_whitespace()).collect();
+        for label in ["places", "contains"] {
+            assert!(words.contains(&label), "{columns}: {label} in\n{shown}");
+        }
+        let row = |name| rows.iter().position(|row| row.contains(name));
+        let (Some(order), Some(item)) = (row("ORDER"), row("LINE-ITEM")) else {
+            panic!("{columns}: ORDER and LINE-ITEM in\n{shown}");
+        };
+        let glyphs = |row: usize| -> Vec<char> {
+            rows.get(row)
+                .map(|row| row.chars().collect())
+                .unwrap_or_default()
+        };
+        let side = glyphs(order).len() - 1;
+        assert!(item > order, "{columns}: LINE-ITEM below ORDER in\n{shown}");
+        assert_eq!(glyphs(order).last(), Some(&'┐'), "{columns}:\n{shown}");
+        assert_eq!(glyphs(item).get(side), Some(&'┘'), "{columns}:\n{shown}");
+        for between in order + 1..item {
+            assert_eq!(
+                glyphs(between).get(side),
+                Some(&'│'),
+                "{columns}: row {between} in\n{shown}"
+            );
+        }
+    }
+}
+
+#[test]
 fn an_entity_relationship_diagram_no_row_of_boxes_joins_side_by_side_is_refused_whole() {
     for source in [
         // An entity joined to three others.

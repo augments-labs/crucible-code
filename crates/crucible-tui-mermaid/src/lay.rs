@@ -365,9 +365,9 @@ const SPACING: (usize, usize) = (6, 2);
 /// Given its spacing, the engine lays a flowchart or a state diagram out once
 /// rather than again at tighter spacing while it is wider than `room`; an
 /// entity-relationship diagram's entities are set in rows as wide as `room`,
-/// in one pass, when no row would break a chain of them, and in one row
-/// otherwise. The engine lays a sequence diagram out at its own width
-/// whatever the room, and a git graph and a gantt are handed none.
+/// in one pass, when every line between two rows reaches its boxes whole,
+/// and in one row otherwise. The engine lays a sequence diagram out at its
+/// own width whatever the room, and a git graph and a gantt are handed none.
 fn rendered(
     scanned: &Scanned,
     reading: Reading,
