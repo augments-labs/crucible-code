@@ -14831,6 +14831,60 @@
         "macos",
         "windows"
       ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-NATIVE-CHUNKED",
+      "family": "transcript-pictures",
+      "obligation": "In the native screen, a 200 KiB picture goes out over the native frames after it: each frame the wait draws while it is pending writes part of it, each frame carries at most 64 KiB of graphics commands and each chunk at most 4096 bytes of data, the first a=t,f=100,i=1,q=2,m=1, the middle ones m=1,q=2, the last m=0,q=2 and then its placement; the chunks decode to the picture's bytes whole, and the renderer stops asking to wake once it is sent.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::pictures::a_native_picture_larger_than_a_frame_may_send_goes_out_over_the_native_frames_after_it",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "9495a66106674080c4994c5d7266417e328642d9e3b71dfecf6f83077551fe46",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-NATIVE-TMUX",
+      "family": "transcript-pictures",
+      "obligation": "In the native screen with passthrough forced, every graphics command of a chunked picture goes out wrapped for tmux and closed for tmux and then for itself, none unwrapped; unwrapped, they are the picture whole and its placement, and the cells are written as placeholders.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::pictures::inside_tmux_every_native_command_is_wrapped_for_it",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "b923b3a9060a08831a026f8457289fb79a2fd0843015fd4fb09a152b656b438c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-NATIVE-NO-COLOUR",
+      "family": "transcript-pictures",
+      "obligation": "In the native screen on a terminal window that confirmed Kitty, worn with output.color never or with NO_COLOR, whether from the start or once the diagram stood as a picture, nothing writes a graphics command or a placeholder, and the diagram reaches the scrollback as its text.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::pictures::no_native_picture_is_drawn_where_colour_is_not_written",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "583e62aa06729484beddf9584ea81782e986446dec5000b594abdb3d69ad3901",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
     }
   ]
 }

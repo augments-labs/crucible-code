@@ -139,7 +139,7 @@ pub(in crate::render) fn commands(written: &str) -> Vec<&str> {
 }
 
 /// How many bytes of graphics commands `written` holds, wrappers included.
-fn graphics_bytes(written: &str) -> usize {
+pub(in crate::render) fn graphics_bytes(written: &str) -> usize {
     written
         .split("\x1b_G")
         .skip(1)
