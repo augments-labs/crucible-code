@@ -4249,6 +4249,36 @@ mod pictures {
     }
 
     #[test]
+    fn a_native_region_closed_part_way_through_sending_a_picture_ends_it() {
+        // The shell writes next, and the terminal would read it as more of
+        // the picture.
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, 200 * 1024));
+        render.stream(DIAGRAM).unwrap();
+        render.settle().unwrap();
+        stands(&mut render);
+        let mut written = window.take();
+        assert_eq!(render.rests_in(), Some(Duration::ZERO), "sent whole");
+
+        render.closes().unwrap();
+        written.push_str(&window.take());
+
+        let commands = commands(&written);
+        assert!(
+            commands
+                .first()
+                .is_some_and(|first| first.starts_with("a=t,f=100,i=1,q=2,m=1;"))
+        );
+        assert_eq!(
+            commands.last(),
+            Some(&"m=0,q=2;"),
+            "left open: {commands:.32?}"
+        );
+        assert!(!commands.iter().any(|command| command.starts_with("a=p")));
+        assert_eq!(render.rests_in(), None, "still owed after closing");
+    }
+
+    #[test]
     fn inside_tmux_every_native_command_is_wrapped_for_it() {
         // Larger than a frame sends, so its first chunk, the chunks after
         // it, its last and its placement all go out.

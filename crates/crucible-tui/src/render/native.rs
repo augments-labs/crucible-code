@@ -325,8 +325,11 @@ impl<T: Terminal> Renderer<T> {
     /// that stood is left, the cursor is shown at the start of a row of its
     /// own, where the shell will write next, and autowrap is on again.
     ///
-    /// Nothing where output is redirected, in the full screen, where nothing
-    /// was drawn, and the second time.
+    /// A picture the terminal is still part way through reading is ended too,
+    /// since what is written after would be read as more of it.
+    ///
+    /// Nothing where output is redirected, where nothing was drawn, and the
+    /// second time; in the full screen, only that end.
     ///
     /// # Errors
     ///
@@ -337,18 +340,34 @@ impl<T: Terminal> Renderer<T> {
         }
         match &self.native {
             Some(native) if native.drawn && !native.left => {}
-            _ => return Ok(()),
+            Some(_) => return Ok(()),
+            None => {
+                let mut ended = String::new();
+                self.sent.end(&mut ended);
+                if ended.is_empty() {
+                    return Ok(());
+                }
+                return self
+                    .terminal
+                    .write(&ended)
+                    .and_then(|()| self.terminal.flush());
+            }
         }
         self.record.end();
         let written = self.framed(Writes::Everything);
         if let Some(native) = &mut self.native {
             native.left = true;
         }
+        // The last frame sends what fits of a picture still going out; the
+        // rest is never sent, so the terminal is told it is over.
+        let mut closing = String::new();
+        self.sent.end(&mut closing);
+        closing.push_str(WRAP_ON);
         // Put back even when the frame before it failed: the shell's lines
         // would otherwise stop at the edge of the window.
         let restored = self
             .terminal
-            .write(WRAP_ON)
+            .write(&closing)
             .and_then(|()| self.terminal.flush());
         written.and(restored)
     }
@@ -358,8 +377,8 @@ impl<T: Terminal> Renderer<T> {
     /// For a session ending while it still holds the terminal's modes: what
     /// those write on their way out, and anything held back to be said then,
     /// lands on the clean row this leaves rather than inside a region that
-    /// dropping the renderer would rewind into. Nothing in the full screen,
-    /// and nothing is drawn after it.
+    /// dropping the renderer would rewind into. In the full screen only a
+    /// picture part way out is ended. Nothing is drawn after it.
     ///
     /// # Errors
     ///

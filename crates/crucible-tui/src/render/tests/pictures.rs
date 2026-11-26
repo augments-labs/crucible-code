@@ -346,6 +346,33 @@ fn a_picture_moves_with_the_transcript_and_is_not_sent_again_for_it() {
 }
 
 #[test]
+fn a_full_screen_closed_part_way_through_sending_a_picture_ends_it() {
+    // Whatever writes to the terminal next would otherwise be read as more
+    // of the picture.
+    let mut drawn = pictured(40, 12, Printed::new(3, 2, 200 * 1024));
+    drawn.answer(DIAGRAM);
+    let mut written = drawn.take();
+    assert_eq!(drawn.render.rests_in(), Some(Duration::ZERO), "sent whole");
+
+    drawn.render.closes().unwrap();
+    written.push_str(&drawn.take());
+
+    let commands = commands(&written);
+    assert!(
+        commands
+            .first()
+            .is_some_and(|first| first.starts_with("a=t,f=100,i=1,q=2,m=1;"))
+    );
+    assert_eq!(
+        commands.last(),
+        Some(&"m=0,q=2;"),
+        "left open: {commands:.32?}"
+    );
+    assert!(!commands.iter().any(|command| command.starts_with("a=p")));
+    assert_eq!(drawn.render.rests_in(), None, "still owed after closing");
+}
+
+#[test]
 fn a_picture_scrolled_back_into_view_is_sent_where_the_terminal_lost_it() {
     // A frame sends what it shows: a picture the terminal lost while it was
     // out of view is sent again when it is scrolled back to, not before.

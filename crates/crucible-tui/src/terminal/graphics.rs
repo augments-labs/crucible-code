@@ -899,6 +899,23 @@ impl Sent {
         }
     }
 
+    /// Appends to `into` the end of a transmission the terminal is part way
+    /// through reading, and owes it nothing more: for a renderer giving the
+    /// terminal up, after which what is written is not read as more of a
+    /// picture. A picture not yet begun is not begun, and one whose bytes are
+    /// all out is not placed.
+    pub(crate) fn end(&mut self, into: &mut String) {
+        let open = self
+            .sending
+            .take()
+            .is_some_and(|sending| sending.sent > 0 && !sending.whole);
+        if self.ending || open {
+            self.command(into, "m=0,q=2", Some(&[]));
+        }
+        self.ending = false;
+        self.waiting.clear();
+    }
+
     /// Appends to `into` the commands owed, up to [`MOST_SENT_A_FRAME`] of
     /// them, with `payload` giving each picture's bytes by number.
     pub(crate) fn write<'a>(

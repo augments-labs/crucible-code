@@ -14921,6 +14921,42 @@
         "macos",
         "windows"
       ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-CLOSED-MID-LOAD",
+      "family": "transcript-pictures",
+      "obligation": "A full screen closed while a picture larger than one frame is part way out ends its transmission with an empty last chunk, places nothing, and owes the terminal nothing after.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_full_screen_closed_part_way_through_sending_a_picture_ends_it",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "ca209be4dc16209faf42268c3403121cdc725f79ce0aac006fe9bab646012723",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-NATIVE-CLOSED-MID-LOAD",
+      "family": "transcript-pictures",
+      "obligation": "A native region closed while a picture larger than one frame is part way out ends its transmission with an empty last chunk after the last frame, places nothing, and owes the terminal nothing after.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::pictures::a_native_region_closed_part_way_through_sending_a_picture_ends_it",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "5dd65efc517f3e09b96f06f3c2fcb20f954b2d8d37cc23b8c68f0f7d7bf09131",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
     }
   ]
 }
