@@ -348,13 +348,25 @@ fn an_iterm2_or_sixel_diagram_is_written_over_the_cells_held_for_it() {
         drawn.answer(DIAGRAM);
         let written = drawn.take();
 
-        let images = images(&written);
-        assert_eq!(images.len(), 1, "{protocol:?}: {written:?}");
-        let (before, image) = images[0];
+        let &[(before, image)] = images(&written).as_slice() else {
+            panic!("{protocol:?}: not one image: {written:?}");
+        };
         assert_eq!(image, first_image(protocol, 0, 300), "{protocol:?}");
-        assert!(
-            placed_at(before).is_some(),
-            "{protocol:?}: not placed: {before:?}"
+        // At the first cell held for it: the first held row's screen row,
+        // and the column its cells start at.
+        let band = drawn.render.bands().transcript;
+        let first_held = drawn
+            .render
+            .record
+            .view(band.len())
+            .iter()
+            .enumerate()
+            .find_map(|(at, row)| row.held().map(|(column, _, _)| (band.start + at, column)));
+        assert!(first_held.is_some(), "{protocol:?}: no cell held");
+        assert_eq!(
+            placed_at(before),
+            first_held,
+            "{protocol:?}: not placed at the first held cell: {before:?}"
         );
         // No cell names it, and nothing is sent the Kitty way.
         assert!(!written.contains('\u{10EEEE}'), "{protocol:?}: {written:?}");
@@ -402,13 +414,17 @@ fn an_iterm2_or_sixel_image_is_written_only_while_every_row_of_it_is_in_the_band
         let Some(first) = first else {
             panic!("{protocol:?}: never written: {frames:?}");
         };
-        let shown: Vec<(usize, usize)> = frames[first..].iter().map_while(|frame| *frame).collect();
+        let shown: Vec<(usize, usize)> = frames
+            .iter()
+            .skip(first)
+            .map_while(|frame| *frame)
+            .collect();
         let tops: Vec<usize> = shown.iter().map(|(row, _)| *row).collect();
         let expected: Vec<usize> = (band.start..=band.end - 2).rev().collect();
         assert_eq!(tops, expected, "{protocol:?}: {frames:?}");
         assert!(shown.iter().all(|(_, column)| *column == 0), "{protocol:?}");
         assert!(
-            frames[first + shown.len()..].iter().all(Option::is_none),
+            frames.iter().skip(first + shown.len()).all(Option::is_none),
             "{protocol:?}: written again after it left: {frames:?}"
         );
     }

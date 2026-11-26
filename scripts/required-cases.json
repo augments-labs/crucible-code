@@ -15185,7 +15185,7 @@
       },
       "case": "render::tests::pictures::an_iterm2_or_sixel_diagram_is_written_over_the_cells_held_for_it",
       "source": "crates/crucible-tui/src/render/tests/pictures.rs",
-      "body_sha256": "a33ccd20786398a7dad79fcb35f62ce91b7980cdea2999f2023e38756f21e391",
+      "body_sha256": "ae92dbf6926f89eb48a7ba054aaa97b8fe8cd4203cdaad89368913c5b5ba038f",
       "platforms": [
         "linux",
         "macos",
@@ -15203,7 +15203,7 @@
       },
       "case": "render::tests::pictures::an_iterm2_or_sixel_image_is_written_only_while_every_row_of_it_is_in_the_band",
       "source": "crates/crucible-tui/src/render/tests/pictures.rs",
-      "body_sha256": "2550fe4d2f33212f4b6bc9d4a5f733cd410a7c6397e2f153e901a368e6d5e01d",
+      "body_sha256": "2188c0eea9770dfb9be4870db61e7878815602b51667e944ffb7252654f29eb0",
       "platforms": [
         "linux",
         "macos",
