@@ -517,7 +517,8 @@ pub struct Renderer<T: Terminal> {
     commands: String,
     /// The iTerm2 and Sixel images the last frame left on screen, each with
     /// what the rows under it were painted as. Emptied wherever the screen
-    /// is forgotten, since a row written again erases what was over it.
+    /// is forgotten, by `forget_screen` alone, since a row written
+    /// again erases what was over it.
     overlaid: Vec<Over>,
 }
 
@@ -1269,8 +1270,7 @@ impl<T: Terminal> Renderer<T> {
     pub fn wears(&mut self, palette: Palette) {
         self.palette = palette;
         self.relaid(self.glyphs);
-        self.painted.forget();
-        self.overlaid.clear();
+        self.forget_screen();
     }
 
     /// Tells this renderer which characters it may draw with.
@@ -1290,8 +1290,7 @@ impl<T: Terminal> Renderer<T> {
         self.glyphs = glyphs;
         self.markdown.draws(glyphs);
         self.relaid(glyphs);
-        self.painted.forget();
-        self.overlaid.clear();
+        self.forget_screen();
     }
 
     /// Tells this renderer how math in an answer is drawn.
@@ -1311,8 +1310,7 @@ impl<T: Terminal> Renderer<T> {
             diagrams: self.diagrams,
         });
         self.relaid(self.glyphs);
-        self.painted.forget();
-        self.overlaid.clear();
+        self.forget_screen();
     }
 
     /// How math in an answer is drawn.
@@ -1336,8 +1334,7 @@ impl<T: Terminal> Renderer<T> {
             diagrams: mode,
         });
         self.relaid(self.glyphs);
-        self.painted.forget();
-        self.overlaid.clear();
+        self.forget_screen();
     }
 
     /// How a diagram in an answer is drawn.
@@ -1501,6 +1498,15 @@ impl<T: Terminal> Renderer<T> {
         self.relaid(self.glyphs);
     }
 
+    /// Forgets what is on screen, rows and the images written over them
+    /// together, so the next frame writes every row and every image again:
+    /// a row written again erases an image over it, and an image believed
+    /// still there would not be written back.
+    fn forget_screen(&mut self) {
+        self.painted.forget();
+        self.overlaid.clear();
+    }
+
     /// Lays the record out again in `glyphs`, with pictures in what the
     /// terminal confirmed and the palette worn now.
     fn relaid(&mut self, glyphs: Glyphs) {
@@ -1532,8 +1538,7 @@ impl<T: Terminal> Renderer<T> {
         self.grip = None;
         self.relaid(self.glyphs);
         self.unselects();
-        self.painted.forget();
-        self.overlaid.clear();
+        self.forget_screen();
     }
 
     /// Appends streamed output and puts a frame on screen.
@@ -2269,8 +2274,7 @@ impl<T: Terminal> Renderer<T> {
 
         // Every row of the window is now showing something drawn for a size it
         // no longer has, so the next frame may not skip any of them.
-        self.painted.forget();
-        self.overlaid.clear();
+        self.forget_screen();
 
         self.draw()
     }
@@ -2300,8 +2304,7 @@ impl<T: Terminal> Renderer<T> {
         // renderer holds no picture it could trust: its live region is laid
         // down afresh on every frame already.
         if self.native.is_none() {
-            self.painted.forget();
-            self.overlaid.clear();
+            self.forget_screen();
         } else {
             for id in self.record.picture_ids() {
                 let named =
@@ -2364,8 +2367,7 @@ impl<T: Terminal> Renderer<T> {
 
         // Every row of the band is showing a line that is no longer in the
         // record, so the next frame may not skip any of them.
-        self.painted.forget();
-        self.overlaid.clear();
+        self.forget_screen();
 
         self.draw()
     }
