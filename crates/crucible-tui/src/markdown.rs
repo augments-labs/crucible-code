@@ -194,6 +194,7 @@ mod links;
 mod math;
 mod strikes;
 mod table;
+mod ticks;
 mod told;
 
 use code::{Fenced, fence_name};
@@ -1125,6 +1126,8 @@ impl Alert {
 #[derive(Debug, Default, Clone, Copy)]
 struct Line {
     heading: bool,
+    /// Whether what is being said is what a span of code held, which wears
+    /// the code slot. See [`ticks`].
     code: bool,
     /// What the line's bullet is marked with, where it has one.
     marked: Marked,
@@ -1957,6 +1960,9 @@ pub struct Markdown {
     waiting: usize,
     /// The span of math held, and what draws one. See [`math`].
     math: math::Math,
+    /// The span of code held, from the run of backticks that opened it. See
+    /// [`ticks`].
+    ticked: Option<ticks::Span>,
 }
 
 /// The most of one line of code that is held back to be read.
@@ -2280,12 +2286,13 @@ impl Markdown {
             }
 
             // Held text, not a run, for the reason a link's words are: the rest
-            // of a line that may be a definition, and a `<` that may be an
-            // address. Before the title watch, which would hold the break that
-            // ends them, and before the links and addresses below, because what
-            // they hand back is read again as if it were arriving, and may
-            // leave one of those open for this character to carry on. The run
-            // is empty while either is held, so none of it is left behind.
+            // of a line that may be a definition, a `<` that may be an address,
+            // and a span of math or of code. Before the title watch, which
+            // would hold the break that ends them, and before the links and
+            // addresses below, because what they hand back is read again as if
+            // it were arriving, and may leave one of those open for this
+            // character to carry on. The run is empty while any is held, so
+            // none of it is left behind.
             if self.holds_text(character, room, say) {
                 run = next;
                 continue;
@@ -2848,15 +2855,7 @@ impl Markdown {
             Inside::Prose => match character {
                 // In a formula shown as written every marker is a character.
                 _ if self.math.formula => false,
-                '`' => true,
-                // Inside a span the backtick above is the only marker left,
-                // for the reason a fence is: the words in there are code, and
-                // code is full of the others. `*ptr` is a pointer, `_private`
-                // is a name, and `**kwargs` is how one language spells an
-                // argument -- every one of them a thing a coding agent writes
-                // far more often than it writes emphasis inside a span.
-                _ if self.line.code => false,
-                '*' | '_' | '~' => true,
+                '`' | '*' | '_' | '~' => true,
                 // Only where nothing else has been written on the line. A
                 // hash is a heading there and a comment everywhere else; a
                 // dash is a bullet there and a minus sign everywhere else.
@@ -2995,10 +2994,7 @@ impl Markdown {
                 self.inside = Inside::Opening;
                 false
             }
-            '`' if self.inside == Inside::Prose => {
-                self.line.code = !self.line.code;
-                false
-            }
+            '`' if self.inside == Inside::Prose => self.opens_code(held.count, next, say),
             // A bullet, and the space after it, are the marker — so what is
             // drawn in their place is a mark and a space of this crate's own,
             // out of the set the rest of the interface is drawn from. The
@@ -3755,22 +3751,31 @@ impl Markdown {
     }
 
     /// Reads `character` into the line held as a definition, the angle
-    /// address held or the span of math held, whichever is open. Answers
-    /// whether it was taken. A span of math is held whole: nothing in it is
+    /// address held or the span of math or of code held, whichever is open.
+    /// Answers whether it was taken. A span is held whole: nothing in it is
     /// markdown.
     ///
     /// `false` says what was held is settled: drawn as what it was, or read as
     /// it would have been had it not been held, and `character` is the
-    /// caller's again.
+    /// caller's again. What one hands back to be read again may open another,
+    /// which `character` is offered to in turn; each holds less than the one
+    /// before it, so the offers end.
     fn holds_text(
         &mut self,
         character: char,
         room: usize,
         say: &mut dyn FnMut(Slot, &str, Option<&str>),
     ) -> bool {
-        (self.defining.is_some() && self.defines(character, room, say))
-            || (self.angle.is_some() && self.angled(character, room, say))
-            || self.spans(character, room, say)
+        while self.defining.is_some() || self.angle.is_some() || self.holds_a_span() {
+            if (self.defining.is_some() && self.defines(character, room, say))
+                || (self.angle.is_some() && self.angled(character, room, say))
+                || self.ticks(character, room, say)
+                || self.spans(character, room, say)
+            {
+                return true;
+            }
+        }
+        false
     }
 
     /// Reads `character` into the number, tag or reference held, whichever is
@@ -4541,17 +4546,13 @@ impl Markdown {
         if std::mem::take(&mut self.bang) {
             self.say("!", say);
         }
-        self.unspan(room, say);
         // The line the message ended in is as complete as a break would have
-        // made it, and the `>` that would have ended an address never came.
-        // First, since what they hand back is read again and may leave an
-        // address, a link or a run of markers for what follows to let go of.
-        if let Some(held) = self.defining.take() {
-            self.defined(held, true, room, say);
-        }
-        if let Some(written) = self.angle.take() {
-            self.unangle(&written, room, say);
-        }
+        // made it: the `>` that would have ended an address never came, and
+        // the run that would have closed a span never will. Settled as the
+        // break would have settled them, and first, since what they hand back
+        // is read again and may leave an address, a link or a run of markers
+        // for what follows to let go of.
+        self.holds_text('\n', room, say);
         self.unslash_at_end(room, say);
 
         // A header still waiting for its delimiter row is the prose it was

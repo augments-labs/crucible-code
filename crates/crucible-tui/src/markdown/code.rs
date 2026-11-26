@@ -4,12 +4,11 @@
 //! The reader opens a fenced block on a run of three or more backticks or
 //! tildes and says it as it streams; what is here is what decides where it
 //! ends ([`Fenced`]), what its info string names, how a run of backticks with
-//! another backtick after it on its line is read as the prose it is, how a
-//! line that could have
-//! closed it and did not is given back, and how a line of code is handed on,
-//! read in the language the block names. A row of code is read back off the
-//! screen by its gutter ([`framed`]), and broken where the room runs out
-//! rather than at a space.
+//! another backtick after it on its line is read as the prose it is, where it
+//! opens a span of code, how a line that could have closed it and did not is
+//! given back, and how a line of code is handed on, read in the language the
+//! block names. A row of code is read back off the screen by its gutter
+//! ([`framed`]), and broken where the room runs out rather than at a space.
 
 use std::ops::Range;
 
@@ -307,8 +306,9 @@ impl Markdown {
     /// Reads the line a run of backticks opened a block on as the prose it
     /// is, at `character`, a backtick after the run: nothing of the line has
     /// been said, so it is said now as it would have been. The spaces in
-    /// front of the run are the line's again, the run is read as one written
-    /// in prose, and what followed it, with `character`, is read again.
+    /// front of the run are the line's again, the run opens a span of code as
+    /// one written in prose would, and what followed it, with `character`, is
+    /// read again into that span.
     ///
     /// Decided at the first backtick, which nothing later on the line can
     /// undo; a line with none is a fence only once it ends, before which
@@ -323,7 +323,7 @@ impl Markdown {
         self.fence = None;
         self.inside = Inside::Prose;
         self.indent = fenced.indent;
-        self.line.code = !self.line.code;
+        self.ticked = Some(super::ticks::Span::opened(fenced.count));
         let mut rest = std::mem::take(&mut self.language);
         rest.push(character);
         self.again(&rest, room, say);

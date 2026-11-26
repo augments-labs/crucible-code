@@ -143,15 +143,17 @@ impl Markdown {
         self
     }
 
-    /// Whether a span of math is held, not yet known to be one.
+    /// Whether a span of math or of code is held, not yet known to be one.
     pub(crate) fn holds_a_span(&self) -> bool {
-        self.math.span.is_some()
+        self.math.span.is_some() || self.ticked.is_some()
     }
 
-    /// The span of math being held, as written and clipped to `columns`, for
-    /// the live foot: nothing of it is in the record yet.
+    /// The span of math or of code being held, as written and clipped to
+    /// `columns`, for the live foot: nothing of it is in the record yet.
     pub(crate) fn spanning(&self, columns: usize) -> Option<Row> {
-        let span = self.math.span.as_ref()?;
+        let Some(span) = self.math.span.as_ref() else {
+            return self.ticking(columns);
+        };
         let (open, close) = span.delimiter.marks();
         let closer = if span.state == State::Closing {
             close
@@ -273,11 +275,11 @@ impl Markdown {
         true
     }
 
-    /// Settles a span the message or the line ended in, as the end of a line
-    /// would have.
+    /// Settles a span of math or of code the message or the line ended in, as
+    /// the end of a line would have.
     pub(super) fn unspan(&mut self, room: usize, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
-        if self.math.span.is_some() {
-            self.spans('\n', room, say);
+        if self.holds_a_span() {
+            self.holds_text('\n', room, say);
         }
     }
 

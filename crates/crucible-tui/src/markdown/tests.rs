@@ -4924,4 +4924,5 @@ mod escapes;
 mod fences;
 mod links;
 mod math;
+mod spans;
 mod strikes;
