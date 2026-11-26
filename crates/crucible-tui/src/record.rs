@@ -72,7 +72,10 @@
 //! of another height lays it out again and sends nothing new; a Sixel bitmap
 //! is drawn cell for cell, so it is encoded again for them once the band
 //! shows it, as for a new width, and a size it is too large to keep at is
-//! passed over rather than drawn as text.
+//! passed over rather than drawn as text. A native session's picture keeps
+//! the rows it was first shown in, whatever the window's height becomes,
+//! since the cells in the terminal's scrollback were laid for them and
+//! nothing it sent is placed again ([`Record::windowed`]).
 //!
 //! The opening is responsive for the same reason. It is drawn from facts read
 //! once at launch and kept for the whole session, so what laid it is still here
@@ -254,11 +257,16 @@ struct Pictured {
     /// How many rows the transcript band was when the reader last chose its
     /// size; none until they do.
     band: usize,
+    /// How many rows the window was when it was first shown, where it keeps
+    /// the rows it was shown in then; none where it follows the window.
+    window: usize,
 }
 
 impl Pictured {
-    /// The most rows it is shown in, in a window `window` rows tall.
+    /// The most rows it is shown in, in a window `window` rows tall, or in
+    /// the one it was first shown in where it keeps that.
     fn rows(&self, window: usize) -> u16 {
+        let window = if self.window == 0 { window } else { self.window };
         self.kept.size.rows(self.key.protocol, window, self.band)
     }
 }
@@ -282,6 +290,10 @@ struct Picturing {
     now: bool,
     /// How many rows the window is; none until the drawing says.
     window: usize,
+    /// Whether a picture keeps the rows it was first shown in rather than
+    /// following the window's height: a native session's, whose scrollback
+    /// holds the cells it was placed in.
+    keeps: bool,
     /// How many rows the transcript band was at the last frame.
     band: usize,
 }
@@ -297,6 +309,7 @@ impl fmt::Debug for Picturing {
             .field("let_go", &self.let_go)
             .field("now", &self.now)
             .field("window", &self.window)
+            .field("keeps", &self.keeps)
             .field("band", &self.band)
             .finish()
     }
@@ -313,6 +326,7 @@ impl Default for Picturing {
             let_go: false,
             now: false,
             window: 0,
+            keeps: false,
             band: 0,
         }
     }
@@ -1227,11 +1241,17 @@ impl Record {
         };
         self.make_room(kept.bytes(), columns, glyphs);
         drawn.refused = None;
+        let window = if self.picturing.keeps {
+            self.picturing.window
+        } else {
+            0
+        };
         drawn.picture = Some(Box::new(Pictured {
             id: self.picturing.number(),
             key,
             kept,
             band,
+            window,
         }));
         true
     }
@@ -1245,12 +1265,7 @@ impl Record {
             Protocol::Kitty | Protocol::Iterm2 => MOST_PLACED,
             Protocol::Sixel => drawn.picture.as_ref().map_or_else(
                 || PictureSize::Fit.rows(protocol, self.picturing.window, 0),
-                |picture| {
-                    picture
-                        .kept
-                        .size
-                        .rows(protocol, self.picturing.window, picture.band)
-                },
+                |picture| picture.rows(self.picturing.window),
             ),
         }
     }
@@ -1471,8 +1486,15 @@ impl Record {
 
     /// Bounds the pictures by a window `rows` tall: said before each
     /// [`Self::relay`], which shows each in the rows its size gives it there.
-    pub(crate) fn windowed(&mut self, rows: usize) {
+    ///
+    /// Where `keeps`, as in a native session, a picture shown already keeps
+    /// the rows it was first shown in and only a picture made from now on is
+    /// bounded by this window: its cells in the terminal's scrollback were
+    /// laid for those rows, and placing its number in others would show
+    /// those cells broken.
+    pub(crate) fn windowed(&mut self, rows: usize, keeps: bool) {
         self.picturing.window = rows;
+        self.picturing.keeps = keeps;
     }
 
     /// Shows the picture of line `line`, counted from the first of the

@@ -1513,7 +1513,8 @@ impl<T: Terminal> Renderer<T> {
     fn relaid(&mut self, glyphs: Glyphs) {
         self.record
             .pictured_as(self.images, self.palette.identity());
-        self.record.windowed(self.size.rows);
+        self.record
+            .windowed(self.size.rows, self.native.is_some());
         self.record
             .relay(self.folds(), glyphs, self.palette.theme());
     }

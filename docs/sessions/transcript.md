@@ -714,7 +714,9 @@ picture Kitty's protocol draws is placed again in its new cells without being
 sent again. One iTerm2's protocol draws is written again from the same image,
 and at Large or Full it is at most the transcript's height when it is placed,
 since it is drawn only while every row of it is in view. In native mode every
-picture stays at Fit, and no click or key changes it.
+picture stays at Fit, and no click or key changes it; it keeps the rows it was
+first shown in when the window's height changes, since your terminal's
+scrollback holds the cells it was placed in.
 
 A diagram with a letter the picture's one font has none for keeps its text
 drawing. Everywhere else, and

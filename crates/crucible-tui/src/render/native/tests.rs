@@ -4164,6 +4164,33 @@ mod pictures {
         );
     }
 
+    #[test]
+    fn a_native_window_settled_at_a_new_height_leaves_a_picture_where_it_was_placed() {
+        // The scrollback still holds the cells the picture was placed in,
+        // laid for the height the window had then: a native session never
+        // places what it sent again, so the picture keeps those cells.
+        let window = Window::new(40, 14);
+        let mut render = pictured(&window, Printed::new(3, 6, 300));
+        answered(&mut render);
+        let id = render.record.picture_ids().next().unwrap();
+        assert_eq!(render.record.payload(id).unwrap().cells(), (3, 6));
+        window.take();
+
+        settles_at(&window, &mut render, 40, 8);
+        let after = window.take();
+        let named = format!(",i={id},");
+        assert!(
+            commands(&after).iter().all(|command| {
+                !command.starts_with("a=d")
+                    && !(command.starts_with("a=p") && command.contains(&named))
+            }),
+            "{after:?}"
+        );
+        assert_eq!(render.record.picture_ids().collect::<Vec<_>>(), [id]);
+        assert_eq!(render.record.payload(id).unwrap().cells(), (3, 6));
+        assert!(transmitted(&commands(&after)).is_empty(), "{after:?}");
+    }
+
     /// The protocols whose images are written over cells held for them.
     const WRITTEN_OVER: [graphics::Protocol; 2] =
         [graphics::Protocol::Iterm2, graphics::Protocol::Sixel];
