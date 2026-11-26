@@ -142,6 +142,20 @@ fn a_closing_run_with_more_written_after_it_is_a_line_of_code() {
 }
 
 #[test]
+fn a_closing_run_with_more_blanks_after_it_than_are_kept_is_a_line_of_code() {
+    // Past the blanks a line that may close a block keeps, it is code: every
+    // one of them is drawn, and the block stays open to the run that closes it.
+    let line = format!("```{}x", " ".repeat(5000));
+    assert_eq!(
+        streamed(&format!("```\ninner\n{line}\n```\nafter\n")),
+        format!("┌─\n│ inner\n│ {line}\n└─\nafter\n")
+    );
+
+    let fence = format!("```diff\n-a\n{line}\n```\n");
+    assert_eq!(held(&format!("{fence}after\n")), closed_diff(&fence));
+}
+
+#[test]
 fn backticks_never_close_a_block_fenced_with_tildes_nor_tildes_one_of_backticks() {
     assert_eq!(streamed("~~~\n```\n~~~\nafter\n"), "┌─\n│ ```\n└─\nafter\n");
     assert_eq!(streamed("```\n~~~\n```\nafter\n"), "┌─\n│ ~~~\n└─\nafter\n");

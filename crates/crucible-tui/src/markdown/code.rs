@@ -276,8 +276,10 @@ impl Markdown {
     ///
     /// What follows a run of backticks may hold no backtick, so one there
     /// says the run opened no block: see [`Markdown::unopens`]. Past [`MOST`]
-    /// bytes of what follows, the bound on what is kept, the line is read as
-    /// the fence it opened as.
+    /// bytes of what follows, the bound on what is kept, an opening line is
+    /// read as the fence it opened as, and a closing one as a line of code,
+    /// its kept blanks given back so that none is lost; a run with more
+    /// blanks than that after it closes nothing.
     pub(super) fn keeps_fence(
         &mut self,
         character: char,
@@ -299,6 +301,10 @@ impl Markdown {
         }
         if self.language.len() < MOST {
             self.language.push(character);
+        }
+        if self.inside == Inside::Closing && self.language.len() >= MOST {
+            self.unfence(say);
+            self.previous = character;
         }
         true
     }
@@ -403,8 +409,9 @@ impl Markdown {
     }
 
     /// Gives back a line that could have closed the fenced block and did not,
-    /// because something other than a space or a tab followed its marks: its
-    /// spaces, its marks and what stood after them are a line of code.
+    /// because something other than a space or a tab followed its marks, or
+    /// more of them than are kept: its spaces, its marks and what stood after
+    /// them are a line of code.
     pub(super) fn unfence(&mut self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         self.inside = Inside::Fence;
         if let Some((opened, count)) = self.fence.take() {
