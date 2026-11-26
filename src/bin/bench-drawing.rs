@@ -42,13 +42,15 @@
 //! line's label the engine set beside another line, and that refusal is made
 //! after the engine laid the diagram out whole, so they are timed through it,
 //! and each kind keeps a case that is drawn beside them. An entity-relationship
-//! diagram is drawn only when its relationships chain its entities and no row
-//! the engine sets them in breaks a chain, and one that is not is refused
-//! before the engine runs, which leaves no layout to time. So it is timed with
+//! diagram is drawn only when its relationships chain its entities and every
+//! line the engine sets between two rows reaches its boxes whole, and one whose
+//! relationships do not chain is refused before the engine runs, which leaves
+//! no layout to time. So it is timed with
 //! every entity its caps hold, set out in rows as the engine sets them when one
 //! row is wider than its room, each joined to the next in its row while the
 //! caps hold relationships: at the caps, 48 entities in seven chains and 41
-//! relationships, the most one drawn may have, each label as long as the byte
+//! relationships, the most one drawn may have, since at the caps no line
+//! between two rows reaches its boxes whole, each label as long as the byte
 //! cap leaves room for and the window still draws, half of them in characters
 //! two columns wide. A diagram refused before the engine runs fails the probe
 //! rather than timing the refusal. A flowchart is laid top to bottom, which
@@ -549,8 +551,9 @@ enum Shape {
     /// boxes as the square root of their count rounded up, and each box
     /// joined to the next in its row while the caps hold lines. An
     /// entity-relationship diagram is drawn only when its relationships chain
-    /// its entities and no row it is set in breaks a chain, so this is the
-    /// most lines one drawn may have.
+    /// its entities and every line between two rows reaches its boxes whole,
+    /// which at the caps none does, so this is the most lines one drawn may
+    /// have.
     Chained,
 }
 
