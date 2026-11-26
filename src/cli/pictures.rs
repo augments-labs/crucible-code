@@ -94,8 +94,12 @@ mod tests {
     use crucible_tui::drawing::{Bucket, Mode, Svg};
     use crucible_tui::graphics::{Capability, Cell, Protocol};
     use crucible_tui::markdown::Kind;
-    use crucible_tui::{Palette, PictureSize, Recording, Theme};
-    use std::sync::{Mutex, PoisonError, mpsc};
+    use crucible_tui::{
+        MOST_KEPT_IMAGES, Palette, PictureSize, Recording, Renderer, ScreenMode, Size, Terminal,
+        TerminalError, Theme,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex, PoisonError, mpsc};
     use std::time::Instant;
 
     /// Every test here takes the one decode slot in the process, and one of
@@ -248,5 +252,185 @@ mod tests {
             written.contains("\x1b_Ga=t,f=100,i=") && written.contains("\x1b_Ga=p,U=1,i="),
             "no picture was sent: {written:?}"
         );
+    }
+
+    /// The longest a width change may take, built optimised as the binary
+    /// ships, to lay a session at the caps out again and draw it.
+    const RELAID_WITHIN: Duration = Duration::from_millis(500);
+
+    /// How many diagrams the timed session draws: four times as many as the
+    /// record keeps pictures of.
+    const DRAWN: usize = 4 * MOST_KEPT_IMAGES;
+
+    /// How many of them are refused a picture only once it is drawn, for its
+    /// size.
+    const TOO_WIDE: usize = 2;
+
+    /// A window whose size changes while the renderer holds it, as a
+    /// terminal's does.
+    struct Resizing(std::cell::Cell<Size>);
+
+    impl Terminal for Resizing {
+        fn size(&self) -> Result<Size, TerminalError> {
+            Ok(self.0.get())
+        }
+
+        fn write(&mut self, _: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn flush(&mut self) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn is_terminal(&self) -> bool {
+            true
+        }
+    }
+
+    /// What a [`Counted`] raster has been asked for.
+    #[derive(Debug, Default)]
+    struct Asked {
+        /// Pictures drawn from a drawer's SVG.
+        made: AtomicUsize,
+        /// Kept pictures encoded again.
+        reencoded: AtomicUsize,
+    }
+
+    /// [`Raster`], counting what it is asked for.
+    struct Counted(Arc<Asked>);
+
+    impl Pictures for Counted {
+        fn cached(&mut self, source: &str, key: &PictureKey) -> Option<(Form, Payload)> {
+            Raster.cached(source, key)
+        }
+
+        fn make(
+            &mut self,
+            source: &str,
+            key: &PictureKey,
+            form: &Form,
+        ) -> Result<Payload, Undrawn> {
+            self.0.made.fetch_add(1, Ordering::Relaxed);
+            Raster.make(source, key, form)
+        }
+
+        fn reencode(&mut self, kept: &KeptPicture, key: &PictureKey) -> Result<Payload, Undrawn> {
+            self.0.reencoded.fetch_add(1, Ordering::Relaxed);
+            Raster.reencode(kept, key)
+        }
+    }
+
+    /// The `number`th gantt chart, in its fence: one section named for
+    /// `number`, so no two are the same picture, and `tasks` tasks beside it,
+    /// each two days long and starting on its own day within `span` days,
+    /// every name as wide as a gantt draws one whole and spelt in the letters
+    /// of `word`.
+    fn gantt(number: usize, span: usize, tasks: usize, word: &str) -> String {
+        use std::fmt::Write as _;
+
+        let caps = crucible_tui_mermaid::Caps::GANTT;
+        let columns = caps.label.unwrap_or(caps.bytes);
+        let label = |index: usize| {
+            let head = index.to_string();
+            let tail: String = word
+                .chars()
+                .cycle()
+                .take(columns.saturating_sub(head.len()))
+                .collect();
+            format!("{head}{}", tail.trim_end())
+        };
+        let mut fence = format!(
+            "```mermaid\ngantt\ndateFormat YYYY-MM-DD\nsection {}\n",
+            label(number)
+        );
+        for task in 1..=tasks {
+            let day = task * 2 % span;
+            let (month, date) = if day < 31 {
+                (1, day + 1)
+            } else {
+                (2, day - 30)
+            };
+            let _ = writeln!(fence, "{} :2026-{month:02}-{date:02}, 2d", label(task));
+        }
+        fence.push_str("```\n\n");
+        fence
+    }
+
+    #[test]
+    fn a_width_change_at_the_caps_encodes_again_the_kept_pictures_and_no_more() {
+        // The record's pictures at their caps: as many as it keeps, each a
+        // gantt as large as sixteen can be together, and one more drawn as
+        // text again past them. Every other diagram is a gantt at a gantt's
+        // caps, laid out again as text: a few refused their picture for its
+        // size once it was drawn, and the rest by their drawer, for letters
+        // the picture's font has none for.
+        let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
+        let truecolour = |name: &str| (name == "COLORTERM").then(|| "truecolor".to_owned());
+        let at_caps = crucible_tui_mermaid::Caps::GANTT.nodes - 1;
+        let pictured = MOST_KEPT_IMAGES + 1;
+        let fence = |number: usize| {
+            if number < TOO_WIDE {
+                gantt(number, 38, at_caps, "word ")
+            } else if number < DRAWN - pictured {
+                gantt(number, 38, at_caps, "слово ")
+            } else {
+                gantt(number, 24, 26, "word ")
+            }
+        };
+        for screen in [ScreenMode::Fullscreen, ScreenMode::Native] {
+            let window = Resizing(std::cell::Cell::new(Size {
+                columns: 80,
+                rows: 40,
+            }));
+            let mut renderer = Renderer::drawing(window, screen);
+            let asked = Arc::new(Asked::default());
+            renderer.drawers(crate::cli::draw::drawers());
+            renderer.pictures(Box::new(Counted(Arc::clone(&asked))));
+            renderer.wears(Palette::resolve(true, Theme::Dark, None, &truecolour));
+            renderer.images(Capability::Graphics {
+                protocol: Protocol::Kitty,
+                cell: CELL,
+            });
+            renderer.diagrams(Mode::Image);
+            for number in 0..DRAWN {
+                renderer.stream(&fence(number)).unwrap();
+            }
+            renderer.settle().unwrap();
+            assert_eq!(
+                asked.made.load(Ordering::Relaxed),
+                TOO_WIDE + pictured,
+                "{screen:?}"
+            );
+            assert_eq!(asked.reencoded.load(Ordering::Relaxed), 0, "{screen:?}");
+
+            renderer.terminal().0.set(Size {
+                columns: 120,
+                rows: 40,
+            });
+            let started = Instant::now();
+            renderer.resized().unwrap();
+            let took = started.elapsed();
+
+            assert_eq!(
+                asked.made.load(Ordering::Relaxed),
+                TOO_WIDE + pictured,
+                "{screen:?}: a width change drew a picture the record does not keep"
+            );
+            assert_eq!(
+                asked.reencoded.load(Ordering::Relaxed),
+                MOST_KEPT_IMAGES,
+                "{screen:?}: a width change did not encode every kept picture again"
+            );
+            // Unoptimised, drawing a picture takes several times as long as
+            // in the binary that ships, so only an optimised build is held to
+            // the bound.
+            if !cfg!(debug_assertions) {
+                assert!(
+                    took < RELAID_WITHIN,
+                    "{screen:?}: a width change took {took:?}"
+                );
+            }
+        }
     }
 }
