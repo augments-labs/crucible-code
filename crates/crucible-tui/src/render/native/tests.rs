@@ -4265,6 +4265,41 @@ mod pictures {
     }
 
     #[test]
+    fn a_native_theme_change_writes_the_iterm2_or_sixel_image_anew_in_the_settled_rewrite() {
+        // What is already in the scrollback keeps the colours it was written
+        // in; the rewrite that gives it back writes the image encoded anew,
+        // over the new theme's ground.
+        let dark = Palette::resolve(true, Theme::Dark, None, &|name| {
+            (name == "COLORTERM").then(|| "truecolor".to_owned())
+        });
+        let light = Palette::resolve(true, Theme::Light, None, &|name| {
+            (name == "COLORTERM").then(|| "truecolor".to_owned())
+        });
+        let [was, _, _] = dark.identity().ground();
+        let [now, _, _] = light.identity().ground();
+        assert_ne!(was, now);
+        for protocol in WRITTEN_OVER {
+            let window = Window::new(40, 8);
+            let mut render = pictured_as(&window, protocol, Printed::worn(3, 2, 300));
+            render.wears(dark);
+            answered(&mut render);
+            assert_eq!(
+                over_its_rows(&window.take()),
+                [image(protocol, was, 300)],
+                "{protocol:?}"
+            );
+
+            render.wears(light);
+            settles_at(&window, &mut render, 100, 8);
+            assert_eq!(
+                over_its_rows(&window.take()),
+                [image(protocol, now, 300)],
+                "{protocol:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_native_repaint_sends_no_iterm2_or_sixel_picture_the_kitty_way() {
         // Only a Kitty picture is held by the terminal under a number, and
         // only it is sent again: an image written over its rows is no

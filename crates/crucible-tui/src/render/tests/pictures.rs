@@ -50,6 +50,9 @@ pub(in crate::render) struct Printed {
     made: u8,
     /// Whether a Sixel picture carries an escape of its own in the middle.
     hostile: bool,
+    /// Whether each picture's bytes count up from the red of the ground it
+    /// is laid over, rather than from how many came before it.
+    worn: bool,
 }
 
 impl Printed {
@@ -60,6 +63,15 @@ impl Printed {
             bytes,
             made: 0,
             hostile: false,
+            worn: false,
+        }
+    }
+
+    /// Pictures that say which ground they were encoded for.
+    pub(in crate::render) fn worn(across: u16, down: u16, bytes: usize) -> Self {
+        Self {
+            worn: true,
+            ..Self::new(across, down, bytes)
         }
     }
 
@@ -72,7 +84,11 @@ impl Printed {
     }
 
     fn payload(&mut self, key: &graphics::PictureKey) -> graphics::Payload {
-        let start = self.made;
+        let start = if self.worn {
+            key.palette.ground()[0]
+        } else {
+            self.made
+        };
         self.made = self.made.wrapping_add(1);
         let bytes = match key.protocol {
             graphics::Protocol::Sixel if self.hostile => {
