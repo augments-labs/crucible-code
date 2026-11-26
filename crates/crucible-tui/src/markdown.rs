@@ -20,7 +20,8 @@
 //! the `](` after them. Either one that runs past its bound, or past the line
 //! it is on, is handed out as the text it turned out to be. Besides them, a
 //! `!` that ends a delta waits the one character that says whether it opens
-//! an image.
+//! an image, and a line inside a fence that may close it waits for its break:
+//! see below.
 //!
 //! A table written without outer bars, and a heading written as a line over a
 //! row of `=` or `-`, are prose until the line under them arrives, and prose
@@ -50,11 +51,18 @@
 //! A fence is drawn in a frame of [`chrome`]'s, and the reader says it as it
 //! streams: the fence's opening line becomes the top edge naming its language,
 //! every line of code starts with the gutter as a run of its own, and the
-//! closing line becomes the bottom edge. A fence a message ends inside is
-//! never given a bottom. The name is the first word of the info string, cleaned
-//! here once because this is where a model's text is read, and a held fence
-//! past its cap says so in its top edge. `framed` reads such a row back by its
-//! gutter, and breaks it where the room runs out rather than at a space.
+//! closing line becomes the bottom edge. The closing line is one of the marks
+//! the fence opened with, at least as many of them, indented three spaces at
+//! most and followed by nothing but spaces and tabs ([`Fenced`]). The spaces
+//! a delta ends on at the start of a line of code are counted rather than
+//! said, and the spaces and tabs after a run that could close the block are
+//! held, until the break says it did, or until anything else says it did not
+//! and they are handed out as code with the run. A fence a message ends inside
+//! is never given a bottom. The name is the first word of the info string,
+//! cleaned here once because this is where a model's text is read, and a held
+//! fence past its cap says so in its top edge. `framed` reads such a row back
+//! by its gutter, and breaks it where the room runs out rather than at a
+//! space.
 //!
 //! A block indented four spaces after a blank line is code as well, outside an
 //! item of a list, and is drawn in the same frame with no name in its top
@@ -190,7 +198,9 @@ use table::{Sight, Table};
 ///
 /// Six because that is the deepest heading. Past it the run is capped rather
 /// than rejected, so `#######` is a heading — the alternative is spending a
-/// counter on a line nobody writes.
+/// counter on a line nobody writes. A fence's backticks and tildes are
+/// counted whole, since a block is closed only by a run as long as the one
+/// that opened it: see [`Fenced`].
 const RUN: usize = 6;
 
 /// What a run is written back as, where it turned out not to be a marker.
@@ -977,8 +987,8 @@ struct Gathering {
 /// What ends a held block other than a table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Closer {
-    /// A line opening, after its spaces, with three or more of this mark.
-    Fence(char),
+    /// The line that closes a block this run of marks opened.
+    Fence(Fenced),
     /// A line holding this, anywhere on it.
     Within(String),
 }
@@ -987,15 +997,33 @@ impl Closer {
     /// Whether `line` is the one that ends the block.
     fn closes(&self, line: &str) -> bool {
         match self {
-            Self::Fence(mark) => {
-                line.trim_start_matches(' ')
-                    .chars()
-                    .take_while(|character| character == mark)
-                    .count()
-                    >= 3
-            }
+            Self::Fence(fenced) => fenced.closes(line),
             Self::Within(closer) => line.contains(closer.as_str()),
         }
+    }
+}
+
+/// The run of marks a block was fenced with, which says what closes it.
+///
+/// A line of the same mark, at least as many of them, indented three spaces
+/// at most and followed by nothing but spaces and tabs: so a block fenced with
+/// four backticks holds one fenced with three, and a row of backticks inside a
+/// block fenced with tildes is a row of backticks.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct Fenced {
+    mark: char,
+    count: usize,
+}
+
+impl Fenced {
+    /// Whether `line`, with or without its break, closes the block.
+    fn closes(self, line: &str) -> bool {
+        let line = line.strip_suffix('\n').unwrap_or(line);
+        let marks = line.trim_start_matches(' ');
+        let rest = marks.trim_start_matches(self.mark);
+        line.len().saturating_sub(marks.len()) < CODE
+            && marks.len().saturating_sub(rest.len()) >= self.count
+            && rest.trim_start_matches([' ', '\t']).is_empty()
     }
 }
 
@@ -1120,6 +1148,25 @@ struct HeldMarks {
     /// middle of a line. It is what tells `* item` from `a *word*`, and it is
     /// the whole of what makes a bullet a bullet.
     opened: bool,
+}
+
+impl HeldMarks {
+    /// The run with one more mark in it.
+    ///
+    /// Counted to [`RUN`], but for a fence's marks, which are counted whole:
+    /// what closes a fenced block is a run at least as long as the one that
+    /// opened it.
+    fn longer(self) -> Self {
+        let count = self.count.saturating_add(1);
+        Self {
+            count: if matches!(self.mark, '`' | '~') {
+                count
+            } else {
+                count.min(RUN)
+            },
+            ..self
+        }
+    }
 }
 
 /// A bulleted item's mark, through the life of the item it belongs to.
@@ -1364,9 +1411,10 @@ enum Inside {
     Prose,
     /// The rest of an opening fence's line, which names a language.
     Opening,
-    /// A fenced block, until a fence at the start of a line closes it.
+    /// A fenced block, until a line closes it: see [`Fenced`].
     Fence,
-    /// The rest of a closing fence's line.
+    /// The rest of a line that closes the block where nothing but spaces and
+    /// tabs follow its marks, held until its break says it did.
     Closing,
     /// A block indented four spaces after a blank line, until a line that is
     /// not blank and is indented less than that ends it.
@@ -1885,19 +1933,22 @@ pub struct Markdown {
     /// Whether they were indentation at all is the first marker's to say: the
     /// ones in front of a fence are part of the fence and go with its line,
     /// and every other marker keeps them, which is what nests one list inside
-    /// another. Counted rather than kept, since a space is a space.
+    /// another. Inside a fenced block they say whether a run of its marks can
+    /// close it: four or more make the run code. Counted rather than kept,
+    /// since a space is a space.
     indent: usize,
     line: Line,
     inside: Inside,
-    /// The marker the open block was fenced with.
+    /// The run of marks the open block was fenced with, which says what
+    /// closes it.
     ///
-    /// A block is closed by the marker that opened it and by no other, so a
-    /// row of backticks inside a block fenced with tildes is a row of
-    /// backticks. Read only while a block is open, which is the only time it
-    /// has been written.
-    fenced: char,
+    /// Read only while a block is open, which is the only time it has been
+    /// written.
+    fenced: Fenced,
     /// What the opening fence said the block is written in, while that fence's
-    /// own line is still being read.
+    /// own line is still being read; or the spaces and tabs after the marks of
+    /// a line that may close the block, held to be given back where it does
+    /// not. Bounded by [`MOST`].
     language: String,
     /// The reader for this block, where the language was one this build knows.
     ///
@@ -1983,7 +2034,8 @@ pub struct Markdown {
     /// Whether this line opens with display math, as far as it has arrived.
     probe: Probe,
     /// Whether the fence on this line opened it, and how many marks it took,
-    /// for the end of the line to rebuild it from where the block is held.
+    /// for the end of the line to rebuild it from where the block is held, or
+    /// to give back the marks of a line that turned out not to close one.
     fence: Option<(bool, usize)>,
     /// How this line opened, as far as that has arrived.
     ///
@@ -2373,10 +2425,7 @@ impl Markdown {
             match self.held {
                 // More of the run being held. Not text, and not decided yet.
                 Some(held) if held.mark == character => {
-                    self.held = Some(HeldMarks {
-                        count: held.count.saturating_add(1).min(RUN),
-                        ..held
-                    });
+                    self.held = Some(held.longer());
                     run = next;
                     continue;
                 }
@@ -2539,21 +2588,19 @@ impl Markdown {
                 });
                 run = next;
             } else if matches!(self.inside, Inside::Opening | Inside::Closing) {
-                // What is left of a fence's own line names the language it is
-                // written in, or nothing at all. Either way it is not the
-                // answer, so it goes the way the fence went — but the opening
-                // one is kept, because it is what decides how the block is read.
-                if self.inside == Inside::Opening && self.language.len() < MOST {
-                    self.language.push(character);
+                // What is left of a fence's own line is not the answer, and
+                // goes the way the fence went: see [`Markdown::keeps_fence`].
+                if self.keeps_fence(character, say) {
+                    run = next;
                 }
-                run = next;
             } else {
                 self.started |= character != ' ';
                 self.previous = character;
             }
         }
 
-        self.ends(delta.get(run..).unwrap_or_default(), fresh, say);
+        let rest = self.counts_margin(delta.get(run..).unwrap_or_default());
+        self.ends(rest, fresh, say);
         self.ready.is_some().then_some(delta.len())
     }
 
@@ -2896,7 +2943,7 @@ impl Markdown {
         match self.inside {
             // Inside a fence the only marker left is the fence that closes it,
             // and only at the start of a line. Code is full of the others.
-            Inside::Fence => character == self.fenced && !self.started,
+            Inside::Fence => character == self.fenced.mark && !self.started,
             // A fence's own line is dropped whole; nothing on it marks anything.
             // An indented block has no fence to close it, and is code like any
             // other.
@@ -3005,24 +3052,38 @@ impl Markdown {
                 }
                 true
             }
-            // Three or more open a block that outlives the line it is on, or
-            // close the one already open.
+            // Inside a fence, a run of its marks as long as the one that opened
+            // it, indented less than code is, may close it if nothing but
+            // spaces and tabs follows; the break says whether it did. Any
+            // other run is code.
+            '`' | '~' if self.inside == Inside::Fence => {
+                if held.count >= self.fenced.count
+                    && self.indent < CODE
+                    && matches!(next, '\n' | ' ' | '\t')
+                {
+                    self.fence = Some((held.opened, held.count));
+                    self.inside = Inside::Closing;
+                } else {
+                    self.unmark(held, say);
+                }
+                false
+            }
+            // Three or more open a block that outlives the line it is on.
             // Either marker, because a model reaches for tildes exactly when
             // the block is full of backticks -- and a block read as prose is
             // code with its markers taken out of it, which is the worst thing
             // this reader can do to an answer.
-            '`' | '~' if held.count >= 3 && self.fences(held.mark) => {
+            '`' | '~' if held.count >= 3 => {
                 // A fence's own line goes whole, and the spaces in front of it
                 // are part of that line: an item's block would otherwise open
                 // with the item's indentation stitched to its first row.
                 self.indent = 0;
-                self.inside = if self.inside == Inside::Fence {
-                    Inside::Closing
-                } else {
-                    self.fenced = held.mark;
-                    self.fence = Some((held.opened, held.count));
-                    Inside::Opening
+                self.fenced = Fenced {
+                    mark: held.mark,
+                    count: held.count,
                 };
+                self.fence = Some((held.opened, held.count));
+                self.inside = Inside::Opening;
                 false
             }
             '`' if self.inside == Inside::Prose => {
@@ -3115,12 +3176,77 @@ impl Markdown {
         self.unstrike(say);
     }
 
-    /// Whether a run of three or more `mark` is this line's fence.
+    /// Says a run of marks that meant nothing as it was written, however long
+    /// it was.
+    fn unmark(&mut self, held: HeldMarks, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        self.previous = held.mark;
+        let mut left = held.count;
+        while left > 0 {
+            let some = left.min(RUN);
+            self.say(
+                written(HeldMarks {
+                    count: some,
+                    ..held
+                }),
+                say,
+            );
+            left -= some;
+        }
+    }
+
+    /// Reads `character` into the rest of a fence's own line. Answers whether
+    /// it was kept rather than said.
     ///
-    /// One opens a block wherever a block is not already open, and closes only
-    /// the block its own marker opened. See [`Markdown::fenced`].
-    fn fences(&self, mark: char) -> bool {
-        self.inside != Inside::Fence || self.fenced == mark
+    /// What is left of an opening fence's line names the language it is
+    /// written in, or nothing at all. Either way it is not the answer, so it
+    /// goes the way the fence went — but it is kept, because it is what
+    /// decides how the block is read. What is left of a closing one is spaces
+    /// and tabs, kept to be given back if the line turns out to be code; any
+    /// other character shows that it is, and is code itself.
+    fn keeps_fence(
+        &mut self,
+        character: char,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) -> bool {
+        if self.inside == Inside::Closing && !matches!(character, ' ' | '\t') {
+            self.unfence(say);
+            self.previous = character;
+            return false;
+        }
+        if self.language.len() < MOST {
+            self.language.push(character);
+        }
+        true
+    }
+
+    /// Answers what is left of `rest`, the end of a delta, to say.
+    ///
+    /// A line of a fence that has said nothing but spaces when the delta ends
+    /// keeps them: whether they stand in front of the line that closes it is
+    /// for the rest of the line to say, so they are counted rather than said.
+    fn counts_margin<'a>(&mut self, rest: &'a str) -> &'a str {
+        if self.inside == Inside::Fence && matches!(self.lead, Lead::Margin(spaces) if spaces > 0) {
+            self.indent += rest.len();
+            return "";
+        }
+        rest
+    }
+
+    /// Gives back a line that could have closed the fenced block and did not,
+    /// because something other than a space or a tab followed its marks: its
+    /// spaces, its marks and what stood after them are a line of code.
+    fn unfence(&mut self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        self.inside = Inside::Fence;
+        if let Some((opened, count)) = self.fence.take() {
+            let held = HeldMarks {
+                mark: self.fenced.mark,
+                count,
+                opened,
+            };
+            self.unmark(held, say);
+        }
+        let after = std::mem::take(&mut self.language);
+        self.say(&after, say);
     }
 
     /// Whether `character` opens a block of bars where the scan stands.
@@ -4724,7 +4850,8 @@ impl Markdown {
         let held = match (ended, self.fence) {
             (Inside::Opening, Some((true, count))) if self.holds() => Held::fenced(&self.language)
                 .map(|held| {
-                    let mut source: String = std::iter::repeat_n(self.fenced, count).collect();
+                    let mut source: String =
+                        std::iter::repeat_n(self.fenced.mark, count.min(MOST)).collect();
                     source.push_str(&self.language);
                     source.push('\n');
                     Gathering {
@@ -4872,6 +4999,12 @@ impl Markdown {
     /// is the moment the marker that could have claimed those spaces has
     /// either claimed them or gone. See [`Markdown::indent`].
     fn spend(&mut self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        // A line that may close a fenced block keeps them until it says
+        // whether it did: one that did is the frame's edge, and one that did
+        // not gives them back with the rest of it.
+        if self.inside == Inside::Closing {
+            return;
+        }
         let mut indent = std::mem::take(&mut self.indent);
         while indent > 0 {
             let spaces = indent.min(SPACES.len());
