@@ -53,12 +53,20 @@
 //! every line of code starts with the gutter as a run of its own, and the
 //! closing line becomes the bottom edge. The closing line is one of the marks
 //! the fence opened with, at least as many of them, indented three spaces at
-//! most and followed by nothing but spaces and tabs ([`Fenced`]). The spaces
-//! a delta ends on at the start of a line of code are counted rather than
-//! said, and the spaces and tabs after a run that could close the block are
-//! held, until the break says it did, or until anything else says it did not
-//! and they are handed out as code with the run. A fence a message ends inside
-//! is never given a bottom. The name is the first word of the info string,
+//! most and followed by nothing but spaces and tabs ([`Fenced`]). Inside a
+//! quote every line of the block is read past the quote's mark and one space
+//! after it, which are drawn as the quote's bar, so the quote's own fence
+//! closes it; the first line that is no row of the quote ends the block and
+//! the quote together. Under an item every line is read past the item's
+//! indentation, as far as it has spaces for it, and the three spaces are
+//! counted from there. The spaces a delta ends on at the start of a line of
+//! code are counted rather than said, and the spaces and tabs after a run that
+//! could close the block are held, until the break says it did, or until
+//! anything else says it did not and they are handed out as code with the
+//! run. The spaces a delta ends on at the start of a line of prose are read in
+//! front of the next delta, since only what follows them says whether they are
+//! an item's indentation. A fence a message ends inside is never given a
+//! bottom. The name is the first word of the info string,
 //! cleaned here once because this is where a model's text is read, and a held
 //! fence past its cap says so in its top edge. `framed` reads such a row back
 //! by its gutter, and breaks it where the room runs out rather than at a
@@ -809,6 +817,22 @@ struct Gathering {
     line: usize,
 }
 
+impl Gathering {
+    /// The block gathered, as it is handed on: a fenced one without the
+    /// indentation of the item it was written under.
+    fn block(self, closed: bool) -> Block {
+        let mut source = self.source;
+        if let Closer::Fence(fenced) = self.closer {
+            fenced.unindents(&mut source);
+        }
+        Block {
+            kind: self.held.kind(),
+            source,
+            closed,
+        }
+    }
+}
+
 /// What ends a held block other than a table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Closer {
@@ -1136,6 +1160,10 @@ struct Line {
     /// Whether the line has been set two columns in as part of the body of a
     /// `<details>` block, or that has been decided against.
     fold: Fold,
+    /// How many columns in the line's own words start: past the spaces in
+    /// front of it, and past the marker of an item it opens and the space
+    /// after that marker.
+    indented: usize,
 }
 
 /// Whether a line inside a `<details>` block has been set in from the margin.
@@ -1235,9 +1263,9 @@ enum Lead {
     /// Digits after the spaces, this many of them: the number of an item, if
     /// a stop and a space follow.
     Number(usize),
-    /// The stop after an item's number, waiting for the space that makes it
-    /// one.
-    Stopped,
+    /// The stop after an item's number of this many digits, waiting for the
+    /// space that makes it one.
+    Stopped(usize),
     /// The line has said what it opened with.
     Read,
 }
@@ -1264,7 +1292,9 @@ enum Above {
 enum Item {
     #[default]
     Shut,
-    Open,
+    /// Open, its words starting this many columns in: past its marker and the
+    /// space after it. A block fenced under it is read past that many.
+    Open(usize),
 }
 
 /// The most digits an item's number is written with, as markdown allows: a
@@ -1735,8 +1765,10 @@ pub struct Markdown {
     /// ones in front of a fence are part of the fence and go with its line,
     /// and every other marker keeps them, which is what nests one list inside
     /// another. Inside a fenced block they say whether a run of its marks can
-    /// close it: four or more make the run code. Counted rather than kept,
-    /// since a space is a space.
+    /// close it: four or more past the indentation of the item it was written
+    /// under make the run code, and inside a quote they are the ones after the
+    /// quote's mark and the space it takes. Counted rather than kept, since a
+    /// space is a space.
     indent: usize,
     line: Line,
     inside: Inside,
@@ -1913,6 +1945,13 @@ pub struct Markdown {
     /// Whether the scan about to run reads source as it arrives, rather than
     /// text read again, so it is what the hold of a phrase counts.
     fresh: bool,
+    /// The spaces a delta ended on at the start of a line of prose, read in
+    /// front of the next delta rather than as they arrived. What they were --
+    /// an item's indentation, part of a fence's line that goes with it, or the
+    /// line's own -- is the first other character's to say, and a space said
+    /// before then cannot be taken back. At most [`SPACES`]; a fenced block
+    /// counts its own, see [`Markdown::counts_margin`].
+    waiting: usize,
     /// The span of math held, and what draws one. See [`math`].
     math: math::Math,
 }
@@ -1997,10 +2036,13 @@ impl Markdown {
     /// after its break until the start of the next line rules out a row of `=`
     /// or `-`: any other character, a mix of the two, a blank line, the end of
     /// the message, or a row past the same cap. A line that opens another
-    /// block, a rule or a heading of its own is never in doubt.
+    /// block, a rule or a heading of its own is never in doubt. A line that
+    /// has opened with nothing but spaces yet is, since it may be any of them.
     #[must_use]
     pub fn in_doubt(&self) -> bool {
-        self.table.as_ref().is_some_and(Table::pending) || matches!(self.probe, Probe::Probing(_))
+        self.table.as_ref().is_some_and(Table::pending)
+            || matches!(self.probe, Probe::Probing(_))
+            || self.waiting > 0
     }
 
     /// The held block being gathered, and how many of its lines have begun.
@@ -2039,6 +2081,42 @@ impl Markdown {
     /// would leave a field stale, and the caller knows the size at every call
     /// anyway.
     pub fn read(&mut self, delta: &str, room: usize, say: &mut dyn FnMut(Said<'_>)) {
+        let carried;
+        let delta = match std::mem::take(&mut self.waiting) {
+            0 => delta,
+            waiting => {
+                carried = [SPACES.get(..waiting).unwrap_or_default(), delta].concat();
+                carried.as_str()
+            }
+        };
+        let head = delta.trim_end_matches(' ');
+        let tail = delta.get(head.len()..).unwrap_or_default();
+        if tail.is_empty() || !(head.is_empty() || head.ends_with('\n')) {
+            self.arrives(delta, room, say);
+            return;
+        }
+        if !head.is_empty() {
+            self.arrives(head, room, say);
+        }
+        if self.waits(tail) {
+            self.waiting = tail.len();
+        } else {
+            self.arrives(tail, room, say);
+        }
+    }
+
+    /// Whether `spaces`, the end of a delta, wait for the next one: see
+    /// [`Markdown::waiting`].
+    fn waits(&self, spaces: &str) -> bool {
+        spaces.len() <= SPACES.len()
+            && self.lead == Lead::Margin(0)
+            && self.inside == Inside::Prose
+            && self.gathering.is_none()
+            && self.table.is_none()
+    }
+
+    /// Reads `delta` as it stands, nothing of it held back for the next one.
+    fn arrives(&mut self, delta: &str, room: usize, say: &mut dyn FnMut(Said<'_>)) {
         let mut kinds = std::mem::take(&mut self.kinds);
         let strikes = self.shared_strikes();
         let mut rest = delta;
@@ -2528,11 +2606,7 @@ impl Markdown {
         if character == '\n' {
             let line = gathering.source.get(gathering.line..).unwrap_or_default();
             if gathering.closer.closes(line) {
-                self.ready = Some(Block {
-                    kind: gathering.held.kind(),
-                    source: gathering.source,
-                    closed: true,
-                });
+                self.ready = Some(gathering.block(true));
                 return;
             }
             gathering.line = gathering.source.len();
@@ -2565,7 +2639,9 @@ impl Markdown {
         match self.lead {
             Lead::Margin(spaces) if character == ' ' => {
                 self.lead = Lead::Margin(spaces.saturating_add(1));
-                self.indents()
+                // Inside a block fenced under an item, the item's indentation
+                // is the item's: neither code nor the margin of a closing line.
+                (self.inside == Inside::Fence && spaces < self.fenced.base) || self.indents()
             }
             Lead::Margin(spaces) => {
                 self.lead = Lead::Read;
@@ -2574,17 +2650,19 @@ impl Markdown {
             Lead::Number(digits) => {
                 self.lead = match character {
                     '0'..='9' if digits < NUMBERED => Lead::Number(digits.saturating_add(1)),
-                    '.' | ')' => Lead::Stopped,
+                    '.' | ')' => Lead::Stopped(digits),
                     _ => Lead::Read,
                 };
                 false
             }
-            Lead::Stopped => {
+            Lead::Stopped(digits) => {
                 if character == ' ' {
                     // A numbered item is a paragraph of its own, as a bullet
                     // is, so a phrase opened by a single tilde above it ends.
                     self.unstrike(say);
-                    self.item = Item::Open;
+                    // Its words start past its digits, its stop and this space.
+                    self.line.indented += digits + 2;
+                    self.item = Item::Open(self.line.indented);
                 }
                 self.lead = Lead::Read;
                 false
@@ -2609,6 +2687,14 @@ impl Markdown {
     ) -> bool {
         // Worked out before anything below changes what it asks.
         let held = spaces > 0 && self.indents();
+        self.line.indented = spaces;
+        // A line of a quote's block that is no row of the quote ends both.
+        if self.inside == Inside::Fence
+            && self.quoting != Quoted::Not
+            && (character != '>' || spaces >= CODE)
+        {
+            self.unquotes(say);
+        }
 
         // Where a line indented by spaces says whether it is a row of the
         // quote carried: a quote mark here leaves that to the mark reader, and
@@ -2744,7 +2830,14 @@ impl Markdown {
         match self.inside {
             // Inside a fence the only marker left is the fence that closes it,
             // and only at the start of a line. Code is full of the others.
-            Inside::Fence => character == self.fenced.mark && !self.started,
+            // Inside a quote, so is the quote's own mark in front of it.
+            Inside::Fence => {
+                !self.started
+                    && (character == self.fenced.mark
+                        || (character == '>'
+                            && self.quoting != Quoted::Not
+                            && self.line.quoted == Quoted::Not))
+            }
             // A fence's own line is dropped whole; nothing on it marks anything.
             // An indented block has no fence to close it, and is code like any
             // other.
@@ -2853,6 +2946,9 @@ impl Markdown {
                 }
                 true
             }
+            // Inside a quote's fence, the quote's mark and the one space after
+            // it are the quote's, and what follows is the line of code.
+            '>' if self.inside == Inside::Fence => self.requotes(held, next, say),
             // Inside a fence, a run of its marks as long as the one that opened
             // it, indented less than code is, may close it if nothing but
             // spaces and tabs follows; the break says whether it did. Any
@@ -2882,6 +2978,14 @@ impl Markdown {
                 self.fenced = Fenced {
                     mark: held.mark,
                     count: held.count,
+                    base: match self.item {
+                        Item::Open(words)
+                            if self.line.quoted == Quoted::Not && self.line.indented >= words =>
+                        {
+                            words
+                        }
+                        _ => 0,
+                    },
                 };
                 self.fence = Some((held.opened, held.count));
                 self.inside = Inside::Opening;
@@ -2899,7 +3003,8 @@ impl Markdown {
             '-' | '+' | '*' if held.opened && held.count == 1 && next == ' ' => {
                 self.opens_block(say);
                 self.line.marked = Marked::Owed;
-                self.item = Item::Open;
+                self.line.indented += 2;
+                self.item = Item::Open(self.line.indented);
                 true
             }
             // A quote is a bar down the left and the words beside it, which is
@@ -4329,6 +4434,11 @@ impl Markdown {
     /// The last moment there is: the reader is dropped between messages, and
     /// text still held when that happens is text the reader never sees.
     pub fn finish(&mut self, room: usize, say: &mut dyn FnMut(Said<'_>)) {
+        // The spaces the last delta ended on came before anything below.
+        let waiting = std::mem::take(&mut self.waiting);
+        if waiting > 0 {
+            self.arrives(SPACES.get(..waiting).unwrap_or_default(), room, say);
+        }
         let mut kinds = std::mem::take(&mut self.kinds);
         let strikes = self.shared_strikes();
         let mut tell = |slot: Slot, text: &str, link: Option<&str>| {
@@ -4372,11 +4482,7 @@ impl Markdown {
         // drawn from what arrived; anything else is shown as written.
         if let Some(gathering) = self.gathering.take() {
             self.hand_on(room, &mut kinds, say);
-            self.ready = Some(Block {
-                kind: gathering.held.kind(),
-                source: gathering.source,
-                closed: false,
-            });
+            self.ready = Some(gathering.block(false));
         }
         self.passing = None;
         // What the answer numbered and left open ends with it.
@@ -4592,12 +4698,14 @@ impl Markdown {
         // A fence named for a block that is held, opened at the start of its
         // line, is gathered from here rather than read: what opened it is
         // rebuilt as the first line of what is kept, so the block can be read
-        // again from its source alone.
+        // again from its source alone -- under the item it was written in, so
+        // with the item's indentation.
         let held = match (ended, self.fence) {
             (Inside::Opening, Some((true, count))) if self.holds() => Held::fenced(&self.language)
                 .map(|held| {
-                    let mut source: String =
-                        std::iter::repeat_n(self.fenced.mark, count.min(MOST)).collect();
+                    let mut source: String = std::iter::repeat_n(' ', self.fenced.base.min(MOST))
+                        .chain(std::iter::repeat_n(self.fenced.mark, count.min(MOST)))
+                        .collect();
                     source.push_str(&self.language);
                     source.push('\n');
                     Gathering {

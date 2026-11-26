@@ -11,7 +11,7 @@
 
 use std::ops::Range;
 
-use super::{CODE, Gutter, HeldMarks, Inside, Lead, MOST, Markdown, PLACEHOLDER};
+use super::{CODE, Gutter, HeldMarks, Inside, MOST, Markdown, PLACEHOLDER, Quoted, SPACES};
 use crate::chrome;
 use crate::color::Slot;
 use crate::escape::Escapes;
@@ -194,27 +194,68 @@ pub(super) fn fence_name(info: &str) -> String {
         .to_owned()
 }
 
-/// The run of marks a block was fenced with, which says what closes it.
+/// The run of marks a block was fenced with, which says what closes it, and
+/// the indentation of the item it was written under.
 ///
 /// A line of the same mark, at least as many of them, indented three spaces
 /// at most and followed by nothing but spaces and tabs: so a block fenced with
 /// four backticks holds one fenced with three, and a row of backticks inside a
-/// block fenced with tildes is a row of backticks.
+/// block fenced with tildes is a row of backticks. Under an item, every line
+/// is read past as many of the item's columns as it has spaces for, and the
+/// three are counted from there.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Fenced {
     pub(super) mark: char,
     pub(super) count: usize,
+    /// The columns the words of the item the block opened under start at.
+    pub(super) base: usize,
 }
 
 impl Fenced {
     /// Whether `line`, with or without its break, closes the block.
     pub(super) fn closes(self, line: &str) -> bool {
         let line = line.strip_suffix('\n').unwrap_or(line);
+        let line = line.get(self.margin(line)..).unwrap_or_default();
         let marks = line.trim_start_matches(' ');
         let rest = marks.trim_start_matches(self.mark);
         line.len().saturating_sub(marks.len()) < CODE
             && marks.len().saturating_sub(rest.len()) >= self.count
             && rest.trim_start_matches([' ', '\t']).is_empty()
+    }
+
+    /// How many of the spaces `line` opens with are the item's.
+    pub(super) fn margin(self, line: &str) -> usize {
+        let spaces = line
+            .len()
+            .saturating_sub(line.trim_start_matches(' ').len());
+        spaces.min(self.base)
+    }
+
+    /// Takes the item's indentation off every line of `source`, where it was
+    /// written under one; in place, since what is handed on is the block.
+    pub(super) fn unindents(self, source: &mut String) {
+        if self.base == 0 {
+            return;
+        }
+        // The item's spaces taken off the line so far, or none once the line
+        // has said something else.
+        let mut taken = Some(0);
+        source.retain(|character| {
+            if character == '\n' {
+                taken = Some(0);
+                return true;
+            }
+            match taken {
+                Some(spaces) if character == ' ' && spaces < self.base => {
+                    taken = Some(spaces + 1);
+                    false
+                }
+                _ => {
+                    taken = None;
+                    true
+                }
+            }
+        });
     }
 }
 
@@ -246,15 +287,75 @@ impl Markdown {
 
     /// Answers what is left of `rest`, the end of a delta, to say.
     ///
-    /// A line of a fence that has said nothing but spaces when the delta ends
-    /// keeps them: whether they stand in front of the line that closes it is
-    /// for the rest of the line to say, so they are counted rather than said.
+    /// A line of a fence that has said nothing but spaces when the delta ends,
+    /// past a quote's mark where it has one, keeps them: whether they stand in
+    /// front of the line that closes it is for the rest of the line to say, so
+    /// they are counted rather than said.
     pub(super) fn counts_margin<'a>(&mut self, rest: &'a str) -> &'a str {
-        if self.inside == Inside::Fence && matches!(self.lead, Lead::Margin(spaces) if spaces > 0) {
+        if self.inside == Inside::Fence && !self.started && rest.bytes().all(|byte| byte == b' ') {
             self.indent += rest.len();
             return "";
         }
         rest
+    }
+
+    /// Reads the quote's mark that opens a line of a block fenced inside the
+    /// quote. Answers whether `next`, the character after the marks, was taken
+    /// with it.
+    ///
+    /// The mark and one space after it are the quote's, and the bar is drawn
+    /// in their place, after the spaces in front of the mark; the line of code
+    /// starts after them, so a fence there may close the block. One quote is
+    /// read and no more: a second mark is code.
+    pub(super) fn requotes(
+        &mut self,
+        held: HeldMarks,
+        next: char,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) -> bool {
+        self.line.quoted = self.row();
+        let mut indent = std::mem::take(&mut self.indent);
+        while indent > 0 {
+            let spaces = indent.min(SPACES.len());
+            say(Slot::Quiet, SPACES.get(..spaces).unwrap_or_default(), None);
+            indent -= spaces;
+        }
+        self.bar(say);
+        if held.count > 1 {
+            let code = HeldMarks {
+                count: held.count - 1,
+                opened: false,
+                ..held
+            };
+            self.unmark(code, say);
+            return false;
+        }
+        // Nothing of the line of code has been read yet.
+        self.started = false;
+        next == ' '
+    }
+
+    /// Ends a block fenced inside a quote, and the quote with it, at the first
+    /// line that is no row of the quote: the block's bottom edge, on a row of
+    /// the quote, before anything of the line.
+    pub(super) fn unquotes(&mut self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        self.line.quoted = self.row();
+        self.bar(say);
+        say(Slot::Quiet, chrome::bottom(self.glyphs), None);
+        say(Slot::Quiet, "\n", None);
+        self.line.quoted = Quoted::Not;
+        self.quoting = Quoted::Not;
+        self.inside = Inside::Prose;
+        self.syntax = None;
+    }
+
+    /// What a row of the quote a block is fenced inside is part of: an alert
+    /// wears its own bar, and any other quote's bar is drawn already.
+    fn row(&self) -> Quoted {
+        match self.quoting {
+            Quoted::Alert => Quoted::Alert,
+            Quoted::Not | Quoted::Owed | Quoted::Plain => Quoted::Plain,
+        }
     }
 
     /// Gives back a line that could have closed the fenced block and did not,

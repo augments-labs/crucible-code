@@ -1238,7 +1238,7 @@ fn emphasis_nobody_closed_ends_where_the_next_block_starts() {
 fn the_spaces_in_front_of_a_fence_go_with_it() {
     let said = ended("- item\n  ```rs\n  let a = 1;\n  ```\n- next\n");
 
-    assert_eq!(drawn(&said), "• item\n┌─ rs\n│   let a = 1;\n└─\n• next\n");
+    assert_eq!(drawn(&said), "• item\n┌─ rs\n│ let a = 1;\n└─\n• next\n");
 }
 
 #[test]

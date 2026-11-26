@@ -1,7 +1,9 @@
 //! Where a fenced block ends: on a line of the marks that opened it, at least
 //! as many of them, indented three spaces at most and followed by nothing but
-//! spaces and tabs. Read on the held path and on the streamed one, and however
-//! the answer is cut into deltas.
+//! spaces and tabs. Inside a quote that line, and every line of code, is read
+//! past the quote's mark, and a line that ends the quote ends the block; inside
+//! an item, past the item's indentation. Read on the held path and on the
+//! streamed one, and however the answer is cut into deltas.
 
 use super::*;
 
@@ -167,5 +169,113 @@ fn a_closing_run_followed_by_spaces_or_a_tab_closes_the_block() {
 
         let fence = format!("```diff\n-a\n{closer}\n");
         assert_eq!(held(&format!("{fence}after\n")), closed_diff(&fence));
+    }
+}
+
+#[test]
+fn a_block_fenced_inside_a_quote_is_closed_by_the_quotes_own_fence() {
+    assert_eq!(
+        streamed("> A quoted block:\n> ```rust\n> let quoted = true;\n> ```\n\nAfter the quote."),
+        "│ A quoted block:\n│ ┌─ rust\n│ │ let quoted = true;\n│ └─\n\nAfter the quote."
+    );
+    assert_eq!(
+        streamed("> [!NOTE]\n> ```\n> code\n> ```\nafter\n"),
+        "▎ ◆ Note\n▎ ┌─\n▎ │ code\n▎ └─\nafter\n"
+    );
+    // The spaces in front of the quote's mark are the quote's, on every row.
+    assert_eq!(
+        streamed("  > ```\n  > code\n  > ```\nafter\n"),
+        "  │ ┌─\n  │ │ code\n  │ └─\nafter\n"
+    );
+
+    // A quoted block is never one handed on whole, and is drawn as it streams.
+    assert_eq!(
+        held("> ```diff\n> -a\n> ```\nafter\n"),
+        (Vec::new(), "│ ┌─ diff\n│ │ -a\n│ └─\nafter\n".to_owned())
+    );
+}
+
+#[test]
+fn a_line_that_ends_the_quote_ends_the_block_fenced_inside_it() {
+    assert_eq!(
+        streamed("> ```\n> code\nafter\n"),
+        "│ ┌─\n│ │ code\n│ └─\nafter\n"
+    );
+    assert_eq!(
+        streamed("> ```\n> code\n\nafter\n"),
+        "│ ┌─\n│ │ code\n│ └─\n\nafter\n"
+    );
+    assert_eq!(
+        streamed("> [!TIP]\n> ```\n> code\nafter\n"),
+        "▎ ✓ Tip\n▎ ┌─\n▎ │ code\n▎ └─\nafter\n"
+    );
+
+    assert_eq!(
+        held("> ```diff\n> -a\nafter\n"),
+        (Vec::new(), "│ ┌─ diff\n│ │ -a\n│ └─\nafter\n".to_owned())
+    );
+}
+
+#[test]
+fn what_follows_the_quote_mark_and_one_space_is_the_code() {
+    assert_eq!(
+        streamed("> ```\n>> nested\n>no space\n>   two more\n>     ```\n>    ```\nafter\n"),
+        "│ ┌─\n│ │ > nested\n│ │ no space\n│ │   two more\n│ │     ```\n│ └─\nafter\n"
+    );
+}
+
+#[test]
+fn a_block_fenced_in_an_item_is_read_past_the_items_indentation() {
+    assert_eq!(
+        streamed("- item\n  ```\n  code\n    more\n  ```\nafter\n"),
+        "• item\n┌─\n│ code\n│   more\n└─\nafter\n"
+    );
+    assert_eq!(
+        streamed("1. item\n   ```\n   code\n   ```\nafter\n"),
+        "1. item\n┌─\n│ code\n└─\nafter\n"
+    );
+    // A nested item's words stand further in, and so may the line that closes
+    // a block written under them.
+    assert_eq!(
+        streamed("- item\n  - nested\n    ```\n    code\n    ```\n  after\n"),
+        "• item\n  • nested\n┌─\n│ code\n└─\n  after\n"
+    );
+    // Three past the item's indentation is as far as a closing line may stand.
+    assert_eq!(
+        streamed("- item\n  ```\n  code\n      ```\n     ```\nafter\n"),
+        "• item\n┌─\n│ code\n│     ```\n└─\nafter\n"
+    );
+    // A block may open on the item's own line.
+    assert_eq!(
+        streamed("- ```\n  code\n  ```\nafter\n"),
+        "• ┌─\n│ code\n└─\nafter\n"
+    );
+
+    let (blocks, _) = closed_diff("```diff\n-a\n```\n");
+    assert_eq!(
+        held("- item\n  ```diff\n  -a\n  ```\nafter\n"),
+        (blocks.clone(), "• item\nafter\n".to_owned())
+    );
+    assert_eq!(
+        held("- item\n  - nested\n    ```diff\n    -a\n    ```\n  after\n"),
+        (blocks, "• item\n  • nested\n  after\n".to_owned())
+    );
+}
+
+#[test]
+fn a_block_held_under_an_item_is_named_from_its_lines_past_the_items_indentation() {
+    // What the live foot names a held block by while it is gathered.
+    let answer = "- item\n  ```mermaid\n  graph TD\n";
+    for cut in (1..answer.len()).filter(|cut| answer.is_char_boundary(*cut)) {
+        let (first, second) = answer.split_at(cut);
+        let mut markdown = Markdown::default();
+        for delta in [first, second] {
+            markdown.read(delta, ROOM, &mut |_| {});
+        }
+        assert_eq!(
+            markdown.opened(),
+            Some(("mermaid", "graph TD")),
+            "{answer:?} cut at {cut}"
+        );
     }
 }
