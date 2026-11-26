@@ -695,11 +695,7 @@ fn largest(pixels: u64, nanos: u64, stops: u64, runs: u64) -> u64 {
 /// renderer clips it: none where it is off the pixmap. A shape the parser
 /// gives no bounding box is still drawn, so it is counted as reaching the
 /// whole pixmap.
-fn reaches(
-    bounds: Option<Rect>,
-    transform: Transform,
-    pixmap: Option<IntRect>,
-) -> Option<IntRect> {
+fn reaches(bounds: Option<Rect>, transform: Transform, pixmap: Option<IntRect>) -> Option<IntRect> {
     let Some(bounds) = bounds else {
         return pixmap;
     };
