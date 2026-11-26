@@ -127,7 +127,7 @@ use rustix::termios::{self, OptionalActions, Winsize};
 /// was sent, up to the count the record keeps and 1.5 MiB together, and every
 /// span a row is drawn in carries room for the picture cell it may stand in.
 /// With the record full and as many pictures kept as it keeps, each as large
-/// as it keeps that many of, an idle run of November 26, 2026 read 48.1 MB at
+/// as it keeps that many of, an idle run of November 26, 2026 read 48.4 MB at
 /// its highest; the rest is room for the noise between runs.
 const LIMIT: f64 = 50.0;
 

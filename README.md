@@ -65,7 +65,7 @@ a diagram reached 42.1 MiB once its record was full. A terminal that shows
 pictures keeps each diagram it is shown as one, up to 16 of them and 1.5 MiB
 together: in a run of November 26, 2026 on the same processor and toolchain,
 that session on a terminal confirmed to show pictures, keeping 16 diagrams as
-large as the record keeps 16 of, reached 48.1 MiB once its record was full.
+large as the record keeps 16 of, reached 48.4 MiB once its record was full.
 These are local workload measurements, not a promise for every machine or
 session. Rendering probes also enforce sustained throughput and pacing budgets.
 
