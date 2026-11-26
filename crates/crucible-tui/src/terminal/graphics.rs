@@ -885,11 +885,16 @@ impl Sent {
 
     /// Counts nothing as held: the terminal may have lost every picture, as
     /// when a child had it or its alternate screen was given back and taken
-    /// again. A transmission still going out is ended first.
+    /// again. A transmission the terminal is part way through reading is ended
+    /// first; one cut off before its first chunk was never begun.
     pub(crate) fn forget(&mut self) {
         self.held.clear();
         self.waiting.clear();
-        if self.sending.take().is_some_and(|sending| !sending.whole) {
+        if self
+            .sending
+            .take()
+            .is_some_and(|sending| sending.sent > 0 && !sending.whole)
+        {
             self.ending = true;
         }
     }
@@ -2075,6 +2080,131 @@ mod tests {
         assert_eq!(huge.cells(), (u16::MAX, u16::MAX));
         // Its bytes stay out of a log.
         assert!(!format!("{payload:?}").contains("[1, 2, 3]"));
+    }
+
+    // -----------------------------------------------------------------------
+    // A transmission cut short: ended with an empty last chunk before any
+    // other command, so the terminal never reads that command as more of it.
+
+    /// What ends a transmission the terminal is part way through reading.
+    const ENDED: &str = "\x1b_Gm=0,q=2;\x1b\\";
+
+    /// [`ENDED`], wrapped for tmux to pass through.
+    const ENDED_THROUGH_TMUX: &str = "\x1bPtmux;\x1b\x1b_Gm=0,q=2;\x1b\x1b\\\x1b\\";
+
+    /// A Kitty picture of `bytes` bytes, each `byte`.
+    fn picture_of(bytes: usize, byte: u8) -> Payload {
+        Payload::new(Protocol::Kitty, vec![byte; bytes], (80, 32), Cell::FALLBACK)
+    }
+
+    #[test]
+    fn a_transmission_the_terminal_is_forgotten_during_is_ended_before_the_next_command() {
+        let larger_than_a_frame = picture_of(2 * MOST_SENT_A_FRAME, 7);
+        let small = picture_of(3, 1);
+        let by_number = |id| match id {
+            1 => Some(&larger_than_a_frame),
+            2 => Some(&small),
+            _ => None,
+        };
+        let mut sent = Sent::default();
+        sent.wants(1);
+        let mut cut = String::new();
+        sent.write(by_number, &mut cut);
+        assert!(
+            cut.starts_with("\x1b_Ga=t,f=100,i=1,q=2,m=1;"),
+            "{cut:.48?}"
+        );
+        assert!(!cut.contains("a=p"), "placed before it was sent whole");
+        assert!(sent.pending(), "the rest of the picture is not owed");
+
+        // The terminal may have lost everything: what it was reading is
+        // ended before the next picture's first chunk.
+        sent.forget();
+        sent.wants(2);
+        let mut next = String::new();
+        sent.write(by_number, &mut next);
+        let Some(after) = next.strip_prefix(ENDED) else {
+            panic!("not ended first: {next:.48?}");
+        };
+        assert!(
+            after.starts_with("\x1b_Ga=t,f=100,i=2,q=2,m=0;"),
+            "{after:.48?}"
+        );
+        assert!(!after.contains(ENDED), "ended twice: {after:?}");
+        assert!(!sent.pending());
+
+        // Ended once: the frame after owes nothing.
+        let mut then = String::new();
+        sent.write(by_number, &mut then);
+        assert_eq!(then, "");
+    }
+
+    #[test]
+    fn a_transmission_whose_picture_is_let_go_of_part_way_is_ended_and_wrapped_for_tmux() {
+        let larger_than_a_frame = picture_of(2 * MOST_SENT_A_FRAME, 7);
+        let small = picture_of(3, 1);
+        let mut sent = Sent::default();
+        sent.passes_through(Passthrough::On);
+        sent.wants(1);
+        let mut cut = String::new();
+        sent.write(|id| (id == 1).then_some(&larger_than_a_frame), &mut cut);
+        assert!(
+            cut.starts_with("\x1bPtmux;\x1b\x1b_Ga=t,f=100,i=1,q=2,m=1;"),
+            "{cut:.48?}"
+        );
+        assert!(sent.pending());
+
+        // The record let picture 1 go before it was sent whole, and the
+        // frame after shows picture 2.
+        sent.wants(2);
+        let mut next = String::new();
+        sent.write(|id| (id == 2).then_some(&small), &mut next);
+        let Some(after) = next.strip_prefix(ENDED_THROUGH_TMUX) else {
+            panic!("not ended first: {next:.64?}");
+        };
+        assert!(
+            after.starts_with("\x1bPtmux;\x1b\x1b_Ga=t,f=100,i=2,q=2,m=0;"),
+            "{after:.64?}"
+        );
+        assert!(!after.contains("m=0,q=2;\x1b"), "ended twice: {after:?}");
+        assert!(!sent.pending());
+    }
+
+    #[test]
+    fn a_transmission_that_never_began_is_not_ended_when_the_terminal_is_forgotten() {
+        // Fifteen chunks and a placement leave less of the frame than the
+        // next picture's first chunk takes, so that picture is owed with not
+        // a byte of it sent.
+        let fills_the_frame = picture_of(15 * (MOST_CHUNK / 4 * 3), 7);
+        let one_chunk = picture_of(MOST_CHUNK / 4 * 3, 1);
+        let small = picture_of(3, 2);
+        let by_number = |id| match id {
+            1 => Some(&fills_the_frame),
+            2 => Some(&one_chunk),
+            3 => Some(&small),
+            _ => None,
+        };
+        let mut sent = Sent::default();
+        sent.wants(1);
+        sent.wants(2);
+        let mut full = String::new();
+        sent.write(by_number, &mut full);
+        assert!(full.contains("\x1b_Ga=p,U=1,i=1,"), "picture 1 not placed");
+        assert!(!full.contains("i=2"), "picture 2 began");
+        assert!(sent.pending(), "picture 2 is not owed");
+
+        // Nothing of picture 2 was read, so nothing is ended: the next
+        // command is the next picture's.
+        sent.forget();
+        sent.wants(3);
+        let mut next = String::new();
+        sent.write(by_number, &mut next);
+        assert!(
+            next.starts_with("\x1b_Ga=t,f=100,i=3,q=2,m=0;"),
+            "{next:.48?}"
+        );
+        assert!(!next.contains(ENDED), "ended what never began: {next:.48?}");
+        assert!(!sent.pending());
     }
 
     // -----------------------------------------------------------------------
