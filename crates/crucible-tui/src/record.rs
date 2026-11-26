@@ -259,19 +259,16 @@ struct Pictured {
     /// size; none until they do.
     band: usize,
     /// How many rows the window was when it was first shown, where it keeps
-    /// the rows it was shown in then; none where it follows the window.
-    window: usize,
+    /// the rows it was shown in then, even none before the window said; no
+    /// count where it follows the window.
+    window: Option<usize>,
 }
 
 impl Pictured {
     /// The most rows it is shown in, in a window `window` rows tall, or in
     /// the one it was first shown in where it keeps that.
     fn rows(&self, window: usize) -> u16 {
-        let window = if self.window == 0 {
-            window
-        } else {
-            self.window
-        };
+        let window = self.window.unwrap_or(window);
         self.kept.size.rows(self.key.protocol, window, self.band)
     }
 }
@@ -1253,11 +1250,7 @@ impl Record {
         };
         self.make_room(kept.bytes(), columns, glyphs);
         drawn.refused = None;
-        let window = if self.picturing.keeps {
-            self.picturing.window
-        } else {
-            0
-        };
+        let window = self.picturing.keeps.then_some(self.picturing.window);
         drawn.picture = Some(Box::new(Pictured {
             id: self.picturing.number(),
             key,
@@ -4126,6 +4119,37 @@ mod tests {
             ["cached a", "picture a", "make a", "reencode"]
         );
         assert!(picturing::shown(&record, 0));
+    }
+
+    #[test]
+    fn a_kept_picture_first_shown_before_the_window_said_its_height_keeps_those_rows() {
+        // A native session keeps a picture in the rows it was first shown in,
+        // and a terminal that has not yet said how tall it is has shown it in
+        // rows all the same; the height it says next places nothing again.
+        let (fake, asked) = fake(100, 20, vec![]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+        let placed = |record: &Record| match record.lines.front() {
+            Some(Line::Drawn(Drawn {
+                picture: Some(picture),
+                ..
+            })) => Some((picture.id, picture.key.rows, picture.kept.payload.cells())),
+            _ => None,
+        };
+        record.windowed(0, true);
+        record.drawn(picturing::diagram("a"), Glyphs::Unicode, Theme::Dark);
+        let first = placed(&record);
+        let folded = record.folded(0);
+        assert!(first.is_some(), "the diagram is shown as a picture");
+
+        record.windowed(8, true);
+        record.relay(40, Glyphs::Unicode, Theme::Dark);
+
+        assert_eq!(placed(&record), first, "its number, rows and cells");
+        assert_eq!(record.folded(0), folded, "the rows it is laid in");
+        assert_eq!(
+            picturing::asked(&asked),
+            ["cached a", "picture a", "make a"]
+        );
     }
 
     #[test]
