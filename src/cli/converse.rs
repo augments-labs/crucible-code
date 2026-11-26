@@ -949,9 +949,10 @@ fn conversing<T: Terminal>(
 
     // In the terminal's own buffer the live region is closed while the modes
     // are still held, so what they and any held-back panic write on the way
-    // out lands below it. Nothing on a screen of crucible's own. Closed here
-    // so a terminal that refuses is reported; `closing` covers every other
-    // way out, and does nothing once this has run.
+    // out lands below it. On a screen of crucible's own only the end of a
+    // picture part way out and any deletes still owed are written. Closed
+    // here so a terminal that refuses is reported; `closing` covers every
+    // other way out, and does nothing once this has run.
     renderer.closes()?;
 
     // Whatever was said about the log while the screen was still up went with

@@ -20,6 +20,7 @@ use std::ops::Range;
 
 use crate::color::{Palette, Slot};
 use crate::escape::Escapes;
+use crate::terminal::graphics::{self, PLACEHOLDER};
 use crate::width;
 
 /// `text` with anything a terminal would read as an instruction taken out.
@@ -35,20 +36,30 @@ use crate::width;
 /// becomes a space: a row occupies one row, and a character that moves the
 /// cursor or rings the terminal is not text. A format character is dropped
 /// outright, as [`width::unshown`] says why, and as a limit's name drops it.
+/// So is the character Kitty places a picture's cells with, and the marks
+/// after it that would name a row and a column of one: the only cells a
+/// terminal is sent that stand for a picture are the record's own.
 fn words(text: String) -> String {
     if !text.contains(|character: char| drawn(character) != Some(character)) {
         return text;
     }
 
     let mut escapes = Escapes::default();
+    let mut placed = false;
     text.chars()
         .filter(|character| !escapes.holds(*character))
+        .filter(|character| {
+            let mark = placed && width::advance(*character) == Some(0);
+            placed = *character == PLACEHOLDER || mark;
+            !mark
+        })
         .filter_map(drawn)
         .collect()
 }
 
 /// What a span shows in place of `character`, once [`Escapes`] has taken
-/// whatever belongs to a sequence: nothing for a format character, a space
+/// whatever belongs to a sequence: nothing for a format character or a
+/// picture's placeholder, a space
 /// for any other control character, and otherwise the character itself.
 ///
 /// The rule [`words`] cleans by, one character at a time, so that
@@ -57,7 +68,7 @@ fn words(text: String) -> String {
 /// character as nothing would lay a row a column narrower than its space
 /// makes it on screen.
 pub(crate) fn drawn(character: char) -> Option<char> {
-    if width::unshown(character) {
+    if width::unshown(character) || character == PLACEHOLDER {
         None
     } else if character.is_control() {
         Some(' ')
@@ -114,6 +125,21 @@ struct Span {
     /// middle of one. Escaped by [`address`] on the way in, because it is
     /// written inside a sequence where [`words`] cannot reach.
     link: Option<Box<str>>,
+    /// The picture this span's cells stand in for, where they stand in for
+    /// one: its text is then a space a cell, so it is measured, folded and
+    /// cut as the columns it covers.
+    image: Option<Placeholder>,
+}
+
+/// Which cells of which picture a run of placeholder cells stands for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Placeholder {
+    /// The picture, as the terminal was told it.
+    pub(crate) id: u32,
+    /// The picture's row these cells are on.
+    pub(crate) row: u16,
+    /// The picture's column the first of these cells is.
+    pub(crate) column: u16,
 }
 
 /// One row of a component: its spans, left to right.
@@ -217,7 +243,27 @@ impl Row {
             slot,
             structural,
             link,
+            image: None,
         });
+    }
+
+    /// Row `row` of picture `id`, `columns` cells across.
+    ///
+    /// Stands in the record where a block is shown as a picture: what paints
+    /// it writes the cells a terminal places the picture in, and anything that
+    /// cannot show a picture reads it as the spaces it is.
+    pub(crate) fn picture(id: u32, row: u16, columns: u16) -> Self {
+        let mut pictured = Self::new();
+        if columns > 0 {
+            pictured.0.push(Span {
+                text: " ".repeat(usize::from(columns)),
+                slot: Slot::Plain,
+                structural: Vec::new(),
+                link: None,
+                image: Some(Placeholder { id, row, column: 0 }),
+            });
+        }
+        pictured
     }
 
     /// The row with `other`'s spans appended.
@@ -341,6 +387,22 @@ impl Row {
             if from >= to {
                 continue;
             }
+            if let Some(image) = span.image {
+                // A placeholder's text is a space a cell, so the bytes it is
+                // cut at are the columns it is cut at.
+                let column = u16::try_from(from - start).unwrap_or(u16::MAX);
+                cut.0.push(Span {
+                    text: span.text[from - start..to - start].to_owned(),
+                    slot: span.slot,
+                    structural: Vec::new(),
+                    link: None,
+                    image: Some(Placeholder {
+                        column: image.column.saturating_add(column),
+                        ..image
+                    }),
+                });
+                continue;
+            }
             cut.push_span(
                 span.slot,
                 &span.text[from - start..to - start],
@@ -350,6 +412,13 @@ impl Row {
         }
 
         cut
+    }
+
+    /// The number of every picture the row stands in cells of.
+    pub(crate) fn pictures(&self) -> impl Iterator<Item = u32> + '_ {
+        self.0
+            .iter()
+            .filter_map(|span| span.image.map(|image| image.id))
     }
 
     /// What the row says, with no colour in it.
@@ -477,6 +546,14 @@ impl Row {
                 painted.push_str(OPENS);
                 painted.push_str(link);
                 painted.push_str(ENDS);
+            }
+
+            // A picture's cells are drawn only where colour is written, since
+            // the colour is what names the picture; elsewhere they are the
+            // spaces they are.
+            if let Some(image) = span.image.filter(|_| palette.writes_color()) {
+                graphics::placed(painted, image.id, image.row, image.column, span.text.len());
+                continue;
             }
 
             let open = palette.open(span.slot);

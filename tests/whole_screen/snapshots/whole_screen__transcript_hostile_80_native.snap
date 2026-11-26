@@ -20,7 +20,7 @@ expression: window.picture()
 |                                                                                |
 |› show me the corpus                                                            |
 |                                                                                |
-|A label a model wrote: 􎻮 and a second 􎻮.                                        |
+|A label a model wrote:  and a second .                                          |
 |                                                                                |
 |A terminal instruction a model wrote:  after it.                                |
 |                                                                                |

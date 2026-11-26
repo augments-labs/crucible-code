@@ -241,7 +241,9 @@ formula as written.
 ## Diagrams
 
 A mermaid diagram in an answer is drawn as text: its boxes, the lines between
-them and their labels, in a terminal's characters. Six kinds are drawn: a
+them and their labels, in a terminal's characters. On a terminal that shows
+pictures, that drawing is shown as a picture instead: see
+[Pictures and image files](#pictures-and-image-files). Six kinds are drawn: a
 flowchart (`graph` or `flowchart`), a state diagram (`stateDiagram` or
 `stateDiagram-v2`), an entity-relationship diagram (`erDiagram`), a sequence
 diagram (`sequenceDiagram`), whose participants stand over lifelines with the
@@ -312,9 +314,10 @@ boxes are drawn with, is left out of the label.
 
 [`output.diagrams`](../configuration/configuration.md#output) says how a
 diagram of any of the six kinds is drawn. `image`, the default, draws a
-diagram as a picture where one can be shown and as text everywhere else,
-which is everywhere for now; `text` draws it as text; `written` shows every
-diagram exactly as the model wrote it, in its fence. It is set apart from
+diagram as a picture where one can be shown, which is where the terminal
+confirmed Kitty's protocol, and as text everywhere else; `text` draws it as
+text; `written` shows every diagram exactly as the model wrote it, in its
+fence. It is set apart from
 `output.math`, so either can be written while the other is drawn. A change in
 `/settings` takes effect at once: every diagram already drawn is laid out
 again in the new form. In native mode a
@@ -651,10 +654,36 @@ with each cell folded into the room its column has, however narrow.
 
 ## Pictures and image files
 
-The transcript does not yet put a picture on the screen as pixels, whatever
-`output.images` says; which protocol a session would draw one with, and on
-which terminals, is under [Where pictures are
-drawn](../configuration/configuration.md#where-pictures-are-drawn).
+Where a session draws pictures with Kitty's protocol, as [Where pictures are
+drawn](../configuration/configuration.md#where-pictures-are-drawn) says, a
+[diagram](#diagrams) drawn as text is shown as a picture of that drawing, in
+both [`output.screen`](../configuration/configuration.md#output) modes. It is
+drawn in the theme's colours, never wider than the window and never larger
+than the diagram's own size. It stands in the transcript's cells, so it
+scrolls with the rows around it, and in native mode it goes into your
+terminal's scrollback with them. A change of theme draws it again in the new
+colours, and a resize draws it again to fit the new width; in native mode a
+picture already in the scrollback changes only when the scrollback is written
+again, once the window has been resized. A diagram with a letter the
+picture's one font has none for keeps its text drawing. Everywhere else, and
+for every formula and image file, what the transcript shows in a picture's
+place is text. No picture is drawn, and nothing is sent to the terminal for
+one, with `output.diagrams` at `text` or `written`, with no colour, or when
+the output is not a terminal.
+
+A session keeps at most 16 pictures, and at most 1.5 MiB of them, what each
+was drawn from and what the terminal was sent counted once each. Past either,
+the oldest is drawn as its text again, and in the full screen the transcript
+stays on the line you were reading. A diagram whose picture alone is more than
+1.5 MiB, or would take more than 64 cells across or down, is drawn as text,
+and stays text when the window is resized or the theme changes. In the full
+screen the terminal is told to let go of each picture the session stops
+keeping or draws again. A few are left to the terminal's own limit instead:
+one let go of after it was sent but before it was shown, pictures still kept
+but not shown again after the screen is redrawn, and any let go of while 32
+are already waiting to be. In native mode it keeps every picture it was sent,
+since the scrollback still shows them, up to its own limit; past that it lets
+the oldest go, and their place in the scrollback is left blank.
 
 A picture the transcript turns into pixels, whether an SVG diagram or a PNG,
 JPEG, GIF or WebP file, is bounded before it is read, and a picture past any
@@ -707,7 +736,9 @@ bound is refused rather than shrunk or cut:
   sent as Sixel it is at most 600 pixels wide.
 - **One at a time.** Only one picture is read or drawn at a time, wherever it
   was asked for. One that waits longer than ten seconds for its turn is
-  refused as late.
+  refused as late. A diagram's picture is drawn while the screen is, so it
+  waits at most 40 ms for its turn, and past that the diagram is drawn as
+  text.
 
 An SVG is drawn from its own bytes and nothing else, and only with the
 elements a picture is drawn with: `svg`, `g`, `defs`, `symbol` and `use`;

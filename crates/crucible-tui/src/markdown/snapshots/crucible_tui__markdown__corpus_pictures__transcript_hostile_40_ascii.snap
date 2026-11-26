@@ -2,7 +2,7 @@
 source: crates/crucible-tui/src/markdown/corpus_pictures.rs
 expression: "pictured(\"hostile\", 40, Glyphs::Ascii)"
 ---
-A label a model wrote: 􎻮̅̅ and a second 􎻮.
+A label a model wrote:  and a second .  
                                         
 A terminal instruction a model wrote:   
 after it.                               

@@ -653,10 +653,11 @@ crucible-tui-math.workspace = true
 # What draws a Mermaid diagram in an answer as text, in every renderer of a
 # session.
 crucible-tui-mermaid.workspace = true
-# What turns a drawer's picture into pixels and a PNG. The drawing probe times
-# a diagram's picture rasterised and encoded through it, and the command
-# line's tests hold the font it draws with to the characters a drawer lets
-# into a picture; nothing the command line runs rasterises yet.
+# What turns a drawer's picture into pixels and a PNG. A session draws a
+# diagram's picture through it for a terminal that confirmed Kitty, the drawing
+# probe times a diagram's picture rasterised and encoded through it, and the
+# command line's tests hold the font it draws with to the characters a drawer
+# lets into a picture.
 crucible-raster.workspace = true
 image.workspace = true
 # The hash an attachment is recorded under, taken here because this is where a

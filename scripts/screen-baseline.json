@@ -2512,7 +2512,7 @@
         "Vendor::answering(transcript::said(\"hostile\"))",
         "Watched::answering_on( \"transcript-hostile-80-fullscreen\", 80, 32, &vendor, Profile { widths: Widths::Unicode, ..Profile::default() }, )"
       ],
-      "sha256": "400c477eaa09fe547eafa0bd3af76acfa5f38fbe2a1bb06da5c29a3ad3618204"
+      "sha256": "263308c3812ef1cafbadd8deb70856e19c2ff2e96b9374188bd90b4cdb7d7e24"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_hostile_80_native.snap",
@@ -2521,7 +2521,7 @@
         "Vendor::answering(transcript::said(\"hostile\"))",
         "Watched::drawn_in_colour( \"transcript-hostile-80-native\", (80, 32), &vendor, None, ( \"unicode\", \"native\", Profile { widths: Widths::Unicode, ..Profile::default() }, ), )"
       ],
-      "sha256": "cc86aad3174aa21ae34b2cc2cf2e351a676d3a395ef188ce2e50f9e22a9ef7b9"
+      "sha256": "3aa41747a22952676411f6bc20d64ae51d02f8c6db322a15a5fa2d93e35ae45a"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_images_80_fullscreen.snap",

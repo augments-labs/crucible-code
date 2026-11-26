@@ -20,14 +20,26 @@
 //! between `$$` lines, a flowchart in a `mermaid` fence, a table, the two lines
 //! that stayed in a fence of Rust, and the diff of that rewrite in a fence. A
 //! table is kept as the source it was written as beside the rows it was laid
-//! out as, and so is a diff, which is drawn as a change, and a formula and a
-//! diagram, which are drawn as text; the edit's own change is drawn too, and
-//! being folded is kept written out for the key that shows it whole.
+//! out as, and so is a diff, which is drawn as a change, a formula, which is
+//! drawn as text, and a diagram, which is drawn as a picture; the edit's own
+//! change is drawn too, and being folded is kept written out for the key that
+//! shows it whole.
 //! So a session of them holds more than a session of prose the same length, and
 //! the fill below rolls every one of them out past the ceiling with its source.
 //! The measurement is refused if the second file does not end as the last edit
 //! leaves it, since a session whose edits were turned away drew no change of a
 //! tool's.
+//!
+//! The terminal is one that draws pictures: it names itself as Kitty, reports
+//! the pixels of its cells with its size, and the configuration names Kitty's
+//! protocol, so a diagram is drawn as a picture without the terminal being
+//! asked. A picture is kept twice, as what it was drawn from and as what the
+//! terminal is sent, and the record holds a count of them and a sum of their
+//! bytes at most. The last measured answer ends in one more gantt than that
+//! count, each the largest picture the record keeps that many of, so every
+//! reading after it is of the kept pictures at their caps, with the oldest
+//! drawn as text again for the newest. The measurement is refused if that turn
+//! placed no picture, since a session that drew its diagrams as text kept none.
 //!
 //! What reading code costs is in this reading. A line of a change that did not
 //! move is drawn in the colours of its file's language, and so is a fence that
@@ -91,22 +103,33 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "linux")]
+use crucible_tui::MOST_KEPT_IMAGES;
+#[cfg(target_os = "linux")]
+use crucible_tui_mermaid::Caps;
+#[cfg(target_os = "linux")]
 use rustix::pty::{self, OpenptFlags};
 #[cfg(target_os = "linux")]
 use rustix::termios::{self, OptionalActions, Winsize};
 
 /// The budget, in megabytes.
 ///
-/// Ten above the no-colour probe's, for what reading code in colour and
+/// Fifteen above the no-colour probe's, for what reading code in colour and
 /// drawing the model's math and diagrams cost. Each language a session reads
 /// compiles its patterns and keeps them, about 5 MB for the one this session
 /// reads, and no way of loading the definitions removes that: a set read whole
 /// and a set read a language at a time come to the same patterns compiled.
 /// The answers this session reads carry math and a diagram, and drawing them
 /// keeps about 2 MB more; the diagram's part does not grow with the number of
-/// blocks. That brought the full record to 42.1 MB at its highest, and the
-/// rest is room for the noise between runs and for more kinds of diagram.
-const LIMIT: f64 = 45.0;
+/// blocks. That brought the full record to 42.1 MB at its highest.
+///
+/// A terminal that shows pictures keeps more. Each diagram it is shown as a
+/// picture is kept twice, as what it was drawn from and as what the terminal
+/// was sent, up to the count the record keeps and 1.5 MiB together, and every
+/// span a row is drawn in carries room for the picture cell it may stand in.
+/// With the record full and as many pictures kept as it keeps, each as large
+/// as it keeps that many of, an idle run of November 26, 2026 read 48.4 MB at
+/// its highest; the rest is room for the noise between runs.
+const LIMIT: f64 = 50.0;
 
 /// How much resident memory may grow across one more full lifecycle after the
 /// retained record has already rolled past its ceiling.
@@ -152,6 +175,31 @@ const LINES: usize = 2_500;
 const COLUMNS: u16 = 80;
 #[cfg(target_os = "linux")]
 const ROWS: u16 = 24;
+
+/// The pixels of each of the window's cells, across and down, which the
+/// window reports with its size: a picture covers as many of its cells as its
+/// pixels fill.
+#[cfg(target_os = "linux")]
+const CELL: (u16, u16) = (8, 16);
+
+/// The days every task of the last measured answer's gantts starts within:
+/// the most a gantt may span and still be as narrow as a picture the record
+/// places, so each is as wide a picture as the session keeps.
+#[cfg(target_os = "linux")]
+const SPAN: usize = 24;
+
+/// The tasks of each of the last measured answer's gantts: the most that
+/// leave a gantt that wide small enough for the record to keep as many
+/// pictures of it as it keeps of any.
+///
+/// Measured, not held by a test here, since what a picture keeps is what the
+/// binary's rasteriser makes of it: at this span and this window, one task
+/// more made each picture about 99.4 KB kept, sixteen of which pass the
+/// 1.5 MiB the record keeps together, and fewer than sixteen were kept. The
+/// binary's own test of a width change at the caps keeps sixteen gantts of
+/// this shape.
+#[cfg(target_os = "linux")]
+const TASKS: usize = 26;
 
 /// A launch or turn that stops producing bytes is a failed measurement.
 #[cfg(target_os = "linux")]
@@ -248,6 +296,13 @@ enum ProbeError {
     )]
     Unedited,
 
+    #[cfg(target_os = "linux")]
+    #[error(
+        "bench-session-rss-colour: the last measured turn placed no picture -- its diagrams \
+         were drawn as text and the reading measures no kept pictures"
+    )]
+    Unpictured,
+
     #[cfg(not(target_os = "linux"))]
     #[error("bench-session-rss-colour: shipped-process RSS measurement requires Linux")]
     Unsupported,
@@ -286,12 +341,17 @@ fn measure() -> Result<Measurement, ProbeError> {
     let mut twenty = start;
 
     for turn in 1..=TURNS {
+        let placed = running.placed.count;
         running.send(&format!("turn {turn}: read big.rs and describe it\r"))?;
         running.until(&marker(turn))?;
 
         match turn {
             1 => one = Resource::read(running.id())?,
             5 => five = Resource::read(running.id())?,
+            // Asked of the terminal's bytes rather than of the answer: a
+            // session that could not draw a picture draws the same gantts as
+            // text, and would be read as one that kept them for nothing.
+            TURNS if running.placed.count == placed => return Err(ProbeError::Unpictured),
             TURNS => twenty = Resource::read(running.id())?,
             _ => {}
         }
@@ -411,7 +471,9 @@ struct Scratch {
 impl Scratch {
     /// A rule lets the session's edits through, as a user who had been asked
     /// once would have it: a question would stop the turn at a prompt nobody
-    /// is there to answer.
+    /// is there to answer. Pictures are drawn by Kitty's protocol as named,
+    /// not after asking the terminal, since the probe's side of it answers
+    /// nothing and a question unanswered draws every picture as text.
     fn new(endpoint: &str, model: &str) -> Result<Self, io::Error> {
         let base = std::env::temp_dir().join(format!("crucible-bench-rss-{}", std::process::id()));
         let home = base.join("home");
@@ -425,7 +487,7 @@ impl Scratch {
              \"provider\": \"anthropic\",\n  \"providers\": {{\n    \
              \"anthropic\": {{\"model\": \"{model}\", \"baseUrl\": \"{endpoint}\", \
              \"defaultContextWindow\": 1000000}}\n  \
-             }},\n  \"output\": {{\"color\": \"auto\"}},\n  \
+             }},\n  \"output\": {{\"color\": \"auto\", \"images\": \"kitty\"}},\n  \
              \"permissions\": {{\"allow\": [\"edit(*)\"]}}\n}}\n"
         );
         fs::write(home.join("config.json"), config)?;
@@ -735,7 +797,9 @@ fn edit(turn: usize) -> String {
 /// where they were in a fence that names Rust, and then by the change that edit
 /// made, written as the unified diff of it in a fence with those lines as the
 /// rows it keeps. Both fences are streamed a line at a time and closed by their
-/// last line.
+/// last line. The last measured answer goes on to one more gantt than the
+/// record keeps pictures of, each in a fence of its own, so its marker is
+/// drawn under the last of them.
 #[cfg(target_os = "linux")]
 fn answer(turn: usize, deltas: usize, lines: bool) -> String {
     // Two bytes into the JSON, where they are the escape a line ending is
@@ -809,6 +873,12 @@ fn answer(turn: usize, deltas: usize, lines: bool) -> String {
         fences.extend(put.map(|(_, line)| format!("+{line}\n")));
         fences.extend(kept(EDITED - 1).map(|line| format!(" {line}")));
         fences.push("```\n\n".to_owned());
+        if turn == TURNS {
+            fences.extend(
+                (1..=MOST_KEPT_IMAGES + 1)
+                    .map(|number| format!("```mermaid\n{}```\n\n", gantt(number, SPAN))),
+            );
+        }
         for line in fences {
             let _ = write!(
                 body,
@@ -830,9 +900,81 @@ fn answer(turn: usize, deltas: usize, lines: bool) -> String {
     body
 }
 
+/// Gantt `number` of the last measured answer: one section and [`TASKS`]
+/// tasks beside it, each two days long and starting on its own day within
+/// `span`, every name as wide as a task's is drawn whole.
+#[cfg(target_os = "linux")]
+fn gantt(number: usize, span: usize) -> String {
+    let columns = Caps::GANTT.label.unwrap_or(Caps::GANTT.bytes);
+    let mut source = String::with_capacity(Caps::GANTT.bytes);
+    source.push_str("gantt\ndateFormat YYYY-MM-DD\n");
+    let _ = writeln!(source, "section {}", label(number, columns));
+    for task in 1..=TASKS {
+        let day = task * 2 % span.max(1);
+        let (month, date) = if day < 31 {
+            (1, day + 1)
+        } else {
+            (2, day - 30)
+        };
+        let _ = writeln!(
+            source,
+            "{} :2026-{month:02}-{date:02}, 2d",
+            label(task, columns)
+        );
+    }
+    source
+}
+
+/// A name `columns` wide for the `index`th of something: its number, then
+/// words.
+#[cfg(target_os = "linux")]
+fn label(index: usize, columns: usize) -> String {
+    let head = index.to_string();
+    let tail: String = "word "
+        .chars()
+        .cycle()
+        .take(columns.saturating_sub(head.len()))
+        .collect();
+    format!("{head}{}", tail.trim_end())
+}
+
 #[cfg(target_os = "linux")]
 fn marker(turn: usize) -> String {
     format!("turn-{turn}-complete")
+}
+
+/// What tells a terminal to place a picture, written once the picture has
+/// reached it whole.
+#[cfg(target_os = "linux")]
+const PLACE: &[u8] = b"\x1b_Ga=p,";
+
+/// How many pictures the terminal has been told to place, counted across the
+/// pieces its bytes arrive in; nothing else of them is kept.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Default)]
+struct Placements {
+    count: usize,
+    /// How much of [`PLACE`] the bytes so far end in.
+    matched: usize,
+}
+
+#[cfg(target_os = "linux")]
+impl Placements {
+    fn feed(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            if PLACE.get(self.matched) == Some(byte) {
+                self.matched += 1;
+                if self.matched == PLACE.len() {
+                    self.count += 1;
+                    self.matched = 0;
+                }
+            } else {
+                // The sequence's first byte is in it nowhere else, so a byte
+                // that breaks it can only start it again.
+                self.matched = usize::from(PLACE.first() == Some(byte));
+            }
+        }
+    }
 }
 
 /// The shipped child and its side of a real terminal.
@@ -843,6 +985,8 @@ struct Running {
     child: Child,
     bytes: Receiver<Vec<u8>>,
     reader: Option<JoinHandle<()>>,
+    /// The pictures the child has told its terminal to place so far.
+    placed: Placements,
 }
 
 #[cfg(target_os = "linux")]
@@ -865,6 +1009,9 @@ impl Running {
             .env("PATH", std::env::var_os("PATH").unwrap_or_default())
             .env("HOME", &scratch.home)
             .env("TERM", "xterm-256color")
+            // What a Kitty window sets for what runs in it, which names the
+            // terminal as one the shipped process draws Kitty's pictures on.
+            .env("KITTY_WINDOW_ID", "1")
             .env(crucible_config::HOME, &scratch.home)
             .env("ANTHROPIC_API_KEY", "bench-not-a-key")
             .stdin(Stdio::from(inside))
@@ -877,6 +1024,7 @@ impl Running {
             child,
             bytes,
             reader: Some(reader),
+            placed: Placements::default(),
         })
     }
 
@@ -911,6 +1059,7 @@ impl Running {
 
             match self.bytes.recv_timeout(wait) {
                 Ok(bytes) => {
+                    self.placed.feed(&bytes);
                     seen.extend_from_slice(&bytes);
                     found |= contains(&seen, wanted);
                     if seen.len() > 64 * 1024 {
@@ -963,8 +1112,8 @@ fn pair() -> Result<(File, File), io::Error> {
         Winsize {
             ws_row: ROWS,
             ws_col: COLUMNS,
-            ws_xpixel: 0,
-            ws_ypixel: 0,
+            ws_xpixel: COLUMNS.saturating_mul(CELL.0),
+            ws_ypixel: ROWS.saturating_mul(CELL.1),
         },
     )
     .map_err(io::Error::from)?;
@@ -1164,6 +1313,9 @@ fn main() -> ExitCode {
 #[cfg(target_os = "linux")]
 mod tests {
     use super::*;
+    use crucible_tui::drawing::{Draws as _, Room};
+    use crucible_tui::{Glyphs, MOST_PLACED};
+    use crucible_tui_mermaid::Diagrams;
 
     /// What a response the fixture wrote says: the tool it calls, the input it
     /// calls it with, and the text its deltas add up to.
@@ -1415,5 +1567,113 @@ mod tests {
         let fill = said(&answer(TURNS + 1, 8, true)).text;
         assert!(!fill.contains('$'), "{fill}");
         assert!(!fill.contains("mermaid"), "{fill}");
+    }
+
+    #[test]
+    fn the_last_measured_answer_ends_in_one_more_gantt_than_the_record_keeps_pictures_of() {
+        let text = said(&answer(TURNS, DELTAS, false)).text;
+        let (_, fence) = text.split_once("\n```diff\n").expect("a diff fence");
+        let (_, after) = fence.split_once("```\n\n").expect("the fence closed");
+        let gantts = after.strip_suffix(&marker(TURNS)).expect("the marker last");
+        let fences: Vec<&str> = gantts
+            .split_terminator("```\n\n")
+            .map(|fence| fence.strip_prefix("```mermaid\n").expect("a mermaid fence"))
+            .collect();
+        assert_eq!(fences.len(), MOST_KEPT_IMAGES + 1);
+        for (number, source) in (1..).zip(&fences) {
+            assert_eq!(*source, gantt(number, SPAN));
+            // One section and its tasks, within every cap a gantt has, so
+            // none of them is drawn as written for its size.
+            assert!(source.starts_with("gantt\n"), "{source}");
+            assert!(source.len() <= Caps::GANTT.bytes, "{} bytes", source.len());
+            let sections = source
+                .lines()
+                .filter(|line| line.starts_with("section "))
+                .count();
+            let tasks = source.lines().filter(|line| line.ends_with(", 2d")).count();
+            assert_eq!((sections, tasks), (1, TASKS));
+            assert!(sections + tasks <= Caps::GANTT.nodes);
+        }
+        // No two alike, so no picture stands for another.
+        let mut distinct = fences.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), fences.len());
+
+        // Every other answer, measured or not, holds no gantt.
+        for turn in 1..TURNS {
+            let text = said(&answer(turn, DELTAS, false)).text;
+            assert!(!text.contains("gantt"), "turn {turn}");
+        }
+        assert!(!said(&answer(TURNS + 1, 8, true)).text.contains("gantt"));
+    }
+
+    /// How many of the measured window's cells `picture` covers across,
+    /// from the width it says it has: it is drawn at that width, never wider.
+    fn across(picture: &crucible_tui::drawing::Svg) -> u16 {
+        let (_, after) = picture.as_str().split_once(" width=\"").expect("a width");
+        let (width, _) = after.split_once('"').expect("the width closed");
+        let width: u16 = width.parse().expect("a width in units");
+        width.div_ceil(CELL.0)
+    }
+
+    #[test]
+    fn every_gantt_of_the_last_answer_is_a_picture_as_wide_as_the_record_places() {
+        // The room a fence is drawn in: the window's columns but the one its
+        // scroll rail stands in.
+        let room = Room {
+            columns: usize::from(COLUMNS) - 1,
+            glyphs: Glyphs::Unicode,
+        };
+        for number in 1..=MOST_KEPT_IMAGES + 1 {
+            let drawn = Diagrams.picture(&gantt(number, SPAN), &room);
+            let across = drawn.as_ref().map(across);
+            assert!(
+                across.is_ok_and(|across| across <= MOST_PLACED),
+                "gantt {number}: {across:?} cells across"
+            );
+        }
+        // A day more, and its picture is wider than a picture is placed.
+        let wider = Diagrams.picture(&gantt(1, SPAN + 1), &room);
+        assert!(
+            wider
+                .as_ref()
+                .map(across)
+                .is_ok_and(|across| across > MOST_PLACED)
+        );
+    }
+
+    #[test]
+    fn a_placement_is_counted_across_the_pieces_it_arrives_in_and_nothing_else_is() {
+        let placing = b"\x1b_Ga=p,U=1,i=7,c=75,r=36,q=2\x1b\\";
+        let sent = b"\x1b_Ga=t,f=100,i=7,q=2,m=0;AAAA\x1b\\";
+
+        let mut whole = Placements::default();
+        whole.feed(placing);
+        assert_eq!(whole.count, 1);
+
+        // Cut at every byte, and a sequence broken off and started again.
+        for at in 0..=placing.len() {
+            let (first, second) = placing.split_at(at);
+            let mut cut = Placements::default();
+            cut.feed(first);
+            cut.feed(second);
+            assert_eq!(cut.count, 1, "cut at {at}");
+        }
+        let mut restarted = Placements::default();
+        restarted.feed(b"\x1b_Ga\x1b_Ga=p,");
+        assert_eq!(restarted.count, 1);
+
+        // A picture sent but not placed, text, and the sequence's own bytes
+        // out of order are not placements.
+        let mut none = Placements::default();
+        none.feed(sent);
+        none.feed(b"a=p, the words of a placement in text");
+        none.feed(b"\x1b_G=pa,");
+        assert_eq!(none.count, 0);
+
+        let mut many = Placements::default();
+        many.feed(&[placing.as_slice(), sent, placing].concat());
+        assert_eq!(many.count, 2);
     }
 }

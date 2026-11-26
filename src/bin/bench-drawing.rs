@@ -82,7 +82,7 @@ use std::io::{self, Write as _};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use crucible_raster::{MOST_DECODED, png, rasterise};
+use crucible_raster::{png, raster_width, rasterise};
 use crucible_tui::chrome::Undrawn;
 use crucible_tui::drawing::{Draws, Room};
 use crucible_tui::{Glyphs, Slot};
@@ -1194,49 +1194,16 @@ fn inks() -> Vec<(&'static str, [u8; 3])> {
     inks
 }
 
-/// The value of `name` on the outermost element of `svg`, as a number.
-fn attribute(svg: &str, name: &str) -> Option<u64> {
-    let opened = svg.find('>')?;
-    let head = svg.get(..opened)?;
-    let key = format!(" {name}=\"");
-    let start = head.find(&key)? + key.len();
-    let rest = head.get(start..)?;
-    rest.get(..rest.find('"')?)?.parse().ok()
-}
-
-/// The width a picture `width` by `height` across is rasterised at: its own,
-/// since a picture is never scaled up, unless that is more pixels than
-/// [`MOST_DECODED`] holds, and then the most it holds at its proportions, with
-/// the height rounded up as the rasteriser rounds it.
-fn widest(width: u64, height: u64) -> Option<u32> {
-    let most = u64::try_from(MOST_DECODED).ok()? / 4;
-    let held = |across: u64| {
-        across.saturating_mul((across.saturating_mul(height)).div_ceil(width.max(1))) <= most
-    };
-    let (mut low, mut high) = (1_u64, most.min(width.max(1)));
-    while low < high {
-        let middle = high - (high - low) / 2;
-        if held(middle) {
-            low = middle;
-        } else {
-            high = middle - 1;
-        }
-    }
-    u32::try_from(low).ok()
-}
-
 /// `text` drawn as a picture in `room`: laid out, rasterised in every slot's
-/// ink at the width [`widest`] gives, and encoded as a PNG; the PNG's bytes,
+/// ink at the width [`raster_width`] gives, and encoded as a PNG; the PNG's bytes,
 /// or why it was not made.
 fn picture(text: &str, room: &Room) -> Result<usize, String> {
     let svg = Diagrams
         .picture(text, room)
         .map_err(|refused| format!("drawer: {refused:?}"))?;
     let svg = svg.as_str();
-    let across = attribute(svg, "width")
-        .zip(attribute(svg, "height"))
-        .and_then(|(width, height)| widest(width, height))
-        .ok_or("drawer: no size")?;
+    let across =
+        raster_width(svg.as_bytes()).map_err(|refused| format!("drawer's size: {refused:?}"))?;
     let pixels = rasterise(svg.as_bytes(), across, &inks())
         .map_err(|refused| format!("raster at {across} across: {refused:?}"))?;
     png(&pixels)
@@ -1401,6 +1368,7 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crucible_raster::MOST_DECODED;
 
     /// A picture over its limit is the reading reported, with the text's
     /// reading kept beside it, so a failure names the number that failed;
@@ -1516,12 +1484,9 @@ mod tests {
                 for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
                     for &columns in case.rooms {
                         let svg = Diagrams.picture(text, &Room { columns, glyphs });
-                        let sized = svg.as_ref().ok().and_then(|svg| {
-                            let svg = svg.as_str();
-                            attribute(svg, "width").zip(attribute(svg, "height"))
-                        });
                         assert!(
-                            sized.is_some_and(|(width, height)| widest(width, height).is_some()),
+                            svg.as_ref()
+                                .is_ok_and(|svg| raster_width(svg.as_str().as_bytes()).is_ok()),
                             "{} at {columns} in {glyphs:?}: {svg:?}\n{text}",
                             case.name
                         );
@@ -1535,6 +1500,13 @@ mod tests {
         );
     }
 
+    /// An SVG that says it is `width` by `height`, as a drawer writes one.
+    fn sized(width: u64, height: u64) -> String {
+        format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}"/>"#
+        )
+    }
+
     /// A picture narrower than the most pixels the rasteriser holds allow is
     /// rasterised at its own width, never scaled up: a gantt in one section
     /// is 776 across, where its proportions would let 840 in.
@@ -1542,8 +1514,8 @@ mod tests {
     fn a_picture_narrower_than_the_rasteriser_holds_is_rasterised_at_its_own_width() {
         for (width, height) in [(776, 576), (8, 16), (3216, 16), (1, 1)] {
             assert_eq!(
-                widest(width, height).map(u64::from),
-                Some(width),
+                raster_width(sized(width, height).as_bytes()).map(u64::from),
+                Ok(width),
                 "{width}x{height}"
             );
         }
@@ -1556,7 +1528,7 @@ mod tests {
     fn the_widest_raster_is_the_most_the_rasteriser_holds() {
         let most = MOST_DECODED as u64 / 4;
         for (width, height) in [(848, 624), (3216, 4000), (100_000, 16), (4, 1_000_000)] {
-            let across = u64::from(widest(width, height).unwrap_or(0));
+            let across = u64::from(raster_width(sized(width, height).as_bytes()).unwrap_or(0));
             let pixels = |across: u64| across * (across * height).div_ceil(width);
             assert!(pixels(across) <= most, "{width}x{height} at {across}");
             assert!(pixels(across + 1) > most, "{width}x{height} at {across}");
