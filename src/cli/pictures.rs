@@ -19,10 +19,17 @@
 //!
 //! Nothing is kept here and nothing is written to disk: the renderer keeps
 //! what it shows, bounded, and asks again from that, so [`Raster::cached`]
-//! holds nothing. Only Kitty is encoded for, and only a drawer's picture: an
-//! image file's form is refused.
+//! holds nothing. Only a drawer's picture is encoded: an image file's form is
+//! refused.
+//!
+//! Kitty and iTerm2 are sent the same PNG. Sixel is sent the pixels laid over
+//! the palette's ground, since it has no transparency, so a new ground is a
+//! new payload; a picture wider than Sixel is encoded at is drawn as text, as
+//! too wide, rather than narrowed.
 
-use crucible_raster::{Refused, Slot, png, raster_width, rasterise};
+use crucible_raster::{
+    MOST_SIXEL_WIDTH, Refused, SixelPalette, Slot, png, raster_width, rasterise, sixel,
+};
 use crucible_tui::KeptPicture;
 use crucible_tui::chrome::Undrawn;
 use crucible_tui::graphics::{Form, Payload, PictureKey, Pictures, Protocol};
@@ -31,6 +38,10 @@ use std::time::Duration;
 /// The longest the drawing thread waits for the decode slot before it draws
 /// the block as text.
 const WAIT: Duration = Duration::from_millis(40);
+
+/// The most colours a Sixel payload defines: the registers a terminal that
+/// draws Sixel is expected to have.
+const SIXEL_COLOURS: u16 = 256;
 
 /// The session's pictures, drawn by `crucible_raster`.
 #[derive(Debug, Default)]
@@ -56,10 +67,6 @@ fn encoded(form: &Form, key: &PictureKey) -> Result<Payload, Undrawn> {
     let Form::Svg(svg) = form else {
         return Err(Undrawn::NotHere);
     };
-    match key.protocol {
-        Protocol::Kitty => {}
-        Protocol::Iterm2 | Protocol::Sixel => return Err(Undrawn::NotHere),
-    }
     let svg = svg.as_str().as_bytes();
     let room = u32::try_from(key.bucket.columns())
         .unwrap_or(u32::MAX)
@@ -70,9 +77,22 @@ fn encoded(form: &Form, key: &PictureKey) -> Result<Payload, Undrawn> {
     let _slot = Slot::take(WAIT).map_err(refusal)?;
     let width = raster_width(svg).map_err(refusal)?.min(room);
     let pixels = rasterise(svg, width, &key.palette.inks()).map_err(refusal)?;
-    let bytes = png(&pixels).map_err(refusal)?;
+    let bytes = match key.protocol {
+        Protocol::Kitty | Protocol::Iterm2 => png(&pixels).map_err(refusal)?,
+        // Wider than Sixel is encoded at, it is text: drawn narrower it would
+        // not be the picture at its own size.
+        Protocol::Sixel if pixels.width() > MOST_SIXEL_WIDTH => return Err(Undrawn::TooWide),
+        Protocol::Sixel => sixel(
+            &pixels,
+            &SixelPalette {
+                ground: key.palette.ground(),
+                colours: SIXEL_COLOURS,
+            },
+        )
+        .map_err(refusal)?,
+    };
     Ok(Payload::new(
-        Protocol::Kitty,
+        key.protocol,
         bytes,
         (pixels.width(), pixels.height()),
         key.cell,
@@ -117,12 +137,22 @@ mod tests {
     /// A diagram's key, `columns` wide, in `theme` against the reported
     /// `ground`, on a truecolour Kitty terminal.
     fn key(theme: Theme, ground: Option<(u8, u8, u8)>, columns: usize) -> PictureKey {
+        key_for(Protocol::Kitty, theme, ground, columns)
+    }
+
+    /// The same key, on a truecolour terminal that confirmed `protocol`.
+    fn key_for(
+        protocol: Protocol,
+        theme: Theme,
+        ground: Option<(u8, u8, u8)>,
+        columns: usize,
+    ) -> PictureKey {
         let truecolour = |name: &str| (name == "COLORTERM").then(|| "truecolor".to_owned());
         PictureKey {
             kind: Kind::Mermaid,
             bucket: Bucket::of(columns),
             palette: Palette::resolve(true, theme, ground, &truecolour).identity(),
-            protocol: Protocol::Kitty,
+            protocol,
             cell: CELL,
         }
     }
@@ -191,6 +221,143 @@ mod tests {
             .unwrap();
         assert_eq!(wide.pixels(), (64, 32));
         assert_eq!(wide.cells(), (8, 2));
+    }
+
+    /// A picture `width` by `height` with nothing on it, so every pixel is
+    /// the ground it is laid over.
+    fn bare(width: u32, height: u32) -> Form {
+        Form::Svg(
+            Svg::new(format!(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\">\
+                 <rect class=\"Accent\" width=\"2\" height=\"2\" fill=\"currentColor\"/>\
+                 </svg>"
+            ))
+            .unwrap(),
+        )
+    }
+
+    #[test]
+    fn an_iterm2_picture_is_the_png_its_protocol_names() {
+        let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
+        let key = key_for(Protocol::Iterm2, Theme::Dark, None, 80);
+        let payload = Raster.make("graph", &key, &halves(40, 20)).unwrap();
+
+        assert_eq!(payload.protocol(), Protocol::Iterm2);
+        assert!(payload.bytes().starts_with(b"\x89PNG\r\n\x1a\n"));
+        assert_eq!(payload.pixels(), (40, 20));
+        // The same image Kitty is sent: only the sequence around it differs.
+        let kitty = Raster
+            .make(
+                "graph",
+                &key_for(Protocol::Kitty, Theme::Dark, None, 80),
+                &halves(40, 20),
+            )
+            .unwrap();
+        assert_eq!(payload.bytes(), kitty.bytes());
+    }
+
+    #[test]
+    fn a_sixel_picture_is_one_device_control_string_and_carries_no_escape_of_its_own() {
+        let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
+        let key = key_for(Protocol::Sixel, Theme::Dark, None, 80);
+        let payload = Raster.make("graph", &key, &halves(40, 20)).unwrap();
+
+        assert_eq!(payload.protocol(), Protocol::Sixel);
+        assert_eq!(payload.pixels(), (40, 20));
+        let bytes = payload.bytes();
+        let inside = bytes
+            .strip_prefix(b"\x1bP")
+            .and_then(|rest| rest.strip_suffix(b"\x1b\\"))
+            .unwrap_or_else(|| panic!("not one device control string: {bytes:?}"));
+        // Nothing between the two may end the string early or open another:
+        // no escape, no eight-bit string terminator, no bell, no control at
+        // all, only the printable characters Sixel is spelt in.
+        assert!(
+            inside.iter().all(|byte| (0x20..0x7f).contains(byte)),
+            "a byte outside Sixel's alphabet: {inside:?}"
+        );
+
+        // What it was drawn from and what it is are never the same bytes, so
+        // the record counts both.
+        let kept = KeptPicture {
+            pixels: payload.pixels(),
+            form: halves(40, 20),
+            payload,
+            size: PictureSize::Fit,
+        };
+        assert_eq!(kept.bytes(), kept.form.len() + kept.payload.bytes().len());
+    }
+
+    #[test]
+    fn a_sixel_picture_is_laid_over_the_ground_of_the_theme_it_is_worn_in() {
+        let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
+        let form = bare(40, 20);
+        let dark = Raster
+            .make(
+                "graph",
+                &key_for(Protocol::Sixel, Theme::Dark, None, 80),
+                &form,
+            )
+            .unwrap();
+        let light = Raster
+            .make(
+                "graph",
+                &key_for(Protocol::Sixel, Theme::Light, None, 80),
+                &form,
+            )
+            .unwrap();
+
+        // Sixel names each colour in hundredths: the empty picture is black
+        // under the dark theme and white under the light one.
+        let says = |payload: &Payload, colour: &str| {
+            String::from_utf8_lossy(payload.bytes()).contains(colour)
+        };
+        assert!(
+            says(&dark, ";2;0;0;0"),
+            "{:?}",
+            String::from_utf8_lossy(dark.bytes())
+        );
+        assert!(!says(&dark, ";2;100;100;100"));
+        assert!(
+            says(&light, ";2;100;100;100"),
+            "{:?}",
+            String::from_utf8_lossy(light.bytes())
+        );
+        assert_ne!(dark.bytes(), light.bytes());
+
+        // A ground the terminal reported is the one it is laid over.
+        let reported = Raster
+            .make(
+                "graph",
+                &key_for(Protocol::Sixel, Theme::Dark, Some((255, 255, 255)), 80),
+                &form,
+            )
+            .unwrap();
+        assert!(says(&reported, ";2;100;100;100"));
+    }
+
+    #[test]
+    fn a_sixel_picture_wider_than_six_hundred_pixels_is_too_wide_and_is_text() {
+        let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
+        // Room for both: a hundred and twenty cells of eight pixels.
+        let widest = crucible_raster::MOST_SIXEL_WIDTH;
+        for theme in [Theme::Dark, Theme::Light] {
+            let key = key_for(Protocol::Sixel, theme, None, 120);
+            assert_eq!(
+                Raster.make("graph", &key, &halves(widest + 1, 20)).err(),
+                Some(Undrawn::TooWide),
+                "{theme:?}"
+            );
+            let kept = KeptPicture {
+                pixels: (widest + 1, 20),
+                form: halves(widest + 1, 20),
+                payload: Payload::new(Protocol::Sixel, Vec::new(), (widest + 1, 20), CELL),
+                size: PictureSize::Fit,
+            };
+            assert_eq!(Raster.reencode(&kept, &key).err(), Some(Undrawn::TooWide));
+            let at_most = Raster.make("graph", &key, &halves(widest, 20)).unwrap();
+            assert_eq!(at_most.pixels(), (widest, 20));
+        }
     }
 
     #[test]
