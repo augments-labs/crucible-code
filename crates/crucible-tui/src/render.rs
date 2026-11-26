@@ -2887,18 +2887,21 @@ impl<T: Terminal> Renderer<T> {
         // An iTerm2 or Sixel image is written over its rows only where the
         // band shows every one of them; one partly shown is its blank rows.
         // The rows an image stood on that no image stands on in the same
-        // place now are written again, which erases what was over them.
+        // place now are written again, which erases what was over them,
+        // whichever band they belong to now: a row the box or the turn grew
+        // over may paint exactly as the row held for the image did.
         let mut over = if self.palette.writes_color() {
             self.placed_over(&showing, bands.transcript.start, folds)
         } else {
             Vec::new()
         };
-        let gone: Vec<Range<usize>> = self
-            .overlaid
-            .iter()
-            .filter(|was| !over.iter().any(|now| now.stands_as(was)))
-            .map(Over::rows)
-            .collect();
+        for was in &self.overlaid {
+            if !over.iter().any(|now| now.stands_as(was)) {
+                for at in was.rows() {
+                    self.painted.blank(at);
+                }
+            }
+        }
         let covering = (!over.is_empty()).then(|| view.clone());
         let mut showing = showing.into_iter();
         for at in bands.transcript.start..bands.transcript.end {
@@ -2913,9 +2916,6 @@ impl<T: Terminal> Renderer<T> {
                 }
                 (row, None) => row,
             };
-            if gone.iter().any(|rows| rows.contains(&at)) {
-                self.painted.blank(at);
-            }
             if let (Some(row), Some(view)) = (&row, &covering)
                 && let Some(image) = over.iter_mut().find(|image| image.rows().contains(&at))
             {

@@ -415,6 +415,62 @@ fn an_iterm2_or_sixel_image_is_written_only_while_every_row_of_it_is_in_the_band
 }
 
 #[test]
+fn the_rows_an_image_left_are_written_again_when_the_box_grows_over_them() {
+    // The box grows over the foot of the band, where the image stood, with
+    // rows that paint exactly as the rows held for it did: only writing
+    // them again erases the image that was over them.
+    for protocol in WRITTEN_OVER {
+        let mut drawn = pictured_as(40, 12, protocol, Printed::new(3, 2, 300));
+        let (rows, caret) = boxed();
+        drawn.live(&rows, caret, colourful()).unwrap();
+        for line in 0..20 {
+            drawn.commit(&format!("before {line}")).unwrap();
+        }
+        drawn.answer(DIAGRAM);
+        let written = drawn.take();
+        let &[(before, _)] = images(&written).as_slice() else {
+            panic!("{protocol:?}: not one image: {written:?}");
+        };
+        let (top, _) = placed_at(before).unwrap();
+        let band = drawn.render.bands().transcript;
+        assert!(top + 2 <= band.end, "{protocol:?}: {top} {band:?}");
+        let held: Vec<Row> = drawn
+            .render
+            .record
+            .view(band.len())
+            .into_iter()
+            .filter(|row| row.held().is_some())
+            .collect();
+        let [first, second] = held.as_slice() else {
+            panic!("{protocol:?}: not two rows held: {held:?}");
+        };
+
+        let from = top - 1;
+        let grown: Vec<Row> = (from..12)
+            .map(|at| {
+                if at == top {
+                    first.clone()
+                } else if at == top + 1 {
+                    second.clone()
+                } else {
+                    Row::plain("│    │")
+                }
+            })
+            .collect();
+        drawn.live(&grown, caret, colourful()).unwrap();
+        assert_eq!(drawn.render.bands().prompt, from..12, "{protocol:?}");
+        let after = drawn.take();
+
+        for at in [top, top + 1] {
+            assert!(
+                after.contains(&format!("\x1b[{};1H\x1b[m\x1b[K", at + 1)),
+                "{protocol:?}: row {at} not written again: {after:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn an_iterm2_or_sixel_image_is_written_again_after_a_repaint_and_not_before() {
     for protocol in WRITTEN_OVER {
         let mut drawn = pictured_as(40, 12, protocol, Printed::new(3, 2, 300));

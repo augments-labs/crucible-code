@@ -15443,6 +15443,24 @@
         "macos",
         "windows"
       ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ITERM2-SIXEL-ROWS-LEFT",
+      "family": "transcript-pictures",
+      "obligation": "In the full screen the rows an iTerm2 or Sixel image stood on are written again when the box grows over them, even where the box's rows paint exactly as the rows held for the image did.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::the_rows_an_image_left_are_written_again_when_the_box_grows_over_them",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "76cae90d51651e777f9627ca90abf4f59760d28173cda6918fe22aa336f1330e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
     }
   ]
 }
