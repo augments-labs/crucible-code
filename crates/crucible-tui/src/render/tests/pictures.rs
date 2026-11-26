@@ -1220,7 +1220,7 @@ fn a_right_press_on_a_picture_or_a_drag_from_it_leaves_its_size_until_let_go_whe
         drawn.render.took(press.clone()).unwrap(),
         Some(press.clone())
     );
-    assert!(drawn.render.resizes(line).unwrap());
+    assert!(drawn.render.resizes_when_let_go(line));
     assert_eq!(shown(&drawn.render), (8, 15));
 
     // Dragged off it and let go there: a selection, and still the size it was.
@@ -1243,7 +1243,7 @@ fn a_right_press_on_a_picture_or_a_drag_from_it_leaves_its_size_until_let_go_whe
 
     // Pressed and let go on the same cell: the next size.
     drawn.render.took(press.clone()).unwrap();
-    assert!(drawn.render.resizes(line).unwrap());
+    assert!(drawn.render.resizes_when_let_go(line));
     assert_eq!(shown(&drawn.render), (8, 15));
     drawn
         .render
@@ -1255,6 +1255,27 @@ fn a_right_press_on_a_picture_or_a_drag_from_it_leaves_its_size_until_let_go_whe
     // one, is shown at once.
     assert!(drawn.render.resizes(line).unwrap());
     assert_eq!(shown(&drawn.render), (20, 40));
+}
+
+#[test]
+fn enter_on_a_picture_resizes_it_at_once_after_a_press_whose_release_never_came() {
+    // A terminal can lose a button coming up, and the press it ended is then
+    // still held. Enter on a picture's source is no press, so the size it asks
+    // for is shown at once all the same, each time it is asked.
+    let mut drawn = pictured(60, 30, Printed::new(20, 40, 300));
+    drawn.answer(DIAGRAM);
+    drawn.take();
+    let (line, (row, column)) = picture_cell(&drawn.render).unwrap();
+    let press = Pressed::Clicked { row, column };
+    assert_eq!(
+        drawn.render.took(press.clone()).unwrap(),
+        Some(press.clone())
+    );
+
+    for (columns, rows) in [(15, 30), (20, 40)] {
+        assert!(drawn.render.resizes(line).unwrap());
+        assert_eq!(shown(&drawn.render), (columns, rows));
+    }
 }
 
 #[test]

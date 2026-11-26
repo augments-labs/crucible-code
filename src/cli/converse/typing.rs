@@ -791,7 +791,7 @@ pub(crate) fn ask<T: Terminal>(
                     Landed::Record(at) => return Ok(Asked::Clicked(at)),
                     Landed::Label(at) => return Ok(Asked::Labelled(at)),
                     Landed::Picture(at) => {
-                        renderer.resizes(at)?;
+                        renderer.resizes_when_let_go(at);
                         offered.is_some()
                     }
                     Landed::Line => true,
@@ -1578,7 +1578,7 @@ pub(super) fn during<T: Terminal>(
                 // Shown at its next size when the button comes up on the
                 // cell it went down on, as between turns.
                 Landed::Picture(line) => {
-                    renderer.resizes(line)?;
+                    renderer.resizes_when_let_go(line);
                 }
                 Landed::Line => moved = true,
                 // The count is the one door on that row, and it is the door it

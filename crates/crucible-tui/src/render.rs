@@ -492,8 +492,9 @@ pub struct Renderer<T: Terminal> {
     /// just arrived under the pointer, and what a drag resting at an edge of
     /// the transcript scrolls towards.
     held: Option<(usize, usize)>,
-    /// The line whose picture a press on it asked to show at its next size,
-    /// shown at it once the button comes up on the cell it went down on.
+    /// The line whose picture a press on it asked to show at its next size
+    /// ([`Self::resizes_when_let_go`]), shown at it once the button comes up
+    /// on the cell it went down on.
     ///
     /// Held until then because a press is both ends of what the pointer can
     /// do: either button going down is one, and so is the start of a drag,
@@ -2732,7 +2733,7 @@ impl<T: Terminal> Renderer<T> {
 
     /// The line, counted from the first of the session, whose picture
     /// stands in cell `column` of window row `at`: what a click there
-    /// resizes ([`Self::resizes`]).
+    /// resizes ([`Self::resizes_when_let_go`]).
     ///
     /// None for any other cell, so a click beside a picture or on a block
     /// drawn as text lands where it always did; and none in native mode,
@@ -2757,14 +2758,8 @@ impl<T: Terminal> Renderer<T> {
 
     /// Shows the picture of line `line`, counted from the first of the
     /// session, at the size after the one it is at, round from Full to Fit,
-    /// and answers whether there was one to resize: what a click on it and
-    /// Enter on its source in the view of what was cut ask.
-    ///
-    /// Asked while a button is down — by the press that landed on the
-    /// picture — it is shown at its next size only once the button comes up
-    /// on the cell it went down on, so a drag that starts on a picture
-    /// selects and leaves its size alone. Asked with no button down, as Enter
-    /// asks, it is shown at once.
+    /// now, and answers whether there was one to resize: what Enter on its
+    /// source in the view of what was cut asks, whatever button is held.
     ///
     /// Never in native mode, where every picture is shown at Fit. The frame
     /// is drawn again where it was, so a Sixel picture is encoded for its new
@@ -2777,16 +2772,27 @@ impl<T: Terminal> Renderer<T> {
         if self.native.is_some() || !self.terminal.is_terminal() {
             return Ok(false);
         }
-        if self.held.is_some() {
-            let pictured = self.record.pictured(line);
-            self.sizing = pictured.then_some(line);
-            return Ok(pictured);
-        }
         if !self.record.cycles(line) {
             return Ok(false);
         }
         self.draw()?;
         Ok(true)
+    }
+
+    /// Shows the picture of line `line` at its next size, as
+    /// [`Self::resizes`] does, once the button that went down on it comes up
+    /// on the cell it went down on, and answers whether there is one to
+    /// resize: what a press that landed on a picture asks.
+    ///
+    /// Held until then so a drag that starts on a picture selects and leaves
+    /// its size alone. Never in native mode, where no press arrives.
+    pub fn resizes_when_let_go(&mut self, line: usize) -> bool {
+        if self.native.is_some() || !self.terminal.is_terminal() {
+            return false;
+        }
+        let pictured = self.record.pictured(line);
+        self.sizing = pictured.then_some(line);
+        pictured
     }
 
     /// Whether [`Self::resizes`] would resize line `line`'s picture, for a
