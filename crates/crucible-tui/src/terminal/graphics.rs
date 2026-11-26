@@ -2539,7 +2539,10 @@ mod tests {
         sent.wants(1);
         let mut first = String::new();
         sent.write(|id| (id == 1).then_some(&resized), &mut first);
-        assert!(first.contains("\x1b_Ga=p,U=1,i=1,c=10,r=2,q=2\x1b\\"), "{first:?}");
+        assert!(
+            first.contains("\x1b_Ga=p,U=1,i=1,c=10,r=2,q=2\x1b\\"),
+            "{first:?}"
+        );
 
         // Shown in one row now: its placement goes and one for the new
         // cells takes its place, and the bytes the terminal holds stay.

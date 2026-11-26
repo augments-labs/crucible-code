@@ -290,6 +290,20 @@ impl Row {
         held
     }
 
+    /// Whether display column `column` of the row is a cell of a picture,
+    /// placed by its cells or held blank for it.
+    pub(crate) fn pictured_at(&self, column: usize) -> bool {
+        let mut at = 0;
+        for span in &self.0 {
+            let end = at + width::columns(&span.text);
+            if (at..end).contains(&column) {
+                return span.image.is_some();
+            }
+            at = end;
+        }
+        false
+    }
+
     /// Where the row holds cells blank for a picture: the display column
     /// they start at, which of the picture's cells they are, and how many.
     pub(crate) fn held(&self) -> Option<(usize, Placeholder, usize)> {

@@ -1513,6 +1513,7 @@ impl<T: Terminal> Renderer<T> {
     fn relaid(&mut self, glyphs: Glyphs) {
         self.record
             .pictured_as(self.images, self.palette.identity());
+        self.record.windowed(self.size.rows);
         self.record
             .relay(self.folds(), glyphs, self.palette.theme());
     }
@@ -2711,6 +2712,69 @@ impl<T: Terminal> Renderer<T> {
         }
 
         None
+    }
+
+    /// The line, counted from the first of the session, whose picture
+    /// stands in cell `column` of window row `at`: what a click there
+    /// resizes ([`Self::resizes`]).
+    ///
+    /// None for any other cell, so a click beside a picture or on a block
+    /// drawn as text lands where it always did; and none in native mode,
+    /// where no press arrives and a picture keeps its size.
+    #[must_use]
+    pub fn pictured(&self, at: usize, column: usize) -> Option<usize> {
+        if self.native.is_some() {
+            return None;
+        }
+        let bands = self.bands();
+        if !bands.transcript.contains(&at) {
+            return None;
+        }
+        let rows = self.record_rows(&bands);
+        let into = at - bands.transcript.start;
+        let top = self.record.top_row(rows);
+        self.record
+            .row_at(top + into)
+            .filter(|row| column < self.folds() && row.pictured_at(column))?;
+        self.record.at(into, rows)
+    }
+
+    /// Shows the picture of line `line`, counted from the first of the
+    /// session, at the size after the one it is at, round from Full to Fit,
+    /// and answers whether there was one to resize: what a click on it and
+    /// Enter on its source in the view of what was cut ask.
+    ///
+    /// Never in native mode, where every picture is shown at Fit.
+    pub fn resizes(&mut self, line: usize) -> bool {
+        self.native.is_none() && self.record.cycles(line)
+    }
+
+    /// Whether [`Self::resizes`] would resize line `line`'s picture, for a
+    /// footer to name the key only where it does something.
+    #[must_use]
+    pub fn resizable(&self, line: usize) -> bool {
+        self.native.is_none() && self.record.pictured(line)
+    }
+
+    /// The line, counted from the first of the session, of the block whose
+    /// label window row `at` is: the top edge of a block drawn as text that
+    /// has a source to read, its kind's word and any refusal on it. What a
+    /// click there opens the block's source for.
+    ///
+    /// None for any other row, and in native mode.
+    #[must_use]
+    pub fn labelled(&self, at: usize) -> Option<usize> {
+        if self.native.is_some() {
+            return None;
+        }
+        let bands = self.bands();
+        if !bands.transcript.contains(&at) {
+            return None;
+        }
+        let rows = self.record_rows(&bands);
+        let into = at - bands.transcript.start;
+        let top = self.record.top_row(rows);
+        self.record.labelled(top + into)
     }
 
     /// The cells of window row `at` that a click or a resting pointer counts

@@ -4587,4 +4587,40 @@ mod pictures {
             );
         }
     }
+
+    #[test]
+    fn a_native_picture_keeps_its_size_whatever_is_asked_of_it() {
+        // Native mode has no click to land on a picture and no Enter that
+        // resizes one: every picture is shown at Fit, and stays there.
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, 300));
+        answered(&mut render);
+        window.take();
+
+        let id = render.record.picture_ids().next().unwrap();
+        let cells = render.record.payload(id).unwrap().cells();
+        assert_eq!(cells, (3, 2));
+        let lines: Vec<usize> = render.record.sources().map(|source| source.line).collect();
+        assert!(!lines.is_empty());
+        for line in lines {
+            assert!(!render.resizable(line));
+            assert!(!render.resizes(line));
+        }
+        for row in 0..8 {
+            for column in 0..40 {
+                assert_eq!(render.pictured(row, column), None);
+            }
+            assert_eq!(render.labelled(row), None);
+        }
+        stands(&mut render);
+        assert_eq!(render.record.picture_ids().collect::<Vec<_>>(), [id]);
+        assert_eq!(render.record.payload(id).unwrap().cells(), cells);
+        let after = window.take();
+        assert!(
+            commands(&after)
+                .iter()
+                .all(|command| !command.starts_with("a=")),
+            "{after:?}"
+        );
+    }
 }
