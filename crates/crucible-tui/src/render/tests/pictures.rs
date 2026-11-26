@@ -1204,6 +1204,60 @@ fn a_tall_kitty_picture_fits_half_the_window_and_a_click_on_it_goes_large_full_a
 }
 
 #[test]
+fn a_right_press_on_a_picture_or_a_drag_from_it_leaves_its_size_until_let_go_where_it_went_down() {
+    // Either button going down is a press, so a right press is one and so is
+    // the start of a drag. The loop under the renderer asks for a picture a
+    // press lands on to be resized as soon as the press is handed back to it;
+    // the size waits for the button to come up on the cell it went down on.
+    let mut drawn = pictured(60, 30, Printed::new(20, 40, 300));
+    drawn.answer(DIAGRAM);
+    drawn.take();
+    let (line, (row, column)) = picture_cell(&drawn.render).unwrap();
+    let press = Pressed::Clicked { row, column };
+
+    // Pressed, and not let go: the size it was.
+    assert_eq!(
+        drawn.render.took(press.clone()).unwrap(),
+        Some(press.clone())
+    );
+    assert!(drawn.render.resizes(line).unwrap());
+    assert_eq!(shown(&drawn.render), (8, 15));
+
+    // Dragged off it and let go there: a selection, and still the size it was.
+    let off = row + 1;
+    assert_eq!(
+        drawn
+            .render
+            .took(Pressed::Dragged { row: off, column })
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        drawn
+            .render
+            .took(Pressed::Released { row: off, column })
+            .unwrap(),
+        None
+    );
+    assert_eq!(shown(&drawn.render), (8, 15));
+
+    // Pressed and let go on the same cell: the next size.
+    drawn.render.took(press.clone()).unwrap();
+    assert!(drawn.render.resizes(line).unwrap());
+    assert_eq!(shown(&drawn.render), (8, 15));
+    drawn
+        .render
+        .took(Pressed::Released { row, column })
+        .unwrap();
+    assert_eq!(shown(&drawn.render), (15, 30));
+
+    // A size asked for with no button held, as Enter on its source asks for
+    // one, is shown at once.
+    assert!(drawn.render.resizes(line).unwrap());
+    assert_eq!(shown(&drawn.render), (20, 40));
+}
+
+#[test]
 fn a_window_of_another_height_fits_a_kitty_picture_in_half_of_it_without_sending_it_again() {
     let mut drawn = pictured(60, 30, Printed::new(20, 40, 300));
     drawn.answer(DIAGRAM);

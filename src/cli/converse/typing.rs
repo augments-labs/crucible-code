@@ -784,7 +784,8 @@ pub(crate) fn ask<T: Terminal>(
             // there. Anywhere else — the border, a blank row, the shell's own
             // output — it moves nothing, the same as a key that moved nothing.
             // A picture in the record is resized where it is, and draws its
-            // own frame, as the wheel does.
+            // own frame, as the wheel does — once the button comes up on the
+            // cell it went down on, so a drag that starts on it selects.
             Pressed::Clicked { row, column } => {
                 match landed(renderer, editor, &says, Pointed { row, column }) {
                     Landed::Record(at) => return Ok(Asked::Clicked(at)),
@@ -1574,6 +1575,8 @@ pub(super) fn during<T: Terminal>(
                     opened.block(line);
                     moved |= opened.is_open();
                 }
+                // Shown at its next size when the button comes up on the
+                // cell it went down on, as between turns.
                 Landed::Picture(line) => {
                     renderer.resizes(line)?;
                 }

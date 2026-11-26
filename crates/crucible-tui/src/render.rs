@@ -492,6 +492,14 @@ pub struct Renderer<T: Terminal> {
     /// just arrived under the pointer, and what a drag resting at an edge of
     /// the transcript scrolls towards.
     held: Option<(usize, usize)>,
+    /// The line whose picture a press on it asked to show at its next size,
+    /// shown at it once the button comes up on the cell it went down on.
+    ///
+    /// Held until then because a press is both ends of what the pointer can
+    /// do: either button going down is one, and so is the start of a drag,
+    /// which selects rather than resizes. Dropped by the next press and by
+    /// the pointer moving under the button.
+    sizing: Option<usize>,
     /// When a drag resting at an edge of the transcript next carries it a row.
     creeps: Option<Instant>,
     /// Which window row and column the pointer was last reported on.
@@ -602,6 +610,7 @@ impl<T: Terminal> Renderer<T> {
             notch: NOTCH,
             taken: None,
             held: None,
+            sizing: None,
             creeps: None,
             pointing: None,
             recall: None,
@@ -779,6 +788,7 @@ impl<T: Terminal> Renderer<T> {
                 let view = self.view(&bands);
                 self.taken = Some(Taken::opened(row, column, &view));
                 self.held = Some((row, column));
+                self.sizing = None;
                 self.creeps = None;
                 if had {
                     self.draw()?;
@@ -787,6 +797,7 @@ impl<T: Terminal> Renderer<T> {
             }
             Pressed::Dragged { row, column } => {
                 self.held = Some((row, column));
+                self.sizing = None;
                 if self.taken.is_some() {
                     // The band scrolls a row towards a pointer at its edge
                     // before the drag is placed, so the words that arrive
@@ -802,13 +813,18 @@ impl<T: Terminal> Renderer<T> {
             }
             // Copied where the drag covered something, and quietly dropped
             // where it did not: a button coming up after a plain click is not
-            // an empty clipboard, it is nothing at all.
-            Pressed::Released { .. } => {
-                self.held = None;
+            // an empty clipboard, it is nothing at all. Where the press asked
+            // for a picture's next size and the button comes up on the cell it
+            // went down on, that is the click the size waited for.
+            Pressed::Released { row, column } => {
+                let clicked = self.held.take() == Some((row, column));
+                let sizing = self.sizing.take();
                 self.creeps = None;
                 if self.taken.is_some_and(|taken| !taken.empty()) {
                     let said = self.selected();
                     self.copied(&said)?;
+                } else if let Some(line) = sizing.filter(|_| clicked) {
+                    self.resizes(line)?;
                 }
                 Ok(None)
             }
@@ -2744,6 +2760,12 @@ impl<T: Terminal> Renderer<T> {
     /// and answers whether there was one to resize: what a click on it and
     /// Enter on its source in the view of what was cut ask.
     ///
+    /// Asked while a button is down — by the press that landed on the
+    /// picture — it is shown at its next size only once the button comes up
+    /// on the cell it went down on, so a drag that starts on a picture
+    /// selects and leaves its size alone. Asked with no button down, as Enter
+    /// asks, it is shown at once.
+    ///
     /// Never in native mode, where every picture is shown at Fit. The frame
     /// is drawn again where it was, so a Sixel picture is encoded for its new
     /// size by the frame that shows it.
@@ -2752,7 +2774,15 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the terminal could not be redrawn.
     pub fn resizes(&mut self, line: usize) -> Result<bool, TerminalError> {
-        if self.native.is_some() || !self.terminal.is_terminal() || !self.record.cycles(line) {
+        if self.native.is_some() || !self.terminal.is_terminal() {
+            return Ok(false);
+        }
+        if self.held.is_some() {
+            let pictured = self.record.pictured(line);
+            self.sizing = pictured.then_some(line);
+            return Ok(pictured);
+        }
+        if !self.record.cycles(line) {
             return Ok(false);
         }
         self.draw()?;

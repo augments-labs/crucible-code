@@ -699,7 +699,8 @@ How it is drawn depends on the protocol and the
 
 In the full screen a picture is shown at one of three sizes, and a click on
 its own cells, or <kbd>Enter</kbd> in the <kbd>Ctrl+O</kbd> view while its
-source is at the top, moves it to the next:
+source is at the top, moves it to the next. The click moves it when you let
+go on the cell you pressed, so a drag that starts on a picture selects instead:
 
 - **Fit**, the size it is first shown at: at most the transcript's width and
   at most half the window's height.
