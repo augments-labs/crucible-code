@@ -276,6 +276,18 @@ mod tests {
             inside.iter().all(|byte| (0x20..0x7f).contains(byte)),
             "a byte outside Sixel's alphabet: {inside:?}"
         );
+        // It opens as Sixel, its numeric parameters and then `q`, as the
+        // renderer requires before it writes one.
+        let parameters = inside
+            .iter()
+            .take_while(|byte| byte.is_ascii_digit() || **byte == b';')
+            .count();
+        assert_eq!(
+            inside.get(parameters),
+            Some(&b'q'),
+            "not opened as Sixel: {:?}",
+            inside.get(..16)
+        );
 
         // What it was drawn from and what it is are never the same bytes, so
         // the record counts both.

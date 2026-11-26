@@ -15123,7 +15123,7 @@
     {
       "id": "CASE-TRANSCRIPT-PICTURES-SIXEL-ONE-STRING",
       "family": "transcript-pictures",
-      "obligation": "A diagram drawn for Sixel is one device control string with only printable bytes inside it, and the record counts its form and its payload apart.",
+      "obligation": "A diagram drawn for Sixel is one device control string, opened as Sixel by its numeric parameters and q, with only printable bytes inside it, and the record counts its form and its payload apart.",
       "package": "crucible-code",
       "target": {
         "kind": "bin",
@@ -15131,7 +15131,7 @@
       },
       "case": "cli::pictures::tests::a_sixel_picture_is_one_device_control_string_and_carries_no_escape_of_its_own",
       "source": "src/cli/pictures.rs",
-      "body_sha256": "4545cfa5dab1d46a5ec26002208b0f151260999d409afed3a232af40280af234",
+      "body_sha256": "75994a980f0a98e7174fd76f268c98f6b78146dc139aa310b8ab52cf0f8baf3b",
       "platforms": [
         "linux",
         "macos",
@@ -15420,6 +15420,24 @@
       "case": "render::native::tests::pictures::a_native_repaint_sends_no_iterm2_or_sixel_picture_the_kitty_way",
       "source": "crates/crucible-tui/src/render/native/tests.rs",
       "body_sha256": "6a0d1b931406b7c4134acc26de5f9bf02f6c09e910c8cc99e0ff9ff28a133610",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SIXEL-OPENS-AS-SIXEL",
+      "family": "transcript-pictures",
+      "obligation": "Only a Sixel payload whose device control string opens with numeric parameters and q is written; a printable request for a setting or a capability is refused.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::only_a_device_control_string_that_opens_as_sixel_is_written",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "6ebc2b91041af3987a3b64b2a9ae8817f44fd0311897d69afe4656f405ce4e18",
       "platforms": [
         "linux",
         "macos",

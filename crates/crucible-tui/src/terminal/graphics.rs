@@ -67,9 +67,10 @@
 //! picture's cells blank, places the cursor on the first of them, and writes
 //! the image whole (`Sent::image`): iTerm2's as an inline file of the PNG in
 //! base64 sized to those cells, Sixel's as the encoded string itself, which is
-//! written only when nothing between its opening and its terminator is
-//! anything but a printable character, so a picture can never close it early
-//! or carry a sequence of its own. Inside tmux, where it passes sequences
+//! written only when it opens as Sixel and nothing between its opening and
+//! its terminator is anything but a printable character, so a picture can
+//! never close it early, carry a sequence of its own or ask the terminal for
+//! an answer. Inside tmux, where it passes sequences
 //! through, the image is wrapped for it as a Kitty command is.
 //!
 //! **The table is what was seen.** [`support`] holds the cells of the terminal
@@ -1048,8 +1049,9 @@ impl Sent {
     /// string as it was encoded, wrapped for tmux where it passes them. A
     /// Kitty payload is sent by [`Sent::write`] and placed by its cells
     /// instead, and a Sixel payload that is not one string of Sixel's own
-    /// characters is not written at all, since it would end the string and
-    /// go on as whatever follows.
+    /// characters, opened as Sixel, is not written at all, since it would
+    /// end the string and go on as whatever follows, or ask the terminal
+    /// for an answer.
     pub(crate) fn image(&self, payload: &Payload, into: &mut String) -> bool {
         use base64::Engine as _;
         use std::fmt::Write as _;
@@ -1132,10 +1134,20 @@ impl Sent {
 
 /// What is inside the one device control string a Sixel payload is, where
 /// it is one: opened by `ESC P`, ended by `ESC \`, and nothing between but
-/// printable characters, so no escape can end it early.
+/// printable characters, so no escape can end it early. It opens as Sixel,
+/// with its numeric parameters and then `q`: any other device control
+/// string, such as a request for a setting or a capability, has the
+/// terminal answer into the session's input.
 fn sixel_body(bytes: &[u8]) -> Option<&str> {
     let body = bytes.strip_prefix(b"\x1bP")?.strip_suffix(b"\x1b\\")?;
     if !body.iter().all(|byte| (0x20..0x7f).contains(byte)) {
+        return None;
+    }
+    let parameters = body
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit() || **byte == b';')
+        .count();
+    if body.get(parameters) != Some(&b'q') {
         return None;
     }
     std::str::from_utf8(body).ok()
@@ -2218,6 +2230,35 @@ mod tests {
         assert_eq!(huge.cells(), (u16::MAX, u16::MAX));
         // Its bytes stay out of a log.
         assert!(!format!("{payload:?}").contains("[1, 2, 3]"));
+    }
+
+    #[test]
+    fn only_a_device_control_string_that_opens_as_sixel_is_written() {
+        // Printable all through, a request for a setting or a capability
+        // would have the terminal type its answer into the session's input.
+        let sent = Sent::default();
+        for body in ["q#0~~", "9;1;0q#0~~", "0;1q"] {
+            let mut into = String::new();
+            let payload = Payload::new(
+                Protocol::Sixel,
+                format!("\x1bP{body}\x1b\\").into_bytes(),
+                (8, 16),
+                Cell::FALLBACK,
+            );
+            assert!(sent.image(&payload, &mut into), "{body:?}");
+            assert_eq!(into, format!("\x1bP{body}\x1b\\"));
+        }
+        for body in ["$q m", "+q544e", "1$r0m", "", "9;1;0", "#0~~q", " q"] {
+            let mut into = String::new();
+            let payload = Payload::new(
+                Protocol::Sixel,
+                format!("\x1bP{body}\x1b\\").into_bytes(),
+                (8, 16),
+                Cell::FALLBACK,
+            );
+            assert!(!sent.image(&payload, &mut into), "{body:?}");
+            assert!(into.is_empty(), "{body:?}: {into:?}");
+        }
     }
 
     // -----------------------------------------------------------------------
