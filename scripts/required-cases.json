@@ -13855,6 +13855,24 @@
       ]
     },
     {
+      "id": "CASE-TRANSCRIPT-MERMAID-DRAWING-PROBE-ER-BYTE-CAP",
+      "family": "transcript-blocks",
+      "obligation": "The drawing probe times an entity-relationship diagram chained at its caps with each label as long as its byte cap leaves room for, in two-column characters and in words, which the probe's widest window refuses as too wide after the engine laid it out.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-drawing"
+      },
+      "case": "tests::an_er_diagram_is_timed_at_the_widest_label_its_byte_cap_holds",
+      "source": "src/bin/bench-drawing.rs",
+      "body_sha256": "f1e79815817585b7fbbe69f795c03820778d460ac3206771599bfdd72019b779",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
       "id": "CASE-TRANSCRIPT-MERMAID-SVG-NATURAL-SIZE",
       "family": "transcript-blocks",
       "obligation": "A picture of every kind in each glyph set is one outermost svg as many cells wide and high as its text layout's rows, eight units by sixteen to a cell, with a view box of the same size.",

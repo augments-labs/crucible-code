@@ -52,21 +52,24 @@
 //! relationships, the most one drawn may have, since at the caps no line
 //! between two rows reaches its boxes whole, each label as long as the byte
 //! cap leaves room for and the window still draws, half of them in characters
-//! two columns wide. A diagram refused before the engine runs fails the probe
-//! rather than timing the refusal. A flowchart is laid top to bottom, which
-//! costs the engine more than left to right for the same boxes and lines. A
-//! sequence diagram is timed with every participant and every message its caps
-//! hold, and with its messages among four participants; a gantt with every task
-//! its caps hold, in four sections and in one, spanning as many days as it may
-//! and still be drawn a day to a cell; and a git graph with every commit its
-//! caps hold, on every branch they allow and on three, each id and tag as long
-//! as the byte cap leaves room for. The engine lays a diagram out once whatever
-//! its room, and a drawing wider than the room is refused for it only after, so
-//! each is laid out at a common terminal's width, where it may be refused as
-//! too wide, and in a window wide enough to draw it, in both glyph sets. Two
-//! milliseconds is the budget for text laid out on the drawing thread: a tenth
-//! of the first frame's twenty, so a block closing beside a streaming answer
-//! still leaves the frame its room.
+//! two columns wide; and again with each label as long as the byte cap leaves
+//! room for, in those letters and in words, which the window refuses as too
+//! wide only after the engine laid it out whole. A diagram refused before the
+//! engine runs fails the probe rather than timing the refusal. A flowchart is
+//! laid top to bottom, which costs the engine more than left to right for the
+//! same boxes and lines. A sequence diagram is timed with every participant and
+//! every message its caps hold, and with its messages among four participants;
+//! a gantt with every task its caps hold, in four sections and in one, spanning
+//! as many days as it may and still be drawn a day to a cell; and a git graph
+//! with every commit its caps hold, on every branch they allow and on three,
+//! each id and tag as long as the byte cap leaves room for. The engine lays a
+//! diagram out once whatever its room, and a drawing wider than the room is
+//! refused for it only after, so each is laid out at a common terminal's width,
+//! where it may be refused as too wide, and in a window wide enough to draw
+//! every one but those entity-relationship diagrams at the byte cap, in both
+//! glyph sets. Two milliseconds is the budget for text laid out on the drawing
+//! thread: a tenth of the first frame's twenty, so a block closing beside a
+//! streaming answer still leaves the frame its room.
 //!
 //! A diagram is also drawn as a picture of the same layout, and a picture is
 //! made on the same thread: laid out, rasterised and encoded as a PNG. Each
@@ -148,15 +151,19 @@ const CHANGE_ROOMS: &[usize] = &[WIDE, NARROW];
 /// reading is of a layout rather than of a refusal for the room.
 const FORMULA_ROOMS: &[usize] = &[MOST_COLUMNS + 2];
 
-/// A window wide enough to draw any diagram at the caps.
+/// A window no diagram timed at the caps is too wide for but one: an
+/// entity-relationship diagram whose labels are as long as its byte cap leaves
+/// room for is wider, and is refused as too wide only after the engine laid it
+/// out whole, so it is timed through that refusal, beside the same diagram
+/// with the widest labels this window draws.
 const WINDOW: usize = 402;
 
 /// The rooms a diagram is laid out in: a common terminal's width with a
-/// frame's gutter, and a window wide enough to draw any diagram at the caps.
+/// frame's gutter, and [`WINDOW`].
 const DIAGRAM_ROOMS: &[usize] = &[WIDE + 2, WINDOW];
 
-/// The room a picture is made in: a window wide enough to draw any diagram at
-/// the caps. A picture is drawn at its layout's own size whatever the room, so
+/// The room a picture is made in: [`WINDOW`], which no picture timed is too
+/// wide for. A picture is drawn at its layout's own size whatever the room, so
 /// a narrower one only refuses it as too wide, and a reading of that would
 /// time the refusal.
 const PICTURE_ROOMS: &[usize] = &[WINDOW];
@@ -1037,6 +1044,26 @@ fn diagrams() -> Vec<Case> {
             rooms: DIAGRAM_ROOMS,
         },
         Case {
+            name: "an er diagram chained at its caps, each label as long as its byte cap holds",
+            input: Input::Diagram(diagram_at_the_caps(
+                Caps::ENTITIES,
+                Shape::Chained,
+                Letters::Mixed,
+                entities,
+            )),
+            rooms: DIAGRAM_ROOMS,
+        },
+        Case {
+            name: "an er diagram chained at its caps, each label in words as long as its byte cap holds",
+            input: Input::Diagram(diagram_at_the_caps(
+                Caps::ENTITIES,
+                Shape::Chained,
+                Letters::Latin,
+                entities,
+            )),
+            rooms: DIAGRAM_ROOMS,
+        },
+        Case {
             name: "a sequence diagram at its caps",
             input: Input::Diagram(diagram_at_the_caps(
                 Caps::SEQUENCE,
@@ -1526,6 +1553,43 @@ mod tests {
                 drawn_a_column_at_a_time(Caps::ENTITIES, Shape::Chained, letters, entities),
                 "{letters:?}"
             );
+        }
+    }
+
+    /// An entity-relationship diagram chained at its caps is timed with each
+    /// label as long as its byte cap leaves room for, in both letters a case
+    /// writes it in, beside the one the window draws: at those labels the
+    /// window refuses it as too wide, after the engine laid it out whole.
+    #[test]
+    fn an_er_diagram_is_timed_at_the_widest_label_its_byte_cap_holds() {
+        let timed: Vec<String> = diagrams()
+            .into_iter()
+            .filter_map(|case| match case.input {
+                Input::Diagram(text) => Some(text),
+                _ => None,
+            })
+            .collect();
+        for letters in [Letters::Mixed, Letters::Latin] {
+            let widest = diagram_at_the_caps(Caps::ENTITIES, Shape::Chained, letters, entities);
+            assert!(
+                timed.contains(&widest),
+                "no er diagram is timed at the widest label its byte cap holds in {letters:?}"
+            );
+            for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+                assert_eq!(
+                    Diagrams
+                        .block(
+                            &widest,
+                            &Room {
+                                columns: WINDOW,
+                                glyphs
+                            }
+                        )
+                        .err(),
+                    Some(Undrawn::TooWide),
+                    "{letters:?} in {glyphs:?}"
+                );
+            }
         }
     }
 
