@@ -355,7 +355,10 @@ fn filled(lines: &[String], bytes: usize) -> String {
 
 /// A diagram of each kind with caps of its own the engine reads, at those
 /// caps: every box and every line it may hold, labels at the label cap,
-/// filling its byte cap. By name, with its caps.
+/// filling its byte cap. An entity-relationship diagram holds one line fewer
+/// than its boxes, chaining them all, written out of the chain's order: one
+/// more would not chain them, and it would be refused before it is laid out.
+/// By name, with its caps.
 fn at_the_caps() -> [(&'static str, Caps, String); 4] {
     let entities = {
         let Caps {
@@ -364,10 +367,20 @@ fn at_the_caps() -> [(&'static str, Caps, String); 4] {
             edges,
             ..
         } = Caps::ENTITIES;
+        let relationships = nodes - 1;
+        assert!(
+            relationships <= edges,
+            "a chain of every box is inside the line cap"
+        );
         let mut lines = vec!["erDiagram".to_owned()];
-        for at in 0..edges {
-            let (from, to) = (at % nodes, (at * 7 + 1) % nodes);
-            lines.push(format!("E{from} ||--o{{ E{to} : \"漢字 and words\""));
+        for at in 0..relationships {
+            // Five and the count of relationships share no factor, so each
+            // is written once, far from the one before.
+            let link = at * 5 % relationships;
+            lines.push(format!(
+                "E{link} ||--o{{ E{} : \"漢字 and words\"",
+                link + 1
+            ));
         }
         let mut text = lines.join("\n");
         let mut entity = 0;

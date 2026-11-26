@@ -13839,7 +13839,7 @@
     {
       "id": "CASE-TRANSCRIPT-MERMAID-DRAWING-PROBE",
       "family": "transcript-blocks",
-      "obligation": "Every diagram the drawing probe times is laid out, or refused only as wider than its room.",
+      "obligation": "Every diagram the drawing probe times, in each glyph set and room, is laid out and drawn, or refused only after the engine laid it out: as wider than its room, or as misplaced labels, a line's label the engine left out, set nearer another line than its own or across another line, or set where crucible cannot tell which line it is on; a refusal made before the engine runs fails it.",
       "package": "crucible-code",
       "target": {
         "kind": "bin",
@@ -13847,7 +13847,25 @@
       },
       "case": "tests::every_diagram_timed_is_laid_out",
       "source": "src/bin/bench-drawing.rs",
-      "body_sha256": "9a0325e314312386e5a2b0fde0c4b93e47911fc599403f2b0e9da486b450409f",
+      "body_sha256": "8eaa7fa7e4af90d56094b5ba3d65d699616618df031e563efcc746f598dd70f4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-DRAWING-PROBE-ER-BYTE-CAP",
+      "family": "transcript-blocks",
+      "obligation": "The drawing probe times an entity-relationship diagram chained at its caps with each label as long as its byte cap leaves room for, in two-column characters and in words, which the probe's widest window refuses as too wide after the engine laid it out.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-drawing"
+      },
+      "case": "tests::an_er_diagram_is_timed_at_the_widest_label_its_byte_cap_holds",
+      "source": "src/bin/bench-drawing.rs",
+      "body_sha256": "f1e79815817585b7fbbe69f795c03820778d460ac3206771599bfdd72019b779",
       "platforms": [
         "linux",
         "macos",

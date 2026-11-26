@@ -275,6 +275,23 @@ frame, whose top edge says why, when:
   names, as in `┌─ mermaid · pie · not drawn as text · shown as written`;
 - it is a flowchart with a group (`subgraph`) in it:
   `┌─ mermaid · groups · not drawn as text · shown as written`;
+- it is an entity-relationship diagram whose relationships do not chain its
+  entities one after another, which is
+  `┌─ mermaid · tangled relationships · not drawn as text · shown as written`:
+  an entity related to itself, two relationships between the same two
+  entities, an entity in three or more, or relationships that close a ring.
+  Each relationship is drawn as a line between two entities set side by
+  side, so any other would run through the boxes between them. No width
+  draws it; one whose relationships chain its entities, such as
+  `A ||--o{ B : has` and `B ||--o{ C : holds`, is drawn where it fits;
+- it is a flowchart or a state diagram with a labelled line whose label the
+  layout would leave out, set nearer another line than its own, or set across
+  another line, which is
+  `┌─ mermaid · misplaced labels · not drawn as text · shown as written`.
+  Crucible also refuses to draw it wherever it cannot tell which line a label
+  is on. This comes of many labelled lines running among a few boxes, out and
+  back between the same ones. The layout does not change with the window, so
+  no width draws it, and the source shown says which line each label is on;
 - it holds a statement crucible does not read, which is `not drawn as text`.
   In a sequence diagram that is a note, an activation, numbering
   (`autonumber`), a group (`box`) or a block such as `loop`, `alt` or `rect`;
