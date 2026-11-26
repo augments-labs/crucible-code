@@ -13839,7 +13839,7 @@
     {
       "id": "CASE-TRANSCRIPT-MERMAID-DRAWING-PROBE",
       "family": "transcript-blocks",
-      "obligation": "Every diagram the drawing probe times is laid out, or refused only as wider than its room.",
+      "obligation": "Every diagram the drawing probe times, in each glyph set and room, is laid out and drawn, or refused only after the engine laid it out: as wider than its room, or as misplaced labels, a line's label the engine set beside another line; a refusal made before the engine runs fails it.",
       "package": "crucible-code",
       "target": {
         "kind": "bin",
