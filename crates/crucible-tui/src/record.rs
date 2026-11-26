@@ -71,8 +71,9 @@
 //! they were sent into the cells a size gives it, so a new size or a window
 //! of another height lays it out again and sends nothing new; a Sixel bitmap
 //! is drawn cell for cell, so it is encoded again for them once the band
-//! shows it, as for a new width, and a size it is too large to keep at is
-//! passed over rather than drawn as text. A native session's picture keeps
+//! shows it, as for a new width, and a size it is too large to keep at, or
+//! kept at only by drawing another picture as text, is passed over rather
+//! than drawn as text. A native session's picture keeps
 //! the rows it was first shown in, whatever the window's height becomes,
 //! since the cells in the terminal's scrollback were laid for them and
 //! nothing it sent is placed again ([`Record::windowed`]).
@@ -1211,12 +1212,19 @@ impl Record {
         let mut key = key;
         let mut made = self.make(drawn, &key, glyphs, columns);
         // A Sixel picture the reader made larger, too large to keep at that
-        // size: the size after it, and back to the first, rather than text.
+        // size or kept there only by drawing another as text: the size after
+        // it, and back to the first, rather than text. At the first it is
+        // what a picture nobody resized would be.
         for _ in 0..2 {
             let window = self.picturing.window;
-            let Err(Undrawn::TooLargeToKeep) = made else {
-                break;
+            let passed = match &made {
+                Err(Undrawn::TooLargeToKeep) => true,
+                Ok(kept) => !self.room_for(kept.bytes()),
+                Err(_) => false,
             };
+            if !passed {
+                break;
+            }
             let Some(picture) = drawn.picture.as_mut().filter(|picture| {
                 picture.key.protocol == Protocol::Sixel && picture.kept.size != PictureSize::Fit
             }) else {
@@ -1321,12 +1329,18 @@ impl Record {
         Ok(kept)
     }
 
+    /// Whether one more picture of `bytes` is kept beside every picture kept
+    /// now, under both caps, with none drawn as text for it.
+    fn room_for(&self, bytes: usize) -> bool {
+        let (count, held) = self.kept_pictures();
+        count < MOST_KEPT_IMAGES && held.saturating_add(bytes) <= MOST_KEPT_IMAGE_BYTES
+    }
+
     /// Draws the oldest kept pictures as text, each laid out again at
     /// `columns` in `glyphs`, until one more of `bytes` fits under both caps.
     fn make_room(&mut self, bytes: usize, columns: usize, glyphs: Glyphs) {
         loop {
-            let (count, held) = self.kept_pictures();
-            if count < MOST_KEPT_IMAGES && held.saturating_add(bytes) <= MOST_KEPT_IMAGE_BYTES {
+            if self.room_for(bytes) {
                 return;
             }
             let by = By {

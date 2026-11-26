@@ -728,7 +728,10 @@ the output is not a terminal.
 A session keeps at most 16 pictures, and at most 1.5 MiB of them, what each
 was drawn from and what the terminal was sent counted once each. Past either,
 the oldest is drawn as its text again, and in the full screen the transcript
-stays on the line you were reading. A diagram whose picture alone is more than
+stays on the line you were reading. A larger size you choose for a picture
+Sixel draws, when it could be kept only by going past either, is passed over
+for the next one, so resizing one picture never draws another as text. A
+diagram whose picture alone is more than
 1.5 MiB, or would take more than 64 cells across or down, is drawn as text,
 and stays text when the window is resized or the theme changes. In the full
 screen the terminal is told to let go of each picture the session stops

@@ -1309,6 +1309,69 @@ fn a_sixel_picture_too_large_to_keep_at_a_larger_size_goes_on_to_the_next_and_is
 }
 
 #[test]
+fn a_sixel_picture_cycled_to_a_size_that_needs_room_another_keeps_goes_on_and_the_other_stays() {
+    // Thirty-five KiB a row: two pictures at Fit's twenty rows are kept
+    // together, and one at the band's height is not kept beside the other.
+    let mut drawn = pictured_as(
+        60,
+        40,
+        graphics::Protocol::Sixel,
+        Printed::per_row(20, 30, 35 * 1024),
+    );
+    drawn.answer(DIAGRAM);
+    drawn.answer(DIAGRAM);
+    drawn.take();
+    let kept: Vec<u32> = drawn.render.record.picture_ids().collect();
+    assert_eq!(kept.len(), 2, "{kept:?}");
+
+    // Large and Full would turn the other to text: it goes back to Fit as it
+    // was encoded, and both stay pictures.
+    let (line, _) = picture_cell(&drawn.render).unwrap();
+    assert!(drawn.render.resizes(line).unwrap());
+    drawn.take();
+    assert_eq!(drawn.render.record.picture_ids().collect::<Vec<_>>(), kept);
+    assert!(drawn.render.resizable(line), "drawn as text");
+    let lines: Vec<usize> = drawn.render.record.sources().map(|source| source.line).collect();
+    assert!(
+        lines.iter().all(|&line| drawn.render.resizable(line)),
+        "a picture drawn as text: {lines:?}"
+    );
+}
+
+#[test]
+fn a_sixel_picture_resized_and_then_made_again_for_a_taller_window_is_text_only_where_fit_is() {
+    // Forty KiB a row and sixty rows of its own: Large fits a window thirty
+    // rows tall, and in a taller one even Fit may be too large to keep. A
+    // picture the reader resized is drawn as text only where one never
+    // resized is too: the window decides that, not the size chosen.
+    for rows in [40, 60, 70, 76, 80] {
+        let ended: Vec<bool> = [false, true]
+            .into_iter()
+            .map(|cycled| {
+                let mut drawn = pictured_as(
+                    60,
+                    30,
+                    graphics::Protocol::Sixel,
+                    Printed::per_row(20, 60, 40 * 1024),
+                );
+                drawn.answer(DIAGRAM);
+                drawn.take();
+                let (line, _) = picture_cell(&drawn.render).unwrap();
+                if cycled {
+                    assert!(drawn.render.resizes(line).unwrap());
+                    drawn.take();
+                    assert!(drawn.render.resizable(line), "drawn as text at Large");
+                }
+                drawn.resize(60, rows);
+                drawn.take();
+                drawn.render.resizable(line)
+            })
+            .collect();
+        assert!(ended[1] || !ended[0], "at {rows} rows: {ended:?}");
+    }
+}
+
+#[test]
 fn a_label_is_what_a_click_opens_a_blocks_source_from_and_no_other_row_is() {
     // Drawn as text: a diagram nothing here draws, written as its source
     // under a label that says so, and a table, whose border is no label.
