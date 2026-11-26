@@ -2713,6 +2713,15 @@
       "sha256": "e7b24db1554cd291c644bad1d95e93637756d96f815873d8de94e1b1fc488dba"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__transcript_mermaid_label_80_fullscreen.snap",
+      "case": "transcript_mermaid_label_80_fullscreen",
+      "opened": [
+        "Vendor::answering(transcript::said(\"mermaid_graphs\"))",
+        "Watched::in_default_colours( \"transcript-mermaid-label-80-fullscreen\", (80, 58), Some(&vendor), None, )"
+      ],
+      "sha256": "4b92ff036247a3ed585bf256d73de423c5706258f9620b0caf102e4c4649130e"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_mermaid_timelines_120_fullscreen.snap",
       "case": "transcript_mermaid_timelines_120_fullscreen",
       "opened": [

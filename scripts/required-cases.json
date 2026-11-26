@@ -15497,6 +15497,346 @@
         "macos",
         "windows"
       ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-KITTY-REPLACED",
+      "family": "transcript-picture-sizes",
+      "obligation": "A Kitty picture the terminal already holds, shown in other cells, is deleted and placed again at the new size with no new transmission.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::a_held_picture_shown_in_other_cells_is_placed_again_and_never_sent_again",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "d1795cee1ad8dafce0248fb6bc251d53bf189888f108ecf7778d59e5502ed753",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-SHAPE-KEPT",
+      "family": "transcript-picture-sizes",
+      "obligation": "A Kitty or iTerm2 payload shown in fewer rows keeps its aspect, is never larger than its natural size nor smaller than one row, and a Sixel payload keeps the cells its bitmap was encoded for.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::a_payload_shown_in_fewer_rows_keeps_its_shape_and_a_sixel_keeps_its_bitmaps",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "389adcc1a2957804bb67356e7bd1f02700cb41ddef5c92fc439c60e0d9f21efd",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-CYCLE",
+      "family": "transcript-picture-sizes",
+      "obligation": "In fullscreen a tall Kitty picture is drawn at Fit, at most half the window height, and a click on its own cells takes it to Large (the window height), Full (its natural size, at most 64 rows) and back to Fit.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_tall_kitty_picture_fits_half_the_window_and_a_click_on_it_goes_large_full_and_back",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "d1c325b5f2c3b422815511c0ae5dfb64baab4274340247998417b3a34a124617",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-WINDOW-HEIGHT",
+      "family": "transcript-picture-sizes",
+      "obligation": "A window of another height fits a Kitty picture in half of it again, re-placing it without sending it again.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_window_of_another_height_fits_a_kitty_picture_in_half_of_it_without_sending_it_again",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "4a5dfffa444297dc0892a76661aec239bf695946b7adba3c91725b694205eed8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-SIXEL-REENCODED",
+      "family": "transcript-picture-sizes",
+      "obligation": "A Sixel picture clicked to a new size is encoded again for that size, bounded by the transcript band, by the frame that shows it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_sixel_picture_clicked_is_encoded_again_for_its_new_size_by_the_frame_that_shows_it",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "174e0141e66174849a0c2cf27a4024908447eee80bb8b0e64474a404ad3238af",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-SIXEL-SKIPPED",
+      "family": "transcript-picture-sizes",
+      "obligation": "A Sixel encoding at a larger size that would pass the kept-image ceiling is discarded and the cycle moves on to the next size; the picture never falls to text.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_sixel_picture_too_large_to_keep_at_a_larger_size_goes_on_to_the_next_and_is_never_text",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "6b80fbfdf5cd791dd1b57f1fb30e0489527d4f0b8ca0d43db64b7fff5bffced0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-LABEL-ROW",
+      "family": "transcript-picture-sizes",
+      "obligation": "The renderer names the label of a diagram drawn as its source, under a refusal label, as the one row a click opens that block's source from: no other row of the band, a table's border included.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_label_is_what_a_click_opens_a_blocks_source_from_and_no_other_row_is",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "e2c6ce591b44d4421b66c2d1b113eff0f432488101b89891e6336c8929a67179",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-NATIVE-FIT",
+      "family": "transcript-picture-sizes",
+      "obligation": "In native mode a picture stays at Fit: no click, label or resize asked of the renderer changes its size.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::pictures::a_native_picture_keeps_its_size_whatever_is_asked_of_it",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "439cb016737711f7cd193f5608b5a8cc1337ef8aa04ad055fec1b13c277caa68",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-SIXEL-ROWS",
+      "family": "transcript-picture-sizes",
+      "obligation": "A Sixel picture is drawn no taller than the rows its key gives it, while a PNG payload is kept at its natural size for the terminal to scale.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::pictures::tests::a_sixel_picture_is_drawn_no_taller_than_the_rows_its_key_gives_it_and_a_png_is_not",
+      "source": "src/cli/pictures.rs",
+      "body_sha256": "a795a077711ad8194c72dc769be5b4cd08f72902388846c5d8b1f87b38736e4d",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-CLICK-PICTURE",
+      "family": "transcript-picture-sizes",
+      "obligation": "A click on a picture's own cells lands on that picture, and a click on a cell beside it lands as a selection does today.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::typing::tests::a_click_on_a_pictures_own_cells_lands_on_it_and_one_beside_it_does_not",
+      "source": "src/cli/converse/typing/tests.rs",
+      "body_sha256": "83379b1ba1f839e8148c11546112f6471168298054f08b2b703c92679b989d28",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-CLICK-LABEL",
+      "family": "transcript-picture-sizes",
+      "obligation": "A click on a drawn diagram's label opens its source, and a click on the diagram's body does not.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::typing::tests::a_click_on_a_diagrams_label_opens_its_source_and_a_click_on_its_source_does_not",
+      "source": "src/cli/converse/typing/tests.rs",
+      "body_sha256": "24d48670193f94a3a79aa98b9746c3671bfe0cddff493dafafda91832e1465af",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-LABEL-VIEW",
+      "family": "transcript-picture-sizes",
+      "obligation": "A label click stands the Ctrl+O view on that block's source alone, as a cut-result click stands its result.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::expanding::tests::a_click_on_a_blocks_label_stands_that_blocks_source_alone",
+      "source": "src/cli/converse/expanding/tests.rs",
+      "body_sha256": "d72bc4658c824ecd50f35afd042e5249e421667d7e08a74d8d8e5f9f9b6ce249",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-LABEL-GONE",
+      "family": "transcript-picture-sizes",
+      "obligation": "A label click whose block is no longer held stands no view.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::expanding::tests::a_label_clicked_whose_block_is_no_longer_held_stands_nothing",
+      "source": "src/cli/converse/expanding/tests.rs",
+      "body_sha256": "368e12eb9f5a1b679cd2f526f0d5692d67c2facc7ae4c95bfdef2e392cc47431",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-ENTER",
+      "family": "transcript-picture-sizes",
+      "obligation": "Enter in the Ctrl+O view asks to resize the picture whose source the footer counts at the top of the window, once, and the footer names enter to resize only there.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::expanding::tests::enter_resizes_the_picture_at_the_top_of_the_view_and_nothing_else",
+      "source": "src/cli/converse/expanding/tests.rs",
+      "body_sha256": "864711a74dcd7dbd4c2841bad56e0a0e67ba79f6c8739e6f5294e4c9f6d692e9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-ENTER-NOTHING",
+      "family": "transcript-picture-sizes",
+      "obligation": "Enter in the Ctrl+O view resizes nothing, and redraws nothing, where no item at the top is a picture the renderer resizes.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::expanding::tests::enter_resizes_nothing_where_no_picture_resizes",
+      "source": "src/cli/converse/expanding/tests.rs",
+      "body_sha256": "d2cbc15e959ca41611826b44d63c603550e7fc77feca09e596f19772f688e15a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-FOOTER",
+      "family": "transcript-picture-sizes",
+      "obligation": "The Ctrl+O footer names enter to resize only over an item Enter resizes, and asks that of the item at the top of the window.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "expanded::tests::enter_to_resize_is_named_only_over_an_item_enter_resizes_and_asked_of_the_top_one",
+      "source": "crates/crucible-tui/src/expanded/tests.rs",
+      "body_sha256": "426dc1b2f729e6fa72a61ff7d74ea031c72d996acfe7cc3bd6e3c057b4336a36",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-FOOTER-UNSCROLLED",
+      "family": "transcript-picture-sizes",
+      "obligation": "The Ctrl+O footer names enter to resize where the whole view fits and nothing scrolls.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "expanded::tests::enter_to_resize_is_named_where_the_whole_of_it_fits_and_nothing_scrolls",
+      "source": "crates/crucible-tui/src/expanded/tests.rs",
+      "body_sha256": "97eb4f6f572c9c6566122df18057b5a7c19e1353849cb2fcdcd94fbe244050de",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-FOOTER-NARROW",
+      "family": "transcript-picture-sizes",
+      "obligation": "In a narrow window the Ctrl+O footer drops enter to resize before it drops the way out.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "expanded::tests::enter_to_resize_gives_way_before_the_way_out_in_a_narrow_window",
+      "source": "crates/crucible-tui/src/expanded/tests.rs",
+      "body_sha256": "c951120db0cea183775dca0b403b757d7299daf8c03f96112ab0d4178f8ebac3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-LABEL-80-FULLSCREEN",
+      "family": "transcript-picture-sizes",
+      "obligation": "A click on a drawn mermaid diagram's label on a real terminal in fullscreen mode opens the Ctrl+O view on that diagram's source alone, as written, and Esc closes it.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_mermaid_label_80_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "a9ea0c1a45f225aea08d887894a6d70bc4050503aeb91a1c64aa13990608bfd2",
+      "platforms": [
+        "linux"
+      ]
     }
   ]
 }
