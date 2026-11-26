@@ -4265,6 +4265,24 @@ mod pictures {
     }
 
     #[test]
+    fn a_native_repaint_sends_no_iterm2_or_sixel_picture_the_kitty_way() {
+        // Only a Kitty picture is held by the terminal under a number, and
+        // only it is sent again: an image written over its rows is no
+        // command a terminal that confirmed another protocol could read.
+        for protocol in WRITTEN_OVER {
+            let window = Window::new(40, 8);
+            let mut render = pictured_as(&window, protocol, Printed::new(3, 2, 300));
+            answered(&mut render);
+            window.take();
+
+            render.repaint().unwrap();
+            let again = window.take();
+            assert!(!again.contains("\x1b_G"), "{protocol:?}: {again:?}");
+            assert!(!again.contains('\u{10EEEE}'), "{protocol:?}: {again:?}");
+        }
+    }
+
+    #[test]
     fn a_native_session_writes_no_iterm2_or_sixel_image_without_colour_or_redirected() {
         for protocol in WRITTEN_OVER {
             for palette in [

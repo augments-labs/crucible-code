@@ -49,7 +49,7 @@ use crate::record::{Modes, Record, Source};
 use crate::row::Row;
 use crate::scroll_rail::{self, ScrollRail};
 use crate::select::{self, Place, Taken, View};
-use crate::terminal::graphics::{Capability, Passthrough, Pictures, Sent};
+use crate::terminal::graphics::{Capability, Passthrough, Pictures, Protocol, Sent};
 use crate::terminal::keys::{Pressed, pressed, waiting};
 use crate::terminal::system::ResizeFlag;
 use crate::terminal::{Size, Terminal, TerminalError};
@@ -2283,8 +2283,9 @@ impl<T: Terminal> Renderer<T> {
     /// screen is not laid out again, unlike [`Renderer::resized`] — the size
     /// did not change — but every row is painted and written. The child may
     /// have taken every picture the terminal held too: a full screen sends
-    /// again those it shows, and a native session every one the record keeps,
-    /// since cells in its scrollback name them.
+    /// again those it shows, and a native session every Kitty picture the
+    /// record keeps, since cells in its scrollback name them. An iTerm2 or
+    /// Sixel image is held by no number, so there is nothing to send again.
     ///
     /// # Errors
     ///
@@ -2292,7 +2293,8 @@ impl<T: Terminal> Renderer<T> {
     pub fn repaint(&mut self) -> Result<(), TerminalError> {
         // Whatever had the terminal may have taken every picture with it: a
         // full screen sends again those it shows, and a native session every
-        // one it keeps, since the cells in the scrollback still name them.
+        // Kitty picture it keeps, since the cells in the scrollback still name
+        // them. Only those are sent the Kitty way.
         self.sent.forget();
         // A native session paints into the terminal's own buffer, where the
         // renderer holds no picture it could trust: its live region is laid
@@ -2302,7 +2304,16 @@ impl<T: Terminal> Renderer<T> {
             self.overlaid.clear();
         } else {
             for id in self.record.picture_ids() {
-                self.sent.wants(id);
+                let named =
+                    self.record
+                        .payload(id)
+                        .is_some_and(|payload| match payload.protocol() {
+                            Protocol::Kitty => true,
+                            Protocol::Iterm2 | Protocol::Sixel => false,
+                        });
+                if named {
+                    self.sent.wants(id);
+                }
             }
         }
         self.draw()
