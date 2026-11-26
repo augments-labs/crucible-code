@@ -1331,7 +1331,12 @@ fn a_sixel_picture_cycled_to_a_size_that_needs_room_another_keeps_goes_on_and_th
     drawn.take();
     assert_eq!(drawn.render.record.picture_ids().collect::<Vec<_>>(), kept);
     assert!(drawn.render.resizable(line), "drawn as text");
-    let lines: Vec<usize> = drawn.render.record.sources().map(|source| source.line).collect();
+    let lines: Vec<usize> = drawn
+        .render
+        .record
+        .sources()
+        .map(|source| source.line)
+        .collect();
     assert!(
         lines.iter().all(|&line| drawn.render.resizable(line)),
         "a picture drawn as text: {lines:?}"

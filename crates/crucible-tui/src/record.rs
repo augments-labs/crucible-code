@@ -267,7 +267,11 @@ impl Pictured {
     /// The most rows it is shown in, in a window `window` rows tall, or in
     /// the one it was first shown in where it keeps that.
     fn rows(&self, window: usize) -> u16 {
-        let window = if self.window == 0 { window } else { self.window };
+        let window = if self.window == 0 {
+            window
+        } else {
+            self.window
+        };
         self.kept.size.rows(self.key.protocol, window, self.band)
     }
 }
