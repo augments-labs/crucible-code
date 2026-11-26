@@ -17,6 +17,12 @@
 //! offered one result stands that result alone, and a click on a block's
 //! label stands that block's source alone.
 //!
+//! Enter resizes the picture whose source is at the top of the window, in a
+//! full screen, and the footer names it only there: the renderer says which
+//! blocks are pictures it resizes as each frame is laid out, and resizes the
+//! one Enter named before the next frame, between turns as under one. Over
+//! anything else, and in native mode, Enter does nothing here.
+//!
 //! After the blocks it stands the whole of each address the transcript drew
 //! shorter than it was written, newest first, under the word `address`: a
 //! forge's address drawn as its reference, and a quiet address cut short. They
@@ -162,6 +168,9 @@ pub(super) struct View {
     /// How many rows each block's source came to at the width of the last
     /// frame, so that a frame lays out only the sources its window reaches.
     counted: Box<Counted>,
+    /// Which pictures Enter resizes, and the one it was pressed to resize.
+    /// Boxed, as `counted` is, so a view closed costs the state no more.
+    pictures: Box<Pictures>,
 }
 
 impl View {
@@ -179,8 +188,25 @@ impl View {
             back: Vec::new(),
             refused: None,
             counted: Box::default(),
+            pictures: Box::default(),
         }
     }
+}
+
+/// The pictures among the items of a view that Enter resizes.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Pictures {
+    /// The record lines of the blocks whose pictures Enter resizes, as the
+    /// renderer said before the last frame was laid: none in native mode, and
+    /// none for a block drawn as text.
+    resizable: Vec<usize>,
+    /// For each item, as of the last frame drawn, the record line of the
+    /// picture Enter resizes when that item is at the top of the window, or
+    /// `None` where Enter resizes nothing there.
+    at: Vec<Option<usize>>,
+    /// The record line of the picture Enter was pressed to resize, until the
+    /// loop holding the renderer resizes it.
+    asked: Option<usize>,
 }
 
 /// How many rows the source of each block, and each address drawn shorter,
@@ -355,6 +381,16 @@ impl Standing {
             }
         }
     }
+
+    /// The record line of the picture Enter was last pressed to resize, taken
+    /// so it is resized once: the renderer is the caller's, and the view only
+    /// says which.
+    pub(super) fn resizing(&mut self) -> Option<usize> {
+        match self {
+            Self::Open(view) => view.pictures.asked.take(),
+            Self::Closed => None,
+        }
+    }
 }
 
 /// Stands the view where the box was, and reads keys until it is closed.
@@ -379,17 +415,35 @@ pub(super) fn stand<T: Terminal>(
     let glyphs = style.glyphs();
     let picture = |renderer: &Renderer<T>, view: &mut View, columns: usize, rows: usize| {
         let sources: Vec<Source<'_>> = renderer.sources().collect();
+        view.pictures.resizable = resizable(renderer, &sources);
         (
             laying(kept, &sources, view, glyphs, Size { columns, rows }),
             None,
         )
     };
 
+    // Enter names the picture in the view, and the renderer, which is the
+    // region's while it stands, resizes it before the next frame is laid.
+    let asked = std::cell::Cell::new(None);
+    let keys = |key, view: &mut View| {
+        let moved = moving(key, view);
+        if let Some(line) = view.pictures.asked.take() {
+            asked.set(Some(line));
+        }
+        moved
+    };
+    let resize = |renderer: &mut Renderer<T>| {
+        if let Some(line) = asked.take() {
+            renderer.resizes(line)?;
+        }
+        Ok(())
+    };
+
     // Nothing is taken here and nothing is committed, so every way out is the
     // same way out: the region goes back and the box comes up under it. A
     // window with no room to stand it in is one of them — a component that
     // never drew and read no key, which here is a view the reader never saw.
-    region::stand_reading(renderer, |_| style, view, picture, moving)?;
+    region::stand_reading(renderer, |_| style, view, picture, keys, resize)?;
     *standing = Standing::Closed;
     Ok(())
 }
@@ -431,6 +485,7 @@ pub(super) fn under<T: Terminal>(
     let room = renderer.room().saturating_sub(1);
     let columns = renderer.columns();
     let sources: Vec<Source<'_>> = renderer.sources().collect();
+    view.pictures.resizable = resizable(renderer, &sources);
     let (blank, rows) = laying_under_a_turn(room, working, |rows| {
         laying(kept, &sources, view, style.glyphs(), Size { columns, rows })
     });
@@ -451,6 +506,16 @@ pub(super) fn under<T: Terminal>(
         style.palette(),
     )?;
     Ok(true)
+}
+
+/// The record lines of the blocks among `sources` whose pictures the renderer
+/// resizes on Enter, which only it knows.
+fn resizable<T: Terminal>(renderer: &Renderer<T>, sources: &[Source<'_>]) -> Vec<usize> {
+    sources
+        .iter()
+        .map(|source| source.line)
+        .filter(|line| renderer.resizable(*line))
+        .collect()
 }
 
 /// The view laid in `room` rows under a running turn: the blank parting the
@@ -501,6 +566,15 @@ fn laying(
     if entries.is_empty() {
         return Vec::new();
     }
+    view.pictures.at = entries
+        .iter()
+        .map(|entry| match entry {
+            Entry::Block(source) => {
+                Some(source.line).filter(|line| view.pictures.resizable.contains(line))
+            }
+            Entry::Held(_) | Entry::Let(_) => None,
+        })
+        .collect();
     refolded(view, &entries, columns);
     let heights = reaching(kept, view, &entries, columns, rows)
         .unwrap_or_else(|| heights(&entries, &view.back, &mut view.counted, columns));
@@ -541,7 +615,10 @@ fn laying(
         .iter()
         .filter(|entry| matches!(entry, Entry::Block(_)))
         .count();
-    expanded.within_measured(&heights, Size { columns, rows }, glyphs, blocks)
+    let pictures = &view.pictures.at;
+    expanded.within_resizing(&heights, Size { columns, rows }, glyphs, blocks, |at| {
+        pictures.get(at).is_some_and(Option::is_some)
+    })
 }
 
 /// Keeps the window on the result at its top when the window changed width
@@ -1020,10 +1097,20 @@ fn moving(arrived: Pressed, view: &mut View) -> Moved {
 
         Pressed::Resized => Moved::Redraw,
 
-        // Nothing here is typed into or picked from, so a letter, a click and a
-        // mode step have nothing to act on. Return is among them: the line under
+        // Return resizes the picture at the top of the window, where the item
+        // there is one, and is otherwise among the keys below: the line under
         // this is not being read, and closing on it would send whatever is in
-        // the box the moment somebody meant to scroll. Ctrl+T for the reason
+        // the box the moment somebody meant to scroll.
+        Pressed::Key(Key::Enter) => match view.pictures.at.get(topmost(view)).copied().flatten() {
+            Some(line) => {
+                view.pictures.asked = Some(line);
+                Moved::Redraw
+            }
+            None => Moved::Still,
+        },
+
+        // Nothing here is typed into or picked from, so a letter, a click and a
+        // mode step have nothing to act on. Ctrl+T for the reason
         // that is nearly the opposite: the plan it opens is in the rows this
         // view is standing over, so the key would move a panel nobody can see.
         // The key about what is running among them: those have their own list,

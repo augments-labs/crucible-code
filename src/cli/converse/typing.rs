@@ -1273,6 +1273,11 @@ pub(super) fn during<T: Terminal>(
 
             let walked = opened.against(arrived, renderer.scroll_rows());
             moved |= walked;
+            // Enter on a picture in the view: the renderer is this loop's, so
+            // the picture is resized here, and draws its own frame.
+            if let Some(line) = opened.resizing() {
+                renderer.resizes(line)?;
+            }
 
             // A wheel the view did nothing with is the transcript's, by the
             // rule the region loop between turns reads one under: at either end
