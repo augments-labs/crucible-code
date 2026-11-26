@@ -692,8 +692,9 @@ fn this_crate(source: &str, room: &Room) -> Result<Laid, Undrawn> {
     Diagrams.block(source, room)
 }
 
-/// The reason a diagram written whole is refused in any room it is given.
+/// The reasons a diagram written whole is refused in any room it is given.
 const TANGLED: &str = "tangled relationships";
+const MISPLACED: &str = "misplaced labels";
 
 /// What a diagram written whole is owed, read from what the generator
 /// writes rather than from the drawer it judges.
@@ -701,14 +702,23 @@ const TANGLED: &str = "tangled relationships";
 enum Owed {
     /// Drawn wherever it fits.
     Drawn,
+    /// Drawn wherever it fits, unless the engine sets a line's label beside
+    /// another line or leaves it out: it labels a line.
+    DrawnUnlessMisplaced,
     /// Refused whatever its room: an entity-relationship diagram whose
     /// relationships do not chain its entities.
     Refused,
 }
 
 fn owed(source: &str) -> Owed {
-    if source.starts_with("erDiagram") && tangled(source) {
-        Owed::Refused
+    if source.starts_with("erDiagram") {
+        if tangled(source) {
+            Owed::Refused
+        } else {
+            Owed::Drawn
+        }
+    } else if labelled(source) {
+        Owed::DrawnUnlessMisplaced
     } else {
         Owed::Drawn
     }
@@ -756,6 +766,20 @@ fn tangled(source: &str) -> bool {
         .any(|name| related.iter().filter(|other| *other == name).count() > 2)
 }
 
+/// Whether a flowchart or a state diagram the generator wrote labels a line.
+fn labelled(source: &str) -> bool {
+    source.lines().any(|line| {
+        if source.starts_with("state") {
+            line.contains(" --> ") && line.contains(" : ")
+        } else {
+            LABELLED_LINKS
+                .iter()
+                .filter_map(|form| form.split_once('@'))
+                .any(|(before, _)| line.contains(&format!(" {before}")))
+        }
+    })
+}
+
 fn judge(case: &Case, drawer: Drawer) -> Result<(), String> {
     let room = case.room;
     let drawn = drawer(&case.source, &room);
@@ -771,7 +795,8 @@ fn judge(case: &Case, drawer: Drawer) -> Result<(), String> {
         (_, Ok(laid)) => check_rows(&laid.rows, room.columns),
         // Too wide for its room is the one refusal a written diagram that
         // owes nothing else may meet.
-        (_, Err(Undrawn::TooWide)) => Ok(()),
+        (_, Err(Undrawn::TooWide))
+        | (Owed::DrawnUnlessMisplaced, Err(Undrawn::Unsupported(MISPLACED))) => Ok(()),
         (_, Err(undrawn)) => Err(format!(
             "a diagram written whole was not drawn: {undrawn:?}"
         )),
@@ -901,7 +926,9 @@ const WIDE: usize = 400;
 #[test]
 fn every_written_diagram_is_drawn_in_a_room_wide_enough_for_it() {
     let mut wrong = Vec::new();
-    // Entity-relationship diagrams, drawn and refused.
+    // Diagrams with a labelled line, drawn and refused for a misplaced
+    // label; and entity-relationship diagrams, drawn and refused.
+    let (mut labelled, mut misplaced) = (0_usize, 0_usize);
     let (mut chained, mut tangled) = (0_usize, 0_usize);
     for index in (0..DEFAULT_CASES).filter(|index| index % 3 == 0) {
         let (_, case) = case(index);
@@ -913,6 +940,10 @@ fn every_written_diagram_is_drawn_in_a_room_wide_enough_for_it() {
             };
             match (owed, this_crate(&case.source, &room)) {
                 (Owed::Refused, Err(Undrawn::Unsupported(TANGLED))) => tangled += 1,
+                (Owed::DrawnUnlessMisplaced, Err(Undrawn::Unsupported(MISPLACED))) => {
+                    misplaced += 1;
+                }
+                (Owed::DrawnUnlessMisplaced, Ok(_)) => labelled += 1,
                 (Owed::Drawn, Ok(_)) => {
                     chained += usize::from(case.source.starts_with("erDiagram"));
                 }
@@ -929,6 +960,13 @@ fn every_written_diagram_is_drawn_in_a_room_wide_enough_for_it() {
         "{} not as owed, the first:\n{}",
         wrong.len(),
         wrong.first().map_or("", String::as_str)
+    );
+    // The engine sets about one labelled diagram in ten wrong. One in four
+    // refused is a reading of the drawing that refuses labels set right.
+    assert!(
+        misplaced * 4 < labelled + misplaced,
+        "{misplaced} of {} labelled diagrams refused",
+        labelled + misplaced
     );
     assert!(
         chained > 0 && tangled > 0,
@@ -1007,6 +1045,18 @@ fn a_planted_drawer_that_refuses_a_diagram_it_owes_or_draws_a_tangled_one_is_fou
             drawn => drawn,
         }
     }
+    fn refuses_every_line_with_or_without_a_label(
+        source: &str,
+        room: &Room,
+    ) -> Result<Laid, Undrawn> {
+        if ["graph", "flowchart", "state"]
+            .iter()
+            .any(|kind| source.starts_with(kind))
+        {
+            return Err(Undrawn::Unsupported(MISPLACED));
+        }
+        this_crate(source, room)
+    }
     let found = run(0, 256, refuses_every_relationship).expect_err("a chained diagram refused");
     assert!(
         found.contains("not drawn: Unsupported(\"tangled relationships\")\nerDiagram"),
@@ -1015,6 +1065,12 @@ fn a_planted_drawer_that_refuses_a_diagram_it_owes_or_draws_a_tangled_one_is_fou
     let found = run(0, 256, draws_what_is_tangled).expect_err("a tangled diagram drawn");
     assert!(
         found.contains("not refused for it: Ok(\"drawn\")"),
+        "{found}"
+    );
+    let found = run(0, 256, refuses_every_line_with_or_without_a_label)
+        .expect_err("an unlabelled diagram refused for its labels");
+    assert!(
+        found.contains("not drawn: Unsupported(\"misplaced labels\")"),
         "{found}"
     );
 }

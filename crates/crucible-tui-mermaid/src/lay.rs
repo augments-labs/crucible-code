@@ -37,9 +37,14 @@
 //!   draw a one-day task with no bar, and a gantt with one is refused.
 //! - An entity-relationship diagram's entities are handed to the engine in
 //!   the order their relationships chain them, and one whose relationships do
-//!   not chain is refused, as [`chains`] says.
+//!   not chain is refused, as [`chains`] says. A flowchart or a state diagram
+//!   is laid out in colour, each line and its label a colour of their own, and
+//!   one with a label the engine left out or set nearer another line than its
+//!   own is refused, as [`labels`] says, whatever its room: the layout is the
+//!   same in any.
 
 mod chains;
+mod labels;
 
 use std::collections::BTreeSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -68,13 +73,19 @@ pub(crate) enum Unlaid {
     /// It is an entity-relationship diagram whose relationships do not chain
     /// its entities, so the engine would draw one through a box.
     Tangled,
+    /// The engine left a line's label out or set it nearer another line.
+    Misplaced,
 }
 
 /// What of the engine's reading the drawing is laid out from and held to.
 enum Reading {
+    /// A flowchart's or a state diagram's lines, in the engine's order, each
+    /// marked when it carries a label.
+    Lines(Vec<bool>),
     /// An entity-relationship diagram as the engine read it.
     Entities(ErDiagram),
-    /// Any other kind, drawn as the engine lays it.
+    /// A sequence diagram, a gantt or a git graph, drawn as the engine lays
+    /// it.
     AsLaid,
 }
 
@@ -116,11 +127,13 @@ fn agrees(scanned: &Scanned) -> Option<Reading> {
     let read = &scanned.read;
     match scanned.kind {
         Kind::Flowchart => parser::flowchart::parse(source)
-            .is_ok_and(|graph| same(&graph, read))
-            .then_some(Reading::AsLaid),
+            .ok()
+            .filter(|graph| same(graph, read))
+            .map(|graph| lines(&graph)),
         Kind::State => parser::state::parse(source)
-            .is_ok_and(|graph| state_alike(&graph, read))
-            .then_some(Reading::AsLaid),
+            .ok()
+            .filter(|graph| state_alike(graph, read))
+            .map(|graph| lines(&graph)),
         // The scan refuses a class diagram before it reaches the engine.
         Kind::Class => None,
         Kind::EntityRelationship => parser::er::parse(source)
@@ -137,6 +150,21 @@ fn agrees(scanned: &Scanned) -> Option<Reading> {
             .is_ok_and(|graph| git_graph_alike(&graph, read))
             .then_some(Reading::AsLaid),
     }
+}
+
+/// `graph`'s lines, each marked when it carries a label.
+fn lines(graph: &Graph) -> Reading {
+    Reading::Lines(
+        graph
+            .edges
+            .iter()
+            .map(|edge| {
+                edge.label
+                    .as_deref()
+                    .is_some_and(|label| !plain(label).is_empty())
+            })
+            .collect(),
+    )
 }
 
 /// Whether `diagram` holds the participants `read` found, in order and
@@ -358,6 +386,15 @@ fn rendered(
         Error::EmptyInput | Error::UnsupportedDiagram(_) | Error::ParseError(_) => Unlaid::Unread,
     };
     let drawn = match reading {
+        Reading::Lines(labelled) => {
+            let painted = labels::painted(&scanned.source, labelled.len());
+            let options = RenderOptions {
+                color: true,
+                ..options
+            };
+            let drawn = render_with_options(&painted, &options).map_err(unread)?;
+            labels::held(&drawn, &labelled)?
+        }
         Reading::Entities(diagram) => {
             let (diagram, room) = chains::chained(diagram, room).ok_or(Unlaid::Tangled)?;
             let drawn = render::er::render(&diagram, Some(room));

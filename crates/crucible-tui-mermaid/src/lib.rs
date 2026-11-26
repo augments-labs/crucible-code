@@ -24,7 +24,9 @@
 //!   it is made on, its id, its tag and the branch it merges, in order. So is
 //!   a diagram the engine would set out to say what it does not, whatever its
 //!   room: an entity-relationship diagram whose relationships do not chain
-//!   its entities, which the engine would draw with a line through a box.
+//!   its entities, which the engine would draw with a line through a box,
+//!   and a flowchart or a state diagram with a line whose label the engine
+//!   leaves out or sets nearer another line than its own.
 //! - **Bounded before the engine.** A source past [`MOST_BYTES`] is refused
 //!   before it is read, and one past its kind's [`Caps`] (bytes, boxes, lines
 //!   or the columns of one label) is refused as the read reaches the one past
@@ -386,6 +388,7 @@ fn laid(source: &str, room: &Room) -> Result<(Kind, lay::Drawing), Undrawn> {
         Unlaid::Unread => Undrawn::NotText,
         Unlaid::TooWide => Undrawn::TooWide,
         Unlaid::Tangled => Undrawn::Unsupported("tangled relationships"),
+        Unlaid::Misplaced => Undrawn::Unsupported("misplaced labels"),
     })?;
     Ok((scanned.kind, drawing))
 }

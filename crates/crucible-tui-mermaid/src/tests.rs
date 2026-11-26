@@ -1127,9 +1127,25 @@ const CHAINED: &str = "erDiagram
     SESSION ||--|| ROUTE : runs_on
 ";
 
+/// A state diagram the engine draws with two transitions' labels beside
+/// another transition's line, and none beside their own.
+const MISLABELLED: &str = "stateDiagram-v2
+    [*] --> Idle
+    Idle --> Composing: key pressed
+    Composing --> Composing: paste image
+    Composing --> Submitted: Enter
+    Submitted --> Running: turn starts
+    Running --> Idle: answer ends
+    Running --> Idle: Esc stops
+    Submitted --> Idle: refused
+";
+
 #[test]
 fn pictures_of_diagrams_the_engine_sets_out_wrong_as_written() {
-    for (name, source) in [("unchained_entities", UNCHAINED)] {
+    for (name, source) in [
+        ("unchained_entities", UNCHAINED),
+        ("mislabelled_states", MISLABELLED),
+    ] {
         for columns in [160, 80] {
             let shown = match block(source, columns, UNICODE) {
                 Ok(rows) => dump(&rows, columns),
@@ -1234,5 +1250,50 @@ fn an_entity_relationship_diagram_no_row_of_boxes_joins_side_by_side_is_refused_
     }
     for to in ["B", "C"] {
         assert_eq!(ends(&rows, "A", to), Some(('1', '*')), "{to} in\n{shown}");
+    }
+}
+
+#[test]
+fn a_diagram_the_engine_labels_a_line_of_beside_another_or_not_at_all_is_refused_whole() {
+    let misplaced = Err(Undrawn::Unsupported("misplaced labels"));
+    for columns in [160, 80] {
+        assert_eq!(
+            block(MISLABELLED, columns, UNICODE).map(|_| ()),
+            misplaced,
+            "{columns}"
+        );
+    }
+    for source in [
+        // A label set nearer another line than its own.
+        r#"graph RL
+    N0("no") === N3{"選ぶ?"}
+    N3 --- N2{"yes"}
+    N0 -. check it .-> N2
+    N1[\"naïve"\]
+"#,
+        r"stateDiagram
+    [*] --> S0
+    S0 --> S3 : 選ぶ?
+    S0 --> S2 : start
+",
+        // Two labels the engine leaves out of its drawing.
+        r#"flowchart TD
+    N2 -.->|한국어| N1["done"]
+    N3[["naïve"]] -.->|done| N2
+    N3 --> N2
+    N2 ---|한국어| N0[/"yes"/]
+    N3 ---|x = 1| N0
+    N0 === N3
+"#,
+    ] {
+        assert_eq!(
+            block(source, 160, UNICODE).map(|_| ()),
+            misplaced,
+            "{source}"
+        );
+    }
+    for source in [FLOWCHART, STATE] {
+        let drawn = block(source, 160, UNICODE);
+        assert!(drawn.is_ok(), "{source}: {drawn:?}");
     }
 }
