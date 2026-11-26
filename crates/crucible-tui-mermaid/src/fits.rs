@@ -29,8 +29,8 @@ const HOSTILE: &str = "flowchart TD
 
 /// The other kinds, each as hostile as it gets in a few lines. The state
 /// diagram's label is on the line out of its composite state: on the line
-/// into it, the engine sets the label beside the note's line or leaves it
-/// out, and the diagram is refused in every room.
+/// into it, the engine sets the label nearer another line than its own, and
+/// the diagram is refused in every room.
 const KINDS: [&str; 5] = [
     "stateDiagram-v2
     state \"很长的状态名\" as Long
