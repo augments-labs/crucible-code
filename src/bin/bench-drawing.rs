@@ -27,48 +27,63 @@
 //! a room as wide as the drawer draws, in both glyph sets.
 //!
 //! A diagram is laid out on the same thread when its fence closes: for each
-//! kind drawn as text, every box and every line its caps hold, each label as
-//! long as the label cap and the byte cap leave room for, half of them in
-//! characters two columns wide; and for each kind the costliest shape, four
-//! boxes with every line the caps allow going out from the first to each of
-//! the others and back again, and each label as long as those caps leave
-//! room for, and for a state diagram the same inside a composite state. The
-//! engine's cost follows the lines and the labels rather than the boxes, so
-//! these are what a cap loosened on lines or labels makes dearer; each is
-//! built from the caps themselves, never written out, so a loosened cap is
-//! timed at what it admits. The costliest flowchart and state diagram found
-//! when the caps were set are timed beside them as they were written. A
-//! flowchart is laid top to bottom, which costs the engine more than left to
-//! right for the same boxes and lines. A sequence diagram is timed with every
-//! participant and every message its caps hold, and with its messages among
-//! four participants; a gantt with every task its caps hold, in four sections
-//! and in one, spanning as many days as it may and still be drawn a day to a
-//! cell; and a git graph with every commit its caps hold, on every branch
-//! they allow and on three, each id and tag as long as the byte cap leaves
-//! room for. The engine lays a diagram out once whatever its room, and a drawing
-//! wider than the room is refused for it only after, so each is laid out at a
-//! common terminal's width, where it may be refused as too wide, and in a
-//! window wide enough to draw it, in both glyph sets. Two milliseconds is the
-//! budget for text laid out on the drawing thread: a tenth of the first
-//! frame's twenty, so a block closing beside a streaming answer still leaves
-//! the frame its room.
+//! kind drawn as text but an entity-relationship diagram, every box and every
+//! line its caps hold, each label as long as the label cap and the byte cap
+//! leave room for, half of them in characters two columns wide; and for a
+//! flowchart and a state diagram the costliest shape, four boxes with every
+//! line the caps allow going out from the first to each of the others and back
+//! again, and each label as long as those caps leave room for, and for a state
+//! diagram the same inside a composite state. The engine's cost follows the
+//! lines and the labels rather than the boxes, so these are what a cap loosened
+//! on lines or labels makes dearer; each is built from the caps themselves,
+//! never written out, so a loosened cap is timed at what it admits. The
+//! costliest flowchart and state diagram found when the caps were set are timed
+//! beside them as they were written. Those and the four boxes are refused for a
+//! line's label the engine set beside another line, and that refusal is made
+//! after the engine laid the diagram out whole, so they are timed through it,
+//! and each kind keeps a case that is drawn beside them. An entity-relationship
+//! diagram is drawn only when its relationships chain its entities and no row
+//! the engine sets them in breaks a chain, and one that is not is refused
+//! before the engine runs, which leaves no layout to time. So it is timed with
+//! every entity its caps hold, set out in rows as the engine sets them when one
+//! row is wider than its room, each joined to the next in its row while the
+//! caps hold relationships: at the caps, 48 entities in seven chains and 41
+//! relationships, the most one drawn may have, each label as long as the byte
+//! cap leaves room for and the window still draws, half of them in characters
+//! two columns wide. A diagram refused before the engine runs fails the probe
+//! rather than timing the refusal. A flowchart is laid top to bottom, which
+//! costs the engine more than left to right for the same boxes and lines. A
+//! sequence diagram is timed with every participant and every message its caps
+//! hold, and with its messages among four participants; a gantt with every task
+//! its caps hold, in four sections and in one, spanning as many days as it may
+//! and still be drawn a day to a cell; and a git graph with every commit its
+//! caps hold, on every branch they allow and on three, each id and tag as long
+//! as the byte cap leaves room for. The engine lays a diagram out once whatever
+//! its room, and a drawing wider than the room is refused for it only after, so
+//! each is laid out at a common terminal's width, where it may be refused as
+//! too wide, and in a window wide enough to draw it, in both glyph sets. Two
+//! milliseconds is the budget for text laid out on the drawing thread: a tenth
+//! of the first frame's twenty, so a block closing beside a streaming answer
+//! still leaves the frame its room.
 //!
 //! A diagram is also drawn as a picture of the same layout, and a picture is
 //! made on the same thread: laid out, rasterised and encoded as a PNG. Each
-//! kind's picture at its caps is timed through all three, a sequence
-//! diagram's, a gantt's and a git graph's in both shapes their text is timed
-//! in, every label in Latin letters, since a diagram holding a letter the
-//! picture's font lacks keeps its text drawing and is never rasterised, and
-//! each label as long as the caps leave room for, so a picture carries as many
-//! letters as the caps let in, and every letter is outlines the rasteriser
-//! draws. It is rasterised in every slot's ink, as a theme hands them, at its
-//! own width, or narrower at its proportions when its pixels would be more
-//! than a picture may hold, in a window wide enough to draw it, since a
-//! picture is drawn at its own size whatever the room, and in both glyph
-//! sets. A picture the drawer or the rasteriser refuses fails the probe
-//! rather than timing the refusal. Thirty milliseconds is the budget for a
-//! picture: half as much again as the first frame's whole budget, which a
-//! picture spends once, when its fence closes.
+//! kind's picture at its caps is timed through all three, in a shape its text
+//! is drawn in rather than refused, an entity-relationship diagram's chained
+//! along its rows as its text is, a sequence diagram's, a gantt's and a git
+//! graph's in both shapes their text is timed in, every label in Latin letters,
+//! since a diagram holding a letter the picture's font lacks keeps its text
+//! drawing and is never rasterised, and each label as long as the caps leave
+//! room for and the window draws, so a picture carries as many letters as the
+//! caps let in, and every letter is outlines the rasteriser draws. It is
+//! rasterised in every slot's ink, as a theme hands them, at its own width, or
+//! narrower at its proportions when its pixels would be more than a picture may
+//! hold, in a window wide enough to draw it, since a picture is drawn at its
+//! own size whatever the room, and in both glyph sets. A picture the drawer or
+//! the rasteriser refuses fails the probe rather than timing the refusal.
+//! Thirty milliseconds is the budget for a picture: half as much again as the
+//! first frame's whole budget, which a picture spends once, when its fence
+//! closes.
 //!
 //! The reported number is the slowest text case's 95th percentile, with each
 //! case's median and its slowest reading kept as evidence, and the slowest
@@ -529,13 +544,21 @@ enum Shape {
     /// from the first to each of the others, then back from each, the last
     /// first, then out again.
     Few,
+    /// Every box the caps hold, set out in rows as an entity-relationship
+    /// diagram's are when one row is wider than its room, each row as many
+    /// boxes as the square root of their count rounded up, and each box
+    /// joined to the next in its row while the caps hold lines. An
+    /// entity-relationship diagram is drawn only when its relationships chain
+    /// its entities and no row it is set in breaks a chain, so this is the
+    /// most lines one drawn may have.
+    Chained,
 }
 
 impl Shape {
     /// The boxes set out where the caps leave room for `most`.
     fn boxes(self, most: usize) -> usize {
         match self {
-            Self::Spread => most,
+            Self::Spread | Self::Chained => most,
             Self::Few => FEW.min(most),
         }
     }
@@ -558,6 +581,15 @@ impl Shape {
                 let back = (1..boxes).rev().map(|from| (from, 0));
                 let round: Vec<(usize, usize)> = out.chain(back).collect();
                 round.iter().copied().cycle().take(edges).collect()
+            }
+            Self::Chained => {
+                let root = boxes.isqrt();
+                let across = (root + usize::from(root * root < boxes)).max(1);
+                (1..boxes)
+                    .filter(|to| to % across != 0)
+                    .map(|to| (to - 1, to))
+                    .take(edges)
+                    .collect()
             }
         }
     }
@@ -584,11 +616,19 @@ fn diagram_at_the_caps(caps: Caps, shape: Shape, letters: Letters, write: Write)
 /// for each, and under a loosened byte cap that alone takes longer than the
 /// probe may.
 fn widest_held(caps: Caps, shape: Shape, letters: Letters, write: Write) -> Option<usize> {
-    let held = |columns: usize| write(caps, shape, letters, columns).len() <= caps.bytes;
+    most_columns(caps.label.unwrap_or(caps.bytes), |columns| {
+        write(caps, shape, letters, columns).len() <= caps.bytes
+    })
+}
+
+/// The most columns up to `most` that `held` holds, found by halving, which
+/// is sound where a label that fails it fails it wider too; `None` where one
+/// column already fails it.
+fn most_columns(most: usize, held: impl Fn(usize) -> bool) -> Option<usize> {
     if !held(1) {
         return None;
     }
-    let (mut low, mut high) = (1, caps.label.unwrap_or(caps.bytes).max(1));
+    let (mut low, mut high) = (1, most.max(1));
     while low < high {
         let middle = high - (high - low) / 2;
         if held(middle) {
@@ -598,6 +638,40 @@ fn widest_held(caps: Caps, shape: Shape, letters: Letters, write: Write) -> Opti
         }
     }
     Some(low)
+}
+
+/// Whether `text` is drawn whole in [`WINDOW`] in both glyph sets.
+fn drawn_in_the_window(text: &str) -> bool {
+    [Glyphs::Unicode, Glyphs::Ascii].into_iter().all(|glyphs| {
+        Diagrams
+            .block(
+                text,
+                &Room {
+                    columns: WINDOW,
+                    glyphs,
+                },
+            )
+            .is_ok()
+    })
+}
+
+/// The most columns a label of `write`'s in `letters` may take in `shape` with
+/// the source still within `caps.bytes`, as [`widest_held`] finds them, and
+/// the diagram still drawn whole in [`WINDOW`]: where labels that wide set its
+/// boxes out wider than the window, fewer. A drawing never narrows as its
+/// labels widen, so these are found by halving too.
+fn widest_drawn(caps: Caps, shape: Shape, letters: Letters, write: Write) -> Option<usize> {
+    most_columns(widest_held(caps, shape, letters, write)?, |columns| {
+        drawn_in_the_window(&write(caps, shape, letters, columns))
+    })
+}
+
+/// The longest source `write` makes in `shape`, with labels in `letters` as
+/// wide as [`widest_drawn`] finds, so that it is drawn rather than refused.
+fn diagram_drawn_at_the_caps(caps: Caps, shape: Shape, letters: Letters, write: Write) -> String {
+    widest_drawn(caps, shape, letters, write)
+        .map(|columns| write(caps, shape, letters, columns))
+        .unwrap_or_default()
 }
 
 /// A flowchart from top to bottom with as many boxes as `shape` sets out and
@@ -683,8 +757,8 @@ fn composite(caps: Caps, shape: Shape, letters: Letters, columns: usize) -> Stri
 }
 
 /// An entity-relationship diagram with as many entities as `shape` sets out
-/// and every relationship its caps hold, each entity with two attributes and
-/// each relationship labelled.
+/// and every relationship `shape` joins them with that its caps hold, each
+/// entity with two attributes and each relationship labelled.
 fn entities(caps: Caps, shape: Shape, letters: Letters, columns: usize) -> String {
     let kinds = ["||--o{", "||--|{", "}o--o{", "|o--||"];
     let boxes = shape.boxes(caps.nodes);
@@ -740,7 +814,7 @@ fn sequence(caps: Caps, shape: Shape, letters: Letters, columns: usize) -> Strin
 /// task named.
 fn gantt(caps: Caps, shape: Shape, letters: Letters, columns: usize) -> String {
     let sections = match shape {
-        Shape::Spread => FEW,
+        Shape::Spread | Shape::Chained => FEW,
         Shape::Few => 1,
     };
     let tasks = caps.nodes.saturating_sub(sections);
@@ -950,20 +1024,10 @@ fn diagrams() -> Vec<Case> {
             rooms: DIAGRAM_ROOMS,
         },
         Case {
-            name: "an er diagram at its caps",
-            input: Input::Diagram(diagram_at_the_caps(
+            name: "an er diagram at its caps, its entities chained along its rows",
+            input: Input::Diagram(diagram_drawn_at_the_caps(
                 Caps::ENTITIES,
-                Shape::Spread,
-                Letters::Mixed,
-                entities,
-            )),
-            rooms: DIAGRAM_ROOMS,
-        },
-        Case {
-            name: "the costliest er diagram inside its caps",
-            input: Input::Diagram(diagram_at_the_caps(
-                Caps::ENTITIES,
-                Shape::Few,
+                Shape::Chained,
                 Letters::Mixed,
                 entities,
             )),
@@ -1056,10 +1120,10 @@ fn pictures() -> Vec<Case> {
             rooms: PICTURE_ROOMS,
         },
         Case {
-            name: "an er diagram's picture at its caps",
-            input: Input::Picture(diagram_at_the_caps(
+            name: "an er diagram's picture at its caps, its entities chained along its rows",
+            input: Input::Picture(diagram_drawn_at_the_caps(
                 Caps::ENTITIES,
-                Shape::Spread,
+                Shape::Chained,
                 Letters::Latin,
                 entities,
             )),
@@ -1253,11 +1317,13 @@ fn lay(case: &Case, room: &Room) -> Option<usize> {
         Input::Span(text) => Formulas.inline(text, room).map(|runs| runs.len()),
         // One row stands for the refusal, and none for a formula drawn.
         Input::Refused(text) => Formulas.block(text, room).err().map(|_| 1),
-        // A diagram refused as wider than its room was laid out whole first,
-        // and one row stands for that refusal.
+        // A diagram refused as wider than its room, or for a line's label the
+        // engine set beside another line, was laid out whole first, and one
+        // row stands for that refusal. One refused before the engine runs is
+        // not a layout, and a reading of it would time the refusal.
         Input::Diagram(text) => match Diagrams.block(text, room) {
             Ok(laid) => Some(laid.rows.len()),
-            Err(Undrawn::TooWide) => Some(1),
+            Err(Undrawn::TooWide | Undrawn::Unsupported("misplaced labels")) => Some(1),
             Err(_) => None,
         },
         Input::Picture(text) => picture(text, room).ok(),
@@ -1457,13 +1523,39 @@ mod tests {
     }
 
     #[test]
-    fn halving_finds_an_er_diagram_s_columns_at_its_caps_with_every_entity() {
-        halved_alike(Caps::ENTITIES, Shape::Spread, entities);
+    fn halving_finds_an_er_diagram_s_columns_at_its_caps_with_its_entities_chained() {
+        halved_alike(Caps::ENTITIES, Shape::Chained, entities);
     }
 
+    /// The columns a search a column at a time down from the most the bytes
+    /// hold finds: the first `write`'s diagram in `shape` is drawn with in
+    /// [`WINDOW`].
+    fn drawn_a_column_at_a_time(
+        caps: Caps,
+        shape: Shape,
+        letters: Letters,
+        write: Write,
+    ) -> Option<usize> {
+        let most = widest_held(caps, shape, letters, write)?;
+        (1..=most)
+            .rev()
+            .find(|&columns| drawn_in_the_window(&write(caps, shape, letters, columns)))
+    }
+
+    /// The widest label an entity-relationship diagram chained at its caps is
+    /// drawn with in the window is found by halving, in both letters a case
+    /// writes it in.
     #[test]
-    fn halving_finds_an_er_diagram_s_columns_at_its_caps_with_few_entities() {
-        halved_alike(Caps::ENTITIES, Shape::Few, entities);
+    fn halving_finds_the_widest_label_an_er_diagram_chained_at_its_caps_is_drawn_with() {
+        for letters in [Letters::Mixed, Letters::Latin] {
+            let halved = widest_drawn(Caps::ENTITIES, Shape::Chained, letters, entities);
+            assert!(halved.is_some(), "{letters:?} draws no label");
+            assert_eq!(
+                halved,
+                drawn_a_column_at_a_time(Caps::ENTITIES, Shape::Chained, letters, entities),
+                "{letters:?}"
+            );
+        }
     }
 
     #[test]
@@ -1484,8 +1576,10 @@ mod tests {
         halved_alike(Caps::GIT_GRAPH, Shape::Few, git_graph);
     }
 
-    /// Every diagram a case times is drawn, or refused only as wider than its
-    /// room: a refusal for any other reason would time the refusal.
+    /// Every diagram a case times is drawn, or refused only after the engine
+    /// laid it out whole: as wider than its room, or for a line's label the
+    /// engine set beside another line. A refusal made before the engine runs
+    /// would time the refusal.
     #[test]
     fn every_diagram_timed_is_laid_out() {
         for case in cases() {
@@ -1494,14 +1588,78 @@ mod tests {
                     for &columns in case.rooms {
                         let laid = Diagrams.block(text, &Room { columns, glyphs });
                         assert!(
-                            matches!(laid, Ok(_) | Err(Undrawn::TooWide)),
-                            "{} at {columns} in {glyphs:?}: {laid:?}\n{text}",
+                            matches!(
+                                laid,
+                                Ok(_)
+                                    | Err(
+                                        Undrawn::TooWide | Undrawn::Unsupported("misplaced labels")
+                                    )
+                            ),
+                            "{} at {columns} in {glyphs:?} was refused before it was laid out: {laid:?}\n{text}",
                             case.name
                         );
                     }
                 }
             }
         }
+    }
+
+    /// A diagram refused for a line's label the engine set beside another
+    /// line is refused after the engine laid it out, and the drawing thread
+    /// pays that whole layout, so a reading times it; one refused before the
+    /// engine runs, as relationships that do not chain, is not timed.
+    #[test]
+    fn a_refusal_made_after_layout_is_timed_and_one_made_before_it_is_not() {
+        let room = Room {
+            columns: WINDOW,
+            glyphs: Glyphs::Unicode,
+        };
+        let timed = |text: &str| {
+            let case = Case {
+                name: "a refusal",
+                input: Input::Diagram(text.to_owned()),
+                rooms: DIAGRAM_ROOMS,
+            };
+            lay(&case, &room)
+        };
+        let tangled = "erDiagram\nE0 ||--o{ E0 : \"itself\"\n";
+        assert_eq!(
+            Diagrams.block(COSTLIEST_FLOWCHART, &room).err(),
+            Some(Undrawn::Unsupported("misplaced labels"))
+        );
+        assert_eq!(timed(COSTLIEST_FLOWCHART), Some(1));
+        assert_eq!(
+            Diagrams.block(tangled, &room).err(),
+            Some(Undrawn::Unsupported("tangled relationships"))
+        );
+        assert_eq!(timed(tangled), None);
+    }
+
+    /// Each kind timed as text has a case at its caps drawn whole in a window
+    /// wide enough for it, in both glyph sets, beside any refused after the
+    /// engine laid it out: a kind whose every case is refused would be timed
+    /// at no drawing.
+    #[test]
+    fn every_kind_timed_has_a_case_at_its_caps_that_is_drawn() {
+        let cases = diagrams();
+        let mut kinds: Vec<(&str, bool)> = Vec::new();
+        for case in &cases {
+            if let Input::Diagram(text) = &case.input {
+                let kind = text.split_whitespace().next().unwrap_or_default();
+                let drawn = drawn_in_the_window(text);
+                match kinds.iter_mut().find(|(seen, _)| *seen == kind) {
+                    Some((_, any)) => *any |= drawn,
+                    None => kinds.push((kind, drawn)),
+                }
+            }
+        }
+        let undrawn: Vec<&str> = kinds
+            .iter()
+            .filter(|(_, drawn)| !drawn)
+            .map(|(kind, _)| *kind)
+            .collect();
+        assert_eq!(kinds.len(), 6, "{kinds:?}");
+        assert!(undrawn.is_empty(), "no case of {undrawn:?} is drawn");
     }
 
     /// Every diagram a picture case times is made a picture by the drawer,
