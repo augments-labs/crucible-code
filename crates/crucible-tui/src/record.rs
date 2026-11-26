@@ -3415,6 +3415,46 @@ mod tests {
     }
 
     #[test]
+    fn a_picture_more_than_its_marks_can_place_is_drawn_as_text() {
+        // Each placeholder cell names its row by one of MOST_PLACED marks: a
+        // picture that many cells down is shown, and one a cell more is not.
+        let (drawer, _) = fake(100, MOST_PLACED, vec![]);
+        let mut record = picturing::record(40, drawer, &picturing::coloured(Theme::Dark));
+        record.drawn(picturing::diagram("a"), Glyphs::Unicode, Theme::Dark);
+        assert!(picturing::shown(&record, 0));
+
+        let (drawer, _) = fake(100, MOST_PLACED + 1, vec![]);
+        let mut record = picturing::record(40, drawer, &picturing::coloured(Theme::Dark));
+        record.drawn(picturing::diagram("a"), Glyphs::Unicode, Theme::Dark);
+        assert!(!picturing::shown(&record, 0));
+        assert_eq!(picturing::refused(&record, 0), Some(Undrawn::TooWide));
+        assert_eq!(record.folded(0).len(), 1, "laid out as its text");
+
+        // Two cells across, in a record one column wide.
+        let (drawer, _) = fake(100, 3, vec![]);
+        let mut record = picturing::record(1, drawer, &picturing::coloured(Theme::Dark));
+        record.drawn(picturing::diagram("a"), Glyphs::Unicode, Theme::Dark);
+        assert!(!picturing::shown(&record, 0));
+        assert_eq!(picturing::refused(&record, 0), Some(Undrawn::TooWide));
+    }
+
+    #[test]
+    fn once_every_number_is_given_out_a_diagram_is_drawn_as_text() {
+        // A number is a 24-bit colour: the last one is given out, and the
+        // picture after it is never named by one already sent.
+        let (fake, _) = fake(100, 3, vec![]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+        record.numbers_from(MOST_PICTURE_ID);
+
+        record.drawn(picturing::diagram("last"), Glyphs::Unicode, Theme::Dark);
+        record.drawn(picturing::diagram("past"), Glyphs::Unicode, Theme::Dark);
+
+        assert!(picturing::shown(&record, 0));
+        assert!(!picturing::shown(&record, 1));
+        assert_eq!(picturing::refused(&record, 1), Some(Undrawn::PastCap));
+    }
+
+    #[test]
     fn a_new_theme_encodes_a_kept_picture_again_without_its_drawer() {
         let (fake, asked) = fake(100, 3, vec![]);
         let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
