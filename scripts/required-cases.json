@@ -14575,7 +14575,7 @@
     {
       "id": "CASE-TRANSCRIPT-PICTURES-KITTY-SLOT-WAIT",
       "family": "transcript-pictures",
-      "obligation": "While another thread holds the raster slot, make gives up with Undrawn::NotHere after at least the 40 ms wait and under 240 ms, and once the slot is free the same picture is made.",
+      "obligation": "While another thread holds the raster slot, make gives up with Undrawn::NotHere after at least the 40 ms wait and under 240 ms, for a picture whose size cannot be read as for one whose can, and once the slot is free the same picture is made.",
       "package": "crucible-code",
       "target": {
         "kind": "bin",
@@ -14583,7 +14583,7 @@
       },
       "case": "cli::pictures::tests::a_held_slot_delays_a_picture_by_no_more_than_the_wait_and_then_it_is_text",
       "source": "src/cli/pictures.rs",
-      "body_sha256": "9f0f86255b537f8d2ff17d84e0dfd423e1aa24222a3aabfb899da74e12aca3de",
+      "body_sha256": "f12f5ae10c8e40d180d6e468c392335beb2a7c3b2c7fa98f54684249c32f6c46",
       "platforms": [
         "linux",
         "macos",

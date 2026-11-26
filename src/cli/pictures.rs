@@ -64,10 +64,11 @@ fn encoded(form: &Form, key: &PictureKey) -> Result<Payload, Undrawn> {
     let room = u32::try_from(key.bucket.columns())
         .unwrap_or(u32::MAX)
         .saturating_mul(u32::from(key.cell.width));
-    let width = raster_width(svg).map_err(refusal)?.min(room);
-    // Taken here, and so not waited for again inside: the raster's own entry
+    // Taken here, before the size is read, since reading it parses the whole
+    // picture; and so not waited for again inside: the raster's own entry
     // points let the thread that holds the slot straight through.
     let _slot = Slot::take(WAIT).map_err(refusal)?;
+    let width = raster_width(svg).map_err(refusal)?.min(room);
     let pixels = rasterise(svg, width, &key.palette.inks()).map_err(refusal)?;
     let bytes = png(&pixels).map_err(refusal)?;
     Ok(Payload::new(
@@ -205,23 +206,37 @@ mod tests {
         });
         assert!(held.recv().unwrap(), "the holder never took the slot");
 
+        // Even a picture whose size cannot be read waits its turn: its size
+        // is read by the parse that draws it, inside the slot.
         let form = halves(40, 20);
+        let sizeless = Form::Svg(
+            Svg::new(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"4\" height=\"4\"/></svg>"
+                    .to_owned(),
+            )
+            .unwrap(),
+        );
         let key = key(Theme::Dark, None, 80);
-        let asked = Instant::now();
-        let made = Raster.make("graph", &key, &form);
-        let waited = asked.elapsed();
+        let mut waits = Vec::new();
+        for asked_for in [&form, &sizeless] {
+            let asked = Instant::now();
+            let made = Raster.make("graph", &key, asked_for);
+            waits.push((made.err(), asked.elapsed()));
+        }
 
         free.send(()).unwrap();
         holder.join().unwrap();
-        assert_eq!(made.err(), Some(Undrawn::NotHere));
-        assert!(waited >= WAIT, "it gave up after {waited:?}");
-        // The wait, and the time a woken thread takes to be run again on a
-        // busy machine; nowhere near the ten seconds a raster entry point
-        // waits for the slot on its own.
-        assert!(
-            waited < WAIT + Duration::from_millis(200),
-            "it waited {waited:?}"
-        );
+        for (refused, waited) in waits {
+            assert_eq!(refused, Some(Undrawn::NotHere));
+            assert!(waited >= WAIT, "it gave up after {waited:?}");
+            // The wait, and the time a woken thread takes to be run again on
+            // a busy machine; nowhere near the ten seconds a raster entry
+            // point waits for the slot on its own.
+            assert!(
+                waited < WAIT + Duration::from_millis(200),
+                "it waited {waited:?}"
+            );
+        }
 
         // The slot free again, the same picture is drawn.
         assert!(Raster.make("graph", &key, &form).is_ok());
