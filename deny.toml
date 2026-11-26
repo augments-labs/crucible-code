@@ -164,6 +164,12 @@ skip = [
     # happen to disagree about a release.
     { crate = "hashbrown:0.15.5", reason = "petgraph pins the older line under arboard" },
 
+    # `foldhash` is the hash function inside that older hashbrown, so the 0.1
+    # copy comes in only through `petgraph` under Wayland clipboard support.
+    # `read-fonts`, which resvg's text shaping reads font tables with, has
+    # moved to 0.2. The older copy goes away with the hashbrown above it.
+    { crate = "foldhash:0.1.5", reason = "the older hashbrown under arboard pins it" },
+
     # `miniz_oxide` is the pure-Rust deflate under `flate2`. `flate2` 1.1.10,
     # which decompresses a release archive for the updater, moved to 0.9, while
     # `png` — the decoder under `image`, at its latest release — still asks for

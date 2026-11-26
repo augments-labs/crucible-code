@@ -41,7 +41,7 @@ image = { version = "=0.25.10", default-features = false, features = ["png", "jp
 # raster image embedded in an SVG is skipped rather than drawn; the `image`
 # crate decodes image files, never an SVG's. Fonts and every `href` are the
 # caller's: nothing it names is read from the machine.
-resvg = { version = "=0.49.0", default-features = false, features = ["text"] }
+resvg = { version = "=0.50.0", default-features = false, features = ["text"] }
 # Encodes pixels as a Sixel payload for terminals that draw one, which `std`
 # cannot do: Sixel is a six-pixel-row text format over a palette, so the work is
 # choosing at most 256 colours and dithering to them, in a quantiser written for
@@ -126,7 +126,7 @@ clap = { version = "=4.6.8", features = ["derive"] }
 # shells would drift from the flags the first time one is renamed. Default
 # features only: the dynamic-completion machinery, which would add `clap_lex`,
 # `shlex` and `is_executable`, is not used.
-clap_complete = "=4.6.11"
+clap_complete = "=4.6.12"
 
 # Error enums. Every module owns its error type; `thiserror` writes the
 # `Display` and `source` impls for it without erasing the type the way a
@@ -477,7 +477,7 @@ windows-sys = { version = "=0.61.2", features = [
 # its times in UTC, and says so. The provider crate takes it for the other
 # side of that hour: reading the RFC 3339 instant a vendor writes it as, which
 # `std` has no parser for.
-jiff = { version = "=0.2.42", default-features = false, features = [
+jiff = { version = "=1.0.1", default-features = false, features = [
     "std",
     "tz-system",
     "tzdb-zoneinfo",
@@ -653,10 +653,11 @@ crucible-tui-math.workspace = true
 # What draws a Mermaid diagram in an answer as text, in every renderer of a
 # session.
 crucible-tui-mermaid.workspace = true
-# What turns a drawer's picture into pixels and a PNG. The drawing probe times
-# a diagram's picture rasterised and encoded through it, and the command
-# line's tests hold the font it draws with to the characters a drawer lets
-# into a picture; nothing the command line runs rasterises yet.
+# What turns a drawer's picture into pixels and a PNG. A session draws a
+# diagram's picture through it for a terminal that confirmed Kitty, the drawing
+# probe times a diagram's picture rasterised and encoded through it, and the
+# command line's tests hold the font it draws with to the characters a drawer
+# lets into a picture.
 crucible-raster.workspace = true
 image.workspace = true
 # The hash an attachment is recorded under, taken here because this is where a

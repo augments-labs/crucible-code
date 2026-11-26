@@ -272,6 +272,76 @@ pub fn rasterise(svg: &[u8], width_px: u32, inks: &[(&str, [u8; 3])]) -> Result<
     })
 }
 
+/// The width `svg` is rasterised at, in pixels: its own, since a picture is
+/// never scaled up, unless that is more pixels than [`MOST_DECODED`] holds, and
+/// then the most it holds at its proportions, with the height rounded up as
+/// [`rasterise`] rounds it.
+///
+/// Its own is the `width` and `height` of its outermost element, read by the
+/// parser [`rasterise`] reads it with: plain numbers, without a unit. A caller
+/// that places the picture in a room narrower than this rasterises it at the
+/// room's width instead.
+///
+/// # Errors
+/// [`Refused::TooLarge`] for an SVG past [`MOST_INPUT`];
+/// [`Refused::NotAnImage`] for bytes that are not an SVG, or one whose width
+/// or height is missing, not a number, or not above nought.
+pub fn raster_width(svg: &[u8]) -> Result<u32, Refused> {
+    if svg.len() > MOST_INPUT {
+        return Err(Refused::TooLarge);
+    }
+    let document = parse(svg).ok_or(Refused::NotAnImage)?;
+    let root = document.root_element();
+    if !root.has_tag_name((SVG_NAMESPACE, "svg")) {
+        return Err(Refused::NotAnImage);
+    }
+    let side = |name: &str| {
+        root.attribute(name)
+            .and_then(|value| value.parse::<f64>().ok())
+            // The tree keeps a size as an `f32`, and the rasteriser's height is
+            // worked out from that.
+            .map(|value| {
+                #[allow(clippy::cast_possible_truncation, reason = "as the tree keeps it")]
+                f64::from(value as f32)
+            })
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .ok_or(Refused::NotAnImage)
+    };
+    let (width, height) = (side("width")?, side("height")?);
+    let most = u64::try_from(MOST_DECODED / 4).unwrap_or(u64::MAX);
+    #[allow(clippy::cast_precision_loss, reason = "a width under the ceiling")]
+    let held = |across: u64| across.saturating_mul(rows(height, across as f64, width)) <= most;
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "saturates, and is held to the ceiling"
+    )]
+    let own = (width.floor() as u64).max(1);
+    let (mut low, mut high) = (1, most.min(own));
+    while low < high {
+        let middle = high - (high - low) / 2;
+        if held(middle) {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+    u32::try_from(low).map_err(|_| Refused::TooLarge)
+}
+
+/// The rows a picture `width` by `height` is drawn in at `across` pixels wide,
+/// worked out as [`rasterise`] works them out: rounded up, never none, and
+/// saturating at what a `u64` holds.
+fn rows(height: f64, across: f64, width: f64) -> u64 {
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "saturates, and is held to the ceiling"
+    )]
+    let rows = (height * across / width).ceil().max(1.0) as u64;
+    rows
+}
+
 /// The stack the drawing thread is given: room for the deepest nesting the XML
 /// parser lets through, in a build with no optimisation, and twice over. Only
 /// the pages a drawing touches are ever backed by memory.

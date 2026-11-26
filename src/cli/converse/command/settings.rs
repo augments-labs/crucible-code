@@ -549,6 +549,7 @@ fn worn<T: Terminal>(
                 if setting.passthrough == graphics::Passthrough::Unknown {
                     setting.passthrough = graphics::passthrough(from, style.platform(), setting);
                     terms.style.set(style.passing(setting.passthrough));
+                    renderer.passes_through(setting.passthrough);
                 }
                 let candidate = graphics::select(from, style.platform(), setting);
                 renderer.images(graphics::unasked(candidate, renderer.terminal().cell()));

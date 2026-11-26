@@ -158,13 +158,18 @@ const ADDED: usize = 40;
 /// line, a second file's, a hunk, changed lines and context, and a fold. Each
 /// ends after its fence has closed, since only a closed fence is a drawer's.
 /// The third is drawn as math is: its span as the line is read, and its block
-/// once its closing marker has come. The fourth's are each drawn as text once
-/// its fence has closed: a state diagram with a start, an end and a labelled
-/// line among its own, a sequence of labelled messages between lifelines, a
-/// gantt's bars in two sections, and a git graph's branch merged back.
+/// once its closing marker has come. The fourth's are each drawn once its
+/// fence has closed, as a picture where the renderer was handed what a
+/// terminal that confirmed Kitty gives a session, and as text elsewhere: a
+/// state diagram with a start, an end and a labelled line among its own, a
+/// sequence of labelled messages between lifelines, a gantt's bars in two
+/// sections, and a git graph's branch merged back.
 ///
-/// Which drawer draws them is each probe's to say in its own file, where what
-/// a probe names is read and held against the list of what it may name.
+/// Which drawer draws them, and what draws a diagram's picture, is each
+/// probe's to say in its own file, where what a probe names is read and held
+/// against the list of what it may name. Both probes time a renderer handed
+/// pictures, so a burst's diagrams are timed as the pictures a Kitty terminal
+/// is sent.
 pub(crate) fn answers() -> Vec<String> {
     let two = "The reader keeps the block, and the window asks for its rows:\n\n\
         ```diff\n\

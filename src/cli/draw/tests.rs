@@ -3786,7 +3786,11 @@ fn the_screen_and_a_limit_name_drop_the_same_format_characters() {
     // sequence or shape a script, and a limit's name has no use for them. So
     // are the line and paragraph separators, which are not format characters:
     // the screen draws them a column each, and a limit's name drops them, as
-    // text written outside the renderer escapes them.
+    // text written outside the renderer escapes them. And so is the character
+    // a picture's cells are written in, which is not one either: the screen
+    // drops it from text, so no text can show itself as a picture's cell, and
+    // a limit's name keeps it, as it keeps any other character it may hold.
+    const PLACEHOLDER: char = '\u{10EEEE}';
     const JOINERS: [char; 2] = ['\u{200c}', '\u{200d}'];
     const SEPARATORS: [char; 2] = ['\u{2028}', '\u{2029}'];
     for character in (0..=u32::from(char::MAX)).filter_map(char::from_u32) {
@@ -3797,7 +3801,8 @@ fn the_screen_and_a_limit_name_drop_the_same_format_characters() {
         let drawn = crucible_tui::Row::plain(said.as_str()).text() == "ab";
         let named = crucible_types::GroupName::new(&said).is_some_and(|name| name.as_str() == "ab");
         let screen_drops =
-            named && !JOINERS.contains(&character) && !SEPARATORS.contains(&character);
+            (named && !JOINERS.contains(&character) && !SEPARATORS.contains(&character))
+                || character == PLACEHOLDER;
         assert_eq!(drawn, screen_drops, "U+{:04X}", u32::from(character));
     }
 }

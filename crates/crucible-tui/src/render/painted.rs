@@ -189,6 +189,15 @@ impl Painted {
         *changed = true;
     }
 
+    /// Sends the terminal `commands`, which makes the frame worth writing
+    /// where there are any.
+    pub(crate) fn graphics(&mut self, commands: &str) {
+        if !commands.is_empty() {
+            self.frame.graphics(commands);
+            self.changed = true;
+        }
+    }
+
     /// Leaves the cursor at `row`, `column`.
     pub(crate) fn park(&mut self, row: usize, column: usize) {
         if self.parked != Some((row, column)) {

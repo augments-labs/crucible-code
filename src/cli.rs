@@ -32,6 +32,7 @@ mod gathering;
 mod kept;
 mod opening;
 pub(super) mod panicked;
+mod pictures;
 #[cfg(test)]
 mod sample;
 mod seen;
@@ -1084,6 +1085,7 @@ fn settle_pictures<T: crucible_tui::Terminal>(
     let platform = terms.style().platform();
     let passthrough = graphics::passthrough(from, platform, picturing_on);
     terms.style.set(terms.style().passing(passthrough));
+    renderer.passes_through(passthrough);
     renderer.images(graphics::confirm(
         graphics::select(
             from,
@@ -1610,11 +1612,18 @@ fn watch_size<T: crucible_tui::Terminal>(_renderer: &mut Renderer<T>) {}
 /// The renderer a session is read on, drawing where `output.screen` names.
 ///
 /// It is handed the drawers a fence of an answer is drawn by, since a renderer
-/// names none of them, and how `output.math` asks math to be drawn and
-/// `output.diagrams` a diagram, which `/settings` changes at once.
+/// names none of them, what draws a diagram's picture to pixels for a terminal
+/// that confirmed it can show one, and how `output.math` asks math to be drawn
+/// and `output.diagrams` a diagram, which `/settings` changes at once.
 fn screen(settings: &Settings) -> Renderer<SystemTerminal> {
-    let mut renderer = Renderer::drawing(SystemTerminal::stdout(), drawn_on(settings.screen()));
+    furnished(SystemTerminal::stdout(), settings)
+}
+
+/// A session's renderer on `terminal`, furnished as [`screen`] says.
+fn furnished<T: crucible_tui::Terminal>(terminal: T, settings: &Settings) -> Renderer<T> {
+    let mut renderer = Renderer::drawing(terminal, drawn_on(settings.screen()));
     renderer.drawers(draw::drawers());
+    renderer.pictures(Box::new(pictures::Raster));
     renderer.math(math_drawn(settings.math()));
     renderer.diagrams(diagrams_drawn(settings.diagrams()));
     renderer

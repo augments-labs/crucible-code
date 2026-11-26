@@ -68,7 +68,15 @@ impl Emulator {
     /// Replays `bytes` onto the buffer.
     fn feed(&mut self, bytes: &str) {
         let mut left = bytes.chars().peekable();
+        // The marks after a picture's placeholder name its row and column,
+        // and go into the placeholder's cell as a terminal puts them.
+        let mut placed = false;
         while let Some(character) = left.next() {
+            let mark = placed && unicode_width::UnicodeWidthChar::width(character) == Some(0);
+            placed = character == '\u{10EEEE}' || mark;
+            if mark {
+                continue;
+            }
             match character {
                 '\r' => {
                     self.at.1 = 0;
@@ -90,9 +98,9 @@ impl Emulator {
                         };
                         self.control(ending, &parameters);
                     }
-                    Some(']') => {
+                    Some(opened @ (']' | '_' | 'P' | '^' | 'X')) => {
                         while let Some(byte) = left.next() {
-                            if byte == '\x07' {
+                            if byte == '\x07' && opened == ']' {
                                 break;
                             }
                             if byte == '\x1b' && left.peek() == Some(&'\\') {
@@ -4056,6 +4064,345 @@ fn a_native_hostile_path_or_line_in_a_drawn_fence_writes_no_escape() {
                     "{hostile:?} reached the terminal for {answer:?} with {glyphs:?}"
                 );
             }
+        }
+    }
+}
+
+// Diagrams drawn as Kitty pictures, into a terminal's own buffer.
+
+mod pictures {
+    use super::*;
+    use crate::render::tests::pictures::{
+        DIAGRAM, Printed, commands, graphics_bytes, pictured_by, placeholders, printed_bytes,
+        transmitted,
+    };
+
+    /// A native renderer on `window` that draws pictures with `printed`,
+    /// with the box under it.
+    fn pictured(window: &Window, printed: Printed) -> Renderer<Window> {
+        let mut render = native(window);
+        pictured_by(&mut render, printed);
+        stands(&mut render);
+        render
+    }
+
+    /// An answer that is a diagram, and then enough lines to carry it into
+    /// the scrollback.
+    fn answered(render: &mut Renderer<Window>) {
+        render.stream(DIAGRAM).unwrap();
+        render.settle().unwrap();
+        for line in 0..12 {
+            render.commit(&format!("line {line}")).unwrap();
+        }
+        render.seal().unwrap();
+        stands(render);
+    }
+
+    #[test]
+    fn a_native_diagram_goes_into_the_scrollback_as_its_cells_and_is_sent_once() {
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, 300));
+        answered(&mut render);
+
+        let written = window.written();
+        let commands = commands(&written);
+        assert_eq!(transmitted(&commands), [(1, printed_bytes(0, 300))]);
+        assert_eq!(
+            commands
+                .iter()
+                .filter(|command| command.starts_with("a=p"))
+                .collect::<Vec<_>>(),
+            [&"a=p,U=1,i=1,c=3,r=2,q=2"]
+        );
+        // Nothing a terminal keeps in its scrollback is ever taken back.
+        assert!(commands.iter().all(|command| !command.starts_with("a=d")));
+        assert!(written.contains(&placeholders(1, 0, 3)), "{written:?}");
+        assert!(written.contains(&placeholders(1, 1, 3)), "{written:?}");
+        let back = window.scrollback();
+        assert_eq!(
+            back.iter()
+                .filter(|row| row.contains("\u{10EEEE}\u{10EEEE}\u{10EEEE}"))
+                .count(),
+            2,
+            "{back:#?}"
+        );
+    }
+
+    #[test]
+    fn a_native_repaint_sends_every_kept_picture_again_though_it_is_in_the_scrollback() {
+        // What the frame after a child had the terminal draws: the cells in
+        // the scrollback are still there, and the picture they stand for may
+        // not be.
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, 300));
+        answered(&mut render);
+        window.take();
+
+        render.repaint().unwrap();
+        let again = window.take();
+        assert_eq!(transmitted(&commands(&again)), [(1, printed_bytes(0, 300))]);
+        assert!(commands(&again).contains(&"a=p,U=1,i=1,c=3,r=2,q=2"));
+    }
+
+    #[test]
+    fn a_native_window_settled_at_a_new_width_gives_the_picture_back_placed_again() {
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, 300));
+        answered(&mut render);
+        window.take();
+
+        settles_at(&window, &mut render, 100, 8);
+        let after = window.take();
+        assert_eq!(transmitted(&commands(&after)), [(2, printed_bytes(1, 300))]);
+        assert!(after.contains(&placeholders(2, 0, 3)), "{after:?}");
+        assert!(after.contains(&placeholders(2, 1, 3)), "{after:?}");
+        assert!(
+            commands(&after)
+                .iter()
+                .all(|command| !command.starts_with("a=d"))
+        );
+    }
+
+    #[test]
+    fn a_redirected_native_session_draws_its_diagram_as_text() {
+        let window = Window::redirected(40, 8);
+        let mut render = native(&window);
+        pictured_by(&mut render, Printed::new(3, 2, 300));
+        render.stream(DIAGRAM).unwrap();
+        render.settle().unwrap();
+        drop(render);
+
+        let written = window.written();
+        assert!(!written.contains("\x1b_G"), "{written:?}");
+        assert!(!written.contains('\u{10EEEE}'), "{written:?}");
+        assert!(written.contains("graph"), "{written:?}");
+    }
+
+    /// Draws the frames a session's input waits draw while a picture is
+    /// still going out, at most `most` of them, and gives back what each
+    /// wrote.
+    fn sent_out(window: &Window, render: &mut Renderer<Window>, most: usize) -> Vec<String> {
+        let mut frames = Vec::new();
+        for _ in 0..most {
+            if render.rests_in().is_none() {
+                break;
+            }
+            render.repose().unwrap();
+            frames.push(window.take());
+        }
+        frames
+    }
+
+    #[test]
+    fn a_native_picture_larger_than_a_frame_may_send_goes_out_over_the_native_frames_after_it() {
+        // The diagram stands in the region, under the box, and nothing after
+        // it changes a row: the frames after it are drawn for the picture.
+        let bytes = 200 * 1024;
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, bytes));
+        render.stream(DIAGRAM).unwrap();
+        render.settle().unwrap();
+        stands(&mut render);
+        let mut written = window.take();
+        assert_eq!(
+            render.rests_in(),
+            Some(Duration::ZERO),
+            "a picture still being sent did not wake the next wait"
+        );
+
+        for frame in sent_out(&window, &mut render, 64) {
+            assert!(
+                !commands(&frame).is_empty(),
+                "a native frame owed part of a picture sent none of it: {frame:.80?}"
+            );
+            written.push_str(&frame);
+        }
+        assert_eq!(render.rests_in(), None, "the picture was never sent whole");
+
+        for frame in written.split(frame::BEGIN_SYNC).skip(1) {
+            assert!(
+                graphics_bytes(frame) <= 64 * 1024,
+                "a native frame sent {} bytes of pictures",
+                graphics_bytes(frame)
+            );
+        }
+        let commands = commands(&written);
+        for command in &commands {
+            let data = command.split_once(';').map_or("", |(_, data)| data);
+            assert!(data.len() <= 4096, "a chunk of {} bytes", data.len());
+        }
+        let [first, middle @ .., last, placement] = commands.as_slice() else {
+            panic!("{} commands", commands.len());
+        };
+        assert!(first.starts_with("a=t,f=100,i=1,q=2,m=1;"));
+        assert!(!middle.is_empty(), "the picture went out in one chunk");
+        for command in middle {
+            assert!(command.starts_with("m=1,q=2;"), "{command:.32}");
+        }
+        assert!(last.starts_with("m=0,q=2;"));
+        assert_eq!(*placement, "a=p,U=1,i=1,c=3,r=2,q=2");
+        assert_eq!(
+            transmitted(&commands),
+            [(1, printed_bytes(0, bytes))],
+            "the picture did not arrive whole"
+        );
+    }
+
+    #[test]
+    fn a_native_region_closed_part_way_through_sending_a_picture_ends_it() {
+        // The shell writes next, and the terminal would read it as more of
+        // the picture.
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, 200 * 1024));
+        render.stream(DIAGRAM).unwrap();
+        render.settle().unwrap();
+        stands(&mut render);
+        let mut written = window.take();
+        assert_eq!(render.rests_in(), Some(Duration::ZERO), "sent whole");
+
+        render.closes().unwrap();
+        written.push_str(&window.take());
+
+        let commands = commands(&written);
+        assert!(
+            commands
+                .first()
+                .is_some_and(|first| first.starts_with("a=t,f=100,i=1,q=2,m=1;"))
+        );
+        assert_eq!(
+            commands.last(),
+            Some(&"m=0,q=2;"),
+            "left open: {commands:.32?}"
+        );
+        assert!(!commands.iter().any(|command| command.starts_with("a=p")));
+        assert_eq!(render.rests_in(), None, "still owed after closing");
+    }
+
+    #[test]
+    fn a_native_picture_encoded_again_or_drawn_as_text_is_never_deleted() {
+        // The scrollback's cells still name the number the picture went out
+        // under, and the terminal draws them from what it holds.
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, 300));
+        render.stream(DIAGRAM).unwrap();
+        render.settle().unwrap();
+        stands(&mut render);
+        let mut written = window.take();
+        assert!(written.contains("\x1b_Ga=t,f=100,i=1,"), "{written:?}");
+
+        render.wears(Palette::resolve(true, Theme::Light, None, &|name| {
+            (name == "COLORTERM").then(|| "truecolor".to_owned())
+        }));
+        render.commit("after the theme").unwrap();
+        stands(&mut render);
+        written.push_str(&window.take());
+        render.diagrams(crate::drawing::Mode::Text);
+        render.commit("after the mode").unwrap();
+        stands(&mut render);
+        written.push_str(&window.take());
+
+        assert!(
+            commands(&written)
+                .iter()
+                .any(|command| command.starts_with("a=t,f=100,i=2,")),
+            "never encoded again: {:?}",
+            commands(&written)
+        );
+        assert!(!written.contains("a=d"), "{:?}", commands(&written));
+    }
+
+    #[test]
+    fn inside_tmux_every_native_command_is_wrapped_for_it() {
+        // Larger than a frame sends, so its first chunk, the chunks after
+        // it, its last and its placement all go out.
+        let bytes = 100 * 1024;
+        let window = Window::new(40, 8);
+        let mut render = native(&window);
+        render.passes_through(crate::graphics::Passthrough::On);
+        pictured_by(&mut render, Printed::new(3, 2, bytes));
+        stands(&mut render);
+        answered(&mut render);
+        sent_out(&window, &mut render, 64);
+        assert_eq!(render.rests_in(), None, "the picture was never sent whole");
+
+        let written = window.written();
+        let wrapped = written.matches("\x1bPtmux;\x1b\x1b_G").count();
+        assert!(wrapped > 3, "{wrapped} wrapped commands");
+        assert_eq!(
+            written.matches("\x1b_G").count(),
+            wrapped,
+            "a command went out unwrapped"
+        );
+        assert_eq!(
+            written.matches("\x1b\x1b\\\x1b\\").count(),
+            wrapped,
+            "a wrapped command was not closed for tmux and then for itself"
+        );
+        // Unwrapped, it is the picture whole and its placement.
+        let unwrapped = written
+            .replace("\x1bPtmux;\x1b\x1b_G", "\x1b_G")
+            .replace("\x1b\x1b\\\x1b\\", "\x1b\\");
+        let commands = commands(&unwrapped);
+        assert_eq!(transmitted(&commands), [(1, printed_bytes(0, bytes))]);
+        assert!(
+            commands.contains(&"a=p,U=1,i=1,c=3,r=2,q=2"),
+            "{commands:.40?}"
+        );
+        // The cells are text, which tmux draws itself.
+        assert!(written.contains(&placeholders(1, 0, 3)), "{written:.80?}");
+    }
+
+    #[test]
+    fn no_native_picture_is_drawn_where_colour_is_not_written() {
+        // `output.color never`, and `NO_COLOR`, on a terminal that confirmed
+        // Kitty: the diagram is its text, and nothing of a picture is sent,
+        // whether colour was off from the start or went off once the diagram
+        // stood in the region as a picture.
+        for palette in [
+            Palette::resolve(false, crate::Theme::Dark, None, &|_| None),
+            Palette::plain(),
+        ] {
+            let window = Window::new(40, 8);
+            let mut render = pictured(&window, Printed::new(3, 2, 300));
+            render.wears(palette);
+            answered(&mut render);
+            render.closes().unwrap();
+
+            let written = window.written();
+            assert!(!written.contains("\x1b_G"), "{written:?}");
+            assert!(!written.contains('\u{10EEEE}'), "{written:?}");
+            assert!(written.contains("graph"), "{written:?}");
+            assert!(
+                window.scrollback().iter().any(|row| row.contains("graph")),
+                "{:#?}",
+                window.scrollback()
+            );
+
+            let window = Window::new(40, 8);
+            let mut render = pictured(&window, Printed::new(3, 2, 300));
+            render.stream(DIAGRAM).unwrap();
+            render.settle().unwrap();
+            stands(&mut render);
+            assert!(
+                window.take().contains('\u{10EEEE}'),
+                "no picture to take off"
+            );
+            render.wears(palette);
+            for line in 0..12 {
+                render.commit(&format!("line {line}")).unwrap();
+            }
+            render.seal().unwrap();
+            stands(&mut render);
+            render.closes().unwrap();
+
+            let written = window.written();
+            assert!(!written.contains("\x1b_G"), "{written:?}");
+            assert!(!written.contains('\u{10EEEE}'), "{written:?}");
+            assert!(
+                window.scrollback().iter().any(|row| row.contains("graph")),
+                "{:#?}",
+                window.scrollback()
+            );
         }
     }
 }

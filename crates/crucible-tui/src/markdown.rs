@@ -185,6 +185,7 @@ use crate::files::Files;
 use crate::forge::{DIGITS, Forge, named};
 use crate::glyphs::Glyphs;
 use crate::row::Row;
+use crate::terminal::graphics::PLACEHOLDER;
 
 mod code;
 mod drawn;
@@ -199,7 +200,7 @@ mod told;
 
 use code::{Counted, Fenced, fence_name};
 pub(crate) use code::{continuation, framed, framed_height};
-pub(crate) use drawn::{Offers, lay_unoffered};
+pub(crate) use drawn::{Offers, lay_unoffered, taken};
 pub(crate) use links::SHORTENED_CAP;
 use links::spill;
 
@@ -805,9 +806,6 @@ pub(crate) fn hang(row: &Row) -> Option<Hang> {
         columns,
     })
 }
-
-/// The character an image is placed with, which no text from a model may use.
-const PLACEHOLDER: char = '\u{10EEEE}';
 
 /// A held block being gathered.
 #[derive(Debug)]

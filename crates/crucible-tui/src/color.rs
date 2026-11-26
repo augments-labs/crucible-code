@@ -322,6 +322,60 @@ pub enum Slot {
     AddedCount,
 }
 
+impl Slot {
+    /// Every slot, once: what a picture's inks are worked out over, since a
+    /// picture may name any slot's class. A test holds it to the list the
+    /// colour checks walk, whose exhaustive match is what a new slot has to
+    /// pass.
+    pub(crate) const EVERY: [Self; 45] = [
+        Self::Plain,
+        Self::Accent,
+        Self::Strong,
+        Self::Pointed,
+        Self::Quiet,
+        Self::Cut,
+        Self::Link,
+        Self::Emphasis,
+        Self::Struck,
+        Self::AllowEdits,
+        Self::FullAccess,
+        Self::Doing,
+        Self::DoingMark,
+        Self::Done,
+        Self::DoneMark,
+        Self::Trouble,
+        Self::Removed,
+        Self::RemovedNumber,
+        Self::Added,
+        Self::AddedNumber,
+        Self::Prompt,
+        Self::PromptMark,
+        Self::Comment,
+        Self::Keyword,
+        Self::Str,
+        Self::Number,
+        Self::Name,
+        Self::Operator,
+        Self::Code,
+        Self::Bold,
+        Self::Path,
+        Self::Revision,
+        Self::Figure,
+        Self::Heading,
+        Self::Bullet,
+        Self::Ordinal,
+        Self::Quote,
+        Self::ArgumentPath,
+        Self::ArgumentAddress,
+        Self::ArgumentCommand,
+        Self::RemovedWord,
+        Self::AddedWord,
+        Self::RemovedCount,
+        Self::AddedCount,
+        Self::BoldEmphasis,
+    ];
+}
+
 /// How many colours the transcript spends, and on which kinds of thing.
 ///
 /// Closed, and matched whole wherever a kind is given its ink, so a design
@@ -1796,6 +1850,125 @@ impl Palette {
             None => Depth::Off,
         }
     }
+}
+
+/// What a picture's inks are worked out from: the theme, the design, how much
+/// colour the terminal takes and the ground it reported.
+///
+/// Part of what a kept picture is keyed by, so a picture drawn under one
+/// palette is worn again rather than shown in another's colours. Taken from
+/// [`Palette::identity`]; the pointer and a syntax theme are left out, since
+/// neither changes an ink a picture is drawn in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PaletteIdentity {
+    theme: Theme,
+    design: Design,
+    depth: Depth,
+    ground: Option<(u8, u8, u8)>,
+}
+
+impl Palette {
+    /// What a picture drawn under this palette is worn in.
+    #[must_use]
+    pub const fn identity(&self) -> PaletteIdentity {
+        PaletteIdentity {
+            theme: self.theme,
+            design: self.design,
+            depth: self.depth,
+            ground: self.ground,
+        }
+    }
+}
+
+impl PaletteIdentity {
+    /// Whether a picture is drawn at all: never where no colour is written,
+    /// which is a pipe, `NO_COLOR` and `output.color` set to `never`.
+    #[must_use]
+    pub fn draws(&self) -> bool {
+        self.depth != Depth::Off
+    }
+
+    /// The colour each slot's class is drawn in, for every slot.
+    ///
+    /// What the palette would write for the slot, read back as a colour: a
+    /// twenty-four bit ink as itself, an indexed one as the colour its index
+    /// stands for, and one of the sixteen, which is every ink under `ansi`, as
+    /// xterm's value for it. A slot written in the reader's own foreground, or
+    /// in weight alone, takes black or white, whichever stands out from the
+    /// ground the terminal reported, or where it reported none from the ground
+    /// the theme was drawn for.
+    #[must_use]
+    pub fn inks(&self) -> Vec<(&'static str, [u8; 3])> {
+        let palette = Palette {
+            depth: self.depth,
+            links: false,
+            theme: self.theme,
+            ground: self.ground,
+            band: Palette::banding(self.depth, self.theme, self.ground),
+            code: Code::default(),
+            design: self.design,
+            pointed: false,
+        };
+        let own = if crate::ground::is_light(self.ground.unwrap_or(Palette::nominal(self.theme))) {
+            [0, 0, 0]
+        } else {
+            [255, 255, 255]
+        };
+        Slot::EVERY
+            .iter()
+            .map(|slot| {
+                let worn = palette.open(*slot);
+                (slot.class(), foreground(worn.as_str()).unwrap_or(own))
+            })
+            .collect()
+    }
+}
+
+/// The foreground `worn` sets, as a colour; none where it sets none.
+fn foreground(worn: &str) -> Option<[u8; 3]> {
+    let mut found = None;
+    for sequence in worn.split('\x1b') {
+        let Some(parameters) = sequence
+            .strip_prefix('[')
+            .and_then(|rest| rest.strip_suffix('m'))
+        else {
+            continue;
+        };
+        let mut numbers = parameters.split(';').map(|part| part.parse::<u8>().ok());
+        while let Some(number) = numbers.next() {
+            let colour = match number {
+                Some(code @ 30..=37) => Some(derived::basic(code - 30)),
+                Some(code @ 90..=97) => Some(derived::basic(code - 90 + 8)),
+                Some(38 | 48) => {
+                    let ground = number == Some(48);
+                    let colour = match numbers.next().flatten() {
+                        Some(5) => numbers.next().flatten().map(|at| {
+                            if at < 16 {
+                                derived::basic(at)
+                            } else {
+                                derived::indexed(at)
+                            }
+                        }),
+                        Some(2) => match (
+                            numbers.next().flatten(),
+                            numbers.next().flatten(),
+                            numbers.next().flatten(),
+                        ) {
+                            (Some(red), Some(green), Some(blue)) => Some((red, green, blue)),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    colour.filter(|_| !ground)
+                }
+                _ => None,
+            };
+            if let Some((red, green, blue)) = colour {
+                found = Some([red, green, blue]);
+            }
+        }
+    }
+    found
 }
 
 #[cfg(test)]

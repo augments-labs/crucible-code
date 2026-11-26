@@ -74,6 +74,9 @@ pub enum Undrawn {
     /// It is a kind of block its drawer knows and does not draw as text,
     /// named here so a reader is told which kind it is.
     Unsupported(&'static str),
+    /// Its picture alone is more than every picture kept together may be, so
+    /// it is drawn as text instead.
+    TooLargeToKeep,
 }
 
 impl Undrawn {
@@ -85,6 +88,7 @@ impl Undrawn {
             Self::NotHere => "not drawn here",
             Self::NotText | Self::Unsupported(_) => "not drawn as text",
             Self::TooWide => "too wide to draw at this width",
+            Self::TooLargeToKeep => "too large to keep as a picture",
         }
     }
 }

@@ -403,6 +403,75 @@ fn the_height_follows_the_proportions_and_rounds_up_to_a_row() {
     );
 }
 
+/// An SVG whose outermost element says it is `width` by `height`, with nothing
+/// drawn on it.
+fn sized(width: &str, height: &str) -> String {
+    format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}"/>"#)
+}
+
+#[test]
+fn a_picture_narrower_than_the_ceiling_allows_is_rasterised_at_its_natural_width() {
+    // A gantt in one section is 776 across, where its proportions would let
+    // 840 in: a picture is never scaled up.
+    for (width, height) in [(776, 576), (8, 16), (3216, 16), (1, 1)] {
+        let svg = sized(&width.to_string(), &height.to_string());
+        assert_eq!(raster_width(svg.as_bytes()), Ok(width), "{width}x{height}");
+    }
+}
+
+#[test]
+fn a_picture_past_the_ceiling_is_rasterised_at_the_widest_the_ceiling_holds() {
+    let most = MOST_DECODED as u64 / 4;
+    for (width, height) in [(848, 624), (3216, 4000), (100_000, 16), (4, 1_000_000)] {
+        let svg = sized(&width.to_string(), &height.to_string());
+        let across = u64::from(raster_width(svg.as_bytes()).unwrap_or(0));
+        let pixels = |across: u64| across * (across * height).div_ceil(width);
+        assert!(across > 0, "{width}x{height}");
+        assert!(pixels(across) <= most, "{width}x{height} at {across}");
+        assert!(pixels(across + 1) > most, "{width}x{height} at {across}");
+    }
+    // What the rasteriser does at that width, and a column past it.
+    let _alone = alone();
+    let svg = sized("848", "624");
+    let across = raster_width(svg.as_bytes()).expect("a size");
+    assert!(
+        rasterise(svg.as_bytes(), across, &[]).is_ok(),
+        "at {across}"
+    );
+    assert_eq!(
+        rasterise(svg.as_bytes(), across + 1, &[]).map(|pixels| pixels.width()),
+        Err(Refused::TooLarge),
+        "one column past {across}"
+    );
+}
+
+#[test]
+fn a_picture_with_no_size_or_a_size_that_is_no_number_is_refused() {
+    let sizeless = [
+        r#"<svg xmlns="http://www.w3.org/2000/svg" height="10"/>"#.to_owned(),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="10"/>"#.to_owned(),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"/>"#.to_owned(),
+        sized("wide", "10"),
+        sized("10", "tall"),
+        sized("", "10"),
+        sized("10px", "10"),
+        sized("0", "10"),
+        sized("10", "0"),
+        sized("-10", "10"),
+        sized("NaN", "10"),
+        sized("inf", "10"),
+        r#"<rect xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>"#.to_owned(),
+        "not a picture".to_owned(),
+    ];
+    for svg in sizeless {
+        assert_eq!(
+            raster_width(svg.as_bytes()),
+            Err(Refused::NotAnImage),
+            "{svg}"
+        );
+    }
+}
+
 #[test]
 fn a_drawing_is_refused_one_byte_past_its_ceiling() {
     let _alone = alone();
