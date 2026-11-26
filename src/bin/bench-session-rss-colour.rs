@@ -36,11 +36,10 @@
 //! asked. A picture is kept twice, as what it was drawn from and as what the
 //! terminal is sent, and the record holds a count of them and a sum of their
 //! bytes at most. The last measured answer ends in one more gantt than that
-//! count, each with every task its caps hold and as wide as the window draws
-//! one, so every reading after it is of the kept pictures at their caps, with
-//! the oldest drawn as text again for the newest. The measurement is refused if
-//! that turn placed no picture, since a session that drew its diagrams as text
-//! kept none.
+//! count, each the largest picture the record keeps that many of, so every
+//! reading after it is of the kept pictures at their caps, with the oldest
+//! drawn as text again for the newest. The measurement is refused if that turn
+//! placed no picture, since a session that drew its diagrams as text kept none.
 //!
 //! What reading code costs is in this reading. A line of a change that did not
 //! move is drawn in the colours of its file's language, and so is a fence that
@@ -184,10 +183,16 @@ const ROWS: u16 = 24;
 const CELL: (u16, u16) = (8, 16);
 
 /// The days every task of the last measured answer's gantts starts within:
-/// the most a gantt at its caps may span and still be drawn in the measured
-/// window, so each is as wide a picture as the session shows.
+/// the most a gantt may span and still be as narrow as a picture the record
+/// places, so each is as wide a picture as the session keeps.
 #[cfg(target_os = "linux")]
-const SPAN: usize = 38;
+const SPAN: usize = 24;
+
+/// The tasks of each of the last measured answer's gantts: the most that
+/// leave a gantt that wide small enough for the record to keep as many
+/// pictures of it as it keeps of any.
+#[cfg(target_os = "linux")]
+const TASKS: usize = 26;
 
 /// A launch or turn that stops producing bytes is a failed measurement.
 #[cfg(target_os = "linux")]
@@ -888,16 +893,16 @@ fn answer(turn: usize, deltas: usize, lines: bool) -> String {
     body
 }
 
-/// Gantt `number` of the last measured answer, at its caps: one section and
-/// every task the caps hold beside it, each two days long and starting on its
-/// own day within `span`, every name as wide as a task's is drawn whole.
+/// Gantt `number` of the last measured answer: one section and [`TASKS`]
+/// tasks beside it, each two days long and starting on its own day within
+/// `span`, every name as wide as a task's is drawn whole.
 #[cfg(target_os = "linux")]
 fn gantt(number: usize, span: usize) -> String {
     let columns = Caps::GANTT.label.unwrap_or(Caps::GANTT.bytes);
     let mut source = String::with_capacity(Caps::GANTT.bytes);
     source.push_str("gantt\ndateFormat YYYY-MM-DD\n");
     let _ = writeln!(source, "section {}", label(number, columns));
-    for task in 1..Caps::GANTT.nodes {
+    for task in 1..=TASKS {
         let day = task * 2 % span.max(1);
         let (month, date) = if day < 31 {
             (1, day + 1)
@@ -1301,9 +1306,8 @@ fn main() -> ExitCode {
 #[cfg(target_os = "linux")]
 mod tests {
     use super::*;
-    use crucible_tui::Glyphs;
-    use crucible_tui::chrome::Undrawn;
     use crucible_tui::drawing::{Draws as _, Room};
+    use crucible_tui::{Glyphs, MOST_PLACED};
     use crucible_tui_mermaid::Diagrams;
 
     /// What a response the fixture wrote says: the tool it calls, the input it
@@ -1571,8 +1575,8 @@ mod tests {
         assert_eq!(fences.len(), MOST_KEPT_IMAGES + 1);
         for (number, source) in (1..).zip(&fences) {
             assert_eq!(*source, gantt(number, SPAN));
-            // Every section and task the caps hold, in no more source than
-            // they hold, so none of them is drawn as written for its size.
+            // One section and its tasks, within every cap a gantt has, so
+            // none of them is drawn as written for its size.
             assert!(source.starts_with("gantt\n"), "{source}");
             assert!(source.len() <= Caps::GANTT.bytes, "{} bytes", source.len());
             let sections = source
@@ -1580,7 +1584,8 @@ mod tests {
                 .filter(|line| line.starts_with("section "))
                 .count();
             let tasks = source.lines().filter(|line| line.ends_with(", 2d")).count();
-            assert_eq!(sections + tasks, Caps::GANTT.nodes);
+            assert_eq!((sections, tasks), (1, TASKS));
+            assert!(sections + tasks <= Caps::GANTT.nodes);
         }
         // No two alike, so no picture stands for another.
         let mut distinct = fences.clone();
@@ -1596,8 +1601,17 @@ mod tests {
         assert!(!said(&answer(TURNS + 1, 8, true)).text.contains("gantt"));
     }
 
+    /// How many of the measured window's cells `picture` covers across,
+    /// from the width it says it has: it is drawn at that width, never wider.
+    fn across(picture: &crucible_tui::drawing::Svg) -> u16 {
+        let (_, after) = picture.as_str().split_once(" width=\"").expect("a width");
+        let (width, _) = after.split_once('"').expect("the width closed");
+        let width: u16 = width.parse().expect("a width in units");
+        width.div_ceil(CELL.0)
+    }
+
     #[test]
-    fn every_gantt_of_the_last_answer_is_as_wide_a_picture_as_the_measured_window_draws() {
+    fn every_gantt_of_the_last_answer_is_a_picture_as_wide_as_the_record_places() {
         // The room a fence is drawn in: the window's columns but the one its
         // scroll rail stands in.
         let room = Room {
@@ -1606,12 +1620,19 @@ mod tests {
         };
         for number in 1..=MOST_KEPT_IMAGES + 1 {
             let drawn = Diagrams.picture(&gantt(number, SPAN), &room);
-            assert!(drawn.is_ok(), "gantt {number}: {:?}", drawn.err());
+            let across = drawn.as_ref().map(across);
+            assert!(
+                across.is_ok_and(|across| across <= MOST_PLACED),
+                "gantt {number}: {across:?} cells across"
+            );
         }
-        // A day more, and it is no longer drawn in the window at all.
-        assert_eq!(
-            Diagrams.picture(&gantt(1, SPAN + 1), &room).err(),
-            Some(Undrawn::TooWide)
+        // A day more, and its picture is wider than a picture is placed.
+        let wider = Diagrams.picture(&gantt(1, SPAN + 1), &room);
+        assert!(
+            wider
+                .as_ref()
+                .map(across)
+                .is_ok_and(|across| across > MOST_PLACED)
         );
     }
 

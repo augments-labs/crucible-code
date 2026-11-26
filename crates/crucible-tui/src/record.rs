@@ -127,7 +127,7 @@ pub(crate) const MOST_KEPT_IMAGE_BYTES: usize = 1536 * 1024;
 /// The most cells a picture may cover across or down: the placeholder cells
 /// that stand for one name their row and column by one of 64 marks, and a
 /// picture past them is drawn as text.
-const MOST_PLACED: u16 = 64;
+pub const MOST_PLACED: u16 = 64;
 
 /// The largest number a picture is told to the terminal by: it is written as
 /// a 24-bit colour, and one past it is never given out, so a picture already
