@@ -34,8 +34,12 @@
 //!
 //! The renderer is handed the drawers a session's is, so the diff fences in the
 //! burst are read and drawn as the changes a session draws them as, and its
-//! formulas and diagrams as the text a session draws them as, and not shown as
-//! the text they were written as, which costs less than a user pays.
+//! formulas as the text a session draws them as, and not shown as the text they
+//! were written as, which costs less than a user pays. It is handed what a
+//! session on a terminal that confirmed Kitty is handed too, so each diagram is
+//! drawn to pixels and encoded as its fence closes, and every frame that shows
+//! one sends it or the cells it stands in: the dearest way a session draws a
+//! diagram is the way this one is timed.
 
 // A binary may not reach into another's tree, so the driver the two burst probes
 // share is a module beside them. Where the bounded pipe below is unavailable this
@@ -45,11 +49,17 @@
 mod burst;
 
 use burst::{Burst, SUSTAINED_FRACTION};
+#[cfg(target_os = "linux")]
+use crucible_raster::{Refused, png, raster_width, rasterise};
 use crucible_tui::TerminalError;
+#[cfg(target_os = "linux")]
+use crucible_tui::chrome::Undrawn;
 #[cfg(target_os = "linux")]
 use crucible_tui::drawing::Drawers;
 #[cfg(target_os = "linux")]
-use crucible_tui::{Palette, Renderer, Size, Terminal, Theme};
+use crucible_tui::graphics::{Capability, Cell, Form, Payload, PictureKey, Pictures, Protocol};
+#[cfg(target_os = "linux")]
+use crucible_tui::{KeptPicture, Palette, Renderer, Size, Terminal, Theme};
 #[cfg(target_os = "linux")]
 use crucible_tui_diff::Changes;
 #[cfg(target_os = "linux")]
@@ -69,6 +79,8 @@ use std::process::ExitCode;
 use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::thread::JoinHandle;
+#[cfg(target_os = "linux")]
+use std::time::Duration;
 
 /// The floor, in frames per second.
 const LIMIT: f64 = 30.0;
@@ -78,6 +90,19 @@ const LIMIT: f64 = 30.0;
 const COLUMNS: usize = 80;
 #[cfg(target_os = "linux")]
 const ROWS: usize = 24;
+
+/// The pixels of each of the window's cells, across and down: a picture
+/// covers as many of its cells as its pixels fill.
+#[cfg(target_os = "linux")]
+const CELL: Cell = Cell {
+    width: 8,
+    height: 16,
+};
+
+/// The longest a frame waits for the decode slot before it draws a diagram as
+/// text, as long as a session's waits.
+#[cfg(target_os = "linux")]
+const WAIT: Duration = Duration::from_millis(40);
 
 /// What can go wrong in the probe itself.
 #[derive(Debug, thiserror::Error)]
@@ -294,6 +319,79 @@ fn drawers() -> Drawers {
         .with(Arc::new(Diagrams))
 }
 
+/// A diagram's picture, drawn to pixels and encoded for Kitty as a session's
+/// is: at the narrowest of its own width, the raster's and its room's, after
+/// a wait for the decode slot no longer than a session's.
+///
+/// This probe's own, because a binary may not reach into the one a session is
+/// handed; nothing is kept here, as nothing is there, so every diagram that
+/// closes is drawn again.
+#[cfg(target_os = "linux")]
+#[derive(Debug)]
+struct Raster;
+
+#[cfg(target_os = "linux")]
+impl Pictures for Raster {
+    fn cached(&mut self, _: &str, _: &PictureKey) -> Option<(Form, Payload)> {
+        None
+    }
+
+    fn make(&mut self, _: &str, key: &PictureKey, form: &Form) -> Result<Payload, Undrawn> {
+        encoded(form, key)
+    }
+
+    fn reencode(&mut self, kept: &KeptPicture, key: &PictureKey) -> Result<Payload, Undrawn> {
+        encoded(&kept.form, key)
+    }
+}
+
+/// `form` drawn in `key`'s palette at the width its room allows and encoded
+/// for Kitty; or why it is drawn as text.
+#[cfg(target_os = "linux")]
+fn encoded(form: &Form, key: &PictureKey) -> Result<Payload, Undrawn> {
+    let Form::Svg(svg) = form else {
+        return Err(Undrawn::NotHere);
+    };
+    match key.protocol {
+        Protocol::Kitty => {}
+        Protocol::Iterm2 | Protocol::Sixel => return Err(Undrawn::NotHere),
+    }
+    let svg = svg.as_str().as_bytes();
+    let room = u32::try_from(key.bucket.columns())
+        .unwrap_or(u32::MAX)
+        .saturating_mul(u32::from(key.cell.width));
+    let width = raster_width(svg).map_err(refusal)?.min(room);
+    let _slot = crucible_raster::Slot::take(WAIT).map_err(refusal)?;
+    let pixels = rasterise(svg, width, &key.palette.inks()).map_err(refusal)?;
+    let bytes = png(&pixels).map_err(refusal)?;
+    Ok(Payload::new(
+        Protocol::Kitty,
+        bytes,
+        (pixels.width(), pixels.height()),
+        key.cell,
+    ))
+}
+
+/// Why a picture the raster refused is drawn as text, as a session says it.
+#[cfg(target_os = "linux")]
+const fn refusal(refused: Refused) -> Undrawn {
+    match refused {
+        Refused::TooLarge => Undrawn::PastCap,
+        Refused::NotAnImage | Refused::OverTime => Undrawn::NotHere,
+    }
+}
+
+/// Hands `render` what a session on a terminal that confirmed Kitty is
+/// handed: the capability, in the window's cells, and what draws a picture.
+#[cfg(target_os = "linux")]
+fn pictured<T: Terminal>(render: &mut Renderer<T>) {
+    render.images(Capability::Graphics {
+        protocol: Protocol::Kitty,
+        cell: CELL,
+    });
+    render.pictures(Box::new(Raster));
+}
+
 /// A palette that writes every hue it has.
 ///
 /// Without one the renderer takes the early path in `stream` and never reads
@@ -314,6 +412,7 @@ fn measure() -> Result<Burst, ProbeError> {
     let mut render = Renderer::new(sink);
     render.wears(palette());
     render.drawers(drawers());
+    pictured(&mut render);
 
     let measured = burst::measure(|index| -> Result<(), ProbeError> {
         let delta = deltas.get(index % deltas.len()).map_or("", String::as_str);
@@ -435,6 +534,8 @@ fn main() -> ExitCode {
 #[cfg(test)]
 #[cfg(target_os = "linux")]
 mod tests {
+    use std::collections::BTreeSet;
+
     use crucible_tui::Recording;
 
     use super::*;
@@ -553,5 +654,39 @@ mod tests {
                 "{written:?} in {undrawn:#?}"
             );
         }
+    }
+
+    /// The ids of the pictures `written` holds after `command`, each once.
+    fn ids<'a>(written: &'a str, command: &str) -> BTreeSet<&'a str> {
+        written
+            .split(command)
+            .skip(1)
+            .filter_map(|after| after.split(',').next())
+            .collect()
+    }
+
+    #[test]
+    fn every_diagram_of_the_burst_is_sent_as_a_picture_and_placed_where_kitty_was_confirmed() {
+        // One cycle of the burst in the measured window, by a renderer handed
+        // what the measured one is.
+        let mut render = Renderer::new(Recording::new(COLUMNS, ROWS));
+        render.wears(palette());
+        render.drawers(drawers());
+        pictured(&mut render);
+        let deltas = streamed();
+        for delta in &deltas {
+            render.stream(delta).expect("a delta drawn");
+        }
+        render.settle().expect("the answer settled");
+        let written = render.terminal().written();
+
+        let diagrams = deltas.concat().matches("```mermaid\n").count();
+        let sent = ids(written, "\x1b_Ga=t,f=100,i=");
+        assert_eq!(
+            sent.len(),
+            diagrams,
+            "{diagrams} diagrams, and pictures sent under {sent:?}"
+        );
+        assert_eq!(ids(written, "\x1b_Ga=p,U=1,i="), sent);
     }
 }

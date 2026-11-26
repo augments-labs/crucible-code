@@ -560,7 +560,7 @@ fn a_resize_that_changed_nothing_writes_nothing() {
 // What the session draws pictures with.
 
 /// Kitty's protocol in a cell `width` by `height` pixels.
-fn kitty_in(width: u16, height: u16) -> graphics::Capability {
+pub(super) fn kitty_in(width: u16, height: u16) -> graphics::Capability {
     graphics::Capability::Graphics {
         protocol: graphics::Protocol::Kitty,
         cell: graphics::Cell { width, height },
@@ -3729,6 +3729,7 @@ mod headings;
 mod links;
 mod math;
 mod notes;
+pub(super) mod pictures;
 mod strikes;
 mod writing;
 

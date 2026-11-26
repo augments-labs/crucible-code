@@ -49,7 +49,7 @@ use crate::record::{Modes, Record, Source};
 use crate::row::Row;
 use crate::scroll_rail::{self, ScrollRail};
 use crate::select::{self, Place, Taken, View};
-use crate::terminal::graphics::Capability;
+use crate::terminal::graphics::{Capability, Passthrough, Pictures, Sent};
 use crate::terminal::keys::{Pressed, pressed, waiting};
 use crate::terminal::system::ResizeFlag;
 use crate::terminal::{Size, Terminal, TerminalError};
@@ -511,6 +511,10 @@ pub struct Renderer<T: Terminal> {
     /// Text until [`Renderer::images`] says otherwise, so a renderer nobody
     /// told — a preview, a test, a redirected run — draws no picture.
     images: Capability,
+    /// What the terminal has been sent of the pictures shown, and is owed.
+    sent: Sent,
+    /// Reused across frames: the graphics commands one frame sends.
+    commands: String,
 }
 
 impl<T: Terminal> Renderer<T> {
@@ -570,6 +574,8 @@ impl<T: Terminal> Renderer<T> {
             recall: None,
             resizes: None,
             images: Capability::Text,
+            sent: Sent::default(),
+            commands: String::new(),
         }
     }
 
@@ -1229,8 +1235,7 @@ impl<T: Terminal> Renderer<T> {
     /// place.
     pub fn wears(&mut self, palette: Palette) {
         self.palette = palette;
-        self.record
-            .relay(self.folds(), self.glyphs, self.palette.theme());
+        self.relaid(self.glyphs);
         self.painted.forget();
     }
 
@@ -1250,8 +1255,7 @@ impl<T: Terminal> Renderer<T> {
     pub fn draws(&mut self, glyphs: Glyphs) {
         self.glyphs = glyphs;
         self.markdown.draws(glyphs);
-        self.record
-            .relay(self.folds(), glyphs, self.palette.theme());
+        self.relaid(glyphs);
         self.painted.forget();
     }
 
@@ -1271,8 +1275,7 @@ impl<T: Terminal> Renderer<T> {
             math: mode,
             diagrams: self.diagrams,
         });
-        self.record
-            .relay(self.folds(), self.glyphs, self.palette.theme());
+        self.relaid(self.glyphs);
         self.painted.forget();
     }
 
@@ -1288,16 +1291,15 @@ impl<T: Terminal> Renderer<T> {
     /// written is laid out again in `mode` now, and math is left drawn as it
     /// was. Under [`Mode::Written`] the live foot names a diagram still
     /// arriving by its fence rather than by its drawer, since it will not be
-    /// drawn. Until a picture can be shown in its place, [`Mode::Image`] draws
-    /// a diagram as [`Mode::Text`] does.
+    /// drawn. Under [`Mode::Image`] a diagram is a picture where the terminal
+    /// confirmed Kitty and colour is written, and is text everywhere else.
     pub fn diagrams(&mut self, mode: Mode) {
         self.diagrams = mode;
         self.record.draws_in(Modes {
             math: self.math,
             diagrams: mode,
         });
-        self.record
-            .relay(self.folds(), self.glyphs, self.palette.theme());
+        self.relaid(self.glyphs);
         self.painted.forget();
     }
 
@@ -1365,9 +1367,13 @@ impl<T: Terminal> Renderer<T> {
 
     /// How long an input wait may sleep before a drag resting at an edge of
     /// the transcript carries it another row, or a native window that changed
-    /// size has settled. `None` where neither is pending.
+    /// size has settled; not at all while a picture is part way out to the
+    /// terminal. `None` where none of them is pending.
     #[must_use]
     fn rests_in(&self) -> Option<Duration> {
+        if self.sent.pending() && self.terminal.is_terminal() {
+            return Some(Duration::ZERO);
+        }
         let now = Instant::now();
         let creeps = self.creeps.map(|due| due.saturating_duration_since(now));
         match (creeps, self.settles_in(now)) {
@@ -1377,8 +1383,9 @@ impl<T: Terminal> Renderer<T> {
     }
 
     /// Does whatever fell due while an input wait slept: carries the
-    /// transcript a row towards a drag resting at its edge, and gives a native
-    /// window that has settled at a new size what was kept.
+    /// transcript a row towards a drag resting at its edge, gives a native
+    /// window that has settled at a new size what was kept, and sends the
+    /// terminal the next part of a picture still going out.
     ///
     /// # Errors
     ///
@@ -1386,6 +1393,9 @@ impl<T: Terminal> Renderer<T> {
     fn repose(&mut self) -> Result<bool, TerminalError> {
         let crept = self.crept()?;
         self.settled(Instant::now())?;
+        if self.sent.pending() {
+            self.draw()?;
+        }
         Ok(crept)
     }
 
@@ -1433,6 +1443,34 @@ impl<T: Terminal> Renderer<T> {
     /// stays text.
     pub fn images(&mut self, capability: Capability) {
         self.images = capability;
+        self.relaid(self.glyphs);
+    }
+
+    /// Tells this renderer whether tmux passes its pictures through, so each
+    /// command is wrapped for it to.
+    ///
+    /// Said once, at startup, where tmux's server was asked.
+    pub fn passes_through(&mut self, passthrough: Passthrough) {
+        self.sent.passes_through(passthrough);
+    }
+
+    /// Hands this renderer what turns a block of an answer into a picture,
+    /// where the session draws pictures with a protocol it confirmed.
+    ///
+    /// Said once, at startup, for the reason [`Renderer::counts`] is. A
+    /// renderer handed none draws every block as text.
+    pub fn pictures(&mut self, pictures: Box<dyn Pictures>) {
+        self.record.pictures(pictures);
+        self.relaid(self.glyphs);
+    }
+
+    /// Lays the record out again in `glyphs`, with pictures in what the
+    /// terminal confirmed and the palette worn now.
+    fn relaid(&mut self, glyphs: Glyphs) {
+        self.record
+            .pictured_as(self.images, self.palette.identity());
+        self.record
+            .relay(self.folds(), glyphs, self.palette.theme());
     }
 
     /// What the session draws pictures with.
@@ -1455,8 +1493,7 @@ impl<T: Terminal> Renderer<T> {
         // scrollbar is the rail.
         self.rails = on && self.native.is_none();
         self.grip = None;
-        self.record
-            .relay(self.folds(), self.glyphs, self.palette.theme());
+        self.relaid(self.glyphs);
         self.unselects();
         self.painted.forget();
     }
@@ -2185,8 +2222,7 @@ impl<T: Terminal> Renderer<T> {
 
         self.native_resize(size);
         self.size = size;
-        self.record
-            .relay(self.folds(), self.glyphs, self.palette.theme());
+        self.relaid(self.glyphs);
         self.standing.repaint(self.folds(), size.columns);
         self.prompt_target = None;
         self.pointed_changed = false;
@@ -2206,17 +2242,28 @@ impl<T: Terminal> Renderer<T> {
     /// may have written anything on the screen, and this process has no record
     /// of it: the bytes the last frame left are no longer what is there. The
     /// screen is not laid out again, unlike [`Renderer::resized`] — the size
-    /// did not change — but every row is painted and written.
+    /// did not change — but every row is painted and written. The child may
+    /// have taken every picture the terminal held too: a full screen sends
+    /// again those it shows, and a native session every one the record keeps,
+    /// since cells in its scrollback name them.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn repaint(&mut self) -> Result<(), TerminalError> {
+        // Whatever had the terminal may have taken every picture with it: a
+        // full screen sends again those it shows, and a native session every
+        // one it keeps, since the cells in the scrollback still name them.
+        self.sent.forget();
         // A native session paints into the terminal's own buffer, where the
         // renderer holds no picture it could trust: its live region is laid
         // down afresh on every frame already.
         if self.native.is_none() {
             self.painted.forget();
+        } else {
+            for id in self.record.picture_ids() {
+                self.sent.wants(id);
+            }
         }
         self.draw()
     }
@@ -2773,6 +2820,13 @@ impl<T: Terminal> Renderer<T> {
         let held = self.holding(folds).filter(|_| self.holds_row(&bands));
         let mut showing = self.record.view(self.record_rows(&bands));
         showing.extend(held);
+        // The pictures this frame shows are the ones the terminal must hold,
+        // and only where their cells are drawn.
+        if self.palette.writes_color() {
+            for id in showing.iter().flat_map(Row::pictures) {
+                self.sent.wants(id);
+            }
+        }
         let mut showing = showing.into_iter();
         for at in bands.transcript.start..bands.transcript.end {
             let row = match (showing.next(), rail.next()) {
@@ -2822,6 +2876,16 @@ impl<T: Terminal> Renderer<T> {
             self.painted.put(at, row);
         }
         self.standing.prompt = prompt;
+
+        // A picture the record let go of is shown nowhere on this screen
+        // again, so the terminal lets go of it too.
+        if self.record.let_pictures_go() {
+            self.sent.keeps(self.record.picture_ids());
+        }
+        self.commands.clear();
+        let record = &self.record;
+        self.sent.write(|id| record.payload(id), &mut self.commands);
+        self.painted.graphics(&self.commands);
 
         let (row, column) = self.parked(&bands);
         self.painted.park(row, column);

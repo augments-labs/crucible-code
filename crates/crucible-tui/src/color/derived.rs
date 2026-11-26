@@ -146,7 +146,7 @@ fn lab((red, green, blue): (u8, u8, u8)) -> (f64, f64, f64) {
 }
 
 /// What an indexed parameter stands for, for every index this maps into.
-fn indexed(at: u8) -> (u8, u8, u8) {
+pub(crate) fn indexed(at: u8) -> (u8, u8, u8) {
     if at < RAMP {
         let at = u32::from(at - OWNED);
         // Six rungs a channel, and the gap below the first one is wider than
@@ -167,7 +167,7 @@ fn indexed(at: u8) -> (u8, u8, u8) {
 ///
 /// The values a terminal that was never configured gives them. See
 /// [`nearest_basic`] for why an assumption is the right shape here.
-fn basic(at: u8) -> (u8, u8, u8) {
+pub(crate) fn basic(at: u8) -> (u8, u8, u8) {
     match at {
         0 => (0, 0, 0),
         1 => (205, 0, 0),

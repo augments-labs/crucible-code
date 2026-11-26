@@ -84,6 +84,13 @@ impl Frame {
         self
     }
 
+    /// Appends graphics commands, which move no cursor and draw nothing
+    /// until the cells that name their picture are on screen.
+    pub(crate) fn graphics(&mut self, commands: &str) -> &mut Self {
+        self.buffer.push_str(commands);
+        self
+    }
+
     /// Leaves the cursor where the reader is typing.
     ///
     /// Absolute, and the last thing a frame writes, so it does not matter in

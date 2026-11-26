@@ -739,7 +739,7 @@ you with no way to send at all.
 | `pinAfterSeconds` | `0` to `60` | How many seconds a running tool call waits before it is drawn above the row that says a turn is running, with the end of its output and `(ctrl+b to background)`; `3` by default. A call that finishes sooner is only written to the transcript, so the rows over the box do not appear and vanish on every quick command, and Ctrl+B still leaves a running command in the background before its row is shown. `0` draws every call the moment it is asked for. |
 | `images` | `auto`, `kitty`, `iterm2`, `sixel`, `off` | What pictures are drawn with; `auto` by default. `auto` asks the terminal at start, and only where its environment names a terminal pictures were seen to draw right on, in the screen mode in force, with no multiplexer in between. A protocol named here is used without asking the terminal where it was seen to draw right, and is text everywhere else; `sixel` was seen to draw right nowhere. `off` draws every picture as text. Under [Where pictures are drawn](#where-pictures-are-drawn). |
 | `math` | `written`, `text`, `image` | How math in an answer is drawn; `image` by default. `image` draws a formula as a picture where one can be shown and as text everywhere else, which is everywhere for now; `text` draws it as text; `written` shows every formula exactly as the model wrote it. Each takes effect at once; in native mode, a block already in the terminal's scrollback changes when a resize writes it again. Under [Math](../sessions/transcript.md#math). |
-| `diagrams` | `written`, `text`, `image` | How a mermaid diagram in an answer is drawn; `image` by default. `image` draws a diagram as a picture where one can be shown and as text everywhere else, which is everywhere for now; `text` draws it as text; `written` shows every diagram exactly as the model wrote it. Each takes effect at once; in native mode, a diagram already in the terminal's scrollback changes when a resize writes it again. Under [Diagrams](../sessions/transcript.md#diagrams). |
+| `diagrams` | `written`, `text`, `image` | How a mermaid diagram in an answer is drawn; `image` by default. `image` draws a diagram as a picture where one can be shown, which is where the terminal confirmed Kitty's protocol, and as text everywhere else; `text` draws it as text; `written` shows every diagram exactly as the model wrote it. Each takes effect at once; in native mode, a diagram already in the terminal's scrollback changes when a resize writes it again. Under [Diagrams](../sessions/transcript.md#diagrams). |
 
 `theme` is a table of what each colour on screen means, tuned to one background.
 `auto` asks the terminal what its background is and picks the dark or the light
@@ -888,11 +888,13 @@ rows it stood in are left blank between the transcript and the box.
 
 ### Where pictures are drawn
 
-The transcript does not yet put a picture on the screen as pixels: whatever
-`output.images` says, what it shows in a picture's place is text. What the
-setting settles now is the protocol a session would draw pictures with, which
-is what *drawn* means below, whether crucible asks anything at start to find
-out, and what `/settings` says of a protocol.
+The setting settles the protocol a session draws pictures with, which is what
+*drawn* means below, whether crucible asks anything at start to find out, and
+what `/settings` says of a protocol. Where it is `kitty`, the transcript shows a
+diagram as a picture, as [Pictures and image
+files](../sessions/transcript.md#pictures-and-image-files) says. `iterm2` and
+`sixel` are not drawn yet: where a session draws with either, what the
+transcript shows in a picture's place is text.
 
 A protocol is drawn only on a terminal it was seen to draw right on, in every
 step of the screen mode in force. Every judgement in this table was made on
