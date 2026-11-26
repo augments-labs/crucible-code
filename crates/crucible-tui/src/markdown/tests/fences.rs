@@ -279,3 +279,39 @@ fn a_block_held_under_an_item_is_named_from_its_lines_past_the_items_indentation
         );
     }
 }
+
+#[test]
+fn a_run_of_backticks_whose_info_string_holds_a_backtick_opens_no_block() {
+    // What follows a run of tildes may hold one, and names the block.
+    assert_eq!(
+        streamed("~~~a`b\ncode\n~~~\nafter\n"),
+        "┌─ a`b\n│ code\n└─\nafter\n"
+    );
+
+    // The line is the prose it would be with fewer backticks, so the line
+    // after it is too; the spaces or the item in front of it stand as they
+    // stand in front of any line of prose.
+    let line = streamed("```a`b\nafter\n");
+    assert!(
+        !line.contains(['┌', '│', '└']) && line.ends_with("\nafter\n"),
+        "{line:?}"
+    );
+    for (answer, lead) in [("  ```a`b\nafter\n", "  "), ("- ```a`b\nafter\n", "• ")] {
+        assert_eq!(streamed(answer), format!("{lead}{line}"), "{answer:?}");
+    }
+    for answer in [
+        "``` `x`\nafter\n",
+        "````go `x`\nafter\n",
+        "```rust x`\nafter\n",
+        "> ```a`b\n\nafter\n",
+    ] {
+        let drawn = streamed(answer);
+        assert!(
+            !drawn.contains(['┌', '└']) && drawn.ends_with("\nafter\n"),
+            "{answer:?} drew {drawn:?}"
+        );
+    }
+
+    // Nor is a block held for the name it would have had.
+    assert_eq!(held("```diff `x`\nafter\n").0, Vec::new());
+}

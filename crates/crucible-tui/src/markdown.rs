@@ -51,7 +51,10 @@
 //! A fence is drawn in a frame of [`chrome`]'s, and the reader says it as it
 //! streams: the fence's opening line becomes the top edge naming its language,
 //! every line of code starts with the gutter as a run of its own, and the
-//! closing line becomes the bottom edge. The closing line is one of the marks
+//! closing line becomes the bottom edge. A run of backticks opens no fence
+//! where a backtick follows it on its line, and the line is the prose it is;
+//! nothing of a fence's opening line is said before its break, so it is read
+//! as prose from that backtick on. The closing line is one of the marks
 //! the fence opened with, at least as many of them, indented three spaces at
 //! most and followed by nothing but spaces and tabs ([`Fenced`]). Inside a
 //! quote every line of the block is read past the quote's mark and one space
@@ -2469,7 +2472,7 @@ impl Markdown {
             } else if matches!(self.inside, Inside::Opening | Inside::Closing) {
                 // What is left of a fence's own line is not the answer, and
                 // goes the way the fence went: see [`Markdown::keeps_fence`].
-                if self.keeps_fence(character, say) {
+                if self.keeps_fence(character, room, say) {
                     run = next;
                 }
             } else {
@@ -2973,9 +2976,10 @@ impl Markdown {
             '`' | '~' if held.count >= 3 => {
                 // A fence's own line goes whole, and the spaces in front of it
                 // are part of that line: an item's block would otherwise open
-                // with the item's indentation stitched to its first row.
-                self.indent = 0;
+                // with the item's indentation stitched to its first row. They
+                // are kept for a line the rest of which opens no block.
                 self.fenced = Fenced {
+                    indent: std::mem::take(&mut self.indent),
                     mark: held.mark,
                     count: held.count,
                     base: match self.item {

@@ -3,7 +3,9 @@
 //!
 //! The reader opens a fenced block on a run of three or more backticks or
 //! tildes and says it as it streams; what is here is what decides where it
-//! ends ([`Fenced`]), what its info string names, how a line that could have
+//! ends ([`Fenced`]), what its info string names, how a run of backticks with
+//! another backtick after it on its line is read as the prose it is, how a
+//! line that could have
 //! closed it and did not is given back, and how a line of code is handed on,
 //! read in the language the block names. A row of code is read back off the
 //! screen by its gutter ([`framed`]), and broken where the room runs out
@@ -209,6 +211,9 @@ pub(super) struct Fenced {
     pub(super) count: usize,
     /// The columns the words of the item the block opened under start at.
     pub(super) base: usize,
+    /// The spaces in front of the run that opened the block, which are the
+    /// line's again where the rest of it says it opens none.
+    pub(super) indent: usize,
 }
 
 impl Fenced {
@@ -269,9 +274,15 @@ impl Markdown {
     /// decides how the block is read. What is left of a closing one is spaces
     /// and tabs, kept to be given back if the line turns out to be code; any
     /// other character shows that it is, and is code itself.
+    ///
+    /// What follows a run of backticks may hold no backtick, so one there
+    /// says the run opened no block: see [`Markdown::unopens`]. Past [`MOST`]
+    /// bytes of what follows, the bound on what is kept, the line is read as
+    /// the fence it opened as.
     pub(super) fn keeps_fence(
         &mut self,
         character: char,
+        room: usize,
         say: &mut dyn FnMut(Slot, &str, Option<&str>),
     ) -> bool {
         if self.inside == Inside::Closing && !matches!(character, ' ' | '\t') {
@@ -279,10 +290,43 @@ impl Markdown {
             self.previous = character;
             return false;
         }
+        if self.inside == Inside::Opening
+            && self.fenced.mark == '`'
+            && character == '`'
+            && self.language.len() < MOST
+        {
+            self.unopens(character, room, say);
+            return true;
+        }
         if self.language.len() < MOST {
             self.language.push(character);
         }
         true
+    }
+
+    /// Reads the line a run of backticks opened a block on as the prose it
+    /// is, at `character`, a backtick after the run: nothing of the line has
+    /// been said, so it is said now as it would have been. The spaces in
+    /// front of the run are the line's again, the run is read as one written
+    /// in prose, and what followed it, with `character`, is read again.
+    ///
+    /// Decided at the first backtick, which nothing later on the line can
+    /// undo; a line with none is a fence only once it ends, before which
+    /// nothing of it is drawn.
+    fn unopens(
+        &mut self,
+        character: char,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) {
+        let fenced = std::mem::take(&mut self.fenced);
+        self.fence = None;
+        self.inside = Inside::Prose;
+        self.indent = fenced.indent;
+        self.line.code = !self.line.code;
+        let mut rest = std::mem::take(&mut self.language);
+        rest.push(character);
+        self.again(&rest, room, say);
     }
 
     /// Answers what is left of `rest`, the end of a delta, to say.
