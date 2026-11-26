@@ -4279,6 +4279,39 @@ mod pictures {
     }
 
     #[test]
+    fn a_native_picture_encoded_again_or_drawn_as_text_is_never_deleted() {
+        // The scrollback's cells still name the number the picture went out
+        // under, and the terminal draws them from what it holds.
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, 300));
+        render.stream(DIAGRAM).unwrap();
+        render.settle().unwrap();
+        stands(&mut render);
+        let mut written = window.take();
+        assert!(written.contains("\x1b_Ga=t,f=100,i=1,"), "{written:?}");
+
+        render.wears(Palette::resolve(true, Theme::Light, None, &|name| {
+            (name == "COLORTERM").then(|| "truecolor".to_owned())
+        }));
+        render.commit("after the theme").unwrap();
+        stands(&mut render);
+        written.push_str(&window.take());
+        render.diagrams(crate::drawing::Mode::Text);
+        render.commit("after the mode").unwrap();
+        stands(&mut render);
+        written.push_str(&window.take());
+
+        assert!(
+            commands(&written)
+                .iter()
+                .any(|command| command.starts_with("a=t,f=100,i=2,")),
+            "never encoded again: {:?}",
+            commands(&written)
+        );
+        assert!(!written.contains("a=d"), "{:?}", commands(&written));
+    }
+
+    #[test]
     fn inside_tmux_every_native_command_is_wrapped_for_it() {
         // Larger than a frame sends, so its first chunk, the chunks after
         // it, its last and its placement all go out.

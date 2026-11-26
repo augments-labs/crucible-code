@@ -2877,6 +2877,11 @@ impl<T: Terminal> Renderer<T> {
         }
         self.standing.prompt = prompt;
 
+        // A picture the record let go of is shown nowhere on this screen
+        // again, so the terminal lets go of it too.
+        if self.record.let_pictures_go() {
+            self.sent.keeps(self.record.picture_ids());
+        }
         self.commands.clear();
         let record = &self.record;
         self.sent.write(|id| record.payload(id), &mut self.commands);

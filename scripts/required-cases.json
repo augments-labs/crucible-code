@@ -14957,6 +14957,96 @@
         "macos",
         "windows"
       ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-LET-GO-TOLD",
+      "family": "transcript-pictures",
+      "obligation": "A kept picture encoded again at another width, drawn as text where colour is not written, drawn as text past the count, spilled or emptied is told to the drawing once, and a picture drawn with none let go of is not.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::every_way_a_kept_picture_is_let_go_of_is_told",
+      "source": "crates/crucible-tui/src/record.rs",
+      "body_sha256": "83a6a627c0050572af721e08ee2e775e700e1fd6ce079f37a0d42dd73d44d5e2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-DELETED-BETWEEN",
+      "family": "transcript-pictures",
+      "obligation": "A picture the terminal holds and the kept set no longer names is deleted once, after the transmission going out when it was let go of is placed, and nothing is owed after.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::a_picture_let_go_of_is_deleted_between_transmissions_and_never_inside_one",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "c4127ee68dd0c1779c41a67810b7e150f2da7b64d8cdb38476b884c1e92a74d5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-REENCODED-DELETED",
+      "family": "transcript-pictures",
+      "obligation": "In the full screen, a picture encoded again under a new number at a resize has the terminal delete the old number once, before the new one is sent.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_picture_encoded_again_has_the_terminal_delete_the_one_it_replaces",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "51057768af48fac02f9a5bcedeec6b220507c23b0f480c9c45deea424c528dbd",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-TEXT-DELETED-TMUX",
+      "family": "transcript-pictures",
+      "obligation": "In the full screen inside tmux, a picture drawn as text again has the terminal delete it in one command wrapped for tmux, and no placeholder cell is written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_picture_drawn_as_text_again_has_the_terminal_delete_it_through_tmux",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "c0f47973c144106f45ed0ffc80fa3655e81567faab5bc059767266707e0dd812",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-NATIVE-NEVER-DELETED",
+      "family": "transcript-pictures",
+      "obligation": "In the terminal's own buffer, a picture encoded again in a new theme and then drawn as text is never deleted, since the scrollback's cells still name it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::pictures::a_native_picture_encoded_again_or_drawn_as_text_is_never_deleted",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "d58f08def615f0a16543a2f51bf660a2a813f06e303cc2112e8959dd1c925788",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
     }
   ]
 }

@@ -429,6 +429,60 @@ fn a_resize_places_the_picture_again_at_the_new_width() {
 }
 
 #[test]
+fn a_picture_encoded_again_has_the_terminal_delete_the_one_it_replaces() {
+    // Nothing on a screen of crucible's own names the old number again, and
+    // the terminal would otherwise keep its image to its own quota.
+    let mut drawn = pictured(40, 12, Printed::new(3, 2, 300));
+    drawn.answer(DIAGRAM);
+    let before = drawn.take();
+    assert!(!before.contains("a=d"), "{before:?}");
+
+    drawn.resize(100, 12);
+    let after = drawn.take();
+
+    let commands = commands(&after);
+    let deleted = commands
+        .iter()
+        .position(|command| *command == "a=d,d=I,i=1,q=2");
+    let sent = commands
+        .iter()
+        .position(|command| command.starts_with("a=t,f=100,i=2,"));
+    assert!(deleted.is_some() && sent.is_some(), "{commands:?}");
+    assert!(
+        deleted < sent,
+        "deleted after the next was sent: {commands:?}"
+    );
+    assert_eq!(
+        commands
+            .iter()
+            .filter(|command| command.starts_with("a=d"))
+            .count(),
+        1,
+        "{commands:?}"
+    );
+}
+
+#[test]
+fn a_picture_drawn_as_text_again_has_the_terminal_delete_it_through_tmux() {
+    let mut drawn = Drawn::new(40, 12);
+    drawn.render.passes_through(graphics::Passthrough::On);
+    pictured_on(&mut drawn, Printed::new(3, 2, 30));
+    drawn.answer(DIAGRAM);
+    drawn.take();
+
+    drawn.render.diagrams(crate::drawing::Mode::Text);
+    drawn.commit("after the change").unwrap();
+    let after = drawn.take();
+
+    assert!(
+        after.contains("\x1bPtmux;\x1b\x1b_Ga=d,d=I,i=1,q=2\x1b\x1b\\\x1b\\"),
+        "{after:?}"
+    );
+    assert_eq!(after.matches("\x1b_G").count(), 1, "{after:?}");
+    assert!(!after.contains('\u{10EEEE}'), "{after:?}");
+}
+
+#[test]
 fn a_theme_changed_draws_the_picture_again_in_its_colours() {
     let mut drawn = pictured(40, 12, Printed::new(3, 2, 300));
     drawn.answer(DIAGRAM);

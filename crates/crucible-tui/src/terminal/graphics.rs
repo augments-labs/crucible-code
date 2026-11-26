@@ -831,9 +831,19 @@ const MOST_HELD: usize = 2 * crate::record::MOST_KEPT_IMAGES;
 /// cells name. A transmission is never interleaved with another command, so
 /// one cut short by a frame's budget is carried on by the next frame before
 /// anything else is sent, and one whose picture the record has let go of is
-/// ended with an empty last chunk. Nothing is ever deleted: a terminal keeps a
-/// native session's pictures in its scrollback, and a full screen's are
-/// replaced by number when they are encoded again.
+/// ended with an empty last chunk.
+///
+/// A full screen has the terminal delete each picture it was sent and placed
+/// once the record lets it go, encoded again under a new number or drawn as
+/// text, since nothing on that screen names it again ([`Sent::keeps`]); one
+/// the terminal is told of while it reads another is deleted after it.
+/// Nothing a native session sent is deleted, since the cells in the
+/// terminal's scrollback still name it. What the terminal holds of one grows
+/// by each diagram drawn and, each time the width's bucket, the palette or
+/// the cell changes, by the at most
+/// [`MOST_KEPT_IMAGES`](crate::record::MOST_KEPT_IMAGES) pictures the record
+/// keeps; it is bounded by the terminal's own quota, past which the terminal
+/// lets the oldest go and their cells show nothing.
 #[derive(Debug, Default)]
 pub(crate) struct Sent {
     /// What the terminal holds, oldest first, at most [`MOST_HELD`].
@@ -842,6 +852,9 @@ pub(crate) struct Sent {
     waiting: VecDeque<u32>,
     /// The picture going out, and how far.
     sending: Option<Sending>,
+    /// What the terminal holds that nothing will show again, oldest first,
+    /// at most [`MOST_HELD`].
+    deleting: VecDeque<u32>,
     /// Whether a transmission was cut off and its last chunk is still owed.
     ending: bool,
     /// Whether every command is wrapped for tmux to pass through.
@@ -878,9 +891,29 @@ impl Sent {
         self.waiting.push_back(id);
     }
 
+    /// Has the terminal delete every picture it holds that `kept` does not
+    /// name, by the next [`Sent::write`]: for a full screen, where nothing
+    /// shows a picture the record has let go of again.
+    pub(crate) fn keeps(&mut self, kept: impl IntoIterator<Item = u32>) {
+        let kept: Vec<u32> = kept.into_iter().collect();
+        let deleting = &mut self.deleting;
+        self.held.retain(|id| {
+            if kept.contains(id) {
+                return true;
+            }
+            if deleting.len() < MOST_HELD {
+                deleting.push_back(*id);
+            }
+            false
+        });
+    }
+
     /// Whether anything is still owed to the terminal.
     pub(crate) fn pending(&self) -> bool {
-        self.ending || self.sending.is_some() || !self.waiting.is_empty()
+        self.ending
+            || self.sending.is_some()
+            || !self.waiting.is_empty()
+            || !self.deleting.is_empty()
     }
 
     /// Counts nothing as held: the terminal may have lost every picture, as
@@ -900,10 +933,10 @@ impl Sent {
     }
 
     /// Appends to `into` the end of a transmission the terminal is part way
-    /// through reading, and owes it nothing more: for a renderer giving the
-    /// terminal up, after which what is written is not read as more of a
-    /// picture. A picture not yet begun is not begun, and one whose bytes are
-    /// all out is not placed.
+    /// through reading, and the deletes owed, and owes it nothing more: for a
+    /// renderer giving the terminal up, after which what is written is not
+    /// read as more of a picture. A picture not yet begun is not begun, and
+    /// one whose bytes are all out is not placed.
     pub(crate) fn end(&mut self, into: &mut String) {
         let open = self
             .sending
@@ -914,6 +947,9 @@ impl Sent {
         }
         self.ending = false;
         self.waiting.clear();
+        while let Some(id) = self.deleting.pop_front() {
+            self.command(into, &format!("a=d,d=I,i={id},q=2"), None);
+        }
     }
 
     /// Appends to `into` the commands owed, up to [`MOST_SENT_A_FRAME`] of
@@ -929,16 +965,26 @@ impl Sent {
             self.ending = false;
         }
         loop {
-            let mut sending = match self.sending.take() {
-                Some(sending) => sending,
-                None => match self.waiting.pop_front() {
-                    Some(id) => Sending {
-                        id,
-                        sent: 0,
-                        whole: false,
-                    },
-                    None => return,
-                },
+            let mut sending = if let Some(sending) = self.sending.take() {
+                sending
+            } else {
+                // Between transmissions, the one place another command goes.
+                while let Some(&id) = self.deleting.front() {
+                    let keys = format!("a=d,d=I,i={id},q=2");
+                    if self.cost(&keys, None) > room(into, start) {
+                        return;
+                    }
+                    self.command(into, &keys, None);
+                    self.deleting.pop_front();
+                }
+                let Some(id) = self.waiting.pop_front() else {
+                    return;
+                };
+                Sending {
+                    id,
+                    sent: 0,
+                    whole: false,
+                }
             };
             let Some(payload) = payload(sending.id) else {
                 // Let go of mid-way: ended, so the next command is not read
@@ -2222,6 +2268,59 @@ mod tests {
         );
         assert!(!next.contains(ENDED), "ended what never began: {next:.48?}");
         assert!(!sent.pending());
+    }
+
+    #[test]
+    fn a_picture_let_go_of_is_deleted_between_transmissions_and_never_inside_one() {
+        let small = picture_of(3, 1);
+        let larger_than_a_frame = picture_of(2 * MOST_SENT_A_FRAME, 7);
+        let by_number = |id| match id {
+            1 => Some(&small),
+            2 => Some(&larger_than_a_frame),
+            _ => None,
+        };
+        let mut sent = Sent::default();
+        sent.wants(1);
+        sent.wants(2);
+        let mut first = String::new();
+        sent.write(by_number, &mut first);
+        assert!(first.contains("\x1b_Ga=p,U=1,i=1,"), "picture 1 not placed");
+        assert!(
+            !first.contains("\x1b_Ga=p,U=1,i=2,"),
+            "picture 2 sent whole"
+        );
+
+        // Picture 1 goes while picture 2 is part way out: deleted once
+        // picture 2 is over, and only then.
+        sent.keeps([2]);
+        assert!(sent.pending());
+        let mut frames = Vec::new();
+        while sent.pending() && frames.len() < 8 {
+            let mut frame = String::new();
+            sent.write(by_number, &mut frame);
+            frames.push(frame);
+        }
+        let written = frames.concat();
+        let deleted = "\x1b_Ga=d,d=I,i=1,q=2\x1b\\";
+        let placed = written.find("\x1b_Ga=p,U=1,i=2,");
+        let at = written.find(deleted);
+        assert!(
+            at.is_some(),
+            "never deleted: {:?}",
+            frames.iter().map(String::len).collect::<Vec<_>>()
+        );
+        assert!(
+            at > placed && placed.is_some(),
+            "deleted inside a transmission"
+        );
+        assert_eq!(written.matches(deleted).count(), 1, "deleted twice");
+        assert!(!written.contains("i=2,q=2\x1b"), "picture 2 deleted");
+        assert!(!sent.pending());
+
+        // Deleted once: the frame after owes nothing.
+        let mut then = String::new();
+        sent.write(by_number, &mut then);
+        assert_eq!(then, "");
     }
 
     // -----------------------------------------------------------------------

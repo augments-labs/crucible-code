@@ -205,6 +205,8 @@ struct Picturing {
     next: u32,
     /// How many numbers are left to give out.
     left: u32,
+    /// Whether a picture kept was let go of since the drawing last asked.
+    let_go: bool,
 }
 
 impl fmt::Debug for Picturing {
@@ -215,6 +217,7 @@ impl fmt::Debug for Picturing {
             .field("palette", &self.palette)
             .field("next", &self.next)
             .field("left", &self.left)
+            .field("let_go", &self.let_go)
             .finish()
     }
 }
@@ -227,6 +230,7 @@ impl Default for Picturing {
             palette: None,
             next: Self::first_number(),
             left: MOST_PICTURE_ID,
+            let_go: false,
         }
     }
 }
@@ -1026,7 +1030,9 @@ impl Record {
             self.picture_key(drawn.block.kind, columns)
         };
         let Some(key) = key else {
-            return drawn.picture.take().is_some();
+            let had = drawn.picture.take().is_some();
+            self.picturing.let_go |= had;
+            return had;
         };
         if drawn
             .picture
@@ -1043,6 +1049,7 @@ impl Record {
         }
         let made = self.make(drawn, &key, glyphs, columns);
         let had = drawn.picture.take().is_some();
+        self.picturing.let_go |= had;
         let kept = match made {
             Ok(kept) => kept,
             Err(why) => {
@@ -1134,6 +1141,7 @@ impl Record {
             };
             oldest.picture = None;
             oldest.fallen = true;
+            self.picturing.let_go = true;
             let was = oldest.weight;
             oldest.lay(columns, glyphs, by);
             self.weight = self
@@ -1142,6 +1150,12 @@ impl Record {
                 .saturating_add(oldest.weight);
             self.remeasure_all();
         }
+    }
+
+    /// Whether a picture the record kept has been let go since this was last
+    /// asked: answered once.
+    pub(crate) fn let_pictures_go(&mut self) -> bool {
+        std::mem::take(&mut self.picturing.let_go)
     }
 
     /// What the terminal is sent for picture `id`, while the record keeps it.
@@ -1419,6 +1433,12 @@ impl Record {
         if let Some(line) = self.lines.pop_front() {
             self.weight = self.weight.saturating_sub(line.weight());
             self.parted_before = Self::blank(&line) || self.parting == Some(self.gone);
+            if let Line::Drawn(Drawn {
+                picture: Some(_), ..
+            }) = line
+            {
+                self.picturing.let_go = true;
+            }
         }
         let tall = self.tall.pop_front().unwrap_or(0);
         self.before = self.ends.pop_front().unwrap_or(self.before);
@@ -1565,6 +1585,8 @@ impl Record {
         // stable boundary taken before the reset cannot alias the first line of
         // the replacement conversation.
         self.gone += self.lines.len() + 1;
+        let kept = self.kept_by_number().next().is_some();
+        self.picturing.let_go |= kept;
         self.lines.clear();
         self.tall.clear();
         self.ends.clear();
@@ -3518,6 +3540,62 @@ mod tests {
             record.picture_ids().collect::<Vec<_>>(),
             [MOST_PICTURE_ID, 1]
         );
+    }
+
+    #[test]
+    fn every_way_a_kept_picture_is_let_go_of_is_told() {
+        type Way = fn(&mut Record, &crate::color::Palette);
+
+        // A full screen deletes what the terminal holds of a picture once
+        // the record lets it go, which it hears of only here.
+        let pictured = || {
+            let (fake, _) = fake(100, 3, vec![]);
+            let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+            record.drawn(picturing::diagram("a"), Glyphs::Unicode, Theme::Dark);
+            assert!(picturing::shown(&record, 0));
+            assert!(!record.let_pictures_go(), "one drawn is none let go");
+            record
+        };
+        let plain = crate::color::Palette::plain();
+        let ways: [(&str, Way); 5] = [
+            ("encoded again at another width", |record, _| {
+                record.relay(100, Glyphs::Unicode, Theme::Dark);
+            }),
+            (
+                "drawn as text where colour is not written",
+                |record, plain| {
+                    record.pictured_as(
+                        Capability::Graphics {
+                            protocol: Protocol::Kitty,
+                            cell: picturing::CELL,
+                        },
+                        plain.identity(),
+                    );
+                    record.relay(40, Glyphs::Unicode, Theme::Dark);
+                },
+            ),
+            ("drawn as text past the count", |record, _| {
+                for line in 1..=MOST_KEPT_IMAGES {
+                    record.drawn(
+                        picturing::diagram(&format!("d{line}")),
+                        Glyphs::Unicode,
+                        Theme::Dark,
+                    );
+                }
+            }),
+            ("spilled", |record, _| {
+                record.lay((0..MOST).map(|_| set("after")));
+            }),
+            ("emptied", |record, _| record.empties()),
+        ];
+        for (way, lets_go) in ways {
+            let mut record = pictured();
+            let first = record.picture_ids().next();
+            lets_go(&mut record, &plain);
+            assert_ne!(record.picture_ids().next(), first, "{way}: still kept");
+            assert!(record.let_pictures_go(), "{way}: not told");
+            assert!(!record.let_pictures_go(), "{way}: told twice");
+        }
     }
 
     #[test]
