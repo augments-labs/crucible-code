@@ -654,7 +654,7 @@ impl Deadline {
 /// A picture's bytes, encoded for one protocol, and the cells it covers.
 ///
 /// It covers the cells its pixels reach into, and fewer where it is shown in
-/// fewer rows ([`Payload::shown_in`]): Kitty and iTerm2 scale the one image
+/// fewer rows where its size says so: Kitty and iTerm2 scale the one image
 /// into whatever cells it is placed in, so a new size is the same bytes.
 pub struct Payload {
     protocol: Protocol,

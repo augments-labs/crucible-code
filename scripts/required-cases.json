@@ -15087,7 +15087,7 @@
     {
       "id": "CASE-TRANSCRIPT-PICTURES-KITTY-KEY-ONE-FIELD",
       "family": "transcript-pictures",
-      "obligation": "A picture key equals itself, and differs from it when only its kind, width bucket, palette theme, design, depth or ground, protocol, cell width or cell height differs.",
+      "obligation": "A picture key equals itself, and differs from it when only its kind, width bucket, palette theme, design, depth or ground, protocol, cell width, cell height or the rows it is drawn for differs.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
@@ -15095,7 +15095,7 @@
       },
       "case": "terminal::graphics::tests::a_key_differing_in_any_one_thing_a_picture_depends_on_is_another_key",
       "source": "crates/crucible-tui/src/terminal/graphics.rs",
-      "body_sha256": "3fff370583555febf23dac82fc891b663edcad078bd59931a0457e41fe38323f",
+      "body_sha256": "804ad83e185f23f37a14b49906f9c53dac9705565faca3ac69a93ec4ba392976",
       "platforms": [
         "linux",
         "macos",
@@ -15564,6 +15564,24 @@
       "case": "render::tests::pictures::a_window_of_another_height_fits_a_kitty_picture_in_half_of_it_without_sending_it_again",
       "source": "crates/crucible-tui/src/render/tests/pictures.rs",
       "body_sha256": "4a5dfffa444297dc0892a76661aec239bf695946b7adba3c91725b694205eed8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-ITERM2-REPLACED",
+      "family": "transcript-picture-sizes",
+      "obligation": "An iTerm2 picture clicked to its next size is written again from the bytes it was made with, at the cells that size gives it, and the record keeps the one picture.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::an_iterm2_picture_clicked_is_written_again_from_the_same_image_at_its_new_size",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "a122c519fd083c813fe762c6f2cd3006693402311a2cc391928a05c22e5735f2",
       "platforms": [
         "linux",
         "macos",
