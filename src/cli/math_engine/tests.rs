@@ -291,9 +291,17 @@ fn a_formula_tex_could_not_make_is_not_run_again_and_one_that_never_reached_it_i
         stand_in.fails(&formula, *unmade);
         engine.told(1, &formula);
         engine.told(2, &formula);
-        assert_eq!(answers(&mut engine, 2), [(1, None), (2, None)], "{unmade:?}");
         assert_eq!(
-            stand_in.made().iter().filter(|made| **made == formula).count(),
+            answers(&mut engine, 2),
+            [(1, None), (2, None)],
+            "{unmade:?}"
+        );
+        assert_eq!(
+            stand_in
+                .made()
+                .iter()
+                .filter(|made| **made == formula)
+                .count(),
             1,
             "{unmade:?} is remembered"
         );
@@ -309,7 +317,11 @@ fn a_formula_tex_could_not_make_is_not_run_again_and_one_that_never_reached_it_i
         [(1, None), (2, None), (3, Some("next".to_owned()))]
     );
     assert_eq!(
-        stand_in.made().iter().filter(|made| *made == "busy").count(),
+        stand_in
+            .made()
+            .iter()
+            .filter(|made| *made == "busy")
+            .count(),
         2,
         "one that never reached TeX is run again"
     );
@@ -335,13 +347,27 @@ fn the_failure_memory_drops_its_oldest_formula_first() {
         answers(&mut engine, turn.len());
         engine.turns();
     }
-    let runs = |formula: &str| stand_in.made().iter().filter(|made| *made == formula).count();
+    let runs = |formula: &str| {
+        stand_in
+            .made()
+            .iter()
+            .filter(|made| *made == formula)
+            .count()
+    };
 
     engine.told(1, &failing(1));
     engine.told(2, &failing(0));
     answers(&mut engine, 2);
-    assert_eq!(runs(&failing(1)), 1, "the second oldest is still remembered");
-    assert_eq!(runs(&failing(0)), 2, "the oldest was dropped, so it ran again");
+    assert_eq!(
+        runs(&failing(1)),
+        1,
+        "the second oldest is still remembered"
+    );
+    assert_eq!(
+        runs(&failing(0)),
+        2,
+        "the oldest was dropped, so it ran again"
+    );
 }
 
 #[test]

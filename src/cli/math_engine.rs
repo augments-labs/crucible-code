@@ -153,7 +153,10 @@ impl<T: Send + 'static> MathEngine<T> {
         }
         self.this_turn += 1;
         self.owed += 1;
-        self.shared.held().waiting.push_back((ticket, source.into()));
+        self.shared
+            .held()
+            .waiting
+            .push_back((ticket, source.into()));
         self.shared.woken.notify_one();
     }
 
@@ -254,7 +257,10 @@ impl crucible_tui::graphics::Formulas for MathEngine<crucible_tui::graphics::For
 
     fn answered(
         &mut self,
-    ) -> Option<(crucible_tui::graphics::Formula, Option<crucible_tui::drawing::Svg>)> {
+    ) -> Option<(
+        crucible_tui::graphics::Formula,
+        Option<crucible_tui::drawing::Svg>,
+    )> {
         let (formula, made) = MathEngine::answered(self)?;
         Some((formula, made.as_ref().and_then(super::pictures::inked)))
     }

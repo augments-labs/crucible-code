@@ -1125,11 +1125,16 @@ fn a_formula_is_its_text_until_its_picture_comes_and_then_its_picture_on_a_full_
 
     let told = drawn.render.formulas();
     assert_eq!(
-        told.iter().map(|formula| formula.source().trim()).collect::<Vec<_>>(),
+        told.iter()
+            .map(|formula| formula.source().trim())
+            .collect::<Vec<_>>(),
         ["x^2"]
     );
     let formula = told.first().expect("one formula");
-    drawn.render.formula_made(formula, formula_picture()).unwrap();
+    drawn
+        .render
+        .formula_made(formula, formula_picture())
+        .unwrap();
     let after = drawn.take();
 
     assert_eq!(transmitted(&commands(&after)), [(1, printed_bytes(0, 300))]);
@@ -1166,7 +1171,8 @@ impl crate::terminal::graphics::Formulas for Making {
         let mut made = self.held();
         made.every.push(formula.source().trim().to_owned());
         if made.at_once {
-            made.answers.push_back((formula.clone(), Some(formula_picture())));
+            made.answers
+                .push_back((formula.clone(), Some(formula_picture())));
         }
         made.told.push(formula);
     }
@@ -1177,7 +1183,10 @@ impl crate::terminal::graphics::Formulas for Making {
 
     fn answered(
         &mut self,
-    ) -> Option<(crate::terminal::graphics::Formula, Option<crate::drawing::Svg>)> {
+    ) -> Option<(
+        crate::terminal::graphics::Formula,
+        Option<crate::drawing::Svg>,
+    )> {
         let mut made = self.held();
         let answer = made.answers.pop_front()?;
         made.told.retain(|told| *told != answer.0);
@@ -1201,7 +1210,10 @@ fn told_cut_at(cuts: &[usize], at_once: bool) -> Vec<String> {
     drawn.render.makes_formulas(Box::new(making.clone()));
     drawn.render.landmark();
     drawn.answer_in_pieces(TWO_FORMULAS, cuts);
-    drawn.render.waiting_from(Duration::from_millis(1), |_| Ok(false)).unwrap();
+    drawn
+        .render
+        .waiting_from(Duration::from_millis(1), |_| Ok(false))
+        .unwrap();
     drawn.take();
     let every = std::mem::take(&mut making.held().every);
     drop(drawn);
@@ -1241,22 +1253,41 @@ fn a_formula_told_to_what_makes_pictures_is_shown_as_its_answer_once_a_wait_rest
     drawn.answer(FORMULA);
     drawn.take();
 
-    assert!(drawn.render.formulas().is_empty(), "told to the maker instead");
+    assert!(
+        drawn.render.formulas().is_empty(),
+        "told to the maker instead"
+    );
     let told = making.held().told.clone();
     assert_eq!(
-        told.iter().map(|formula| formula.source().trim()).collect::<Vec<_>>(),
+        told.iter()
+            .map(|formula| formula.source().trim())
+            .collect::<Vec<_>>(),
         ["x^2"]
     );
     assert_eq!(making.held().turns, 1);
-    assert!(drawn.render.rests_in().is_some(), "a wait rests while it is owed");
+    assert!(
+        drawn.render.rests_in().is_some(),
+        "a wait rests while it is owed"
+    );
 
     let formula = told.first().expect("one formula").clone();
-    making.held().answers.push_back((formula, Some(formula_picture())));
-    assert!(!drawn.render.waiting_from(Duration::from_millis(1), |_| Ok(false)).unwrap());
+    making
+        .held()
+        .answers
+        .push_back((formula, Some(formula_picture())));
+    assert!(
+        !drawn
+            .render
+            .waiting_from(Duration::from_millis(1), |_| Ok(false))
+            .unwrap()
+    );
     let after = drawn.take();
     assert_eq!(transmitted(&commands(&after)), [(1, printed_bytes(0, 300))]);
     assert!(after.contains(&placeholders(1, 0, 3)), "{after:?}");
-    assert!(drawn.render.rests_in().is_none(), "nothing is owed any more");
+    assert!(
+        drawn.render.rests_in().is_none(),
+        "nothing is owed any more"
+    );
 }
 
 #[test]
@@ -1269,7 +1300,10 @@ fn a_formula_answered_with_no_picture_stays_its_text_and_is_owed_no_more() {
     let formula = making.held().told.first().expect("one formula").clone();
 
     making.held().answers.push_back((formula, None));
-    drawn.render.waiting_from(Duration::from_millis(1), |_| Ok(false)).unwrap();
+    drawn
+        .render
+        .waiting_from(Duration::from_millis(1), |_| Ok(false))
+        .unwrap();
     let after = drawn.take();
     assert!(commands(&after).is_empty(), "{after:?}");
     assert!(drawn.render.rests_in().is_none());
@@ -1284,7 +1318,10 @@ fn a_formula_picture_handed_back_after_its_block_went_changes_nothing_on_screen(
     drawn.render.empties().unwrap();
     drawn.take();
 
-    drawn.render.formula_made(formula, formula_picture()).unwrap();
+    drawn
+        .render
+        .formula_made(formula, formula_picture())
+        .unwrap();
     let after = drawn.take();
     assert!(commands(&after).is_empty(), "{after:?}");
 }

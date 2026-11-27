@@ -1507,7 +1507,10 @@ impl<T: Terminal> Renderer<T> {
             .as_ref()
             .is_some_and(|formulas| formulas.pending())
             .then_some(FORMULA_LOOK);
-        [creeps, self.settles_in(now), looks].into_iter().flatten().min()
+        [creeps, self.settles_in(now), looks]
+            .into_iter()
+            .flatten()
+            .min()
     }
 
     /// Does whatever fell due while an input wait slept: shows each formula's

@@ -4431,10 +4431,15 @@ mod tests {
         record.drawn(picturing::formula("x^2"), Glyphs::Unicode, Theme::Dark);
 
         assert!(!picturing::shown(&record, 0), "drawn as its text meanwhile");
-        assert_eq!(record.folded(0).first().map(Row::text), Some("x^2".to_owned()));
+        assert_eq!(
+            record.folded(0).first().map(Row::text),
+            Some("x^2".to_owned())
+        );
         let told = record.formulas();
         assert_eq!(
-            told.iter().map(|formula| formula.source().trim()).collect::<Vec<_>>(),
+            told.iter()
+                .map(|formula| formula.source().trim())
+                .collect::<Vec<_>>(),
             ["x^2"]
         );
         assert!(picturing::told(&mut record).is_empty(), "told once");
@@ -4454,7 +4459,10 @@ mod tests {
 
         let formula = told.first().expect("one formula");
         assert!(record.formula_made(formula, picturing::svg("x^2")));
-        assert!(picturing::shown(&record, 0), "the picture replaces the text");
+        assert!(
+            picturing::shown(&record, 0),
+            "the picture replaces the text"
+        );
         assert_eq!(
             picturing::asked(&asked).last().map(String::as_str),
             Some("make x^2")
@@ -4517,10 +4525,15 @@ mod tests {
             record.drawn(picturing::formula("missed"), Glyphs::Unicode, Theme::Dark);
             record.resuming(false, screen);
             assert!(picturing::told(&mut record).is_empty(), "{screen:?}");
-            assert!(picturing::shown(&record, 0), "{screen:?}: the cache's picture");
+            assert!(
+                picturing::shown(&record, 0),
+                "{screen:?}: the cache's picture"
+            );
             assert!(!picturing::shown(&record, 1), "{screen:?}");
             assert!(
-                picturing::asked(&asked).iter().all(|asked| !asked.starts_with("make")),
+                picturing::asked(&asked)
+                    .iter()
+                    .all(|asked| !asked.starts_with("make")),
                 "{screen:?}: {:?}",
                 picturing::asked(&asked)
             );
@@ -4561,7 +4574,9 @@ mod tests {
         assert!(!record.formula_made(formula, picturing::svg("x^2")));
         assert!(!picturing::shown(&record, 0));
         assert!(
-            picturing::asked(&asked).iter().all(|asked| !asked.starts_with("make")),
+            picturing::asked(&asked)
+                .iter()
+                .all(|asked| !asked.starts_with("make")),
             "{:?}",
             picturing::asked(&asked)
         );

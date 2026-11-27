@@ -4203,7 +4203,10 @@ mod pictures {
         sealed(&mut render);
 
         let written = window.written();
-        assert_eq!(transmitted(&commands(&written)), [(1, printed_bytes(0, 300))]);
+        assert_eq!(
+            transmitted(&commands(&written)),
+            [(1, printed_bytes(0, 300))]
+        );
         let back = window.scrollback();
         assert!(!back.iter().any(|row| row.contains("x^2")), "{back:#?}");
         assert_eq!(
@@ -4237,7 +4240,10 @@ mod pictures {
         // Made when it came, and encoded again for the new width.
         settles_at(&window, &mut render, 100, 8);
         let rewritten = window.take();
-        assert_eq!(transmitted(&commands(&rewritten)), [(2, printed_bytes(1, 300))]);
+        assert_eq!(
+            transmitted(&commands(&rewritten)),
+            [(2, printed_bytes(1, 300))]
+        );
         assert!(rewritten.contains(&placeholders(2, 0, 3)), "{rewritten:?}");
         assert!(rewritten.contains(&placeholders(2, 1, 3)), "{rewritten:?}");
         assert!(!window.scrollback().iter().any(|row| row.contains("x^2")));
@@ -4266,7 +4272,10 @@ mod pictures {
             panic!("one picture sent: {sent:?}");
         };
         assert_eq!(*bytes, printed_bytes(ground, 300));
-        assert!(rewritten.contains(&placeholders(*id, 0, 3)), "{rewritten:?}");
+        assert!(
+            rewritten.contains(&placeholders(*id, 0, 3)),
+            "{rewritten:?}"
+        );
         assert!(!window.scrollback().iter().any(|row| row.contains("x^2")));
     }
 

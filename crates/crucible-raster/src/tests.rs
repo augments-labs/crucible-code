@@ -2920,7 +2920,11 @@ const DVISVGM_X: &str = r"<?xml version='1.0' encoding='UTF-8'?>
 fn a_glyph_drawn_by_a_use_naming_it_by_fragment_draws() {
     let _alone = alone();
     let pixels = rasterise(DVISVGM_X.as_bytes(), 32, &[]).expect("drawn");
-    let inked = pixels.rgba().chunks_exact(4).filter(|pixel| pixel.get(3) == Some(&255)).count();
+    let inked = pixels
+        .rgba()
+        .chunks_exact(4)
+        .filter(|pixel| pixel.get(3) == Some(&255))
+        .count();
     assert!(inked > 20, "{inked} pixels inked");
 }
 
