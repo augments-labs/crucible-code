@@ -617,13 +617,18 @@ pub(super) fn wear<T: Terminal>(name: &str, renderer: &mut Renderer<T>, terms: &
 
 /// Puts `choice` in force and repaints every row on screen in it.
 ///
-/// Where nothing named a syntax theme, code is read again in the one the new
-/// table draws it in: a table for the other ground would leave code drawn for
-/// the ground it left.
+/// Where no syntax theme is named, or the one named is none this build has,
+/// code is read again in the one the new table draws it in: a table for the
+/// other ground would leave code drawn for the ground it left.
 fn put_on<T: Terminal>(choice: ThemeChoice, renderer: &mut Renderer<T>, terms: &Terms) {
     let was = terms.style();
     let now = was.wearing(Style::theme(Some(choice), was.ground()));
-    let now = match terms.reading.borrow().as_deref() {
+    let named = terms
+        .reading
+        .borrow()
+        .as_deref()
+        .and_then(crucible_tui::syntax::colours);
+    let now = match named {
         Some(_) => now,
         None => crucible_tui::syntax::colours(now.syntax_unless_said())
             .map_or(now, |six| now.reading(six)),

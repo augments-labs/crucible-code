@@ -244,6 +244,29 @@ fn taking_a_table_for_the_other_ground_reads_code_in_the_theme_made_for_it() {
 
     taken(ThemeChoice::Dark, "dark", &mut renderer, &terms).expect("dark to be taken");
     assert_eq!(string(terms.style()), string_in(coloured(), dark));
+
+    // Following the table is not naming one: nothing is held for the session
+    // and nothing is written down, so the next table is followed as well.
+    assert_eq!(*terms.reading.borrow(), None);
+    let written = std::fs::read_to_string(sample.user_file()).expect("the theme was written");
+    assert!(written.contains("\"theme\""), "{written}");
+    assert!(!written.contains("syntaxTheme"), "{written}");
+}
+
+#[test]
+fn taking_a_table_reads_code_for_its_ground_where_the_name_given_reads_nothing() {
+    // A name this build has no theme of, as a hand-edited file might hold:
+    // the start drew code in the default, and that default follows the table.
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let sample = Sample::new("theme-code-unknown");
+    let terms = keeping(&sample);
+    terms.style.set(coloured());
+    *terms.reading.borrow_mut() = Some("monokai extended".to_owned());
+    let light = crucible_tui::syntax::theme_unless_said(crucible_tui::Theme::Light, None);
+
+    taken(ThemeChoice::Light, "light", &mut renderer, &terms).expect("light to be taken");
+
+    assert_eq!(string(terms.style()), string_in(coloured(), light));
 }
 
 #[test]
