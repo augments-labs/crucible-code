@@ -1400,9 +1400,9 @@ impl Record {
     /// Only a block the walk put off: one wanting a picture, with none, not
     /// fallen back to text, and refused as not drawn here. A line already
     /// gone out keeps the text it went out as. One put off that is older
-    /// than those has fallen back to text, as a block a live session drew
-    /// past the cap has, so a new palette, protocol or cell asks nothing for
-    /// it.
+    /// than those is already its text, and falls back to it as a block a
+    /// live session drew past the cap does, laid out as it is, so a new
+    /// palette, protocol or cell asks nothing for it.
     fn restore(&mut self) {
         let from = self.first().saturating_sub(self.gone);
         let mut put_off: Vec<usize> = Vec::new();
@@ -1423,7 +1423,6 @@ impl Record {
             if put_off.len() < MOST_KEPT_IMAGES {
                 put_off.push(at);
             } else {
-                // Already its text, so laid out as it is.
                 drawn.fallen = true;
             }
         }
