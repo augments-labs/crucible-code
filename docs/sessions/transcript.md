@@ -831,11 +831,8 @@ the output is not a terminal. An image a turn named does not depend on
 A session keeps at most 16 pictures, and at most 1.5 MiB of them, what each
 was drawn from and what the terminal was sent counted once each. Past either,
 the oldest is drawn as its text again, and in the full screen the transcript
-stays on the line you were reading. A larger size you choose for a picture
-Sixel draws, when it could be kept only by going past either, is passed over
-for the next one, so resizing one picture never draws another as text. A
-diagram whose picture alone is more than
-1.5 MiB, or would take more than 64 cells across or down, is drawn as text,
+stays on the line you were reading. A diagram whose picture alone is more
+than 1.5 MiB, or would take more than 64 cells across or down, is drawn as text,
 and stays text when the window is resized or the theme changes. In the full
 screen the terminal is told to let go of each picture the session stops
 keeping or draws again. A few are left to the terminal's own limit instead:
@@ -1050,3 +1047,14 @@ picture's own, under the bounds every picture has: it is never put in the
 reads each file again and shows what it holds now. <kbd>Ctrl+O</kbd> lists each image under the
 word `image`, by the path it was named by, whether it was shown or not, so one
 that was refused can still be found and opened by hand.
+
+A front end with no terminal, driving crucible through its client protocol,
+can ask for the same image with the `show_image` command, naming it by the
+path the turn wrote, and for a picture a tool's call read, by the SHA-256 that
+call kept as well. The file is read under the same rules: inside the
+workspace, only where the permission rules let `read` read it, with nothing
+asked, and under the same bounds and two seconds. What comes back is the image
+as a PNG crucible wrote from what it read, or the reason it is not shown:
+`not_shown`, `too_large`, `not_an_image`, `not_in_time` or `changed`, the first
+five reasons in the table above. How many to ask for in a turn is the front
+end's to count.

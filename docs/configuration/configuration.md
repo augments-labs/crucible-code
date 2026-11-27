@@ -733,7 +733,7 @@ you with no way to send at all.
 | Key | Answers | Means |
 | --- | --- | --- |
 | `color` | `auto`, `always`, `never` | Whether to write colour; `auto` by default. `auto` follows the terminal and `NO_COLOR`; `always` writes colour on a terminal even when `NO_COLOR` is set, and `never` writes none. Output that is not a terminal gets no colour whatever this says, and the model's markdown is kept as written. A `TERM` of `dumb`, or no `TERM` at all, still gets no colour, even under `always`, unless `COLORTERM` says `truecolor` or `24bit`. |
-| `glyphs` | `unicode`, `ascii` | Which characters crucible draws with; `unicode` by default. `ascii` if box drawing shows as hollow squares. |
+| `glyphs` | `unicode`, `ascii` | Which characters crucible draws with; `unicode` by default. `ascii` if box drawing shows as hollow squares, or if the terminal draws box drawing such as `─` and `│`, or marks such as `›`, `•` and `●`, two columns wide. |
 | `theme` | `auto`, `dark`, `light`, `colourblind-dark`, `colourblind-light`, `ansi` | Which colours crucible draws with; `auto` by default. |
 | `transcriptColours` | `calm`, `balanced`, `rich` | How many of the theme's colours a reply and its tool calls spend; `calm` by default. Below the table. |
 | `syntaxTheme` | a theme name | Which theme fenced code is drawn in; `Monokai Extended` by default. |
@@ -822,6 +822,12 @@ is a font missing that character, and nothing about that reaches crucible. The
 bytes arrived, the encoding was right, and the gap is in a font this program
 cannot see. So it is a setting, and `ascii` is the answer for a terminal whose
 font has no box drawing rather than a fallback crucible guesses its way into.
+
+It is the answer too for a terminal that draws box drawing such as `─` and `│`,
+and marks such as `›`, `•` and `●`, two columns wide, as some do for characters
+whose width Unicode leaves to the terminal. crucible counts each of them as one
+column, so a border or a row drawn with them reaches past the edge of the
+window; `ascii` draws them with the ASCII characters in the table below.
 
 It is one answer for the whole interface rather than one for the box. Every mark
 crucible draws comes out of the same set as the border:

@@ -306,7 +306,7 @@ fn escapes(outside: &Path) -> Vec<(String, String)> {
 
 /// The paths escape inputs name for a write on the host itself, which must
 /// not exist after them. None may exist before.
-const HOST_WRITES: [&str; 1] = ["/tmp/t34-escape-written.txt"];
+const HOST_WRITES: [&str; 1] = ["/tmp/crucible-escape-written.txt"];
 
 /// What no picture may hold: each sentinel's text, and the first line of the
 /// host's `/etc/passwd`.
@@ -334,8 +334,9 @@ fn holds_no_secret(name: &str, made: &Result<Svg, Unmade>) {
 /// reading `.dotsecret`, name paths relative to the run's working directory,
 /// the sandbox's own `/tmp`. That directory and the root above it are a
 /// fresh scratch each run, which no host path reaches, so no sentinel can be
-/// planted where they read; they are kept as T34 wrote them, and what holds
-/// TeX's reads to its own tree is asserted by the `\openin` formulas of
+/// planted where they read; they are kept as they were first written, and
+/// what holds TeX's reads to its own tree is asserted by the `\openin`
+/// formulas of
 /// `tex_reads_nothing_of_the_host_and_writes_nothing_above_its_directory`.
 const READS: [&str; 9] = [
     "01-read-abs-visible.tex",
