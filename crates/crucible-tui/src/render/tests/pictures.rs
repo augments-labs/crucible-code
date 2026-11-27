@@ -1699,6 +1699,42 @@ fn ctrl_o_lists_each_image_a_turn_named_by_its_path_newest_first_shown_or_not() 
 }
 
 #[test]
+fn ctrl_o_lists_each_image_a_session_put_back_did_not_redraw_by_its_path() {
+    let mut drawn = pictured(40, 12, Printed::new(3, 2, 300));
+    drawn
+        .render
+        .image("out/plot.png", None, Ok(vec![1, 2, 3]))
+        .unwrap();
+    for (path, by) in [("late.png", None), ("docs/read.png", Some("read"))] {
+        drawn
+            .render
+            .image(path, by, Err(crate::chrome::Undrawn::NotRedrawnOnResume))
+            .unwrap();
+    }
+    let rows = drawn.rows();
+    drawn.take();
+
+    assert!(
+        rows.iter()
+            .any(|row| row.starts_with("┌─ image · late.png · not redrawn")),
+        "{rows:#?}"
+    );
+    let sources: Vec<(&str, &str)> = drawn
+        .render
+        .sources()
+        .map(|source| (source.word, source.text))
+        .collect();
+    assert_eq!(
+        sources,
+        [
+            ("image", "docs/read.png"),
+            ("image", "late.png"),
+            ("image", "out/plot.png")
+        ]
+    );
+}
+
+#[test]
 fn every_cut_of_an_answer_naming_images_names_and_draws_what_the_whole_answer_does() {
     // Each image's read is faked to settle at once, so what is compared is the
     // naming and the drawing alone, and every cut gives the same of both.
