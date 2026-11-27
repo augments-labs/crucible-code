@@ -378,6 +378,17 @@ fn every_escape_input_leaves_its_sentinels_and_the_host_unchanged() {
             Err(error) if error.kind() == ErrorKind::WouldBlock => {}
             accepted => panic!("the loopback listener was reached: {accepted:?}"),
         }
+
+        // The sandbox holds every sentinel whatever TeX runs, so they cannot
+        // tell whether shell escape is off. A program TeX's restricted shell
+        // escape would still run, read back as the formula, can: off, the
+        // pipe is a file name that is not there and the formula stays text.
+        let piped = here.made(
+            engine,
+            r#"\csname input\endcsname|"kpsewhich -var-value=openout_any""#,
+        );
+        println!("  restricted pipe: {}", answer(&piped));
+        assert!(piped.is_err(), "a restricted shell escape ran");
     });
 }
 

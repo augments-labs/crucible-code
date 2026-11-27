@@ -578,8 +578,10 @@ fn well_before(elapsed: Duration, deadline: Duration) {
 }
 
 /// The check's second deadline for a run of `command_time`, from "staged".
+/// The margin is written out rather than read from [`MARGIN`], so a margin
+/// changed in the engine moves the deadline these tests expect from it.
 fn second(command_time: Duration) -> Duration {
-    command_time + MARGIN
+    command_time + Duration::from_secs(7)
 }
 
 // Row: the TeX tree absent on the host, injected before any stage.
