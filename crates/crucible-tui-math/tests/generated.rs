@@ -3,8 +3,8 @@
 //! characters, each drawn in a line and as a block into a room of its own.
 //! None may come back as a panic, a hang, a row wider than its room, a line
 //! broken inside a span, or a character a terminal would obey; and a formula
-//! written whole must be drawn, in a line always and as a block wherever it
-//! fits.
+//! written whole inside the caps must be drawn, in a line always and as a
+//! block wherever it fits.
 //!
 //! Every case is made from a seed and its index alone, so a failure names the
 //! case that reproduces it, and the run says its seed and its count. A run
@@ -20,7 +20,7 @@
 use crucible_tui::chrome::Undrawn;
 use crucible_tui::drawing::{Draws, Laid, Room, Run};
 use crucible_tui::{Glyphs, Row};
-use crucible_tui_math::Formulas;
+use crucible_tui_math::{Formulas, MOST_COLUMNS};
 use std::fmt::Write as _;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
@@ -159,8 +159,8 @@ fn scripted(rng: &mut Rng, depth: usize) -> String {
 }
 
 fn term(rng: &mut Rng, depth: usize) -> String {
-    // Below the deepest level only atoms, so a written formula stays inside
-    // the caps.
+    // Below the deepest level only atoms, so a written formula's nesting
+    // stays inside the caps; how wide it reads is for `whole` to weigh.
     if depth >= 3 {
         return rng.pick(ATOMS).to_owned();
     }
@@ -292,9 +292,19 @@ const FAMILIES: [Family; 3] = [Family::Written, Family::Damaged, Family::Noise];
 #[derive(Debug)]
 struct Case {
     source: String,
-    /// Whether it is written whole, and must be drawn.
+    /// Whether it is written whole inside the caps, and must be drawn.
     whole: bool,
     room: Room,
+}
+
+/// Whether a formula written whole is inside the caps, and so must be drawn.
+///
+/// No line a formula reads as is wider than its TeX is long, since each
+/// command reads as fewer columns than its name takes, so one of
+/// [`MOST_COLUMNS`] bytes or fewer reads inside the column cap. A longer one
+/// may read past it, and a line past the cap is refused rather than drawn.
+fn whole(source: &str) -> bool {
+    source.len() <= MOST_COLUMNS
 }
 
 fn case(index: u64) -> (Family, Case) {
@@ -304,7 +314,11 @@ fn case(index: u64) -> (Family, Case) {
         .copied()
         .unwrap_or(Family::Noise);
     let (source, whole) = match family {
-        Family::Written => (expression(&mut rng, 0), true),
+        Family::Written => {
+            let source = expression(&mut rng, 0);
+            let whole = whole(&source);
+            (source, whole)
+        }
         Family::Damaged => (damaged(&mut rng), false),
         Family::Noise => (noise(&mut rng), false),
     };
@@ -432,6 +446,33 @@ fn run(from: u64, to: u64, drawer: Drawer) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[test]
+fn a_written_formula_whose_line_is_past_the_column_cap_may_be_shown_as_written() {
+    let room = Room {
+        columns: 200,
+        glyphs: Glyphs::Unicode,
+    };
+    // Every byte of these is a column: the shortest a formula whose line is
+    // past the cap can be written, and the longest whose line is not.
+    for (source, drawn) in [
+        ("x".repeat(MOST_COLUMNS), true),
+        ("x".repeat(MOST_COLUMNS + 1), false),
+    ] {
+        let bytes = source.len();
+        assert_eq!(
+            Formulas.inline(&source, &room).is_some(),
+            drawn,
+            "{bytes} bytes"
+        );
+        let case = Case {
+            whole: whole(&source),
+            source,
+            room,
+        };
+        assert_eq!(judge(&case, this_crate), Ok(()), "{bytes} bytes");
+    }
 }
 
 #[test]
