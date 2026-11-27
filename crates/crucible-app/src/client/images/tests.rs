@@ -378,10 +378,11 @@ fn counted(bytes: &[u8]) -> Result<Pixels, Refused> {
 
 #[test]
 fn sixteen_asked_at_once_are_decoded_one_at_a_time_and_each_is_shown() {
-    // Each of the sixteen holds what it read while it waits for the slot: at
-    // most `MOST_INPUT` bytes and one chunk, so about 64 MiB among them here,
-    // where nothing bounds how many read at once. Lent the tool worker, no
-    // more than its `CAPACITY` read at a time.
+    // Each of the sixteen holds what it read while it waits for the slot, and
+    // reading sets aside room for the whole file first, up to the 4 MiB an
+    // attachment may be: about 64 MiB among them here, where nothing bounds
+    // how many read at once. Lent the tool worker, where reading and waiting
+    // are one job, no more than its `CAPACITY` hold any, about 16 MiB.
     let (_sample, workspace) = tree("images-sixteen");
     let _shared = SLOT.read().unwrap_or_else(PoisonError::into_inner);
     let workspace = Arc::new(workspace);

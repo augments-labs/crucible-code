@@ -89,8 +89,8 @@ const CHUNK: usize = 64 * 1024;
 /// the read tool hands its blocking work to, all lent by the host. Resolving
 /// the path, reading the file, waiting for the decode slot and decoding run
 /// there, so a mount that stops answering holds a worker's place rather than
-/// whoever asked; polled on a runtime, this answers within [`DEADLINE`]
-/// whether or not that work has ended. The engine is never left waiting on a
+/// whoever asked; lent one, this answers within [`DEADLINE`] whether or not
+/// that work has ended. The engine is never left waiting on a
 /// person, since every question it would put is answered `deny` here.
 ///
 /// # Errors
@@ -146,7 +146,7 @@ where
         ImageRef::Tool { hash, .. } => Some(*hash),
         ImageRef::Answer { .. } => None,
     };
-    within(started, async {
+    within(started, worker, async {
         let (owned, asked) = (workspace.clone(), requested.to_owned());
         let (path, sensitivity) = blocking(worker, move || {
             let path = owned.existing(&asked).map_err(|_| ImageRefused::NotShown)?;
@@ -180,20 +180,23 @@ where
 /// What `work` answers, or [`ImageRefused::NotInTime`] once [`DEADLINE`] has
 /// passed since `started`, whether or not the work has ended.
 ///
-/// The deadline is kept here, outside the work, since what runs on the worker
-/// cannot be stopped once started: a read stuck on a mount that stopped
-/// answering is left to end on its own, and the answer is not waited for. Kept
-/// by the timer of the runtime polling this; polled where there is none, the
-/// work is awaited as it is, and each step looks at the deadline itself.
+/// The deadline is kept here, outside the work, by the timer of the worker
+/// the work runs on: what has started there cannot be stopped, so a read stuck
+/// on a mount that stopped answering is left to end on its own and its answer
+/// is not waited for. Lent no worker, the work runs on the calling thread,
+/// which nothing could take back from it, and each step looks at the deadline
+/// itself.
 async fn within<T>(
     started: Instant,
+    worker: Option<&ToolWorker>,
     work: impl Future<Output = Result<T, ImageRefused>>,
 ) -> Result<T, ImageRefused> {
-    if tokio::runtime::Handle::try_current().is_err() {
+    let Some(worker) = worker else {
         return work.await;
-    }
+    };
     let left = DEADLINE.saturating_sub(started.elapsed());
-    tokio::time::timeout(left, work)
+    worker
+        .within(left, work)
         .await
         .unwrap_or(Err(ImageRefused::NotInTime))
 }
