@@ -93,6 +93,7 @@ fn ruled(
     let mut renderer = crate::cli::furnished(
         Recording::new(80, 60),
         &crucible_config::Settings::default(),
+        Box::new(crate::cli::pictures::Raster),
     );
     renderer.wears(Style::coloured().palette());
     renderer.images(Capability::Graphics {

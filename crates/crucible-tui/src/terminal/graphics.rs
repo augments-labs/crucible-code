@@ -816,6 +816,12 @@ pub trait Pictures {
     ///
     /// Why it is drawn as text instead.
     fn reencode(&mut self, kept: &KeptPicture, key: &PictureKey) -> Result<Payload, Undrawn>;
+
+    /// Told when a session put back starts and stops being drawn, so what is
+    /// kept beyond this session is asked for only while it is.
+    fn resuming(&mut self, resuming: bool) {
+        let _ = resuming;
+    }
 }
 
 // The bytes are a picture, and a picture in a log is megabytes of noise.

@@ -21,9 +21,13 @@
 //! have in time is drawn as text, so a frame is never held for another
 //! thread's decode.
 //!
-//! Nothing is kept here and nothing is written to disk: the renderer keeps
-//! what it shows, bounded, and asks again from that, so [`Raster::cached`]
-//! holds nothing.
+//! Nothing is kept here: the renderer keeps what it shows, bounded, and asks
+//! again from that, so [`Raster::cached`] holds nothing. A session's own
+//! pictures are [`Caching`], which hands each diagram or equation it draws to
+//! the one thread that writes the picture cache, without waiting, and asks
+//! that cache first only while a session put back is drawn; live, a frame
+//! never reads the disk. An image is never handed to it, since it is read
+//! again from its file.
 //!
 //! An image arrives as the PNG the application read it into, already within
 //! its ceilings and made by this process, and is decoded again here in the
@@ -39,6 +43,7 @@
 //! new payload; a picture wider than Sixel is encoded at is drawn as text, as
 //! too wide, rather than narrowed.
 
+use super::picture_cache::{Cache, Queue};
 use crucible_client_api::ImageRefused;
 use crucible_raster::{
     MOST_SIXEL_WIDTH, Refused, SixelPalette, Slot, decode, png, raster_width, rasterise, sixel,
@@ -50,7 +55,7 @@ use std::time::Duration;
 
 /// The longest the drawing thread waits for the decode slot before it draws
 /// the block as text.
-const WAIT: Duration = Duration::from_millis(40);
+pub(super) const WAIT: Duration = Duration::from_millis(40);
 
 /// The most colours a Sixel payload defines: the registers a terminal that
 /// draws Sixel is expected to have.
@@ -71,6 +76,50 @@ impl Pictures for Raster {
 
     fn reencode(&mut self, kept: &KeptPicture, key: &PictureKey) -> Result<Payload, Undrawn> {
         encoded(&kept.form, key)
+    }
+}
+
+/// The session's pictures drawn as [`Raster`] draws them, each new one handed
+/// to the picture cache's writer; and, while a session put back is drawn,
+/// looked for in that cache first.
+#[derive(Debug)]
+pub(crate) struct Caching {
+    cache: Cache,
+    queue: Queue,
+    resuming: bool,
+}
+
+impl Caching {
+    /// Pictures read from `cache` on resume and written through `queue`.
+    pub(crate) const fn new(cache: Cache, queue: Queue) -> Self {
+        Self {
+            cache,
+            queue,
+            resuming: false,
+        }
+    }
+}
+
+impl Pictures for Caching {
+    fn cached(&mut self, source: &str, key: &PictureKey) -> Option<(Form, Payload)> {
+        // Asked live, it would read the disk inside a frame; live, the
+        // drawer runs instead, and only a session put back reads it.
+        self.resuming.then(|| self.cache.get(source, key)).flatten()
+    }
+
+    fn make(&mut self, source: &str, key: &PictureKey, form: &Form) -> Result<Payload, Undrawn> {
+        let payload = encoded(form, key)?;
+        // A full queue drops the write: the picture is drawn either way.
+        let _ = self.queue.put(source, key, form, &payload);
+        Ok(payload)
+    }
+
+    fn reencode(&mut self, kept: &KeptPicture, key: &PictureKey) -> Result<Payload, Undrawn> {
+        encoded(&kept.form, key)
+    }
+
+    fn resuming(&mut self, resuming: bool) {
+        self.resuming = resuming;
     }
 }
 
@@ -527,6 +576,7 @@ pub(crate) mod tests {
         let mut renderer = crate::cli::furnished(
             Recording::new(80, 40),
             &crucible_config::Settings::default(),
+            Box::new(crate::cli::pictures::Raster),
         );
         renderer.wears(Palette::resolve(true, Theme::Dark, None, &truecolour));
         renderer.images(Capability::Graphics {
