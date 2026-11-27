@@ -14637,7 +14637,7 @@
       },
       "case": "cli::pictures::tests::a_sessions_screen_sends_a_diagram_to_a_terminal_that_confirmed_kitty",
       "source": "src/cli/pictures.rs",
-      "body_sha256": "75f71396d9051faf1fd0a124361b5a6a3d9f9db769c4cf461e4585f8b2373879",
+      "body_sha256": "2cd294f2b8cbb3f20d5d98d99651bf3c8702eb2c9c9423de092213ae7c9905d1",
       "platforms": [
         "linux",
         "macos",
@@ -16871,7 +16871,7 @@
       },
       "case": "cli::picture_cache::tests::a_payload_that_is_not_what_its_protocol_says_is_a_miss",
       "source": "src/cli/picture_cache/tests.rs",
-      "body_sha256": "e367ddd1411369d1ee500004759e3963fadc3a7d7d6c161d7a86007c1e55acd3",
+      "body_sha256": "0e8d6d1ae302af328c3d6239c80aa01e870ef2f8ba9cb582c58f668508f7b9b8",
       "platforms": [
         "linux",
         "macos",
@@ -17103,6 +17103,149 @@
       "case": "record::tests::a_session_put_back_draws_what_the_cache_kept_and_the_rest_as_text_with_no_drawer",
       "source": "crates/crucible-tui/src/record.rs",
       "body_sha256": "ace76124f9278090d075488e0449590b34274cf273cbad3c3a7c5e4256558df3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-WRITER-TRIMS-FIRST",
+      "family": "transcript-pictures",
+      "obligation": "The cache's writer thread removes a draft an earlier write left before it writes anything, writes the picture it is handed, and ends once its queue is dropped.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::the_writer_thread_trims_first_and_then_writes_what_it_is_handed",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "dcbab2342ec1d8b2c7aa1e52cfced562a36f5f328a43bbc3b7d7eaf743f2d2a7",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-RESUME-UNREDRAWN-IMAGES-LISTED",
+      "family": "transcript-pictures",
+      "obligation": "An image a session put back did not draw again is shown as not redrawn, and Ctrl+O lists it under the word image by the path it was named by, with the images that were drawn.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::ctrl_o_lists_each_image_a_session_put_back_did_not_redraw_by_its_path",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "972a3060fb31c020d587221bbe9024a1dc44366b76816a0ddf1d0b51e47ee3fe",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-RESUME-READS-ONLY-KEPT",
+      "family": "transcript-pictures",
+      "obligation": "Putting back a session with more cached diagrams than the record keeps reads nothing while it is walked, then reads exactly as many as it keeps, the newest, runs no drawer, and leaves the older ones as their text.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::a_session_put_back_reads_the_cache_only_for_the_pictures_it_keeps",
+      "source": "crates/crucible-tui/src/record.rs",
+      "body_sha256": "b597f1b63496a63b1e5f7c649574ba219e567abd8593c64ca472a90b7b123088",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-SIXEL-GATE",
+      "family": "transcript-pictures",
+      "obligation": "A Sixel entry is read back only when it is what the terminal is sent as Sixel and paints within its pixels: a DECRQSS or XTGETTCAP body, a 1x1 entry painting 2000x600, one with no raster attributes or another size, and a band or repeat past its pixels are misses, and what the live encoder writes is a hit.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::a_sixel_payload_the_terminal_would_not_be_sent_or_that_paints_past_its_pixels_is_a_miss",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "f073637b4f0e296fe5643d2efd4e96b88052506a8bc7459cda4353dfce51c9fa",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-AHEAD-PRUNED",
+      "family": "transcript-pictures",
+      "obligation": "A write takes out an entry dated more than a day ahead of now, and keeps one dated less than that ahead.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::a_write_takes_out_every_entry_dated_more_than_a_day_ahead",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "38ce2987a49ba328664d88a7cc539b065af8a1e4d7208fde7d6fc6624103815a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-AGE-ON-READ",
+      "family": "transcript-pictures",
+      "obligation": "An entry past its age, or dated more than a day ahead, is a miss on read whether or not a write has taken it out, and one within both is a hit.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::an_entry_past_its_age_or_dated_more_than_a_day_ahead_is_a_miss",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "f1faaf565a0c091ced6e4b0cb98a3094d50bbaea0d5281e42834a856e65555c8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-NARROWED-BEFORE-READ",
+      "family": "transcript-pictures",
+      "obligation": "A cache directory an earlier build left open to others is narrowed to its owner before a process first reads it, and its entries are then read.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::a_directory_an_earlier_build_left_open_is_narrowed_before_it_is_first_read",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "d593633cb54c38171f81ff212958e379bcdabf32fde34e92289c6de55edc7a25",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-NAMES-BOUNDED",
+      "family": "transcript-pictures",
+      "obligation": "A write holds no more entry names than its bound while it chooses what to take out, takes out the oldest of those, and the writes after it go on freeing the rest.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::a_write_holds_no_more_names_than_its_bound_and_takes_the_oldest_of_them_out",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "7570cff834c5ec21ec55406abbe232209e9cdffe4416e5290a633226b2a70b8b",
       "platforms": [
         "linux",
         "macos",
