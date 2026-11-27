@@ -1202,9 +1202,10 @@ impl crate::terminal::graphics::Formulas for Making {
 const TWO_FORMULAS: &str = "Before.\n\n$$\nx^2\n$$\n\nBetween.\n\n$$\ny_1\n$$\n\nAfter.\n";
 
 /// Every formula told while [`TWO_FORMULAS`] streams in pieces cut at
-/// `cuts`, to a maker that answers each `at_once` or never.
-fn told_cut_at(cuts: &[usize], at_once: bool) -> Vec<String> {
-    let mut drawn = pictured(40, 12, Printed::new(3, 2, 300));
+/// `cuts`, to a maker that answers each `at_once` or never, and every row
+/// the window then shows, once each answer that came is drawn.
+fn told_cut_at(cuts: &[usize], at_once: bool) -> (Vec<String>, Vec<String>) {
+    let mut drawn = pictured(40, 30, Printed::new(3, 2, 300));
     let making = Making::default();
     making.held().at_once = at_once;
     drawn.render.makes_formulas(Box::new(making.clone()));
@@ -1214,17 +1215,37 @@ fn told_cut_at(cuts: &[usize], at_once: bool) -> Vec<String> {
         .render
         .waiting_from(Duration::from_millis(1), |_| Ok(false))
         .unwrap();
-    drawn.take();
+    // The pictures' own bytes are sent between frames, wherever the caret
+    // stood; what the window shows is the frames without them.
+    let frames: String = drawn
+        .take()
+        .split("\x1b_G")
+        .enumerate()
+        .map(|(at, piece)| match piece.split_once("\x1b\\") {
+            Some((_, after)) if at > 0 => after,
+            _ => piece,
+        })
+        .collect();
+    let rows = crate::terminal::Picture::of(&frames, 40, 30).rows();
     let every = std::mem::take(&mut making.held().every);
     drop(drawn);
-    every
+    (every, rows)
 }
 
-/// The same formulas are told however the answer is cut: at each byte, at
-/// every byte, or not at all.
-fn told_the_same_however_cut(at_once: bool) {
+/// The same formulas are told, and the same window drawn once they are
+/// answered, however the answer is cut: at each byte, at every byte, or not
+/// at all.
+fn drawn_the_same_however_cut(at_once: bool) {
     let whole = told_cut_at(&[], at_once);
-    assert_eq!(whole, ["x^2", "y_1"]);
+    assert_eq!(whole.0, ["x^2", "y_1"]);
+    // Each formula is its picture where the maker answers, and its text
+    // where it does not, so a window that showed neither agrees with nothing.
+    let pictured = whole
+        .1
+        .iter()
+        .filter(|row| row.contains('\u{10EEEE}'))
+        .count();
+    assert_eq!(pictured, if at_once { 4 } else { 0 }, "{:#?}", whole.1);
     for cut in 1..TWO_FORMULAS.len() {
         assert_eq!(told_cut_at(&[cut], at_once), whole, "cut at {cut}");
     }
@@ -1234,12 +1255,12 @@ fn told_the_same_however_cut(at_once: bool) {
 
 #[test]
 fn formulas_are_told_the_same_however_the_answer_is_cut_to_a_maker_that_never_answers() {
-    told_the_same_however_cut(false);
+    drawn_the_same_however_cut(false);
 }
 
 #[test]
 fn formulas_are_told_the_same_however_the_answer_is_cut_to_a_maker_that_answers_at_once() {
-    told_the_same_however_cut(true);
+    drawn_the_same_however_cut(true);
 }
 
 #[test]
