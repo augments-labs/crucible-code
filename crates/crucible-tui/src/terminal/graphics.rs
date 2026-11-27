@@ -1229,7 +1229,8 @@ impl Sent {
 /// with its numeric parameters and then `q`: any other device control
 /// string, such as a request for a setting or a capability, has the
 /// terminal answer into the session's input.
-fn sixel_body(bytes: &[u8]) -> Option<&str> {
+#[must_use]
+pub fn sixel_body(bytes: &[u8]) -> Option<&str> {
     let body = bytes.strip_prefix(b"\x1bP")?.strip_suffix(b"\x1b\\")?;
     if !body.iter().all(|byte| (0x20..0x7f).contains(byte)) {
         return None;

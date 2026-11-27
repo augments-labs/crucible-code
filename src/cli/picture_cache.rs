@@ -239,8 +239,8 @@ fn is_draft(name: &std::ffi::OsStr) -> bool {
 }
 
 /// Whether `payload` is what `protocol` is sent, `pixels` in size: a PNG of
-/// those pixels for Kitty and iTerm2, and for Sixel one device control string
-/// of printable bytes, so no other sequence reaches the terminal from it.
+/// those pixels for Kitty and iTerm2, and for Sixel what the terminal is sent
+/// as Sixel and no other sequence, painting no more than those pixels.
 fn shown(protocol: Protocol, payload: &[u8], pixels: (u32, u32)) -> bool {
     match protocol {
         Protocol::Kitty | Protocol::Iterm2 => {
@@ -251,11 +251,106 @@ fn shown(protocol: Protocol, payload: &[u8], pixels: (u32, u32)) -> bool {
             };
             decode(payload).is_ok_and(|read| (read.width(), read.height()) == pixels)
         }
-        Protocol::Sixel => payload
-            .strip_prefix(b"\x1bP")
-            .and_then(|inner| inner.strip_suffix(b"\x1b\\"))
-            .is_some_and(|inner| inner.iter().all(|byte| matches!(byte, b' '..=b'~'))),
+        Protocol::Sixel => crucible_tui::graphics::sixel_body(payload)
+            .is_some_and(|body| sixel_within(body.as_bytes(), pixels)),
     }
+}
+
+/// Whether the Sixel `body`, inside its device control string, says it is
+/// `pixels` in its raster attributes and paints nothing outside them: a
+/// payload that paints more than it says would draw past the cells it was
+/// given. Anything but colours, sixels, repeats, returns and new bands is
+/// refused, as is a body that does not say its size.
+fn sixel_within(body: &[u8], (width, height): (u32, u32)) -> bool {
+    let opened = body
+        .iter()
+        .position(|byte| *byte == b'q')
+        .and_then(|at| body.get(at + 1..));
+    let Some(rest) = opened.and_then(|rest| rest.strip_prefix(b"\"")) else {
+        return false;
+    };
+    let mut said = [0_u64; 4];
+    let mut rest = rest;
+    for (at, slot) in said.iter_mut().enumerate() {
+        let Some((number, after)) = number(rest) else {
+            return false;
+        };
+        *slot = number;
+        rest = after;
+        if at < 3 {
+            let Some(after) = rest.strip_prefix(b";") else {
+                return false;
+            };
+            rest = after;
+        }
+    }
+    let [_, _, across, down] = said;
+    if (across, down) != (u64::from(width), u64::from(height)) {
+        return false;
+    }
+    let bands = down.div_ceil(6);
+    let (mut band, mut column) = (0_u64, 0_u64);
+    while let Some((&byte, after)) = rest.split_first() {
+        rest = after;
+        let painted = match byte {
+            b'#' => {
+                let taken = rest
+                    .iter()
+                    .take_while(|byte| byte.is_ascii_digit() || **byte == b';')
+                    .count();
+                rest = rest.get(taken..).unwrap_or_default();
+                0
+            }
+            b'!' => {
+                let Some((count, after)) = number(rest) else {
+                    return false;
+                };
+                let Some((sixel, after)) = after.split_first() else {
+                    return false;
+                };
+                if !(0x3f..=0x7e).contains(sixel) {
+                    return false;
+                }
+                rest = after;
+                count.max(1)
+            }
+            0x3f..=0x7e => 1,
+            b'$' => {
+                column = 0;
+                0
+            }
+            b'-' => {
+                band += 1;
+                column = 0;
+                0
+            }
+            _ => return false,
+        };
+        if painted > 0 {
+            column = column.saturating_add(painted);
+            if band >= bands || column > across {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// The decimal number `bytes` opens with, and what follows it; nothing where
+/// it opens with no digit or the number is past any picture's size.
+fn number(bytes: &[u8]) -> Option<(u64, &[u8])> {
+    let digits = bytes
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    let (taken, rest) = bytes.split_at_checked(digits)?;
+    if taken.is_empty() || taken.len() > 9 {
+        return None;
+    }
+    let number = taken
+        .iter()
+        .fold(0_u64, |number, digit| number * 10 + u64::from(digit - b'0'));
+    Some((number, rest))
 }
 
 /// An entry's body, read apart.

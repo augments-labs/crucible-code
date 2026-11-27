@@ -513,7 +513,6 @@ fn a_payload_that_is_not_what_its_protocol_says_is_a_miss() {
         protocol: Protocol::Sixel,
         ..key()
     };
-    fs::create_dir_all(&cache.directory).unwrap();
     // Sealed as an entry is, so only what the payload is tells them apart.
     for (key, payload) in [
         (key(), b"not a picture".to_vec()),
@@ -530,7 +529,7 @@ fn a_payload_that_is_not_what_its_protocol_says_is_a_miss() {
             &payload,
         )
         .unwrap();
-        fs::write(cache.directory.join(named(&digest)), &bytes).unwrap();
+        written(&cache, &named(&digest), &bytes);
         assert!(
             cache.get(SOURCE, &key).is_none(),
             "{:?} took {} bytes it is not sent",
@@ -548,11 +547,106 @@ fn a_payload_that_is_not_what_its_protocol_says_is_a_miss() {
         kitty.bytes(),
     )
     .unwrap();
-    fs::write(cache.directory.join(named(&digest)), &bytes).unwrap();
+    written(&cache, &named(&digest), &bytes);
     assert!(
         cache.get(SOURCE, &key()).is_none(),
         "the wrong size was read"
     );
+}
+
+/// Sealed as an entry is, `payload` under a Sixel key for `pixels`, with the
+/// picture `form` is: only what the payload is can make it a miss.
+fn sixel_sealed(cache: &Cache, form: &Form, pixels: (u32, u32), payload: &[u8]) -> PictureKey {
+    let Form::Svg(svg) = form else { panic!() };
+    let key = PictureKey {
+        protocol: Protocol::Sixel,
+        ..key()
+    };
+    let digest = keyed(SOURCE, &key);
+    let bytes = sealed(
+        &digest,
+        key.protocol,
+        pixels,
+        svg.as_str().as_bytes(),
+        payload,
+    )
+    .unwrap();
+    written(cache, &named(&digest), &bytes);
+    key
+}
+
+/// `bytes` written under `name` in `cache` as the writer writes an entry,
+/// owner-only, so only what the bytes are can make it a miss.
+fn written(cache: &Cache, name: &str, bytes: &[u8]) {
+    crucible_privacy::directory(&cache.directory).unwrap();
+    crucible_privacy::replace_in(&cache.directory, std::ffi::OsStr::new(name), bytes).unwrap();
+}
+
+#[test]
+fn a_sixel_payload_the_terminal_would_not_be_sent_or_that_paints_past_its_pixels_is_a_miss() {
+    let _turn = turn();
+    let (_sample, home) = home("sixel-gate");
+    let cache = Cache::open(&home);
+    let form = form(40, 20);
+    // A band of 2000 columns, a hundred times over: 2000 by 600 pixels.
+    let wide = format!(
+        "\x1bP0;1;0q\"1;1;1;1#0;2;0;0;0{}\x1b\\",
+        "#0!2000~-".repeat(100)
+    );
+    for (pixels, payload, what) in [
+        (
+            (1, 1),
+            "\x1bP$qm\x1b\\".to_owned(),
+            "a request for a setting",
+        ),
+        (
+            (1, 1),
+            "\x1bP+q544e\x1b\\".to_owned(),
+            "a request for a capability",
+        ),
+        (
+            (1, 1),
+            wide.clone(),
+            "a 1 by 1 picture painting 2000 by 600",
+        ),
+        (
+            (2000, 600),
+            wide.replace("\"1;1;1;1", ""),
+            "no raster attributes",
+        ),
+        (
+            (1, 1),
+            "\x1bP0;1;0q\"1;1;2;1#0~~-\x1b\\".to_owned(),
+            "raster wider than kept",
+        ),
+        (
+            (1, 1),
+            "\x1bP0;1;0q\"1;1;1;1#0~-#0~-\x1b\\".to_owned(),
+            "a band past its height",
+        ),
+        (
+            (4, 1),
+            "\x1bP0;1;0q\"1;1;4;1#0!5~-\x1b\\".to_owned(),
+            "a repeat past its width",
+        ),
+    ] {
+        let key = sixel_sealed(&cache, &form, pixels, payload.as_bytes());
+        assert!(cache.get(SOURCE, &key).is_none(), "{what} was taken");
+    }
+    // What the live encoder wrote is still read back, whatever it repeats.
+    let key = PictureKey {
+        protocol: Protocol::Sixel,
+        ..key()
+    };
+    for (width, height) in [(40, 20), (300, 7), (1, 1)] {
+        let form = self::form(width, height);
+        let payload = drawn(&key, &form);
+        sixel_sealed(&cache, &form, payload.pixels(), payload.bytes());
+        let (_, again) = cache
+            .get(SOURCE, &key)
+            .expect("the live encoder's own payload");
+        assert_eq!(again.bytes(), payload.bytes());
+    }
 }
 
 #[cfg(unix)]
