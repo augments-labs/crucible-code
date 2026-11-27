@@ -25,7 +25,7 @@
 //! table of colours and half in another.
 
 use crucible_config::ThemeChoice;
-use crucible_tui::{Glyphs, Offered, Panel, Renderer, Row, Slot, Terminal};
+use crucible_tui::{Glyphs, Ground, Offered, Panel, Renderer, Row, Slot, Terminal};
 
 use crate::cli::Fatal;
 use crate::cli::client::unwritten;
@@ -299,10 +299,17 @@ enum Axis {
 struct Standing {
     axis: Axis,
     interface: usize,
-    code: usize,
+    /// Which syntax theme the mark is on. `None` while nothing has named one
+    /// and the mark has not moved on that axis, and then code is drawn in the
+    /// one the interface row previewed draws it in unless said — so moving
+    /// from `dark` to `light` shows the code that taking `light` would give.
+    code: Option<usize>,
     /// Every syntax theme there is, read once when the panel opens rather than
     /// per frame — the list does not change while somebody is looking at it.
     themes: Vec<String>,
+    /// Which way the terminal said its ground goes, which is what `auto` and
+    /// `ansi` are answered from.
+    ground: Option<Ground>,
 }
 
 impl Standing {
@@ -318,15 +325,40 @@ impl Standing {
     fn at(&mut self) -> &mut usize {
         match self.axis {
             Axis::Interface => &mut self.interface,
-            Axis::Code => &mut self.code,
+            Axis::Code => {
+                let at = self.code_at();
+                self.code.get_or_insert(at)
+            }
         }
+    }
+
+    /// The interface theme the mark is standing on, as a table.
+    fn table(&self) -> crucible_tui::Theme {
+        let (choice, ..) = EVERY.get(self.interface).copied().unwrap_or(EVERY[0]);
+        Style::theme(Some(choice), self.ground)
+    }
+
+    /// What that table draws code in where nothing named a syntax theme.
+    fn unless_said(&self) -> &'static str {
+        crucible_tui::syntax::theme_unless_said(self.table(), self.ground)
+    }
+
+    /// Which row of the code list the mark is on.
+    fn code_at(&self) -> usize {
+        self.code.unwrap_or_else(|| {
+            let unless_said = self.unless_said();
+            self.themes
+                .iter()
+                .position(|named| named == unless_said)
+                .unwrap_or_default()
+        })
     }
 
     /// The syntax theme the mark is standing on.
     fn syntax(&self) -> &str {
-        self.themes
-            .get(self.code)
-            .map_or(crucible_tui::syntax::THEME_UNLESS_SAID, String::as_str)
+        self.code
+            .and_then(|at| self.themes.get(at))
+            .map_or(self.unless_said(), String::as_str)
     }
 }
 
@@ -350,7 +382,6 @@ fn chosen<T: Terminal>(
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<Picked, Fatal> {
     let was = terms.style();
-    let ground = was.ground();
     let themes = crucible_tui::syntax::every_theme();
 
     let mut standing = Standing {
@@ -361,19 +392,19 @@ fn chosen<T: Terminal>(
             .unwrap_or_default(),
         code: themes
             .iter()
-            .position(|named| Some(named.as_str()) == terms.reading.borrow().as_deref())
-            .unwrap_or_default(),
+            .position(|named| Some(named.as_str()) == terms.reading.borrow().as_deref()),
         themes,
+        ground: was.ground(),
     };
 
     let ended = region::stand_while(
         renderer,
         // The preview: both axes as the mark is standing on them, so moving on
         // either one visibly changes the column on the right.
-        |standing: &Standing| previewing(was, ground, standing),
+        |standing: &Standing| previewing(was, standing),
         &mut standing,
         |standing, columns, room| {
-            let style = previewing(was, ground, standing);
+            let style = previewing(was, standing);
             (laid(standing, style, columns, room), None)
         },
         walking,
@@ -429,9 +460,8 @@ fn walking(arrived: Pressed, standing: &mut Standing) -> Moved {
 }
 
 /// The style both marks together preview.
-fn previewing(was: Style, ground: Option<crucible_tui::Ground>, standing: &Standing) -> Style {
-    let (choice, ..) = EVERY.get(standing.interface).copied().unwrap_or(EVERY[0]);
-    let wearing = was.wearing(Style::theme(Some(choice), ground));
+fn previewing(was: Style, standing: &Standing) -> Style {
+    let wearing = was.wearing(standing.table());
 
     match crucible_tui::syntax::colours(standing.syntax()) {
         Some(six) => wearing.reading(six),
@@ -482,7 +512,7 @@ fn laid(standing: &Standing, style: Style, columns: usize, room: usize) -> Vec<R
         shown: &shown,
         chosen: match standing.axis {
             Axis::Interface => standing.interface,
-            Axis::Code => standing.code,
+            Axis::Code => standing.code_at(),
         },
         // Drawn below, across the whole width, for the reason the rule is: it
         // names the keys for the picture rather than for the column on the left.
@@ -586,9 +616,18 @@ pub(super) fn wear<T: Terminal>(name: &str, renderer: &mut Renderer<T>, terms: &
 }
 
 /// Puts `choice` in force and repaints every row on screen in it.
+///
+/// Where nothing named a syntax theme, code is read again in the one the new
+/// table draws it in: a table for the other ground would leave code drawn for
+/// the ground it left.
 fn put_on<T: Terminal>(choice: ThemeChoice, renderer: &mut Renderer<T>, terms: &Terms) {
     let was = terms.style();
     let now = was.wearing(Style::theme(Some(choice), was.ground()));
+    let now = match terms.reading.borrow().as_deref() {
+        Some(_) => now,
+        None => crucible_tui::syntax::colours(now.syntax_unless_said())
+            .map_or(now, |six| now.reading(six)),
+    };
 
     terms.style.set(now);
     terms.chosen.set(Some(choice));

@@ -230,7 +230,13 @@ fn every_settings_row_offers_what_its_declaration_accepts() {
             "{} offers what its declaration does not accept",
             row.key
         );
-        assert!(row.usual().is_some(), "{} states no default", row.key);
+        // Except the syntax theme, whose default follows the ground and is
+        // shown by the row as the one in force.
+        assert!(
+            row.usual().is_some() || row.key == "output.syntaxTheme",
+            "{} states no default",
+            row.key
+        );
     }
 }
 

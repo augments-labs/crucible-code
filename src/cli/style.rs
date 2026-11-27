@@ -189,15 +189,15 @@ impl Style {
         // only one *theme* that is read now, under half a millisecond of
         // the startup budget. The syntax definitions, which are the larger
         // half, stay unread until a fence actually arrives.
+        // Where nothing named one, it is the one made for the ground the table
+        // is drawn on: code has no ground of its own.
         let code = color
             .then(|| {
-                let named = syntax
-                    .as_deref()
-                    .unwrap_or(crucible_tui::syntax::THEME_UNLESS_SAID);
+                let unless_said = crucible_tui::syntax::theme_unless_said(theme, ground);
+                let named = syntax.as_deref().unwrap_or(unless_said);
 
-                crucible_tui::syntax::colours(named).or_else(|| {
-                    crucible_tui::syntax::colours(crucible_tui::syntax::THEME_UNLESS_SAID)
-                })
+                crucible_tui::syntax::colours(named)
+                    .or_else(|| crucible_tui::syntax::colours(unless_said))
             })
             .flatten();
 
@@ -262,6 +262,15 @@ impl Style {
     /// terminal reported then.
     pub(crate) fn ground(self) -> Option<Ground> {
         self.ground
+    }
+
+    /// Which syntax theme fenced code is drawn in under this style where
+    /// nothing named one: the one made for the ground its table is drawn on.
+    ///
+    /// Read by `/theme`, which reads code in it again when it changes the
+    /// table, and by `/settings`, whose row says what is in force.
+    pub(crate) fn syntax_unless_said(self) -> &'static str {
+        crucible_tui::syntax::theme_unless_said(self.palette.theme(), self.ground)
     }
 
     /// The system the session runs on.
@@ -548,6 +557,121 @@ mod tests {
         assert_eq!(themed(None, None).palette().theme(), Theme::Dark);
     }
 
+    /// The colour a twenty-four bit ink writes.
+    fn ink(worn: &str) -> Option<(u8, u8, u8)> {
+        let mut said = worn
+            .strip_prefix("\x1b[38;2;")?
+            .strip_suffix('m')?
+            .split(';')
+            .map(|part| part.parse().ok());
+
+        Some((said.next()??, said.next()??, said.next()??))
+    }
+
+    /// How far apart two colours stand, as the contrast formula measures it.
+    fn contrast(one: (u8, u8, u8), other: (u8, u8, u8)) -> f64 {
+        let luminance = |(red, green, blue): (u8, u8, u8)| {
+            let channel = |value: u8| {
+                let value = f64::from(value) / 255.0;
+                if value <= 0.03928 {
+                    value / 12.92
+                } else {
+                    ((value + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue)
+        };
+        let (one, other) = (luminance(one), luminance(other));
+
+        (one.max(other) + 0.05) / (one.min(other) + 0.05)
+    }
+
+    /// The six a syntax theme decides.
+    const CODE: [crucible_tui::Slot; 6] = [
+        crucible_tui::Slot::Comment,
+        crucible_tui::Slot::Keyword,
+        crucible_tui::Slot::Str,
+        crucible_tui::Slot::Number,
+        crucible_tui::Slot::Name,
+        crucible_tui::Slot::Operator,
+    ];
+
+    /// The palette a run gets on a twenty-four bit terminal, having named
+    /// `chosen` and nothing about code, over whatever the terminal said.
+    fn coded(
+        chosen: Option<ThemeChoice>,
+        exact: Option<(u8, u8, u8)>,
+        seeded: Option<Ground>,
+    ) -> Palette {
+        Style::resolve(
+            Output {
+                theme: chosen,
+                ..Output::default()
+            },
+            true,
+            exact,
+            seeded,
+            &environment(&[("COLORTERM", "truecolor")]),
+        )
+        .palette()
+    }
+
+    #[test]
+    fn code_on_a_light_ground_with_no_syntax_theme_named_reads_on_white() {
+        // A syntax theme made for a dark ground puts its strings at 1.4:1 on a
+        // light one, which nobody reads. Every way a run arrives at a light
+        // ground with nothing said about code: the table named, for either
+        // eyes, `auto` told by the channels or by a variable, and `ansi`, whose
+        // sixteen were chosen for whichever ground the terminal says it has.
+        for (chosen, exact, seeded) in [
+            (Some(ThemeChoice::Light), None, None),
+            (Some(ThemeChoice::ColourblindLight), None, None),
+            (None, Some((255, 255, 255)), None),
+            (Some(ThemeChoice::Auto), None, Some(Ground::Light)),
+            (Some(ThemeChoice::Ansi), None, Some(Ground::Light)),
+        ] {
+            let palette = coded(chosen, exact, seeded);
+            let faint: Vec<String> = CODE
+                .iter()
+                .filter_map(|slot| {
+                    let worn = palette.open(*slot);
+                    let colour = ink(worn.as_str())
+                        .unwrap_or_else(|| panic!("{slot:?} wrote {:?}", worn.as_str()));
+                    let ratio = contrast(colour, (255, 255, 255));
+                    (ratio < 4.5).then(|| format!("{slot:?} {colour:?} at {ratio:.2}:1"))
+                })
+                .collect();
+
+            assert!(
+                faint.is_empty(),
+                "{chosen:?} {exact:?} {seeded:?} on white: {faint:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn code_on_a_dark_ground_or_an_unknown_one_is_drawn_as_it_always_was() {
+        // Monokai Extended's string colour, where nothing has said the ground
+        // is light: a dark table, either eyes, `auto` told dark or told
+        // nothing, and `ansi` told nothing.
+        for (chosen, seeded) in [
+            (Some(ThemeChoice::Dark), None),
+            (Some(ThemeChoice::ColourblindDark), None),
+            (Some(ThemeChoice::Dark), Some(Ground::Light)),
+            (None, None),
+            (Some(ThemeChoice::Auto), Some(Ground::Dark)),
+            (Some(ThemeChoice::Ansi), None),
+        ] {
+            let palette = coded(chosen, None, seeded);
+
+            assert_eq!(
+                ink(palette.open(crucible_tui::Slot::Str).as_str()),
+                Some((0xe6, 0xdb, 0x74)),
+                "{chosen:?} {seeded:?}"
+            );
+        }
+    }
+
     #[test]
     fn a_band_is_blended_only_where_the_terminal_answered_with_channels() {
         // The distinction the two parameters exist for. A ground known only by
@@ -816,25 +940,39 @@ mod tests {
     }
 
     #[test]
-    fn the_theme_the_schema_states_for_fenced_code_is_the_one_this_falls_back_to() {
+    fn the_schema_names_every_theme_fenced_code_falls_back_to_and_states_no_one_default() {
         // The one default whose two halves are in two crates: the schema is
-        // generated in crucible-config and the theme is named in crucible-tui,
+        // generated in crucible-config and the themes are named in crucible-tui,
         // and this file is where they meet. Which is the whole reason the test
-        // is here rather than beside either of them.
+        // is here rather than beside either of them. The answer depends on the
+        // ground, so a single `default` an editor would write into a file is
+        // right on one ground and unreadable on the other; the description
+        // names each instead.
         let schema: serde_json::Value =
             serde_json::from_str(&crucible_config::schema()).expect("the schema is JSON");
-        let stated = [
-            "properties",
-            "output",
-            "properties",
-            "syntaxTheme",
-            "default",
-        ]
-        .iter()
-        .try_fold(&schema, |node, step| node.get(step))
-        .and_then(serde_json::Value::as_str);
+        let declared = ["properties", "output", "properties", "syntaxTheme"]
+            .iter()
+            .try_fold(&schema, |node, step| node.get(step))
+            .expect("the schema declares syntaxTheme");
 
-        assert_eq!(stated, Some(crucible_tui::syntax::THEME_UNLESS_SAID));
+        assert_eq!(declared.get("default"), None);
+
+        let about = declared
+            .get("description")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        for theme in [
+            Theme::Dark,
+            Theme::Light,
+            Theme::ColourblindDark,
+            Theme::ColourblindLight,
+            Theme::Ansi,
+        ] {
+            for ground in [None, Some(Ground::Dark), Some(Ground::Light)] {
+                let named = crucible_tui::syntax::theme_unless_said(theme, ground);
+                assert!(about.contains(named), "{named} is not named: {about}");
+            }
+        }
     }
 
     #[test]

@@ -736,7 +736,7 @@ you with no way to send at all.
 | `glyphs` | `unicode`, `ascii` | Which characters crucible draws with; `unicode` by default. `ascii` if box drawing shows as hollow squares, or if the terminal draws box drawing such as `─` and `│`, or marks such as `›`, `•` and `●`, two columns wide. |
 | `theme` | `auto`, `dark`, `light`, `colourblind-dark`, `colourblind-light`, `ansi` | Which colours crucible draws with; `auto` by default. |
 | `transcriptColours` | `calm`, `balanced`, `rich` | How many of the theme's colours a reply and its tool calls spend; `calm` by default. Below the table. |
-| `syntaxTheme` | a theme name | Which theme fenced code is drawn in; `Monokai Extended` by default. |
+| `syntaxTheme` | a theme name | Which theme fenced code is drawn in. Unset, it follows the ground `theme` is drawn for: `Monokai Extended` on a dark one, `Coldark-Cold` on a light one. |
 | `toolDetail` | `compact`, `full` | The width of compact tool headings and result previews: a readable measure, or the whole window; `compact` by default. Clipped details remain expandable: recent ones from memory, older ones read back from the session log when the view reaches them, where the session has a log. |
 | `scrollRail` | `true`, `false` | Whether the transcript has a one-column scroll rail on its right edge; `true` by default. The rail shows which part of the transcript is on screen and a mark at each prompt, and while a turn runs it also stands beside what the turn is showing, which it counts as the end of the transcript; a click off the thumb scrolls there, a drag on its thumb scrolls with the pointer, and a click on a mark lands on that prompt. The prompt you are reading under has a larger mark, and a pointer on the rail lights the track and marks and enlarges the mark under it. Text wraps one column narrower while it is drawn, and a window too narrow to spare the column does not draw it. `false` gives the column back. |
 | `screen` | `fullscreen`, `native` | Where crucible draws; `fullscreen` by default, and read only at start. `fullscreen` takes a screen of its own, with its own scrollback, scroll rail and selection. `native` draws in your terminal's own buffer: what is finished is written once into the terminal's scrollback, only the part still changing at the foot is drawn again, and scrolling, selection, search and copy are your terminal's. The scroll rail, the mouse scroll speed and crucible's own selection are off there. The rest of what it changes, and what you do instead, is under [What native mode cannot do](#what-native-mode-cannot-do). |
@@ -806,6 +806,13 @@ screen is already making.
 above decides the interface: borders, marks, the mode in force, the ground a
 diff takes. This decides what a fenced block of code in an answer looks like,
 and the two are chosen together on `/theme`, one axis each.
+
+Code is drawn on your terminal's own background, so with no `syntaxTheme` set
+it follows the ground the theme is drawn for: Monokai Extended under `dark` and
+`colourblind-dark`, Coldark-Cold under `light` and `colourblind-light`, whose
+colours all stand at least 6:1 on white. Under `auto` and `ansi` that is the
+ground your terminal reports, and dark where it reports none. Taking a theme on
+`/theme` takes the code theme with it, until you name one.
 
 The names are the ones you already have an opinion about: Monokai Extended,
 GitHub, Dracula, Nord, gruvbox, Solarized, one-half and the rest. `/theme` lists

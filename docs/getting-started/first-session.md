@@ -1248,6 +1248,8 @@ There are two lists, and the left and right arrows step between them. **interfac
 is the one above: borders, marks, the mode in force, the ground a diff takes.
 **code** is which theme fenced code is drawn in, and its list holds the names
 you already know: Monokai Extended, GitHub, Dracula, Nord, gruvbox and the rest.
+Until you take one, code follows the interface theme's background: Monokai
+Extended on a dark one and Coldark-Cold on a light one.
 
 The specimen shows both at once, which is why it is a diff. The rows a change
 touched carry a ground, and that is the interface theme's; the rows it did not

@@ -475,7 +475,7 @@ fn other(line: &Line) -> String {
         ),
         Values::Named => crucible_tui::syntax::every_theme()
             .into_iter()
-            .find(|name| *name != line.value && *name != crucible_tui::syntax::THEME_UNLESS_SAID),
+            .find(|name| *name != line.value),
     }
     .unwrap_or_else(|| panic!("{} offers one value", line.row.label()))
 }
@@ -1347,6 +1347,31 @@ fn the_math_row_says_what_the_check_found_of_math_pictures_each_time_it_is_drawn
             rows.iter().filter(|row| row.contains(&words)).count(),
             1,
             "{said:?}: {rows:#?}"
+        );
+    }
+}
+
+#[test]
+fn the_syntax_theme_row_says_which_one_the_table_in_force_draws_code_in() {
+    // Nothing named one, so the files state no default: the row shows the one
+    // in force, and that follows the ground the table is drawn for.
+    for theme in [crucible_tui::Theme::Dark, crucible_tui::Theme::Light] {
+        let terms = Terms {
+            style: std::cell::Cell::new(Style::plain().wearing(theme)),
+            ..plain()
+        };
+        let counted = counted();
+        let panel = Panel::new(&terms, &counted);
+        let line = panel
+            .lines
+            .iter()
+            .find(|line| line.row.id() == RowId::SyntaxTheme)
+            .expect("a syntax theme row");
+
+        assert_eq!(
+            line.value,
+            crucible_tui::syntax::theme_unless_said(theme, None),
+            "{theme:?}"
         );
     }
 }

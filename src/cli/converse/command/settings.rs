@@ -716,6 +716,12 @@ impl Line {
             .or(settled)
             .or_else(|| terms.settings.stated(row, &from))
             .or_else(|| row.usual().map(str::to_owned))
+            // The one row whose default follows the ground, so the files state
+            // none: the syntax theme the table in force draws code in.
+            .or_else(|| {
+                (row.id() == RowId::SyntaxTheme)
+                    .then(|| terms.style().syntax_unless_said().to_owned())
+            })
             .unwrap_or_default();
         let locked = if unoffered {
             Some(Lock::FullscreenOnly)

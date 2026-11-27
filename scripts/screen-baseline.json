@@ -227,7 +227,7 @@
         "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, &answer, )",
         "Watched::allowing(\"theme-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "cee15425954c579381445f442dd743b5608a56a0e5e4648b5052d9304fb393af"
+      "sha256": "d31cf161497667536c641c8ffa72c1cae7827ac3a2195735ace14822a64df97c"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_typed_line_that_reaches_the_edge_wraps_and_grows_the_box.snap",
@@ -1962,7 +1962,7 @@
         "Vendor::answering(&crate::a_long_answer())",
         "Watched::native(case, 80, 24, vendor)"
       ],
-      "sha256": "9f31399eaa76bb79289f5eb13012fd8be945a6b1ef1a67693793ab6e64534bb8"
+      "sha256": "98d3e20397b8dc7553b1195e4b80db486fe18792d5a42e3cafc0e1f0018773e5"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__usage_after_a_turn_on_a_key_says_no_limits_were_reported_and_closes_on_escape_in_native_mode.snap",

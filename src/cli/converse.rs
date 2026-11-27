@@ -162,8 +162,8 @@ pub(crate) struct Terms {
     /// nothing rather than marking the row `auto` happens to have resolved to.
     pub(crate) chosen: Cell<Option<crucible_config::ThemeChoice>>,
     /// Which syntax theme fenced code is read in, where a layer named one or
-    /// `/theme` took one. `None` is "nothing said", and the first fence settles
-    /// on whatever this build draws code in unless somebody says otherwise.
+    /// `/theme` took one. `None` is "nothing said", and code is drawn in the one
+    /// made for the ground the table in force is drawn for.
     pub(crate) reading: RefCell<Option<String>>,
     /// What `/settings` has written down this session, by key, one entry a
     /// row: the settings above were read at the start and are not read again,
