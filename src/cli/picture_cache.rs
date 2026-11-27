@@ -457,7 +457,7 @@ impl Writer {
 
     /// Writes every entry waiting now.
     #[cfg(test)]
-    fn drain(&self) {
+    pub(crate) fn drain(&self) {
         while let Ok(entry) = self.receiver.try_recv() {
             self.write(&entry);
         }

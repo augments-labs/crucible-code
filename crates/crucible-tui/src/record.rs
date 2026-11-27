@@ -320,9 +320,18 @@ struct Picturing {
     keeps: bool,
     /// How many rows the transcript band was at the last frame.
     band: usize,
-    /// Whether a session put back is being drawn, when only a kept picture
-    /// is shown.
-    resuming: bool,
+    /// What is being drawn: a live session, or one put back, when only a
+    /// kept picture is shown.
+    drawing: Drawing,
+}
+
+/// What blocks are being drawn for, which decides whether a drawer may run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Drawing {
+    /// A live session: a block not kept is drawn afresh.
+    Live,
+    /// A session put back: a block not kept is its text.
+    PutBack,
 }
 
 impl fmt::Debug for Picturing {
@@ -339,7 +348,7 @@ impl fmt::Debug for Picturing {
             .field("window", &self.window)
             .field("keeps", &self.keeps)
             .field("band", &self.band)
-            .field("resuming", &self.resuming)
+            .field("drawing", &self.drawing)
             .finish()
     }
 }
@@ -358,7 +367,7 @@ impl Default for Picturing {
             window: 0,
             keeps: false,
             band: 0,
-            resuming: false,
+            drawing: Drawing::Live,
         }
     }
 }
@@ -1350,7 +1359,11 @@ impl Record {
     /// from an earlier session; one they did not keep is drawn as its text,
     /// as one not drawn here is, so putting a session back runs no drawer.
     pub(crate) fn resuming(&mut self, resuming: bool) {
-        self.picturing.resuming = resuming;
+        self.picturing.drawing = if resuming {
+            Drawing::PutBack
+        } else {
+            Drawing::Live
+        };
         if let Some(pictures) = self.picturing.pictures.as_mut() {
             pictures.resuming(resuming);
         }
@@ -1596,7 +1609,7 @@ impl Record {
                 payload,
                 size: PictureSize::Fit,
             }
-        } else if self.picturing.resuming {
+        } else if self.picturing.drawing == Drawing::PutBack {
             return Err(Undrawn::NotHere);
         } else {
             let form = Form::Svg(drawer.picture(source, &Room { columns, glyphs })?);

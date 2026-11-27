@@ -553,3 +553,298 @@ fn a_session_picked_up_by_resume_draws_the_images_its_turns_named() {
         "no picture was sent: {written:?}"
     );
 }
+
+/// Pictures that keep what they draw under `home`, and the one writer that
+/// lands it, run where a test says.
+fn caching(
+    home: &std::path::Path,
+) -> (
+    Box<dyn graphics::Pictures>,
+    crate::cli::picture_cache::Writer,
+) {
+    let cache = crate::cli::picture_cache::Cache::open(home);
+    let (queue, writer) = crate::cli::picture_cache::writing(cache.clone());
+    (
+        Box::new(crate::cli::pictures::Caching::new(cache, queue)),
+        writer,
+    )
+}
+
+/// The entries the cache under `home` holds: its own names only.
+fn cached_entries(home: &std::path::Path) -> Vec<String> {
+    let Ok(listed) = std::fs::read_dir(home.join("pictures")) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = listed
+        .map(|listed| listed.unwrap().file_name().into_string().unwrap())
+        .filter(|name| name.len() == 64 && name.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .collect();
+    names.sort();
+    names
+}
+
+/// A diagram as an answer writes one, its node named `node`.
+fn diagram(node: &str) -> String {
+    format!("```mermaid\ngraph TD\n  {node} --> B\n```\n")
+}
+
+/// A session whose one turn was answered with `answer`, put back.
+fn answered_with(answer: &str) -> crucible_types::Transcript {
+    let mut transcript = crucible_types::Transcript::new();
+    transcript
+        .push(crucible_types::Message::said("draw it"))
+        .unwrap();
+    transcript
+        .push(crucible_types::Message::Agent {
+            continuation: None,
+            text: answer.into(),
+            calls: Vec::new(),
+            stop: Some(crucible_types::StopReason::Yielded),
+        })
+        .unwrap();
+    transcript
+}
+
+/// What the loop leaves when `pictures` draw in a workspace holding `files`,
+/// over a runner `build` makes, once `typed` is read.
+fn pictured(
+    sample: &Sample,
+    files: &[(&str, &[u8])],
+    pictures: Box<dyn graphics::Pictures>,
+    typed: &[u8],
+    build: impl FnOnce(Arc<Session>, crucible_workspace::Workspace) -> crucible_runner::Runner,
+) -> (String, Vec<String>) {
+    for (file, bytes) in files {
+        std::fs::write(sample.root().join(file), bytes).unwrap();
+    }
+    let terms = Terms {
+        workspace: sample.workspace(),
+        style: Cell::new(Style::coloured()),
+        ..plain()
+    };
+    seated(sample, &terms, pictures, typed, build)
+}
+
+/// How many pictures `written` sent.
+fn sent(written: &str) -> usize {
+    written.matches("\x1b_Ga=t,f=100,i=").count()
+}
+
+#[test]
+fn an_image_file_drawn_live_or_put_back_leaves_nothing_in_the_picture_cache() {
+    let _turn = crate::cli::pictures::tests::ONE_AT_A_TIME
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    let sample = Sample::new("images-never-cached");
+    let home = sample.root().join(".home");
+    let files: &[(&str, &[u8])] = &[("plot.png", &png(40, 20))];
+    let read = |workspace: crucible_workspace::Workspace| {
+        let mut offered = Tools::new();
+        offered
+            .add_builtin(crucible_builtins::Read::new(
+                workspace,
+                crucible_builtins::Ledger::default(),
+            ))
+            .unwrap();
+        offered
+    };
+    let calls = vec![
+        crucible_models::Delta::ToolStarted {
+            id: ToolId::new("r-1"),
+            name: "read".into(),
+        },
+        crucible_models::Delta::ToolArgs(r#"{"path":"plot.png"}"#.into()),
+        crucible_models::Delta::Stopped(crucible_types::StopReason::WantsTools),
+    ];
+
+    // Put back naming the file, then read by a tool live, beside a diagram
+    // that shows the cache is being written at all.
+    let (pictures, writer) = caching(&home);
+    let (written, rows) = pictured(&sample, files, pictures, b"look\n", |session, workspace| {
+        scripted(
+            Script::new(vec![
+                calls,
+                saying(&format!("A square.\n\n{}", diagram("A"))),
+            ]),
+            read(workspace),
+            session,
+        )
+        .resuming(answered_with("![plot](plot.png)"))
+    });
+    writer.drain();
+
+    assert!(
+        rows.iter().any(|row| row == "┌─ image · plot.png"),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row == "┌─ image · plot.png · read by read"),
+        "{rows:#?}"
+    );
+    assert_eq!(sent(&written), 3, "{written:?}");
+    assert_eq!(cached_entries(&home).len(), 1, "only the diagram is kept");
+}
+
+#[test]
+fn a_session_put_back_draws_its_diagrams_from_what_an_earlier_run_kept() {
+    let _turn = crate::cli::pictures::tests::ONE_AT_A_TIME
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    let sample = Sample::new("images-resumed-cached");
+    let home = sample.root().join(".home");
+    let (pictures, writer) = caching(&home);
+    let (written, _) = pictured(&sample, &[], pictures, b"draw\n", |session, _| {
+        scripted(
+            Script::new(vec![saying(&diagram("A"))]),
+            Tools::new(),
+            session,
+        )
+    });
+    writer.drain();
+    assert_eq!(sent(&written), 1, "the live run drew it: {written:?}");
+    let kept = cached_entries(&home);
+    assert_eq!(kept.len(), 1);
+
+    let (pictures, writer) = caching(&home);
+    let (written, _) = pictured(&sample, &[], pictures, b"", |session, _| {
+        scripted(Script::new(Vec::new()), Tools::new(), session)
+            .resuming(answered_with(&diagram("A")))
+    });
+    writer.drain();
+
+    assert_eq!(sent(&written), 1, "put back as a picture: {written:?}");
+    assert_eq!(cached_entries(&home), kept, "nothing drawn afresh");
+}
+
+#[test]
+fn a_session_put_back_with_nothing_kept_draws_its_diagrams_as_text_and_says_nothing() {
+    let _turn = crate::cli::pictures::tests::ONE_AT_A_TIME
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    let sample = Sample::new("images-resumed-empty");
+    let home = sample.root().join(".home");
+    let (pictures, writer) = caching(&home);
+    let (written, rows) = pictured(&sample, &[], pictures, b"", |session, _| {
+        scripted(Script::new(Vec::new()), Tools::new(), session)
+            .resuming(answered_with(&diagram("A")))
+    });
+    writer.drain();
+
+    assert_eq!(sent(&written), 0, "{written:?}");
+    assert!(cached_entries(&home).is_empty(), "no drawer ran");
+    // Drawn as text, as a terminal that shows no pictures draws it.
+    let (_, text) = after_a_turn_shown_as_text(&diagram("A"));
+    let at = rows.iter().position(|row| row == "› draw it").unwrap();
+    let after = rows.get(at + 1..).unwrap();
+    for row in text.iter().filter(|row| !row.is_empty()) {
+        assert!(after.contains(row), "{row:?} missing from {rows:#?}");
+    }
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row.contains("not drawn") || row.starts_with('!')),
+        "{rows:#?}"
+    );
+}
+
+/// The rows a turn answered with `answer` leaves on a terminal that shows no
+/// pictures, under the line that asked.
+fn after_a_turn_shown_as_text(answer: &str) -> (String, Vec<String>) {
+    let sample = Sample::new("images-as-text");
+    let terms = Terms {
+        workspace: sample.workspace(),
+        style: Cell::new(Style::coloured()),
+        ..plain()
+    };
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(Script::new(Vec::new()), Tools::new(), session).resuming(answered_with(answer))
+    });
+    let mut renderer = crate::cli::furnished(
+        Recording::new(80, 60),
+        &crucible_config::Settings::default(),
+        Box::new(crate::cli::pictures::Raster),
+    );
+    renderer.wears(Style::coloured().palette());
+    let mut input = Cursor::new(Vec::new());
+    converse(
+        conversation,
+        &mut renderer,
+        &terms,
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .unwrap();
+    let written = renderer.terminal().written().to_string();
+    let rows: Vec<String> = crucible_tui::Picture::of(&written, 80, 60)
+        .rows()
+        .iter()
+        .map(|row| row.trim_end().to_owned())
+        .collect();
+    let at = rows.iter().position(|row| row == "› draw it").unwrap();
+    (written, rows.get(at + 1..).unwrap().to_vec())
+}
+
+#[test]
+fn a_long_session_put_back_draws_every_kept_diagram_and_its_images_within_their_time() {
+    let _turn = crate::cli::pictures::tests::ONE_AT_A_TIME
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    let sample = Sample::new("images-resumed-many");
+    let home = sample.root().join(".home");
+    let nodes: Vec<String> = (0..10).map(|node| format!("N{node}")).collect();
+    let files: Vec<(String, Vec<u8>)> = (0..12)
+        .map(|file| (format!("{file}.png"), png(16, 8)))
+        .collect();
+    let files: Vec<(&str, &[u8])> = files
+        .iter()
+        .map(|(name, bytes)| (name.as_str(), bytes.as_slice()))
+        .collect();
+    let diagrams: String = nodes.iter().map(|node| diagram(node) + "\n").collect();
+    let images: String = (0..12).fold(String::new(), |images, file| {
+        images + &format!("![{file}]({file}.png)\n")
+    });
+
+    let (pictures, writer) = caching(&home);
+    let (written, _) = pictured(&sample, &files, pictures, b"draw\n", |session, _| {
+        scripted(Script::new(vec![saying(&diagrams)]), Tools::new(), session)
+    });
+    writer.drain();
+    assert!(sent(&written) > 0, "{written:?}");
+    let kept = cached_entries(&home);
+    assert_eq!(kept.len(), 10, "each diagram is kept, in view or not");
+
+    let started = std::time::Instant::now();
+    let (pictures, writer) = caching(&home);
+    let (written, rows) = pictured(&sample, &files, pictures, b"", |session, _| {
+        scripted(Script::new(Vec::new()), Tools::new(), session)
+            .resuming(answered_with(&(diagrams.clone() + &images)))
+    });
+    writer.drain();
+
+    assert!(sent(&written) > 12, "{written:?}");
+    // The diagrams in view are pictures, and none is its text.
+    let images = rows
+        .iter()
+        .position(|row| row == "[image: 0] (0.png)")
+        .unwrap();
+    let above = rows.get(..images).unwrap();
+    assert!(
+        above.iter().any(|row| row.starts_with('\u{10eeee}')),
+        "{rows:#?}"
+    );
+    assert!(!above.iter().any(|row| row.contains("N9")), "{rows:#?}");
+    for file in 0..12 {
+        let edge = format!("┌─ image · {file}.png");
+        assert!(rows.contains(&edge), "{edge} in {rows:#?}");
+    }
+    assert_eq!(cached_entries(&home), kept, "nothing drawn afresh");
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "{:?}",
+        started.elapsed()
+    );
+}
