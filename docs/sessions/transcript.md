@@ -225,11 +225,11 @@ why where there is a reason to give, as in
 enough: see [Drawn again at every width](#drawn-again-at-every-width).
 
 [`output.math`](../configuration/configuration.md#output) says how math is
-drawn. `image`, the default, draws a formula as a picture where one can be
-shown and as text everywhere else, which is everywhere for now; `text` draws
-it as text; `written` shows every formula exactly as the model wrote it, its
-markers included. A change in `/settings` takes effect at once: every display
-formula already drawn is laid out again in the new form, while a span already
+drawn. `image`, the default, draws a display formula as a picture where the
+session can make one and show it, as [Math as a picture](#math-as-a-picture)
+says, and as text everywhere else; `text` draws it as text; `written` shows
+every formula exactly as the model wrote it, its markers included. A change in
+`/settings` takes effect at once: every display formula already drawn is laid out again in the new form, while a span already
 drawn in a line keeps the form it was drawn in and the next span is drawn in
 the new one. In native mode a display formula already written to the
 terminal's scrollback changes only when the scrollback is written again, once
@@ -237,6 +237,91 @@ the window has been resized; see
 [What native mode cannot do](../configuration/configuration.md#what-native-mode-cannot-do).
 Output with no colour, including output that is not a terminal, keeps every
 formula as written.
+
+### Math as a picture
+
+Under `image`, a display formula is made into a picture by the TeX installed
+on your machine. This is done on Linux only, and needs:
+
+- **TeX.** `latex` and `dvisvgm` in `/usr/bin` or `/bin`, and TeX's settings
+  and formats in `/etc/texmf` and `/var/lib/texmf`, where the Debian-family
+  packages put them. On Debian or Ubuntu,
+  `sudo apt install texlive-latex-base dvisvgm` installs them.
+- **The sandbox's Linux backend.** Bubblewrap 0.11.0 or newer that lists
+  `--size`, a kernel of 5.14 or newer, and `crucible-sandbox-broker` beside
+  `crucible`, as [Turning it on](../security/sandboxing.md#turning-it-on) and
+  the [capability matrix](../security/sandboxing.md#capability-matrix) say.
+
+What TeX is given is the model's text, so it always runs in that sandbox,
+whether `sandbox.enabled` is on or off: the network closed, nothing of your
+machine writable, its own shell escape off, and for each formula at most 8
+seconds, 512 MiB of memory, 16 processes and 8 MiB of files. Where the sandbox
+cannot hold all of that, no formula is made into a picture; none is ever run
+unconfined. On macOS, Windows and every other system, display math is text.
+The formula is read inside a fixed preamble that loads `amsmath` and
+`amssymb`, so one that needs another package stays text.
+
+Nothing is checked at start. Before the first display formula that could be
+shown as a picture, crucible checks once that TeX and the sandbox are there,
+by running `latex --version` and `dvisvgm --version` in the sandbox for at
+most 8 seconds between them, so a session that never shows one never checks.
+A check that decides nothing, because the sandbox was busy, is made again
+before the next display formula. A check that finds no TeX, or a sandbox that
+cannot hold it, is not made again in that session.
+
+Formulas are made one at a time, away from what draws the screen, so the
+screen never waits for TeX. A display formula is drawn as text when it
+closes, and its picture replaces the text once it is made. In the full screen
+that happens wherever the formula is. In native mode it happens while the
+formula is still at the foot of the screen; one already written to your
+terminal's scrollback stays text there until the scrollback is written again,
+after a resize or a change of theme, which draws its picture. A turn's first
+16 display formulas are made, and the rest of that turn stays text. When a
+new turn starts, the formulas of an earlier turn not yet begun stay text, so a
+new question never waits behind an old answer's math.
+
+The picture is drawn in the theme's colour for plain text, and drawn again in
+the new colour when the theme changes. It is shown at its own size, its
+letters about the height of the text around it, and never made smaller to
+fit: a formula whose picture is taller than the window is drawn as text. It is
+shown by the protocols, and in the screen modes, that show a diagram's
+picture, as [Pictures and image files](#pictures-and-image-files) says, and
+counts towards the pictures a session keeps.
+
+Display math stays text everywhere else:
+
+- where pictures are not drawn, and with `output.math` at `text` or `written`;
+- math in a line, and display math in a table's cell or a quote;
+- a formula crucible would show as written;
+- a formula past a turn's first 16;
+- a formula TeX could not make, or did not make in its 8 seconds, which is
+  not run again while the session remembers it among the last 256 that
+  failed.
+
+The Math row of `/settings` says what the check found, after the value and a
+`·`, and says it again each time it is drawn:
+
+- `math pictures not checked yet`: no display formula has wanted a picture.
+- `checking for math pictures`: the check is running.
+- `math pictures by` and the TeX it found, named by the first line each
+  program's `--version` prints, as in
+  `math pictures by pdfTeX 3.141592653-2.6-1.40.28 (TeX Live 2025/Debian); dvisvgm 3.6`.
+- `no math pictures:` and why:
+  - `latex, dvisvgm, /etc/texmf or /var/lib/texmf is missing`;
+  - `no sandbox runs on this machine`, where no Bubblewrap the sandbox
+    accepts or no `crucible-sandbox-broker` beside `crucible` is found;
+  - `the sandbox cannot hold the DiskLimit a TeX run needs`, where Bubblewrap
+    does not list `--size`, and `the sandbox cannot hold the ProcessLimit a
+    TeX run needs`, where the kernel is older than 5.14; off Linux, the limit
+    named is the first that system's sandbox cannot hold;
+  - `the sandbox refused the TeX run`;
+  - `the sandbox would run TeX unconfined`;
+  - `the TeX check did not finish in time`;
+  - `not checked yet: the sandbox was busy`, checked again before the next
+    display formula.
+
+A row a project file or the environment sets says so first, as in
+`image · set by project config, math pictures not checked yet`.
 
 ## Diagrams
 
@@ -682,7 +767,9 @@ than the diagram's own size, and at first at most half the window's height:
 see [Its size](#its-size). A change of theme draws it again in the new
 colours, and a resize draws it again to fit the new width; in native mode a
 picture already in the scrollback changes only when the scrollback is written
-again, once the window has been resized.
+again, once the window has been resized. A display formula TeX made is shown
+the same way, but at its own size, as [Math as a
+picture](#math-as-a-picture) says.
 
 How it is drawn depends on the protocol and the
 [`output.screen`](../configuration/configuration.md#output) mode:
@@ -711,6 +798,10 @@ go on the cell you pressed, so a drag that starts on a picture selects instead:
 - **Full**: the picture's own size, at most 64 rows. After Full it goes back
   to Fit.
 
+A display formula is first shown at Large, which leaves it at its own size,
+since no picture is drawn larger than that and a formula taller than the window
+is drawn as text.
+
 At every size the picture keeps its shape and is never wider than the
 transcript or larger than its own size. Each picture keeps the size it was
 given for the rest of the session, and a resize fits it again at that size. A
@@ -718,17 +809,19 @@ picture Kitty's protocol draws is placed again in its new cells without being
 sent again. One iTerm2's protocol draws is written again from the same image,
 and at Large or Full it is at most the transcript's height when it is placed,
 since it is drawn only while every row of it is in view. In native mode every
-picture stays at Fit, and no click or key changes it; it keeps the rows it was
+picture stays at the size it was first shown at, Fit for a diagram and Large
+for a formula, and no click or key changes it; it keeps the rows it was
 first shown in when the window's height changes, since your terminal's
 scrollback holds the cells it was placed in.
 
 A diagram with a letter the picture's one font has none for keeps its text
-drawing. Everywhere else, and
-for every formula, what the transcript shows in a picture's place is text. No
-picture is drawn, and nothing is sent to the terminal for one, with
-`output.diagrams` at `text` or `written`, with no colour, or when the output is
-not a terminal. An image a turn named does not depend on `output.diagrams`,
-only on the last two.
+drawing, and a formula stays text where [Math as a
+picture](#math-as-a-picture) says. Everywhere else, what the transcript shows
+in a picture's place is text. No picture is drawn, and nothing is sent to the
+terminal for one, with `output.diagrams` at `text` or `written` for a diagram
+or `output.math` at `text` or `written` for a formula, with no colour, or when
+the output is not a terminal. An image a turn named does not depend on
+`output.diagrams` or `output.math`, only on the last two.
 
 A session keeps at most 16 pictures, and at most 1.5 MiB of them, what each
 was drawn from and what the terminal was sent counted once each. Past either,
@@ -754,15 +847,26 @@ again with `--continue`, `--resume` or `/resume` shows it as the picture it
 was, without drawing it again. Putting a session back draws nothing afresh:
 a diagram with no picture kept for it comes back as its text, as it would
 where no pictures are drawn, and nothing is said about it. In the full
-screen, only the 16 newest diagrams are read from the cache, the most a session
-keeps pictures of, once the whole session is back; the older ones come back as
-their text, and stay text when the theme changes. In native mode each diagram
-is read from the cache as it goes back into the scrollback, so every one the
+screen, only the 16 newest diagrams and formulas are read from the cache, the
+most a session keeps pictures of, once the whole session is back; the older
+ones come back as their text, and stay text when the theme changes. In native
+mode each diagram is read from the cache as it goes back into the scrollback, so every one the
 cache kept comes back as its picture, as it did live. It is kept for the
 theme, `transcriptColours`, colour depth, background, protocol, cell size and
 window width it was drawn in, so a picture drawn in another of them is another
 entry, and one drawn in a terminal the session no longer runs in is simply not
 found.
+
+A display formula's picture is kept the same way, and also under the TeX that
+made it, named as the Math row of `/settings` names it. A session put back
+runs no TeX: its formulas stay text until the session's
+[check](#math-as-a-picture) has found TeX, and are then read under that TeX
+alone, on a full screen among the 16 newest pictures, and in native mode each
+as it goes into the scrollback, so one sent there before the check passed
+stays text. Where the check finds no TeX, or another version of it, as after
+TeX is upgraded, no picture an earlier TeX made is read and those formulas
+come back as their text. A formula is made again only when an answer streams
+it anew.
 
 A picture is kept in the form it was first drawn in. One drawn again after the
 window is resized or the theme changes is not kept, so a session picked up
@@ -783,8 +887,8 @@ entry past 32 MiB until the next write.
 It is [yours alone](sessions.md#who-can-read-them), as session logs are.
 
 Nothing in it is needed: deleting the directory, or any file in it, only means
-the next session put back draws those diagrams as text. An entry that is cut
-short, changed, or reachable by another account is passed over and written
+the next session put back draws those diagrams and formulas as text. An entry
+that is cut short, changed, or reachable by another account is passed over and written
 again the next time that picture is drawn, and a cache that cannot be written,
 on a full or read-only disk, leaves every picture drawn as before. Writing it
 never holds up the screen: entries are written one at a time by a thread of
