@@ -59,7 +59,7 @@ impl Checking {
     /// A check that finds `engine` as soon as it is made.
     fn open(engine: &Arc<StandIn>) -> Self {
         let checking = Self::shut(engine);
-        checking.gate.add_permits(1 << 20);
+        checking.lets_all();
         checking
     }
 
@@ -75,6 +75,11 @@ impl Checking {
 
     fn lets_one(&self) {
         self.gate.add_permits(1);
+    }
+
+    /// Lets every check made from now on through as soon as it is made.
+    fn lets_all(&self) {
+        self.gate.add_permits(1 << 20);
     }
 
     fn says(&self, said: Result<(), Unavailable>) {
@@ -194,20 +199,64 @@ fn formulas_told_while_a_check_that_decides_nothing_runs_stay_text_and_the_next_
     assert!(stand_in.made().is_empty());
     assert!(!engine.pending());
 
-    // Each kept its place under the turn's cap: fourteen more are made, and
-    // the one past them is not.
+    // The next formula asks again, and those told while that check runs
+    // wait for it and start none of their own.
     checking.says(Ok(()));
-    checking.lets_one();
-    for ticket in 3..=17 {
+    engine.told(3, "f3");
+    until(|| checking.started() == 2);
+    for ticket in 4..=17 {
         engine.told(ticket, &format!("f{ticket}"));
     }
+    settle();
+    assert_eq!(checking.started(), 2, "one check is in flight");
+    checking.lets_all();
+
+    // Each kept its place under the turn's cap: fourteen more are made, and
+    // the one past them is not.
     let made = answers(&mut engine, 14);
     assert_eq!(made.first(), Some(&(3, Some("f3".to_owned()))));
     assert_eq!(made.last(), Some(&(16, Some("f16".to_owned()))));
-    assert_eq!(checking.started(), 2, "the next formula asked again");
     settle();
+    assert_eq!(
+        checking.started(),
+        2,
+        "what the check settled asked no more"
+    );
     assert!(engine.answered().is_none());
     assert!(!engine.pending());
+}
+
+#[test]
+fn formulas_told_while_a_check_asked_again_decides_nothing_stay_text_and_the_next_asks_a_third_time()
+ {
+    let runtime = runtime();
+    let stand_in = Arc::new(StandIn::default());
+    let checking = Checking::shut(&stand_in);
+    checking.says(Err(Unavailable::NotReached));
+    let mut engine = MathEngine::start(runtime.handle(), checking.check());
+
+    engine.told(1, "a");
+    until(|| checking.started() == 1);
+    checking.lets_one();
+    assert_eq!(answers(&mut engine, 1), [(1, None)]);
+
+    engine.told(2, "b");
+    until(|| checking.started() == 2);
+    engine.told(3, "c");
+    settle();
+    assert_eq!(checking.started(), 2, "one check is in flight");
+    checking.lets_all();
+
+    assert_eq!(answers(&mut engine, 2), [(2, None), (3, None)]);
+    settle();
+    assert_eq!(checking.started(), 2, "neither started a check of its own");
+    assert!(stand_in.made().is_empty());
+    assert!(!engine.pending());
+
+    checking.says(Ok(()));
+    engine.told(4, "d");
+    assert_eq!(answers(&mut engine, 1), [(4, Some("d".to_owned()))]);
+    assert_eq!(checking.started(), 3, "the next formula asked again");
 }
 
 #[test]
