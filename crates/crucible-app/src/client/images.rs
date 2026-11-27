@@ -75,9 +75,9 @@
 //!   by its text when it is joined to the root, so there it is judged by where
 //!   it lands and no name before a `..` is looked up; an absolute one is
 //!   walked by its names as on macOS and Linux, and a verbatim one, `\\?\…`,
-//!   holding a `.`, `..` or empty name is not shown. A link inside the
-//!   workspace is followed as the read tool follows it, and where it leads is
-//!   the workspace's to refuse.
+//!   holding a `/`, or a `.`, `..` or empty name, is not shown. A link inside
+//!   the workspace is followed as the read tool follows it, and where it leads
+//!   is the workspace's to refuse.
 //! - Nothing is remembered: a decision is asked for each image with
 //!   [`Remember::Never`], and the PNG is handed back and kept nowhere here.
 //! - How many images a turn shows is the front end's to count, at most
@@ -142,11 +142,13 @@ const CHUNK: usize = 64 * 1024;
 /// [`ImageRefused::NotShown`] for a path whose words name anything outside
 /// every root the workspace grants and off the way to one, an absolute one not
 /// written under a root as the workspace spells it, one that opens with two
-/// separators outside a root on a share, a verbatim path, `\\?\…`, holding a
-/// `.`, `..` or empty name, one that resolves outside the workspace, one a rule
-/// refuses or puts a question about, a file that is not there or cannot be
-/// read, a worker that would not start the work, a `lane` another image's job
-/// still holds, and [`DEADLINE`] passing before the engine allowed the read;
+/// separators outside a root on a share, on Windows a verbatim path, `\\?\…`,
+/// holding a `/`, or a `.`, `..` or empty name (on macOS and Linux a `\` is
+/// part of a name, and such a path is judged as any other relative one), one
+/// that resolves outside the workspace, one a rule refuses or puts a question
+/// about, a file that is not there or cannot be read, a worker that would not
+/// start the work, a `lane` another image's job still holds, and [`DEADLINE`]
+/// passing before the engine allowed the read;
 /// for a file the engine allowed, [`ImageRefused::TooLarge`] past
 /// [`MOST_INPUT`] bytes or past what the decoder or encoder hold,
 /// [`ImageRefused::NotAnImage`] for bytes no decoder reads,
@@ -345,19 +347,22 @@ fn reaches(workspace: &Workspace, requested: &str) -> bool {
 /// names, and any other verbatim path, a share's `\\?\UNC\…` among them, left
 /// as it is to be walked as two separators are.
 ///
-/// Nothing where a verbatim path holds a `.`, `..` or empty name after the
-/// prefix, at either separator: Win32 opens such a path as written rather
-/// than folding it, and the walk would fold it, so it would check names that
-/// are not the ones opened. A path written `//?/` is not verbatim to Win32,
-/// which folds it as the walk does, and is left as it is.
+/// Nothing where a verbatim path holds a `/` after the prefix, or a `.`, `..`
+/// or empty name between its `\`s: Win32 opens such a path as written, split
+/// at `\` alone and never folded, and the walk would split it at the `/` and
+/// fold it, so it would check names that are not the ones opened. A path
+/// written `//?/` is not verbatim to Win32, which folds it by its text, and is
+/// left as it is to be walked as two separators are. The two fold it alike
+/// but for one thing: Win32 stops a `..` at its `\\?\`, where the walk lets
+/// one climb to the two separators. A path the walk admits that climbs there
+/// is opened by Win32 as `\\?\?\…`, under a device named `?` that Windows
+/// does not define, so it reaches no host: the difference only ever fails
+/// closed.
 fn verbatim(requested: &str) -> Option<Cow<'_, str>> {
     let Some(rest) = requested.strip_prefix(r"\\?\") else {
         return Some(Cow::Borrowed(requested));
     };
-    if rest
-        .split(['\\', '/'])
-        .any(|name| matches!(name, "" | "." | ".."))
-    {
+    if rest.contains('/') || rest.split('\\').any(|name| matches!(name, "" | "." | "..")) {
         return None;
     }
     match rest.as_bytes() {

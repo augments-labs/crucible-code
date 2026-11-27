@@ -849,7 +849,8 @@ Nothing is fetched: an image at an address on the web, or written `www.`,
 stays a link, as does one whose path opens with two slashes or backslashes:
 on Windows that is another computer's share, a device, or an extended-length
 path such as `\\?\C:\Users\you\project\plot.png`, which Windows opens
-exactly as written, without taking away a `.` or `..`. So do one in a
+exactly as written, without taking away a `.` or `..` or taking a `/` as a
+separator. So do one in a
 table's cell, one written as a reference, `![the plot][plot]`, and one inside
 a link's words. One in code or a fence is
 drawn as written.
@@ -863,11 +864,12 @@ case stays a link, though `read` would reach it. A path any of whose names
 lies outside the workspace, such as `/net/host/plot.png`, `../../plot.png` or
 `/net/host/../../home/you/project/plot.png`, is not looked up at all, even
 where a `..` after it comes back, so a directory that would reach another
-computer is never opened. That is how macOS and Linux follow a path, and how
-Windows follows an absolute one, so `C:\Users\you\x\..\project\plot.png`
-stays a link there too. A path relative to the workspace has each `.` and
-`..` taken away by its text when Windows joins it to the workspace, so there
-it is judged by where it lands, and no name before a `..` is looked up. Where
+computer is never opened. That is how macOS and Linux follow a path, and an
+absolute path is judged the same way on Windows, so
+`C:\Users\you\x\..\project\plot.png` stays a link there too. On Windows a
+path relative to the workspace has each `.` and `..` taken away by its text
+when it is joined to the workspace, so there it is judged by where it lands,
+and no name before a `..` is looked up. Where
 the session draws no
 pictures nothing is read, and the answer's link is all there is.
 

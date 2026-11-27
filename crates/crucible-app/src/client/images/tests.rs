@@ -940,10 +940,11 @@ fn a_verbatim_drive_path_is_walked_as_its_drive_s_path_and_refused_with_a_dot_or
     // Windows keeps a workspace's root verbatim, `\\?\C:\…`, and tells the
     // model so: a path copied from it is read as the drive path it names,
     // as the root itself is written. Win32 takes a verbatim path as written,
-    // `.` and `..` and all, so one holding such a name, or an empty one, is
-    // refused rather than folded. A verbatim share is left as it is, and a
-    // drive path written `//?/C:/`, which Win32 folds rather than taking as
-    // written, is left to be walked as two separators are.
+    // `.` and `..` and all, and splits its names at `\` alone, so one holding
+    // such a name, an empty one or a `/` is refused rather than folded or
+    // split where Win32 does not split it. A verbatim share is left as it is,
+    // and a drive path written `//?/C:/`, which Win32 folds rather than taking
+    // as written, is left to be walked as two separators are.
     let local = ["C:/w".to_owned()];
     let share = ["//?/UNC/server/share".to_owned()];
     let judged = [
@@ -966,6 +967,8 @@ fn a_verbatim_drive_path_is_walked_as_its_drive_s_path_and_refused_with_a_dot_or
         (r"\\?\c:\w\a.png", &local, false),
         (r"\\?/C:/w/a.png", &local, false),
         (r"\\?\C:/w/a.png", &local, false),
+        (r"\\?\C:\w/a.png", &local, false),
+        (r"\\?\C:\w\sub/a.png", &local, false),
         (r"\\?\UNC\server\share\a.png", &local, false),
         (r"\\?\UNC\server\share\a.png", &share, true),
         (r"\\?\UNC\server\other\a.png", &share, false),
@@ -985,10 +988,12 @@ fn a_verbatim_drive_path_is_walked_as_its_drive_s_path_and_refused_with_a_dot_or
 
 #[test]
 fn a_verbatim_share_path_holding_a_dot_or_empty_name_is_refused() {
-    // Win32 opens a verbatim share path as written too, so one holding a
-    // `.`, `..` or empty name is refused rather than walked folded, and one
-    // without is left as it is, to be walked towards a root on a share. One
-    // written `//?/UNC/` is folded by Win32 as the walk folds it.
+    // Win32 opens a verbatim share path as written too, and splits its names
+    // at `\` alone, so one holding a `.`, `..` or empty name, or a `/`, is
+    // refused rather than walked folded or split, and one without is left as
+    // it is, to be walked towards a root on a share. One written `//?/UNC/` is
+    // folded by Win32 as the walk folds it, but that Win32 stops a `..` at its
+    // `\\?\`, which only ever leaves it naming no device and no host.
     let share = ["//?/UNC/server/share".to_owned()];
     let judged = [
         (r"\\?\UNC\server\share\a.png", true),
@@ -999,6 +1004,10 @@ fn a_verbatim_share_path_holding_a_dot_or_empty_name_is_refused() {
         (r"\\?\UNC\server\share\a.png\", false),
         (r"\\?\UNC\server\other\..\share\a.png", false),
         (r"\\?\unc\server\share\sub\..\a.png", false),
+        (r"\\?\UNC\server/share\a.png", false),
+        (r"\\?\UNC\server/share/evil.example\x.png", false),
+        (r"\\?\UNC/server\share\a.png", false),
+        (r"\\?\UNC\server\share/a.png", false),
         ("//?/UNC/server/share/sub/../a.png", true),
     ];
     for (requested, reaches) in judged {
