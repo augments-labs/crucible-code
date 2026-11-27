@@ -263,7 +263,7 @@ questions and **Close** leaves it waiting.
 ## From a program with no terminal
 
 A front end with no terminal, driving crucible through its client protocol,
-answers the same questions. The protocol is revision 6. A front end that holds
+answers the same questions. The protocol is revision 7. A front end that holds
 questions for later is offered `ask_user` without a terminal. A request that
 claims the `questions` capability is told what waits by a `waiting` progress
 report carrying an `era` and the waiting batches. An answer that shows a
