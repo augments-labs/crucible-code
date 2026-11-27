@@ -1685,7 +1685,10 @@ impl Record {
             }
             made = self.make(drawn, &key, glyphs, columns);
         }
-        let band = drawn.picture.as_ref().map_or(0, |picture| picture.band);
+        let (band, first) = drawn
+            .picture
+            .as_ref()
+            .map_or((0, None), |picture| (picture.band, picture.window));
         let had = drawn.picture.take().is_some();
         self.picturing.let_go |= had;
         let kept = match made {
@@ -1697,7 +1700,11 @@ impl Record {
         };
         self.make_room(kept.bytes(), columns, glyphs);
         drawn.refused = None;
-        let window = self.picturing.keeps.then_some(self.picturing.window);
+        // Encoded again, a picture keeps the window it was first shown in.
+        let window = self
+            .picturing
+            .keeps
+            .then(|| first.unwrap_or(self.picturing.window));
         drawn.picture = Some(Box::new(Pictured {
             id: self.picturing.number(),
             key,
@@ -1821,17 +1828,19 @@ impl Record {
             }
         };
         let kept = held(kept, columns)?;
-        // A formula is held to the window however its picture came, read
-        // from the cache or encoded again, as one just made is.
-        if drawn.block.kind == Kind::DisplayMath {
+        // A formula read from the cache is held to the window as one just
+        // made is; one shown already keeps the size it was given.
+        if drawn.block.kind == Kind::DisplayMath && drawn.picture.is_none() {
             return self.fits_window(kept);
         }
         Ok(kept)
     }
 
     /// `kept`, a formula's picture, where the window is as tall as it is: a
-    /// formula is shown at its own size or not at all, since one made
-    /// smaller to fit is not the formula its text says.
+    /// formula is first shown at its own size or not at all, since one made
+    /// smaller to fit is not the formula its text says. Only that first size
+    /// is judged, of a picture just made or read back from the cache; one
+    /// shown already keeps the size it was given, as any picture does.
     fn fits_window(&self, kept: KeptPicture) -> Result<KeptPicture, Undrawn> {
         let window = self.picturing.window;
         let (_, down) = kept.payload.cells();

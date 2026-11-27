@@ -18523,17 +18523,17 @@
       ]
     },
     {
-      "id": "CASE-MATH-PICTURES-REENCODE-HELD-TO-WINDOW",
+      "id": "CASE-MATH-PICTURES-REENCODE-KEPT-IN-SHORTER-WINDOW",
       "family": "transcript-math-pictures",
-      "obligation": "A math picture encoded again where the window no longer holds it is its text.",
+      "obligation": "A math picture already shown, encoded again in a window shorter than it, stays shown at the size it was given, with no refusal recorded.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "record::tests::formulas::a_math_picture_encoded_again_where_the_window_no_longer_holds_it_is_text",
+      "case": "record::tests::formulas::a_math_picture_encoded_again_in_a_shorter_window_is_kept",
       "source": "crates/crucible-tui/src/record/tests/formulas.rs",
-      "body_sha256": "ee4af1e4548e653951a2f5cc9fdab3afc1912d1459afd9ba2935bb3acd26fd98",
+      "body_sha256": "e57ea5839776c80953c3c26debb331603ce79471dcf98fb5833fddad5c12055f",
       "platforms": [
         "linux",
         "macos",
@@ -18623,6 +18623,42 @@
       "body_sha256": "d3a9b8c39c88b38954fd4f3468d207cbb109c39c43841ab3f1013f4270c8d40e",
       "platforms": [
         "linux"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-FULLSCREEN-SHOWN-AGAIN-AFTER-SHRINK",
+      "family": "transcript-math-pictures",
+      "obligation": "A formula shown on a full screen, encoded again through a shorter window and back, is never refused for the window and is shown at its own size once the window holds it, encoded again and not made anew.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::formulas::a_formula_shown_on_a_full_screen_is_shown_again_once_a_shorter_window_grows_back",
+      "source": "crates/crucible-tui/src/record/tests/formulas.rs",
+      "body_sha256": "7a03e6979848e173bc8b9af13bf90dd1a4deda0e8ad3281417844e5f0f8e8ad7",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-NATIVE-KEEPS-FIRST-ROWS",
+      "family": "transcript-math-pictures",
+      "obligation": "A formula shown natively stays shown in the rows it was first shown in at every new palette, through a shorter window and back, encoded again and not made anew.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::formulas::a_formula_shown_natively_keeps_its_first_rows_through_a_shorter_window_and_back",
+      "source": "crates/crucible-tui/src/record/tests/formulas.rs",
+      "body_sha256": "b6b728988d1ab8e636405a5e78d8503de5d789ba69a47c29220cb5642a628ca2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
       ]
     }
   ]
