@@ -12819,7 +12819,7 @@
     {
       "id": "CASE-TRANSCRIPT-MATH-SETTING-BARE",
       "family": "transcript-blocks",
-      "obligation": "The Math row shows written, text and image bare, since each is in force at once, and the style a preview is drawn from holds the same way the renderer draws math.",
+      "obligation": "The Math row shows written, text and image with no refusal after them, only what the check has said of math pictures, since each is in force at once, and the style a preview is drawn from holds the same way the renderer draws math.",
       "package": "crucible-code",
       "target": {
         "kind": "bin",
@@ -17881,7 +17881,7 @@
     {
       "id": "CASE-MATH-PICTURES-QUEUE-UNDECIDED-CHECK-TEXT",
       "family": "transcript-math-pictures",
-      "obligation": "Formulas told while a check that decides nothing runs stay text, start no check of their own, and the next formula asks again.",
+      "obligation": "Formulas told while a check that decides nothing runs stay text, start no check of their own, and the next formula asks again; those told while that check runs start none of their own either.",
       "package": "crucible-code",
       "target": {
         "kind": "bin",
@@ -17889,7 +17889,7 @@
       },
       "case": "cli::math_engine::tests::formulas_told_while_a_check_that_decides_nothing_runs_stay_text_and_the_next_asks_again",
       "source": "src/cli/math_engine/tests.rs",
-      "body_sha256": "55b55004229b6a5363047c78b8281eab77ec18b2b854db11c63195072716b330",
+      "body_sha256": "ce92dc72ffbe760a0d29ca318e7d74aa9aafdd6083a708524361cb5efb955f7b",
       "platforms": [
         "linux",
         "macos",
@@ -18259,7 +18259,7 @@
     {
       "id": "CASE-MATH-PICTURES-CUT-NEVER-ANSWERS",
       "family": "transcript-math-pictures",
-      "obligation": "Formulas are told the same however the answer is cut, to a maker that never answers.",
+      "obligation": "Formulas are told, and the window drawn once their answers are in, the same however the answer is cut, to a maker that never answers.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
@@ -18267,7 +18267,7 @@
       },
       "case": "render::tests::pictures::formulas_are_told_the_same_however_the_answer_is_cut_to_a_maker_that_never_answers",
       "source": "crates/crucible-tui/src/render/tests/pictures.rs",
-      "body_sha256": "be8a08622cdba0f0e733d00d87915c3c98a08d3a531766c7637700e7c987b3c8",
+      "body_sha256": "51a24861156324f2c9c71662d13ba7654872fb1feb412b5db844967636d3c572",
       "platforms": [
         "linux",
         "macos",
@@ -18277,7 +18277,7 @@
     {
       "id": "CASE-MATH-PICTURES-CUT-ANSWERS-AT-ONCE",
       "family": "transcript-math-pictures",
-      "obligation": "Formulas are told the same however the answer is cut, to a maker that answers at once.",
+      "obligation": "Formulas are told, and the window drawn once their answers are in, the same however the answer is cut, to a maker that answers at once.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
@@ -18285,7 +18285,7 @@
       },
       "case": "render::tests::pictures::formulas_are_told_the_same_however_the_answer_is_cut_to_a_maker_that_answers_at_once",
       "source": "crates/crucible-tui/src/render/tests/pictures.rs",
-      "body_sha256": "ebdb0a4b866275484e10fade29291a12747dbff3d5400cb8154419a86e367b3a",
+      "body_sha256": "fbb1a915cf479c29cd6434a662afc2e35780e1283b71c271af480109bdae155a",
       "platforms": [
         "linux",
         "macos",
@@ -18394,6 +18394,168 @@
       "body_sha256": "3e4359773fc869f286cd74e5da66612e2ea987e3d777314b48ec90cf64c20c96",
       "platforms": [
         "linux"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RECORD-TOLD-ONLY-LIVE-PICTURING",
+      "family": "transcript-math-pictures",
+      "obligation": "Display math is told out only where a live record draws it as a picture: not as text or as written, not without colour, and not while a native session is put back.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::formulas::display_math_is_told_out_only_as_a_live_picture_capable_record_draws_it",
+      "source": "crates/crucible-tui/src/record/tests/formulas.rs",
+      "body_sha256": "7d7db9b685b5e64277acb87e58442e692a9e880099d582ea4ee30e0b0cfb78d0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-WAIT-SHOWS-ANSWER",
+      "family": "transcript-math-pictures",
+      "obligation": "A formula told to what makes pictures is shown as its answer once the input wait rests, and nothing is owed after it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_formula_told_to_what_makes_pictures_is_shown_as_its_answer_once_a_wait_rests",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "89b15f9dd05773717529f390967e3cd9bd108338c1640c7a897e204a6614f733",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-NO-PICTURE-OWED-NO-MORE",
+      "family": "transcript-math-pictures",
+      "obligation": "A formula answered with no picture stays its text and is owed no more.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_formula_answered_with_no_picture_stays_its_text_and_is_owed_no_more",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "626f459281715004b6753c2260d4becc703ba1a793993fe152f2e5bbb7e07bd4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-QUEUE-NO-ENGINE-FINAL",
+      "family": "transcript-math-pictures",
+      "obligation": "A check that finds no engine leaves every formula text and is not made again.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::math_engine::tests::a_check_that_finds_no_engine_leaves_every_formula_text_and_is_not_made_again",
+      "source": "src/cli/math_engine/tests.rs",
+      "body_sha256": "c3b691f636f8e99d3da77217444c266949829fecda54aaa6b8881e70f33702b0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RECORD-TOO-WIDE-TOLD",
+      "family": "transcript-math-pictures",
+      "obligation": "A display formula too wide as text is told out, says why it is its source while it waits and after no picture comes, and is replaced by its picture when one does.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::formulas::a_display_formula_too_wide_as_text_is_told_out_and_replaced_by_its_picture",
+      "source": "crates/crucible-tui/src/record/tests/formulas.rs",
+      "body_sha256": "17e047689e7a35746dde4ddd23bfe368dd532f3250894abdb2a7b5734d058949",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-STEER-KEEPS-TURN",
+      "family": "transcript-math-pictures",
+      "obligation": "A line steered into a running turn keeps that turn's queued formulas and its count of sixteen.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::draw::tests::steered::a_line_steered_into_a_turn_keeps_its_formulas_queued_and_its_sixteen_counted",
+      "source": "src/cli/draw/tests/steered.rs",
+      "body_sha256": "1feb5984acad823a49e213863566afa4f6542c0b3f61120c07aaf35a9676494f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RESUME-NATIVE-LARGE-IN-WINDOW",
+      "family": "transcript-math-pictures",
+      "obligation": "A formula put back natively is shown at Large where the window holds it, and as its text where it does not.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::formulas::a_formula_put_back_natively_is_shown_large_where_the_window_holds_it_and_text_where_not",
+      "source": "crates/crucible-tui/src/record/tests/formulas.rs",
+      "body_sha256": "f76057ef6432f6cc4335fe59b9d6eb775803ff58c9972eb47c9af2420dc2a3e3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-REENCODE-HELD-TO-WINDOW",
+      "family": "transcript-math-pictures",
+      "obligation": "A math picture encoded again where the window no longer holds it is its text.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::formulas::a_math_picture_encoded_again_where_the_window_no_longer_holds_it_is_text",
+      "source": "crates/crucible-tui/src/record/tests/formulas.rs",
+      "body_sha256": "ee4af1e4548e653951a2f5cc9fdab3afc1912d1459afd9ba2935bb3acd26fd98",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-QUEUE-RECHECK-UNDECIDED-TEXT",
+      "family": "transcript-math-pictures",
+      "obligation": "Formulas told while a check asked again decides nothing stay text and start no check of their own, and the next formula asks a third time.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::math_engine::tests::formulas_told_while_a_check_asked_again_decides_nothing_stay_text_and_the_next_asks_a_third_time",
+      "source": "src/cli/math_engine/tests.rs",
+      "body_sha256": "ee28affe958d5fe421e2d7a415d769bf714126adc342dd3313c3ad61deb0fa02",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
       ]
     }
   ]
