@@ -1,5 +1,5 @@
-//! Pictures of diagrams and display math, kept on disk so a session put back
-//! shows them again without drawing them.
+//! Pictures of diagrams, kept on disk so a session put back shows them again
+//! without drawing them. Display math is drawn as its text and has no key.
 
 use std::collections::BinaryHeap;
 use std::fs;

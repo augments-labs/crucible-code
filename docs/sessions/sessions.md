@@ -439,7 +439,7 @@ counts. These previews are private display data and are never sent to the model.
 Older logs without preview bodies still show their recorded change counts;
 resume does not reread files or rerun tools to invent missing history.
 
-A diagram or formula drawn as a picture comes back as that picture where
+A diagram drawn as a picture comes back as that picture where
 crucible [kept it](transcript.md#pictures-kept-between-sessions), and as its
 text where it did not; the images its turns named are read again from their
 files. Picking a session up with `/resume` draws both as `--continue` and
@@ -658,7 +658,9 @@ do nothing.
 
 Each file is named for its session and ends in `.jsonl`. They are yours: reading
 one with `cat`, `jq` or a text editor is a supported thing to do, and deleting
-one is how you forget a session. A `.jsonl.lock` beside one is where the claim
+one is how you forget a session; the pictures it drew stay in
+`~/.crucible/pictures/` until they age out, or until that directory is deleted.
+A `.jsonl.lock` beside one is where the claim
 above is taken; it holds nothing, and an empty one left by a crash is only a
 file.
 
@@ -740,18 +742,21 @@ by sitting above it. An administrator can still take ownership and read it, whic
 is the same escape by a longer route and the honest limit of what a file
 permission promises on either system.
 
-The [picture cache](transcript.md#pictures-kept-between-sessions) holds
-pictures of what the model wrote, and is kept the same way: on Unix `0700` on
-its directory and `0600` on each entry, and on Windows the same list naming
-your account alone. On Unix an entry or a directory another account could
-reach, or one not owned by your account, is never read, and nothing is read
-or written through a symbolic link there.
-
 Both are set on every start and every `--continue`, not only when they are
 created, because a directory made by an earlier build or by hand keeps whatever
 it was made with, and `--continue` is the run that goes looking in it. A path
 that cannot be set stops the run and says so, rather than carrying on and writing
 a transcript somewhere the whole machine can read.
+
+The [picture cache](transcript.md#pictures-kept-between-sessions) holds
+pictures of what the model wrote, and is kept the same way: on Unix `0700` on
+its directory and `0600` on each entry, and on Windows the same list naming
+your account alone. Its directory is set so the first time a run reads it or
+writes to it, whatever an earlier build left it as; one that cannot be set is
+passed over, and its pictures drawn as text, rather than stopping the run, since
+nothing in it is needed. On Unix an entry or a directory another account could
+reach, or one not owned by your account, is never read, and nothing is read or
+written through a symbolic link there.
 
 ## What is in a file
 
