@@ -1583,6 +1583,80 @@ while IFS= read -r line; do
     failed=1
 done <<<"$signer_feature"
 
+section "the colour probe's stand-in engine stays out of a release"
+# The colour-on memory probe measures a session that keeps sixteen math
+# pictures on any runner, TeX or none, so `scripts/sh/bench.sh` builds a copy of
+# `crucible` whose engine answers every formula with one kept picture. That
+# copy comes from the root package's one bench-only feature, and a build that
+# shipped with it would draw every user's formulas as the same picture. So the
+# feature is held as the `proof` seam is above: the root package declares it
+# and turns nothing else on with it, no `default` and no other feature of any
+# package names it, no dependency asks for it, and no workflow or script but
+# `bench.sh`, which asks for it, and this check names it. `release.yml` may not
+# build with every feature on, which would turn it on without naming it. The
+# selection that reads it is `src/cli/math_engine.rs`'s, and no other Rust file
+# may name it, so no test can be gated on it. A check that finds no reader or
+# no declaration measured nothing and fails.
+stand_in_feature=bench-math-stand-in
+stand_in_reader="src/cli/math_engine.rs"
+if ! grep -qF "$stand_in_feature" "$stand_in_reader"; then
+    printf '    FAIL %s does not name %s; this check measured nothing\n' "$stand_in_reader" "$stand_in_feature"
+    failed=1
+fi
+while IFS= read -r file; do
+    [[ -z "$file" || "$file" == "$stand_in_reader" ]] && continue
+    printf '    FAIL %s names %s; only %s may, so no test is gated on it\n' "$file" "$stand_in_feature" "$stand_in_reader"
+    failed=1
+done < <(git ls-files -z -- '*.rs' | xargs -0 grep -lF "$stand_in_feature" -- 2>/dev/null || true)
+while IFS= read -r file; do
+    [[ -z "$file" || "$file" == scripts/sh/bench.sh || "$file" == scripts/sh/repo-checks.sh ]] && continue
+    printf '    FAIL %s names %s; only scripts/sh/bench.sh asks for it\n' "$file" "$stand_in_feature"
+    failed=1
+done < <(git ls-files -z -- .github/workflows scripts | xargs -0 grep -lF "$stand_in_feature" -- 2>/dev/null || true)
+if grep -nE -- '--all-features' .github/workflows/release.yml >/dev/null; then
+    printf '    FAIL .github/workflows/release.yml builds with --all-features, which turns on %s\n' "$stand_in_feature"
+    failed=1
+fi
+stand_in_manifests=$(cargo metadata --no-deps --offline --format-version 1 --color never --manifest-path Cargo.toml 2>/dev/null |
+    python3 -c '
+import json, sys
+
+OWNER, FEATURE = "crucible-code", "bench-math-stand-in"
+packages = json.load(sys.stdin)["packages"]
+owner = [package for package in packages if package["name"] == OWNER]
+if len(owner) != 1 or FEATURE not in owner[0]["features"]:
+    sys.exit(0)
+for enabled in owner[0]["features"][FEATURE]:
+    print(f"{OWNER}/{FEATURE} turns on {enabled}; it changes the root package alone")
+for package in packages:
+    name = package["name"]
+    keys = set()
+    for dependency in package["dependencies"]:
+        if dependency["name"] != OWNER:
+            continue
+        keys.add(dependency.get("rename") or dependency["name"])
+        if FEATURE in dependency["features"]:
+            kind = dependency["kind"] or "normal"
+            print(f"{name} turns on {OWNER}/{FEATURE} in a {kind} dependency")
+    for feature, enables in package["features"].items():
+        if name == OWNER:
+            named = feature != FEATURE and FEATURE in enables
+        else:
+            named = any(f"{key}{joint}{FEATURE}" in enables for key in keys for joint in ("/", "?/"))
+        if named:
+            print(f"{name} turns on {OWNER}/{FEATURE} through its feature {feature}, which a release build can ask for")
+print("measured")
+')
+if ! grep -Fxq measured <<<"$stand_in_manifests"; then
+    printf '    FAIL the root package was not found declaring %s; this check measured nothing\n' "$stand_in_feature"
+    failed=1
+fi
+while IFS= read -r line; do
+    [[ -z "$line" || "$line" == measured ]] && continue
+    printf '    FAIL %s\n' "$line"
+    failed=1
+done <<<"$stand_in_manifests"
+
 section "the external route is removable"
 # Running a conversation on an installed agent is one route a release can drop
 # by deleting what it adds, so every tracked file that names it is one this list
@@ -1904,6 +1978,14 @@ fi
 # `bench-first-input-colour-silent` names `crucible_tui` in its test alone, for
 # the reply wait its budget is held to the sum of, and measures the built
 # binary like every other startup probe.
+# `bench-picture-wait` names `crucible_tui` for the renderer whose calls it
+# times and the formulas it tells, `crucible_tui_math` for the drawer that
+# draws a formula's text until its picture comes, and `crucible_raster` for
+# the picture maker that draws an answered formula to pixels in the call that
+# finds it, as a session's does. `bench-tex-slab` names `crucible_app` for the
+# math engine and the check a session finds it with, and `crucible_sandbox`
+# and `crucible_sandbox_local` for the service that check is handed, so what
+# it measures is a formula's run as a session makes it.
 probes='src/bin/bench-drawing.rs crucible_raster
 src/bin/bench-drawing.rs crucible_tui
 src/bin/bench-drawing.rs crucible_tui_diff
@@ -1920,6 +2002,9 @@ src/bin/bench-live-burst.rs crucible_tui
 src/bin/bench-live-burst.rs crucible_tui_diff
 src/bin/bench-live-burst.rs crucible_tui_math
 src/bin/bench-live-burst.rs crucible_tui_mermaid
+src/bin/bench-picture-wait.rs crucible_raster
+src/bin/bench-picture-wait.rs crucible_tui
+src/bin/bench-picture-wait.rs crucible_tui_math
 src/bin/bench-read-back.rs crucible_session
 src/bin/bench-read-back.rs crucible_types
 src/bin/bench-read-back.rs crucible_workspace
@@ -1934,6 +2019,9 @@ src/bin/bench-session-rss-colour.rs crucible_attachments
 src/bin/bench-session-rss-colour.rs crucible_config
 src/bin/bench-session-rss-colour.rs crucible_tui
 src/bin/bench-session-rss-colour.rs crucible_tui_mermaid
+src/bin/bench-tex-slab.rs crucible_app
+src/bin/bench-tex-slab.rs crucible_sandbox
+src/bin/bench-tex-slab.rs crucible_sandbox_local
 src/bin/bench-tools.rs crucible_builtins
 src/bin/bench-tools.rs crucible_runtime
 src/bin/bench-tools.rs crucible_sandbox_local

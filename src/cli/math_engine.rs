@@ -130,7 +130,22 @@ pub(crate) type Check =
 
 /// The session's check: the installed TeX on `sandbox`, given its
 /// [`COMMAND_TIME`] to answer.
+#[cfg(not(feature = "bench-math-stand-in"))]
 pub(crate) fn checking(sandbox: Arc<dyn SandboxService>) -> Check {
+    installed(sandbox)
+}
+
+/// The colour-on memory probe's check, in the build only
+/// `scripts/sh/bench.sh` asks for with the `bench-math-stand-in` feature: it
+/// checks nothing and finds [`stand_in`]'s engine. The installed TeX's check
+/// is still built, so the selection a release makes is the one compiled.
+#[cfg(feature = "bench-math-stand-in")]
+pub(crate) fn checking(sandbox: Arc<dyn SandboxService>) -> Check {
+    stand_in::instead(installed(sandbox))
+}
+
+/// The check of the TeX installed on `sandbox`.
+fn installed(sandbox: Arc<dyn SandboxService>) -> Check {
     Arc::new(move || {
         let sandbox = Arc::clone(&sandbox);
         Box::pin(async move {
@@ -139,6 +154,45 @@ pub(crate) fn checking(sandbox: Arc<dyn SandboxService>) -> Check {
                 .map(|engine| -> Arc<dyn MathPictures> { Arc::new(engine) })
         })
     })
+}
+
+/// An engine that makes every formula into one picture without TeX or the
+/// sandbox, for the colour-on memory probe to keep sixteen of.
+///
+/// The picture is what `dvisvgm` makes of `display-cases` through this
+/// engine's own preamble, wrapper and options: the largest display formula
+/// measured for math pictures that draws within the raster's caps, 9,856
+/// bytes and about 294 by 100 pixels at 240 dpi.
+#[cfg(feature = "bench-math-stand-in")]
+mod stand_in {
+    use std::sync::Arc;
+
+    use crucible_app::math::{MathPictures, Svg, Unmade};
+    use crucible_runtime::BoxFuture;
+
+    use super::Check;
+
+    /// The picture every formula is answered with.
+    const PICTURE: &str = include_str!("math_engine/display-cases.svg");
+
+    /// The engine: every formula is the one picture.
+    struct StandIn;
+
+    impl MathPictures for StandIn {
+        fn toolchain(&self) -> &'static str {
+            "stand-in"
+        }
+
+        fn make(&self, _formula: &str) -> BoxFuture<'_, Result<Svg, Unmade>> {
+            Box::pin(async { Ok(Svg::new(PICTURE.as_bytes())) })
+        }
+    }
+
+    /// A check that finds the stand-in, in place of `installed`.
+    pub(super) fn instead(installed: Check) -> Check {
+        drop(installed);
+        Arc::new(|| Box::pin(async { Ok(Arc::new(StandIn) as Arc<dyn MathPictures>) }))
+    }
 }
 
 /// The drawing thread's side: what it tells the task, and what the task
