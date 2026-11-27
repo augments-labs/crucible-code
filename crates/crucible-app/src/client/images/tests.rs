@@ -713,27 +713,54 @@ fn counting(workspace: &Workspace, requested: &str) -> Result<WorkspacePath, Pat
 fn a_path_whose_words_leave_every_root_is_refused_before_anything_resolves_it() {
     // A path under an automounter's directory is a host it would contact on
     // resolving it, before any refusal, so a path is told from its words
-    // first: joined to the root, its dots folded, and kept only where that
-    // lies under a root. Each refused here is resolved by nothing at all.
+    // first: joined to the root and walked name by name, each name it would
+    // look up has to lie under a root or on the way to one. Each refused here
+    // is resolved by nothing at all, including one whose `..` comes back
+    // into the workspace after a name outside it, since resolving looks that
+    // name up before the `..` after it.
     let (sample, workspace) = tree("images-words");
     let root = sample.root();
     fs::create_dir_all(root.join("sub")).expect("a directory");
     let absolute = outside(&root).to_string_lossy().into_owned();
-    let unchecked = [0_u8; 32];
-    let asked: Vec<ImageRef> = vec![
-        answer("/net/host/x.png"),
-        answer("../../net/host/x.png"),
-        answer(&absolute),
-        ImageRef::Tool {
-            path: path("/net/host/x.png"),
-            hash: unchecked,
-        },
-        ImageRef::Tool {
-            path: path("../../net/host/x.png"),
-            hash: unchecked,
-        },
-        answer("sub/../a.png"),
+    let canonical = workspace.root();
+    let name = canonical
+        .file_name()
+        .expect("the root's name")
+        .to_string_lossy()
+        .into_owned();
+    let beside = canonical
+        .parent()
+        .expect("the root's parent")
+        .join("x")
+        .join("..")
+        .join(&name)
+        .join("a.png")
+        .to_string_lossy()
+        .into_owned();
+    let back = format!("../x/../{name}/a.png");
+    let mut leaving = vec![
+        "/net/host/x.png".to_owned(),
+        "../../net/host/x.png".to_owned(),
+        beside,
+        back,
     ];
+    if cfg!(unix) {
+        let through = format!(
+            "/net/attacker.example/../..{}/a.png",
+            canonical.to_string_lossy()
+        );
+        leaving.push(through);
+    }
+    let unchecked = [0_u8; 32];
+    let mut asked: Vec<ImageRef> = vec![answer(&absolute)];
+    for spelled in &leaving {
+        asked.push(answer(spelled));
+        asked.push(ImageRef::Tool {
+            path: path(spelled),
+            hash: unchecked,
+        });
+    }
+    asked.push(answer("sub/../a.png"));
     let _shared = SLOT.read().unwrap_or_else(PoisonError::into_inner);
     let answered: Vec<_> = asked
         .iter()
@@ -746,22 +773,24 @@ fn a_path_whose_words_leave_every_root_is_refused_before_anything_resolves_it() 
             (image.path().as_str().to_owned(), answered, RESOLVED.get())
         })
         .collect();
-    let refused = |spelled: &str| (spelled.to_owned(), Err(ImageRefused::NotShown), 0);
-    assert_eq!(
-        answered,
-        vec![
-            refused("/net/host/x.png"),
-            refused("../../net/host/x.png"),
-            refused(&absolute),
-            refused("/net/host/x.png"),
-            refused("../../net/host/x.png"),
-            ("sub/../a.png".to_owned(), Ok((3, 2)), 1),
-        ]
-    );
+    let mut expected: Vec<_> = asked
+        .iter()
+        .map(|image| {
+            (
+                image.path().as_str().to_owned(),
+                Err(ImageRefused::NotShown),
+                0,
+            )
+        })
+        .collect();
+    if let Some(last) = expected.last_mut() {
+        *last = ("sub/../a.png".to_owned(), Ok((3, 2)), 1);
+    }
+    assert_eq!(answered, expected);
 }
 
 #[test]
-fn a_path_is_under_a_root_by_its_folded_words_and_a_share_s_path_under_a_share() {
+fn a_path_is_under_a_root_only_by_names_on_the_way_to_it_and_a_share_s_path_under_a_share() {
     let local = ["/tmp/w".to_owned()];
     let share = ["//?/UNC/server/share".to_owned()];
     let everything = ["/".to_owned()];
@@ -774,6 +803,20 @@ fn a_path_is_under_a_root_by_its_folded_words_and_a_share_s_path_under_a_share()
         ("/tmp/wx/a.png", "/tmp/wx/a.png", &local, false),
         ("/tmp/w/../../../a.png", "../../../a.png", &local, false),
         ("/net/host/x.png", "/net/host/x.png", &local, false),
+        // A name outside every root that a `..` after it leaves again: the
+        // name is looked up before the `..` is applied, so the path is not
+        // under the root however it folds.
+        (
+            "/net/host/../../tmp/w/a.png",
+            "/net/host/../../tmp/w/a.png",
+            &local,
+            false,
+        ),
+        ("/tmp/x/../w/a.png", "/tmp/x/../w/a.png", &local, false),
+        ("/tmp/w/../x/../w/a.png", "../x/../w/a.png", &local, false),
+        // Leaving the root for one of its ancestors and coming back names
+        // nothing outside the way to it.
+        ("/tmp/w/../w/a.png", "../w/a.png", &local, true),
         ("//tmp/w/a.png", "//tmp/w/a.png", &local, false),
         // A file of that name under the root, which a path opening so still
         // may not reach.
@@ -807,6 +850,12 @@ fn a_path_is_under_a_root_by_its_folded_words_and_a_share_s_path_under_a_share()
         (
             "//?/UNC/server/share/../other/a.png",
             "//?/UNC/server/share/../other/a.png",
+            &share,
+            false,
+        ),
+        (
+            "//?/UNC/server/other/../share/a.png",
+            "//?/UNC/server/other/../share/a.png",
             &share,
             false,
         ),

@@ -11,10 +11,12 @@
 //!    automounter serves contacts the host a name under it names, and on
 //!    Windows a path that opens with two separators, `\\` or `//` in any mix,
 //!    names a share or a device. Joined to the root as the read tool joins it,
-//!    and its `.` and `..` folded without asking the filesystem, it has to lie
-//!    under the written spelling of a root the workspace grants; one that
-//!    opens with two separators only under a root whose spelling does too, a
-//!    workspace on a share. Only then is it resolved, by
+//!    it is walked name by name without asking the filesystem: resolving looks
+//!    each name up before the `..` after it, so every name has to lie at or
+//!    under the written spelling of a root the workspace grants, or on the way
+//!    to one, and where the walk ends has to lie under one. One that opens
+//!    with two separators is walked only towards a root whose spelling does
+//!    too, a workspace on a share. Only then is it resolved, by
 //!    [`Workspace::existing`], which is what the read tool resolves it by. A
 //!    link that leads out of the workspace and a file that is not there stop
 //!    there.
@@ -56,11 +58,11 @@
 //!   are one refusal, [`ImageRefused::NotShown`], so a client cannot tell which
 //!   it was and learns nothing about a file it may not read. Every other reason
 //!   is told only about a file the engine allowed.
-//! - No path that lies, by its words as written or as joined to the root,
-//!   outside a root the workspace grants is resolved, so no host such a path
-//!   names is reached by showing it. A link inside the workspace is followed
-//!   as the read tool follows it, and where it leads is the workspace's to
-//!   refuse.
+//! - No path that names, by its words as written or as joined to the root, a
+//!   name outside a root the workspace grants and off the way to one is
+//!   resolved, so no host such a path names is reached by showing it. A link
+//!   inside the workspace is followed as the read tool follows it, and where it
+//!   leads is the workspace's to refuse.
 //! - Nothing is remembered: a decision is asked for each image with
 //!   [`Remember::Never`], and the PNG is handed back and kept nowhere here.
 //! - How many images a turn shows is the front end's to count, at most
@@ -297,7 +299,7 @@ where
 
 /// Whether `requested`, by its words alone, lies under a root `workspace`
 /// grants: joined to the root as [`Workspace::existing`] joins it, spelled as
-/// [`written`] spells a path, and folded by [`folded`]. Nothing here asks the
+/// [`written`] spells a path, and walked by [`under`]. Nothing here asks the
 /// filesystem.
 fn reaches(workspace: &Workspace, requested: &str) -> bool {
     let asked = Path::new(requested);
@@ -311,39 +313,58 @@ fn reaches(workspace: &Workspace, requested: &str) -> bool {
 }
 
 /// Whether `spelled`, the written spelling of the path `requested` names,
-/// lies under one of `roots`' once both are folded: a path whose words open
-/// with two separators only under a root whose spelling opens with them too.
+/// names nothing a resolve would look up outside `roots` and ends under one.
+///
+/// Resolving looks up each name before the `..` after it, so the walk asks
+/// the same of every name as it is taken: the path so far lies at or under a
+/// root, or on the way to one. A `..` only goes back along a way already
+/// walked. A path whose words open with two separators is walked only
+/// towards a root whose spelling opens with them too.
 fn under(spelled: &str, roots: &[String], requested: &str) -> bool {
-    let Some(spelled) = folded(spelled) else {
-        return false;
+    let roots: Vec<String> = roots
+        .iter()
+        .filter_map(|root| walked(root, |_| true))
+        .filter(|root| !elsewhere(requested) || elsewhere(root))
+        .collect();
+    let towards = |so_far: &str| {
+        roots
+            .iter()
+            .any(|root| beneath(so_far, root) || beneath(root, so_far))
     };
-    roots.iter().any(|root| {
-        folded(root).is_some_and(|root| {
-            let beneath = spelled.strip_prefix(root.as_str()).is_some_and(|rest| {
-                rest.is_empty() || rest.starts_with('/') || root.ends_with('/')
-            });
-            beneath && (!elsewhere(requested) || elsewhere(&root))
-        })
-    })
+    walked(spelled, towards).is_some_and(|end| roots.iter().any(|root| beneath(&end, root)))
 }
 
 /// `spelled` with its `.` and empty names dropped and each `..` taking the
-/// name before it away, the separators it opens with kept as they are; nothing
-/// where a `..` has no name before it to take.
-fn folded(spelled: &str) -> Option<String> {
+/// name before it away, the separators it opens with kept as they are, and
+/// each name it keeps, as it is taken, one the path so far `admits`; nothing
+/// where a name is not, or where a `..` has no name before it to take.
+fn walked(spelled: &str, admits: impl Fn(&str) -> bool) -> Option<String> {
     let names = spelled.trim_start_matches('/');
-    let opening = spelled.strip_suffix(names).unwrap_or_default();
-    let mut kept: Vec<&str> = Vec::new();
+    let mut so_far = spelled.strip_suffix(names).unwrap_or_default().to_owned();
+    let mut before: Vec<usize> = Vec::new();
     for name in names.split('/') {
         match name {
             "" | "." => {}
-            ".." => {
-                kept.pop()?;
+            ".." => so_far.truncate(before.pop()?),
+            name => {
+                before.push(so_far.len());
+                if !so_far.is_empty() && !so_far.ends_with('/') {
+                    so_far.push('/');
+                }
+                so_far.push_str(name);
+                if !admits(&so_far) {
+                    return None;
+                }
             }
-            name => kept.push(name),
         }
     }
-    Some(format!("{opening}{}", kept.join("/")))
+    Some(so_far)
+}
+
+/// Whether `path` is `root` or lies under it, at a separator.
+fn beneath(path: &str, root: &str) -> bool {
+    path.strip_prefix(root)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/') || root.ends_with('/'))
 }
 
 /// Whether `requested` opens with two separators, in any mix of `\` and `/`:
