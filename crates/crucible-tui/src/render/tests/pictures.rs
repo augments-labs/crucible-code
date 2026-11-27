@@ -55,6 +55,9 @@ pub(in crate::render) struct Printed {
     worn: bool,
     /// What a picture's `bytes` are for.
     grows: Grows,
+    /// How many times its cache was read, where it holds every picture;
+    /// none where it holds none.
+    kept: Option<std::rc::Rc<std::cell::Cell<usize>>>,
 }
 
 /// What each `bytes` of a [`Printed`] picture is for.
@@ -79,7 +82,23 @@ impl Printed {
             hostile: false,
             worn: false,
             grows: Grows::Not,
+            kept: None,
         }
+    }
+
+    /// Pictures whose cache holds every one asked of it, and how many times
+    /// it was read.
+    pub(in crate::render) fn kept(
+        across: u16,
+        down: u16,
+        bytes: usize,
+    ) -> (Self, std::rc::Rc<std::cell::Cell<usize>>) {
+        let read = std::rc::Rc::default();
+        let printed = Self {
+            kept: Some(std::rc::Rc::clone(&read)),
+            ..Self::new(across, down, bytes)
+        };
+        (printed, read)
     }
 
     /// Pictures whose bytes grow with the rows they cover, `bytes` a row.
@@ -164,9 +183,11 @@ impl graphics::Pictures for Printed {
     fn cached(
         &mut self,
         _: &str,
-        _: &graphics::PictureKey,
+        key: &graphics::PictureKey,
     ) -> Option<(graphics::Form, graphics::Payload)> {
-        None
+        let read = self.kept.as_ref()?;
+        read.set(read.get() + 1);
+        Some((graphics::Form::Png(Vec::new()), self.payload(key)))
     }
 
     fn make(
@@ -1695,6 +1716,42 @@ fn ctrl_o_lists_each_image_a_turn_named_by_its_path_newest_first_shown_or_not() 
         at("image").is_some()
             && matches!((at("docs/a.png"), at("out/plot.png")), (Some(newer), Some(older)) if newer < older),
         "{rows:#?}"
+    );
+}
+
+#[test]
+fn ctrl_o_lists_each_image_a_session_put_back_did_not_redraw_by_its_path() {
+    let mut drawn = pictured(40, 12, Printed::new(3, 2, 300));
+    drawn
+        .render
+        .image("out/plot.png", None, Ok(vec![1, 2, 3]))
+        .unwrap();
+    for (path, by) in [("late.png", None), ("docs/read.png", Some("read"))] {
+        drawn
+            .render
+            .image(path, by, Err(crate::chrome::Undrawn::NotRedrawnOnResume))
+            .unwrap();
+    }
+    let rows = drawn.rows();
+    drawn.take();
+
+    assert!(
+        rows.iter()
+            .any(|row| row.starts_with("┌─ image · late.png · not redrawn")),
+        "{rows:#?}"
+    );
+    let sources: Vec<(&str, &str)> = drawn
+        .render
+        .sources()
+        .map(|source| (source.word, source.text))
+        .collect();
+    assert_eq!(
+        sources,
+        [
+            ("image", "docs/read.png"),
+            ("image", "late.png"),
+            ("image", "out/plot.png")
+        ]
     );
 }
 

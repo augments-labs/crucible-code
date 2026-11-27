@@ -1576,6 +1576,21 @@ impl<T: Terminal> Renderer<T> {
         self.relaid(self.glyphs);
     }
 
+    /// Draws what follows as a session put back, `resuming`, or live again.
+    ///
+    /// On a full screen, while it is put back every block is drawn as its
+    /// text and nothing is read or drawn for it. Once it is, the newest
+    /// diagrams, no more than the record keeps pictures for, are shown as
+    /// what the pictures kept from an earlier run, and any other stays its
+    /// text, as one not drawn here is. In native mode each diagram is shown
+    /// as what was kept of it as it is drawn, since it goes into the
+    /// scrollback as it is then, and one with nothing kept is its text. Said
+    /// around the walk that puts a session back, so the walk runs no drawer
+    /// and reads only what it will show.
+    pub fn resuming(&mut self, resuming: bool) {
+        self.record.resuming(resuming, self.screen());
+    }
+
     /// Forgets what is on screen, rows and the images written over them
     /// together, so the next frame writes every row and every image again:
     /// a row written again erases an image over it, and an image believed

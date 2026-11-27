@@ -281,8 +281,10 @@ fn picking<T: Terminal>(
     }
     let pruned = conversation.session().take_pruned();
     let against = replaying::Replay::of(conversation.settled(), terms, &pruned);
-    super::super::replaying::replayed(renderer, &against, conversation.session(), &mut held.kept)?;
+    let named = replaying::replayed(renderer, &against, conversation.session(), &mut held.kept)?;
     drop(pruned);
+    // The images its turns named, read again as a launch reads them.
+    replaying::redrawn(renderer, terms, conversation, &named)?;
     super::super::resuming::asked(
         renderer,
         conversation.settled(),

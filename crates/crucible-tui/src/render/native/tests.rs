@@ -4130,6 +4130,51 @@ mod pictures {
     }
 
     #[test]
+    fn a_native_session_put_back_sends_each_kept_diagram_into_the_scrollback_as_its_picture() {
+        // What goes into the scrollback while a session is put back stays
+        // as it went, so a diagram the cache kept goes as its picture, read
+        // as it is drawn; one it did not keep goes as its text, drawn by no
+        // drawer.
+        let window = Window::new(40, 8);
+        let (printed, read) = Printed::kept(3, 2, 300);
+        let mut render = pictured(&window, printed);
+
+        render.resuming(true);
+        for _ in 0..3 {
+            answered(&mut render);
+        }
+        render.resuming(false);
+
+        assert_eq!(read.get(), 3, "one read a diagram");
+        let written = window.written();
+        assert_eq!(
+            transmitted(&commands(&written)),
+            [
+                (1, printed_bytes(0, 300)),
+                (2, printed_bytes(1, 300)),
+                (3, printed_bytes(2, 300))
+            ]
+        );
+        let back = window.scrollback();
+        assert_eq!(
+            back.iter()
+                .filter(|row| row.contains("\u{10EEEE}\u{10EEEE}\u{10EEEE}"))
+                .count(),
+            6,
+            "{back:#?}"
+        );
+
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, 300));
+        render.resuming(true);
+        answered(&mut render);
+        render.resuming(false);
+        let written = window.written();
+        assert!(commands(&written).is_empty(), "{written:?}");
+        assert!(window.scrollback().iter().any(|row| row.contains("graph")));
+    }
+
+    #[test]
     fn a_native_repaint_sends_every_kept_picture_again_though_it_is_in_the_scrollback() {
         // What the frame after a child had the terminal draws: the cells in
         // the scrollback are still there, and the picture they stand for may

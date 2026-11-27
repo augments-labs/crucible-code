@@ -105,6 +105,7 @@ use crate::color::{PaletteIdentity, Slot, Theme};
 use crate::drawing::{Bucket, Drawers, Mode, Room};
 use crate::glyphs::Glyphs;
 use crate::markdown::{self, Block, Kind, Links, Offers};
+use crate::render::ScreenMode;
 use crate::row::Row;
 use crate::scroll_rail::Place;
 use crate::terminal::graphics::{Capability, Form, Payload, PictureKey, Pictures, Protocol};
@@ -320,6 +321,25 @@ struct Picturing {
     keeps: bool,
     /// How many rows the transcript band was at the last frame.
     band: usize,
+    /// What is being drawn: a live session, or one put back, when only a
+    /// kept picture is shown, and only once the walk is over.
+    drawing: Drawing,
+}
+
+/// What blocks are being drawn for, which decides whether a drawer may run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Drawing {
+    /// A live session: a block not kept is drawn afresh.
+    Live,
+    /// A session put back on a full screen, while it is walked: every block
+    /// is its text, and nothing is read for it yet.
+    PutBack,
+    /// A session put back, where a block is read from what was kept and one
+    /// not kept is its text: on a full screen once it is walked, for the
+    /// newest blocks the record keeps pictures for; in a native session
+    /// while it is walked, for each block as it is drawn, since what goes
+    /// into the scrollback stays as it went.
+    Restoring,
 }
 
 impl fmt::Debug for Picturing {
@@ -336,6 +356,7 @@ impl fmt::Debug for Picturing {
             .field("window", &self.window)
             .field("keeps", &self.keeps)
             .field("band", &self.band)
+            .field("drawing", &self.drawing)
             .finish()
     }
 }
@@ -354,6 +375,7 @@ impl Default for Picturing {
             window: 0,
             keeps: false,
             band: 0,
+            drawing: Drawing::Live,
         }
     }
 }
@@ -1339,6 +1361,108 @@ impl Record {
         self.picturing.pictures = Some(pictures);
     }
 
+    /// Draws what follows as a session put back, `resuming`, or live again,
+    /// on `screen`.
+    ///
+    /// On a full screen, while it is put back, every block is drawn as its
+    /// text and nothing is read for it. Once it is, the newest blocks, as
+    /// many as [`MOST_KEPT_IMAGES`], are given the pictures their pictures
+    /// kept from an earlier session, and one they did not keep stays its
+    /// text, as one not drawn here is: putting a session back runs no
+    /// drawer, and reads no more pictures than the record keeps.
+    ///
+    /// In a native session each block is given its kept picture as it is
+    /// drawn, since one that goes into the scrollback goes once and stays as
+    /// it went, and the scrollback shows every picture it was sent; one not
+    /// kept is its text, and no drawer runs either.
+    pub(crate) fn resuming(&mut self, resuming: bool, screen: ScreenMode) {
+        if resuming {
+            self.picturing.drawing = match screen {
+                ScreenMode::Fullscreen => Drawing::PutBack,
+                ScreenMode::Native => Drawing::Restoring,
+            };
+        } else {
+            if self.picturing.drawing == Drawing::PutBack {
+                self.picturing.drawing = Drawing::Restoring;
+                self.restore();
+            }
+            self.picturing.drawing = Drawing::Live;
+        }
+        if let Some(pictures) = self.picturing.pictures.as_mut() {
+            pictures.resuming(resuming);
+        }
+    }
+
+    /// Gives the newest blocks put back that are still to go out, as many as
+    /// [`MOST_KEPT_IMAGES`], the pictures kept of them, oldest first so the
+    /// newest is the last to make room.
+    ///
+    /// Only a block the walk put off: one wanting a picture, with none, not
+    /// fallen back to text, and refused as not drawn here. A line already
+    /// gone out keeps the text it went out as. One put off that is older
+    /// than those is already its text, and falls back to it as a block a
+    /// live session drew past the cap does, laid out as it is, so a new
+    /// palette, protocol or cell asks nothing for it.
+    fn restore(&mut self) {
+        let from = self.first().saturating_sub(self.gone);
+        let mut put_off: Vec<usize> = Vec::new();
+        for at in (from..self.lines.len()).rev() {
+            let Some(Line::Drawn(drawn)) = self.lines.get_mut(at) else {
+                continue;
+            };
+            let waits = drawn.picture.is_none()
+                && drawn.image.is_none()
+                && !drawn.fallen
+                && drawn
+                    .refused
+                    .as_ref()
+                    .is_some_and(|refused| refused.1 == Undrawn::NotHere);
+            if !waits {
+                continue;
+            }
+            if put_off.len() < MOST_KEPT_IMAGES {
+                put_off.push(at);
+            } else {
+                drawn.fallen = true;
+            }
+        }
+        if put_off.is_empty() {
+            return;
+        }
+        let columns = self.columns;
+        for at in put_off.into_iter().rev() {
+            // Out of the lines while its picture is settled, since keeping
+            // one may draw an older picture as text.
+            let Some(Line::Drawn(mut drawn)) = self
+                .lines
+                .get_mut(at)
+                .map(|line| std::mem::replace(line, Line::Set(Row::new())))
+            else {
+                continue;
+            };
+            drawn.refused = None;
+            // In the glyphs it was laid in, which a put back does not change.
+            let glyphs = drawn.laid.1;
+            if self.settle(&mut drawn, columns, glyphs) {
+                let by = By {
+                    links: &self.links,
+                    drawers: &self.drawers,
+                    modes: self.modes,
+                    offers: self.offers,
+                    window: self.picturing.window,
+                };
+                let was = drawn.weight;
+                self.picturing.saw(drawn.lay(columns, glyphs, by));
+                self.weight = self.weight.saturating_sub(was).saturating_add(drawn.weight);
+            }
+            if let Some(line) = self.lines.get_mut(at) {
+                *line = Line::Drawn(drawn);
+            }
+        }
+        self.remeasure_all();
+        self.spill();
+    }
+
     /// Whether an image a turn named would be shown as a picture now.
     pub(crate) fn shows_pictures(&self) -> bool {
         self.picturing.pictures.is_some() && self.picture_key(Kind::Image, self.columns).is_some()
@@ -1572,6 +1696,9 @@ impl Record {
                 payload,
                 size: picture.kept.size,
             }
+        } else if self.picturing.drawing == Drawing::PutBack {
+            // Read once the walk is over, and only if the record keeps it.
+            return Err(Undrawn::NotHere);
         } else if let Some((form, payload)) = pictures.cached(source, key) {
             KeptPicture {
                 pixels: payload.pixels(),
@@ -1579,6 +1706,8 @@ impl Record {
                 payload,
                 size: PictureSize::Fit,
             }
+        } else if self.picturing.drawing == Drawing::Restoring {
+            return Err(Undrawn::NotHere);
         } else {
             let form = Form::Svg(drawer.picture(source, &Room { columns, glyphs })?);
             let payload = pictures.make(source, key, &form)?;
@@ -3987,6 +4116,10 @@ mod tests {
                 self.note("reencode".to_owned());
                 Ok(self.payload(key))
             }
+
+            fn resuming(&mut self, resuming: bool) {
+                self.note(format!("resuming {resuming}"));
+            }
         }
 
         /// The cell every test's terminal draws in.
@@ -4103,6 +4236,123 @@ mod tests {
             ["cached new", "picture new", "make new", "cached kept"]
         );
         assert!(picturing::shown(&record, 1));
+    }
+
+    #[test]
+    fn a_session_put_back_draws_what_the_cache_kept_and_the_rest_as_text_with_no_drawer() {
+        let (fake, asked) = fake(100, 3, vec!["kept"]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+
+        record.resuming(true, ScreenMode::Fullscreen);
+        record.drawn(picturing::diagram("kept"), Glyphs::Unicode, Theme::Dark);
+        record.drawn(picturing::diagram("missed"), Glyphs::Unicode, Theme::Dark);
+        record.resuming(false, ScreenMode::Fullscreen);
+
+        assert!(picturing::shown(&record, 0), "the cache's picture");
+        assert!(!picturing::shown(&record, 1), "a miss was drawn");
+        // As a picture not drawn here: its text, with nothing said of it.
+        assert_eq!(picturing::refused(&record, 1), Some(Undrawn::NotHere));
+        assert_eq!(
+            picturing::asked(&asked),
+            [
+                "resuming true",
+                "cached kept",
+                "cached missed",
+                "resuming false"
+            ]
+        );
+
+        // Once it is put back, a new block is drawn as live ones are.
+        record.drawn(picturing::diagram("live"), Glyphs::Unicode, Theme::Dark);
+        assert!(picturing::shown(&record, 2));
+        assert_eq!(
+            picturing::asked(&asked).get(4..),
+            Some(&["cached live", "picture live", "make live"].map(str::to_owned)[..])
+        );
+    }
+
+    #[test]
+    fn a_session_put_back_reads_the_cache_only_for_the_pictures_it_keeps() {
+        let names: Vec<String> = (0..MOST_KEPT_IMAGES + 4)
+            .map(|at| format!("d{at}"))
+            .collect();
+        let cached: Vec<&'static str> = names
+            .iter()
+            .map(|name| &*Box::leak(name.clone().into_boxed_str()))
+            .collect();
+        let (fake, asked) = fake(100, 3, cached);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+
+        record.resuming(true, ScreenMode::Fullscreen);
+        for name in &names {
+            record.drawn(picturing::diagram(name), Glyphs::Unicode, Theme::Dark);
+        }
+        assert_eq!(
+            picturing::asked(&asked),
+            ["resuming true"],
+            "the walk read the cache"
+        );
+        record.resuming(false, ScreenMode::Fullscreen);
+
+        let asked = picturing::asked(&asked);
+        let read = asked
+            .iter()
+            .filter(|said| said.starts_with("cached "))
+            .count();
+        assert_eq!(read, MOST_KEPT_IMAGES, "{asked:?}");
+        assert!(
+            !asked
+                .iter()
+                .any(|said| said.starts_with("picture ") || said.starts_with("make ")),
+            "{asked:?}"
+        );
+        assert_eq!(asked.last().map(String::as_str), Some("resuming false"));
+        // The newest are the ones shown, and the oldest are their text.
+        assert!((0..4).all(|line| !picturing::shown(&record, line)));
+        assert!((4..MOST_KEPT_IMAGES + 4).all(|line| picturing::shown(&record, line)));
+    }
+
+    #[test]
+    fn a_new_palette_after_a_session_put_back_asks_nothing_for_the_diagrams_it_did_not_keep() {
+        // The older diagrams the put back did not reach are text for as long
+        // as they are held, as those a live session drew past the cap are: a
+        // new palette encodes the kept pictures again and asks for no other.
+        let older = 10;
+        let names: Vec<String> = (0..MOST_KEPT_IMAGES + older)
+            .map(|at| format!("d{at}"))
+            .collect();
+        let cached: Vec<&'static str> = names
+            .iter()
+            .map(|name| &*Box::leak(name.clone().into_boxed_str()))
+            .collect();
+        let (fake, asked) = fake(100, 3, cached);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+        record.resuming(true, ScreenMode::Fullscreen);
+        for name in &names {
+            record.drawn(picturing::diagram(name), Glyphs::Unicode, Theme::Dark);
+        }
+        record.resuming(false, ScreenMode::Fullscreen);
+        let before = picturing::asked(&asked).len();
+
+        let light = picturing::coloured(Theme::Light);
+        record.pictured_as(
+            Capability::Graphics {
+                protocol: Protocol::Kitty,
+                cell: picturing::CELL,
+            },
+            light.identity(),
+        );
+        record.relay(40, Glyphs::Unicode, Theme::Light);
+
+        let after = picturing::asked(&asked);
+        let since = after.get(before..).unwrap_or_default();
+        assert!(
+            since.iter().all(|said| said == "reencode"),
+            "asked for a diagram not kept: {since:?}"
+        );
+        assert_eq!(since.len(), MOST_KEPT_IMAGES, "{since:?}");
+        assert!((0..older).all(|line| !picturing::shown(&record, line)));
+        assert!((older..MOST_KEPT_IMAGES + older).all(|line| picturing::shown(&record, line)));
     }
 
     #[test]
