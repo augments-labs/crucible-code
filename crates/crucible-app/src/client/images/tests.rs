@@ -3,17 +3,22 @@
 
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crucible_attachments::Taken;
 use crucible_client_api::bounds::IMAGE_BYTES;
 use crucible_client_api::{ImagePath, ImageRef, ImageRefused, Outcome, Response, Shown};
-use crucible_tools::{Disposition, Mode, Permission, Rules, Settled, Tool as _};
+use crucible_raster::{Pixels, Refused};
+use crucible_tools::{
+    Approved, Disposition, Mode, Permission, Rules, Settled, Tool as _, ToolWorker,
+};
 use crucible_types::{ToolArgs, ToolCall, ToolId};
-use crucible_workspace::Workspace;
+use crucible_workspace::{Workspace, WorkspacePath};
 
-use super::{CHUNK, DEADLINE, Unasked, read, show};
+use super::{CHUNK, DEADLINE, Unasked, pictured, read, show, showing};
 use crate::sample::Sample;
 
 /// A picture three pixels wide and two high, as a file a model could name.
@@ -60,7 +65,7 @@ fn unlocked(
     rules: &[(Disposition, &str)],
     image: &ImageRef,
 ) -> Result<Shown, ImageRefused> {
-    crucible_runtime::answered!(show(image, workspace, &mut engine(rules)))
+    crucible_runtime::answered!(show(image, workspace, &mut engine(rules), None))
 }
 
 /// A workspace holding the picture as `a.png`, a secret one under `secret/`,
@@ -169,8 +174,9 @@ fn a_path_at_another_host_or_a_device_is_refused_before_anything_resolves_it() {
         for name in named {
             fs::write(root.join(name), picture()).expect("a picture by that name");
         }
-        fs::create_dir_all(root.join(r"\").join("host")).expect("a directory");
-        fs::write(root.join(r"\").join("host").join("f.png"), picture()).expect("a picture");
+        let mixed = format!("{}/{}", root.display(), r"\/host");
+        fs::create_dir_all(&mixed).expect("a directory");
+        fs::write(format!("{mixed}/f.png"), picture()).expect("a picture");
     }
     let mut spelled = vec![doubled.as_str(), r"\/host/f.png", "//host/share/a.png"];
     spelled.extend(named);
@@ -355,24 +361,98 @@ fn a_proof_settled_about_another_file_reads_nothing() {
     );
 }
 
+/// How many decodes are running now, and the most that ever ran at once.
+static DECODING: AtomicUsize = AtomicUsize::new(0);
+static MOST_DECODING: AtomicUsize = AtomicUsize::new(0);
+
+/// The raster's decoder, counting how many run at once and taking long
+/// enough that two in the slot together would be seen.
+fn counted(bytes: &[u8]) -> Result<Pixels, Refused> {
+    let now = DECODING.fetch_add(1, Ordering::SeqCst).saturating_add(1);
+    MOST_DECODING.fetch_max(now, Ordering::SeqCst);
+    thread::sleep(Duration::from_millis(5));
+    let decoded = crucible_raster::decode(bytes);
+    DECODING.fetch_sub(1, Ordering::SeqCst);
+    decoded
+}
+
 #[test]
 fn sixteen_asked_at_once_are_decoded_one_at_a_time_and_each_is_shown() {
+    // Each of the sixteen holds what it read while it waits for the slot: at
+    // most `MOST_INPUT` bytes and one chunk, so about 64 MiB among them here,
+    // where nothing bounds how many read at once. Lent the tool worker, no
+    // more than its `CAPACITY` read at a time.
     let (_sample, workspace) = tree("images-sixteen");
     let _shared = SLOT.read().unwrap_or_else(PoisonError::into_inner);
     let workspace = Arc::new(workspace);
+    let decoded = |workspace: &Workspace| {
+        let (image, mut permission) = (answer("a.png"), engine(&[]));
+        let showing = showing(&image, workspace, &mut permission, None, (read, counted));
+        crucible_runtime::answered!(showing)
+    };
     let asked: Vec<_> = (0..16)
         .map(|_| {
             let workspace = Arc::clone(&workspace);
-            thread::spawn(move || unlocked(&workspace, &[], &answer("a.png")))
+            thread::spawn(move || decoded(&workspace))
         })
         .collect();
-    let first = unlocked(&workspace, &[], &answer("a.png")).expect("the picture");
+    let first = decoded(&workspace).expect("the picture");
     for one in asked {
         assert_eq!(
             one.join().expect("a thread that showed it"),
             Ok(first.clone())
         );
     }
+    assert_eq!(MOST_DECODING.load(Ordering::SeqCst), 1, "decoded together");
+}
+
+#[test]
+fn a_read_that_never_returns_is_answered_not_in_time_within_the_deadline() {
+    let (_sample, workspace) = tree("images-stuck");
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .expect("a runtime");
+    let worker = ToolWorker::new(runtime.handle().clone());
+    let (release, stuck) = std::sync::mpsc::channel::<()>();
+    // Stuck as a read of a mount that stopped answering is, until the test
+    // lets it go once it has its answer.
+    let reader = move |_: &Approved, _: &Workspace, _: &WorkspacePath, _: Instant| {
+        let _ = stuck.recv_timeout(Duration::from_secs(5));
+        Err::<Taken, _>(ImageRefused::NotShown)
+    };
+    let started = Instant::now();
+    let answered = runtime.block_on(showing(
+        &answer("a.png"),
+        &workspace,
+        &mut engine(&[]),
+        Some(&worker),
+        (reader, crucible_raster::decode),
+    ));
+    let waited = started.elapsed();
+    let _ = release.send(());
+    assert_eq!(answered, Err(ImageRefused::NotInTime));
+    assert!(
+        waited < DEADLINE.saturating_add(Duration::from_millis(500)),
+        "{waited:?}"
+    );
+}
+
+#[test]
+fn a_decode_that_ends_past_the_deadline_is_not_in_time() {
+    fn slow(bytes: &[u8]) -> Result<Pixels, Refused> {
+        thread::sleep(Duration::from_millis(200));
+        crucible_raster::decode(bytes)
+    }
+    let _shared = SLOT.read().unwrap_or_else(PoisonError::into_inner);
+    let started = Instant::now()
+        .checked_sub(DEADLINE.saturating_sub(Duration::from_millis(100)))
+        .expect("a clock that has run that long");
+    assert_eq!(
+        pictured(&picture(), started, slow),
+        Err(ImageRefused::NotInTime)
+    );
 }
 
 #[test]

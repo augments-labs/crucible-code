@@ -304,7 +304,8 @@ pub async fn perform(
                 .switching
                 .settings
                 .permission(conversation.settled().mode());
-            Performed::Image(images::show(image, desk.workspace, &mut permission).await)
+            let worker = conversation.runner.worker();
+            Performed::Image(images::show(image, desk.workspace, &mut permission, worker).await)
         }
         Command::Exit => Performed::Leaving,
     }

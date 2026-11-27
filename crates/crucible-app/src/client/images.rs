@@ -23,7 +23,14 @@
 //!    changed since the model was shown it is not shown as what it saw.
 //! 5. It is decoded and encoded again as a PNG in the decode slot, taken with
 //!    what is left of the deadline, so each image keeps its own two seconds and
-//!    sixteen asked at once wait for the slot one at a time.
+//!    sixteen asked at once wait for the slot one at a time. A picture that
+//!    was ready only past the deadline is late, however it ended.
+//!
+//! Every step that touches the filesystem, and the wait for the slot, runs on
+//! the tool worker the host lends, where it lends one, and the deadline is
+//! kept outside that work: what has started there cannot be stopped, so a step
+//! still running at the deadline is left to end on its own and the answer is
+//! [`ImageRefused::NotInTime`] without it.
 //!
 //! Invariants:
 //!
@@ -39,12 +46,16 @@
 //!   [`PER_TURN`]; this answers one request at a time and counts nothing.
 
 use std::cell::Cell;
+use std::future::Future;
 use std::time::{Duration, Instant};
 
 use crucible_attachments::{AttachmentError, Opened, Taken};
 use crucible_client_api::{ImageRef, ImageRefused, Shown};
-use crucible_raster::{MOST_INPUT, Refused, Slot};
-use crucible_tools::{Approved, Ask, Permission, Remember, Sensitivity, Settled, Target, Verdict};
+use crucible_raster::{MOST_INPUT, Pixels, Refused, Slot};
+use crucible_runtime::Cancel;
+use crucible_tools::{
+    Approved, Ask, Permission, Remember, Sensitivity, Settled, Target, ToolWorker, Unrun, Verdict,
+};
 use crucible_types::{ToolArgs, ToolCall, ToolId};
 use crucible_workspace::{Workspace, WorkspacePath};
 
@@ -74,15 +85,20 @@ const CHUNK: usize = 64 * 1024;
 /// The picture `image` names, or why it is not shown.
 ///
 /// `workspace` is where the path is resolved and `permission` the engine the
-/// read is decided by, the session's own rules and mode, both lent by the
-/// host. Settles as soon as it is asked: the engine is never left waiting on a
+/// read is decided by, the session's own rules and mode, and `worker` the one
+/// the read tool hands its blocking work to, all lent by the host. Resolving
+/// the path, reading the file, waiting for the decode slot and decoding run
+/// there, so a mount that stops answering holds a worker's place rather than
+/// whoever asked; polled on a runtime, this answers within [`DEADLINE`]
+/// whether or not that work has ended. The engine is never left waiting on a
 /// person, since every question it would put is answered `deny` here.
 ///
 /// # Errors
 ///
 /// [`ImageRefused::NotShown`] for a path that opens with two separators, one
-/// outside the workspace, one a rule refuses or puts a question about, and a
-/// file that is not there or cannot be read; for a file the engine allowed, [`ImageRefused::TooLarge`] past
+/// outside the workspace, one a rule refuses or puts a question about, a file
+/// that is not there or cannot be read, and a worker that would not start the
+/// work; for a file the engine allowed, [`ImageRefused::TooLarge`] past
 /// [`MOST_INPUT`] bytes or past what the decoder or encoder hold,
 /// [`ImageRefused::NotAnImage`] for bytes no decoder reads,
 /// [`ImageRefused::NotInTime`] past [`DEADLINE`], and
@@ -92,34 +108,115 @@ pub async fn show(
     image: &ImageRef,
     workspace: &Workspace,
     permission: &mut Permission,
+    worker: Option<&ToolWorker>,
 ) -> Result<Shown, ImageRefused> {
+    showing(
+        image,
+        workspace,
+        permission,
+        worker,
+        (read, crucible_raster::decode),
+    )
+    .await
+}
+
+/// How a file is read and its bytes decoded: [`read`] and the raster's own
+/// decoder outside the tests, which put a slow or a stuck one in their place.
+type Steps<R> = (R, fn(&[u8]) -> Result<Pixels, Refused>);
+
+/// [`show`], reading and decoding by `steps`.
+async fn showing<R>(
+    image: &ImageRef,
+    workspace: &Workspace,
+    permission: &mut Permission,
+    worker: Option<&ToolWorker>,
+    (reader, decode): Steps<R>,
+) -> Result<Shown, ImageRefused>
+where
+    R: FnOnce(&Approved, &Workspace, &WorkspacePath, Instant) -> Result<Taken, ImageRefused>
+        + Send
+        + 'static,
+{
     let started = Instant::now();
     let requested = image.path().as_str();
     if elsewhere(requested) {
         return Err(ImageRefused::NotShown);
     }
-    let path = workspace
-        .existing(requested)
-        .map_err(|_| ImageRefused::NotShown)?;
-    let call = ToolCall {
-        id: ToolId::new("show-image"),
-        name: TOOL.into(),
-        args: ToolArgs::new(serde_json::json!({ "path": requested }).to_string()),
+    let hash = match image {
+        ImageRef::Tool { hash, .. } => Some(*hash),
+        ImageRef::Answer { .. } => None,
     };
-    let sensitivity = Sensitivity::ReadOnly {
-        target: Target::resolved(workspace, &path),
-    };
-    let Settled::Approved(approved) = permission.decide(&call, &sensitivity, &mut Unasked).await
-    else {
-        return Err(ImageRefused::NotShown);
-    };
-    let taken = read(&approved, workspace, &path, started)?;
-    if let ImageRef::Tool { hash, .. } = image
-        && taken.hash() != *hash
-    {
-        return Err(ImageRefused::Changed);
+    within(started, async {
+        let (owned, asked) = (workspace.clone(), requested.to_owned());
+        let (path, sensitivity) = blocking(worker, move || {
+            let path = owned.existing(&asked).map_err(|_| ImageRefused::NotShown)?;
+            let target = Target::resolved(&owned, &path);
+            Ok((path, Sensitivity::ReadOnly { target }))
+        })
+        .await??;
+        let call = ToolCall {
+            id: ToolId::new("show-image"),
+            name: TOOL.into(),
+            args: ToolArgs::new(serde_json::json!({ "path": requested }).to_string()),
+        };
+        let Settled::Approved(approved) =
+            permission.decide(&call, &sensitivity, &mut Unasked).await
+        else {
+            return Err(ImageRefused::NotShown);
+        };
+        let owned = workspace.clone();
+        blocking(worker, move || {
+            let taken = reader(&approved, &owned, &path, started)?;
+            if hash.is_some_and(|hash| taken.hash() != hash) {
+                return Err(ImageRefused::Changed);
+            }
+            pictured(taken.bytes(), started, decode)
+        })
+        .await?
+    })
+    .await
+}
+
+/// What `work` answers, or [`ImageRefused::NotInTime`] once [`DEADLINE`] has
+/// passed since `started`, whether or not the work has ended.
+///
+/// The deadline is kept here, outside the work, since what runs on the worker
+/// cannot be stopped once started: a read stuck on a mount that stopped
+/// answering is left to end on its own, and the answer is not waited for. Kept
+/// by the timer of the runtime polling this; polled where there is none, the
+/// work is awaited as it is, and each step looks at the deadline itself.
+async fn within<T>(
+    started: Instant,
+    work: impl Future<Output = Result<T, ImageRefused>>,
+) -> Result<T, ImageRefused> {
+    if tokio::runtime::Handle::try_current().is_err() {
+        return work.await;
     }
-    pictured(taken.bytes(), started)
+    let left = DEADLINE.saturating_sub(started.elapsed());
+    tokio::time::timeout(left, work)
+        .await
+        .unwrap_or(Err(ImageRefused::NotInTime))
+}
+
+/// What `job` answers, run on `worker` where one was lent, as the read tool's
+/// blocking work is, and on the calling thread where none was.
+///
+/// A job the worker would not start, because its runtime is shutting down, is
+/// [`ImageRefused::NotShown`]; one that comes apart unwinds through here, as
+/// it would have on the calling thread.
+async fn blocking<T, F>(worker: Option<&ToolWorker>, job: F) -> Result<T, ImageRefused>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    let Some(worker) = worker else {
+        return Ok(job());
+    };
+    match worker.run(&Cancel::new(), |_| job()).await {
+        Ok(answer) => Ok(answer),
+        Err(Unrun::Panicked) => std::panic::resume_unwind(Box::new(Unrun::Panicked.to_string())),
+        Err(Unrun::Cancelled | Unrun::Stopped) => Err(ImageRefused::NotShown),
+    }
 }
 
 /// Whether `requested` opens with two separators, in any mix of `\` and `/`:
@@ -194,7 +291,11 @@ pub fn read(
 ///
 /// Encoded again whatever it was, so what crosses is pixels this process made
 /// and nothing else the file carried.
-fn pictured(bytes: &[u8], started: Instant) -> Result<Shown, ImageRefused> {
+fn pictured(
+    bytes: &[u8],
+    started: Instant,
+    decode: fn(&[u8]) -> Result<Pixels, Refused>,
+) -> Result<Shown, ImageRefused> {
     let left = DEADLINE.saturating_sub(started.elapsed());
     if left.is_zero() {
         return Err(ImageRefused::NotInTime);
@@ -208,8 +309,13 @@ fn pictured(bytes: &[u8], started: Instant) -> Result<Shown, ImageRefused> {
     // and encoded at a time, and the wait for it comes out of this one's two
     // seconds rather than the slot's own.
     let _slot = Slot::take(left).map_err(refused)?;
-    let pixels = crucible_raster::decode(bytes).map_err(refused)?;
+    let pixels = decode(bytes).map_err(refused)?;
     let png = crucible_raster::png(&pixels).map_err(refused)?;
+    // A decode or an encode that ran past the deadline is late however it
+    // ended, so what is handed back always came within the two seconds.
+    if started.elapsed() >= DEADLINE {
+        return Err(ImageRefused::NotInTime);
+    }
     Ok(Shown {
         png,
         pixels: (pixels.width(), pixels.height()),

@@ -360,6 +360,15 @@ impl Runner {
         self
     }
 
+    /// The worker this runner lends its calls, where it was lent one.
+    ///
+    /// For blocking work the host does beside a turn as a tool would, such as
+    /// reading a file the turn named, so that it is held to the same bound.
+    #[must_use]
+    pub fn worker(&self) -> Option<&ToolWorker> {
+        self.worker.as_ref()
+    }
+
     /// Holds the questions the model asks without waiting in `held`, and
     /// delivers each batch's answer once it is settled.
     ///
