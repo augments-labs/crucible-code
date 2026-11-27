@@ -16507,7 +16507,7 @@
     {
       "id": "CASE-IMAGE-WORDS-BEFORE-RESOLVING",
       "family": "authority",
-      "obligation": "A path whose words, joined to the root and folded, leave every root, an answer's or a tool's, is not shown and resolved by nothing; one that folds back inside is shown.",
+      "obligation": "A path any of whose names, joined to the root and walked name by name, lies outside every root and off the way to one, an answer's or a tool's, is not shown and resolved by nothing, even where a later `..` comes back inside; one that stays inside is shown.",
       "package": "crucible-app",
       "target": {
         "kind": "lib",
@@ -16515,7 +16515,7 @@
       },
       "case": "client::images::tests::a_path_whose_words_leave_every_root_is_refused_before_anything_resolves_it",
       "source": "crates/crucible-app/src/client/images/tests.rs",
-      "body_sha256": "b927c685ca0004b81d1ca5d569d71827820b262ba82d32373c64b2ad0fb3e30e",
+      "body_sha256": "165513b60b16ae6b63651a3095d7bd4c3cf72a73e6968bb58bdd37459ed1c8ee",
       "platforms": [
         "linux",
         "macos",
@@ -16525,19 +16525,36 @@
     {
       "id": "CASE-IMAGE-UNDER-A-ROOT-BY-ITS-WORDS",
       "family": "authority",
-      "obligation": "A path is under a root only where its folded words lie beneath the root's spelling, and one opening with two separators only under a root on a share.",
+      "obligation": "A path is under a root only where every name it walks lies at or under the root's spelling or on the way to it and it ends beneath the root, and one opening with two separators only under a root on a share.",
       "package": "crucible-app",
       "target": {
         "kind": "lib",
         "name": "crucible_app"
       },
-      "case": "client::images::tests::a_path_is_under_a_root_by_its_folded_words_and_a_share_s_path_under_a_share",
+      "case": "client::images::tests::a_path_is_under_a_root_only_by_names_on_the_way_to_it_and_a_share_s_path_under_a_share",
       "source": "crates/crucible-app/src/client/images/tests.rs",
-      "body_sha256": "9d03d08c514dc9b49e06393c0e0b83a5b4fc057b7aeaf8767c769569bb6c3eff",
+      "body_sha256": "6f95f10a2aa635ce71568a0833305d2785d5ff3afe99f97f879bd00dc3e9f3d4",
       "platforms": [
         "linux",
         "macos",
         "windows"
+      ]
+    },
+    {
+      "id": "CASE-IMAGE-LINKED-SPELLING-NOT-SHOWN",
+      "family": "authority",
+      "obligation": "An absolute path through a link to the root's parent, which resolving would bring into the workspace, is not shown and resolved by nothing.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "client::images::tests::an_absolute_path_through_a_link_to_the_root_s_parent_is_not_shown_and_nothing_resolves_it",
+      "source": "crates/crucible-app/src/client/images/tests.rs",
+      "body_sha256": "44ab222df87f9b3790b25ece591e60cba48a1f66d02a110c1568fc4476de532f",
+      "platforms": [
+        "linux",
+        "macos"
       ]
     }
   ]
