@@ -1525,8 +1525,8 @@ impl<T: Terminal> Renderer<T> {
     /// whole of every address an answer was drawn with shorter than it was
     /// written, newest first.
     ///
-    /// A table, display math, a diagram or a diff; not a rule, which draws all
-    /// there is of it. An address cut short in its quiet form, or drawn as a
+    /// A table, display math, a diagram or a diff, and an image a turn named,
+    /// by its path; not a rule, which draws all there is of it. An address cut short in its quiet form, or drawn as a
     /// forge's reference; not a reference the answer wrote short itself. The
     /// record is the only copy, so what lists these reads it where it stands.
     pub fn sources(&self) -> impl Iterator<Item = Source<'_>> + '_ {

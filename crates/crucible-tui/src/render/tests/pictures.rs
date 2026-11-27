@@ -1632,3 +1632,50 @@ fn an_image_path_carrying_an_escape_never_reaches_the_terminal() {
     assert!(!written.contains("\x1b]52"), "{written:?}");
     assert!(!written.contains("\x1b[2J"), "{written:?}");
 }
+
+#[test]
+fn ctrl_o_lists_each_image_a_turn_named_by_its_path_newest_first_shown_or_not() {
+    let mut drawn = pictured(40, 12, Printed::new(3, 2, 300));
+    drawn
+        .render
+        .image("out/plot.png", None, Ok(vec![1, 2, 3]))
+        .unwrap();
+    drawn
+        .render
+        .image(
+            "docs/a.png",
+            Some("read"),
+            Err(crate::chrome::Undrawn::ImageNotShown),
+        )
+        .unwrap();
+    drawn.take();
+
+    let sources: Vec<(&str, &str)> = drawn
+        .render
+        .sources()
+        .map(|source| (source.word, source.text))
+        .collect();
+    assert_eq!(
+        sources,
+        [("image", "docs/a.png"), ("image", "out/plot.png")]
+    );
+
+    let shown: Vec<crate::Shown<'_>> = sources
+        .iter()
+        .map(|&(called, text)| crate::Shown { called, text })
+        .collect();
+    let rows: Vec<String> = crate::Expanded {
+        shown: &shown,
+        from: 0,
+    }
+    .within(40, 12, Glyphs::Unicode)
+    .iter()
+    .map(|row| row.text().trim_end().to_owned())
+    .collect();
+    let at = |line: &str| rows.iter().position(|row| row == line);
+    assert!(
+        at("image").is_some()
+            && matches!((at("docs/a.png"), at("out/plot.png")), (Some(newer), Some(older)) if newer < older),
+        "{rows:#?}"
+    );
+}
