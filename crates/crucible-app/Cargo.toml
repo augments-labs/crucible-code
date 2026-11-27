@@ -10,6 +10,9 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
+# A file opened through the workspace's proof and read in bounded chunks, which
+# is how an image a turn named is read for a front end to show.
+crucible-attachments.workspace = true
 # The credential store `/login` writes and startup reads.
 crucible-auth.workspace = true
 # The built-in tools every run is assembled with.
@@ -36,6 +39,9 @@ crucible-extension.workspace = true
 # The one crate that speaks the Model Context Protocol. Composition is where a
 # hosted server becomes a tool, so it is taken here and nowhere below.
 crucible-mcp.workspace = true
+# The decoder and the PNG encoder an image a turn named is shown through, under
+# their ceilings and their one decode slot.
+crucible-raster.workspace = true
 # The provider contract and what a model is described by.
 crucible-models.workspace = true
 # The owner-only boundary the user configuration is held behind before it is

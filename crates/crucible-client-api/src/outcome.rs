@@ -9,7 +9,7 @@
 
 use serde_json::Value;
 
-use crate::bounds::{Name, Text};
+use crate::bounds::{IMAGE_BYTES, Name, Text};
 use crate::command::{Command, Mode};
 use crate::context::Context;
 use crate::error::{ErrorCode, Refusal};
@@ -815,6 +815,70 @@ impl AnswerOutcome {
     }
 }
 
+/// An image a turn named, as the application showed it: a PNG it wrote itself
+/// from what it read, never the file's own bytes, and its size in pixels.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Shown {
+    /// The picture, as a PNG of at most [`IMAGE_BYTES`].
+    pub png: Vec<u8>,
+    /// How many pixels it is across and down, neither of them none.
+    pub pixels: (u32, u32),
+}
+
+impl std::fmt::Debug for Shown {
+    /// The size and not the bytes, which are a picture and not a log line.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Shown")
+            .field("png", &self.png.len())
+            .field("pixels", &self.pixels)
+            .finish()
+    }
+}
+
+/// Why an image a turn named is not shown.
+///
+/// [`ImageRefused::NotShown`] is the one answer for a path outside the
+/// workspace, one a rule keeps from being read and one where nothing is,
+/// so that which of the three it was is not told by the answer. The rest are
+/// told only of a file that may be read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ImageRefused {
+    /// It is outside the workspace, a rule keeps it from being read, or
+    /// nothing is there.
+    NotShown,
+    /// The file, or the picture it holds, is larger than may be read or drawn.
+    TooLarge,
+    /// The file is not a picture the application reads.
+    NotAnImage,
+    /// It could not be read and drawn in the time an image is given.
+    NotInTime,
+    /// A tool's image whose file no longer holds what the tool read.
+    Changed,
+}
+
+impl ImageRefused {
+    /// Every reason.
+    pub const EVERY: [Self; 5] = [
+        Self::NotShown,
+        Self::TooLarge,
+        Self::NotAnImage,
+        Self::NotInTime,
+        Self::Changed,
+    ];
+
+    /// The word it crosses as.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotShown => "not_shown",
+            Self::TooLarge => "too_large",
+            Self::NotAnImage => "not_an_image",
+            Self::NotInTime => "not_in_time",
+            Self::Changed => "changed",
+        }
+    }
+}
+
 /// What came of one command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
@@ -869,6 +933,9 @@ pub enum Outcome {
     /// conversation and delivers it, or the route has none to run. Where an
     /// idle conversation runs one, the answer is that turn's outcome.
     Answer(AnswerOutcome),
+    /// Showing an image a turn named ended: the picture, or why it is not
+    /// shown.
+    Image(Result<Shown, ImageRefused>),
 }
 
 /// An [`Outcome`], paired with the request it answers.
@@ -885,8 +952,12 @@ impl Response {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::TooLarge`] where the frame would be over the ceiling.
+    /// [`ErrorCode::TooLarge`] where the frame would be over the ceiling, or
+    /// an image shown in it over [`IMAGE_BYTES`].
     pub fn encode(&self) -> Result<Vec<u8>, Refusal> {
+        if matches!(&self.outcome, Outcome::Image(Ok(shown)) if shown.png.len() > IMAGE_BYTES) {
+            return Err(ErrorCode::TooLarge.into());
+        }
         frame(
             &Writing::new()
                 .with("version", crate::request::Version::CURRENT.number())
@@ -935,7 +1006,7 @@ impl Outcome {
     }
 
     /// Every kind of outcome, by the word it crosses as.
-    pub const KINDS: [&'static str; 24] = [
+    pub const KINDS: [&'static str; 25] = [
         "refused",
         "turn",
         "room",
@@ -960,6 +1031,7 @@ impl Outcome {
         "usage",
         "leaving",
         "answer",
+        "image",
     ];
 
     /// The word this kind crosses as.
@@ -990,6 +1062,7 @@ impl Outcome {
             Self::Usage(_) => "usage",
             Self::Leaving => "leaving",
             Self::Answer(_) => "answer",
+            Self::Image(_) => "image",
         }
     }
 
@@ -1022,6 +1095,7 @@ impl Outcome {
             Self::Context(context) => object.with("context", context.written()),
             Self::Usage(usage) => object.with("usage", usage.written()),
             Self::Answer(answer) => object.with("answer", answer.written()),
+            Self::Image(image) => object.with("image", codec::image(image)),
         }
         .finish()
     }
@@ -1060,6 +1134,7 @@ impl Outcome {
             "usage" => Self::Usage(Usage::read(fields.take("usage")?)?),
             "leaving" => Self::Leaving,
             "answer" => Self::Answer(AnswerOutcome::read(fields.take("answer")?)?),
+            "image" => Self::Image(codec::read_image(fields.take("image")?)?),
             _ => return Err(ErrorCode::Malformed.into()),
         };
         fields.done()?;

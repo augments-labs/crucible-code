@@ -156,7 +156,7 @@ fn legacy_reset_preserves_visible_history_and_opening() {
         history,
         &against(&runner, &Pruned::default()),
         &Session::nowhere(),
-        &mut kept,
+        (&mut kept, &mut crate::cli::converse::Naming::default()),
     )
     .unwrap();
     let visible = renderer
@@ -1178,7 +1178,7 @@ fn a_replayed_change_is_held_at_the_row_that_offers_it() {
         history,
         &against(&runner, &Pruned::default()),
         &session,
-        &mut kept,
+        (&mut kept, &mut crate::cli::converse::Naming::default()),
     )
     .unwrap();
 

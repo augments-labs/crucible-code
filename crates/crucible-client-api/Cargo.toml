@@ -21,7 +21,11 @@ authors.workspace = true
 # `serde_core` for the visitor a frame is read through, which is what lets the
 # item, nesting, value-count and repeated-key refusals happen while the bytes
 # are read.
+#
+# `base64` for the one field of bytes that crosses, the PNG an image a turn
+# named is shown as: JSON has no bytes, and std has no encoder for them.
 [dependencies]
+base64.workspace = true
 crucible-types.workspace = true
 serde_core.workspace = true
 serde_json.workspace = true

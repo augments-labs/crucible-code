@@ -1511,3 +1511,239 @@ fn a_label_is_what_a_click_opens_a_blocks_source_from_and_no_other_row_is() {
         "{labelled:#?}"
     );
 }
+
+#[test]
+fn an_answer_names_its_images_by_path_in_order_and_never_an_address() {
+    let mut drawn = reading(100, 8);
+    drawn.answer(
+        "see ![plot](out/plot.png), ![b](./b.png), ![web](https://example.com/a.png), \
+         ![bare](www.example.com/a.png), ![mail](mailto:a@b) and ![none]()\n",
+    );
+
+    assert_eq!(
+        drawn.render.named_images(),
+        ["out/plot.png".into(), "./b.png".into()] as [Box<str>; 2]
+    );
+    assert!(drawn.render.named_images().is_empty(), "named twice");
+}
+
+#[test]
+fn an_image_written_at_another_host_or_a_device_is_never_named() {
+    // A path that opens with two separators, in any mix, is a host's share or
+    // a device on Windows, and resolving it reaches the network before any
+    // refusal could: the answer's words alone must ask for none of them.
+    let mut drawn = reading(100, 8);
+    drawn.answer(
+        "![a](\\\\host\\share\\a.png) ![b](//host/share/b.png) \
+         ![c](\\\\?\\UNC\\host\\share\\c.png) ![d](\\\\.\\pipe\\x) \
+         ![e](/\\host\\e.png) ![f](\\/host/f.png) ![kept](./kept.png)\n",
+    );
+
+    assert_eq!(
+        drawn.render.named_images(),
+        ["./kept.png".into()] as [Box<str>; 1]
+    );
+}
+
+#[test]
+fn the_images_an_answer_named_before_a_tool_call_are_kept_across_it() {
+    // A tool call settles the reader the answer was read by, which is where
+    // what it named is kept from.
+    let mut drawn = reading(100, 8);
+    drawn.answer("first ![a](a.png)\n");
+    drawn.render.stream("then ![b](b.png)\n").unwrap();
+
+    assert_eq!(
+        drawn.render.named_images(),
+        ["a.png".into(), "b.png".into()] as [Box<str>; 2]
+    );
+}
+
+#[test]
+fn no_more_images_are_named_than_the_cap() {
+    let mut drawn = reading(100, 8);
+    let answer = (0..crate::markdown::NAMED_CAP + 6)
+        .map(|at| format!("![{at}](i{at}.png) "))
+        .collect::<Vec<_>>()
+        .concat();
+    drawn.answer(&format!("{answer}\n"));
+    drawn.answer(&format!("{answer}\n"));
+
+    let named = drawn.render.named_images();
+    assert_eq!(named.len(), crate::markdown::NAMED_CAP);
+    assert_eq!(named.first().map(AsRef::as_ref), Some("i0.png"));
+}
+
+#[test]
+fn an_image_is_shown_under_an_edge_naming_its_path_where_pictures_are() {
+    assert!(!reading(40, 12).render.shows_pictures(), "no protocol told");
+    let mut drawn = pictured(40, 12, Printed::new(3, 2, 300));
+    assert!(drawn.render.shows_pictures());
+
+    drawn
+        .render
+        .image("out/plot.png", None, Ok(vec![1, 2, 3]))
+        .unwrap();
+    let rows = drawn.rows();
+    let written = drawn.take();
+
+    let edge = rows
+        .iter()
+        .position(|row| row.trim_end() == "┌─ image · out/plot.png")
+        .unwrap_or_else(|| panic!("{rows:#?}"));
+    let transmitted = transmitted(&commands(&written));
+    assert_eq!(transmitted.len(), 1, "{written:?}");
+    assert!(
+        written.contains(&placeholders(1, 0, 3)),
+        "not placed under its edge at row {edge}: {written:?}"
+    );
+}
+
+#[test]
+fn an_image_refused_is_its_edge_alone_and_never_said_to_be_shown_as_written() {
+    let mut drawn = pictured(80, 12, Printed::new(3, 2, 300));
+
+    drawn
+        .render
+        .image(
+            "docs/a.png",
+            Some("read"),
+            Err(crate::chrome::Undrawn::ChangedSinceRead),
+        )
+        .unwrap();
+    let rows: Vec<String> = drawn
+        .rows()
+        .into_iter()
+        .map(|row| row.trim_end().to_owned())
+        .filter(|row| !row.is_empty())
+        .collect();
+    let written = drawn.take();
+    assert_eq!(
+        rows.last().map(String::as_str),
+        Some("┌─ image · docs/a.png · read by read · changed since it was read"),
+        "{rows:#?}"
+    );
+    assert!(!written.contains("\x1b_G"), "{written:?}");
+}
+
+#[test]
+fn an_image_path_carrying_an_escape_never_reaches_the_terminal() {
+    let mut drawn = pictured(60, 12, Printed::new(3, 2, 300));
+
+    drawn
+        .render
+        .image(
+            "a\u{1b}]52;c;aGk=\u{7}.png",
+            Some("re\u{1b}[2Jad"),
+            Err(crate::chrome::Undrawn::ImageNotShown),
+        )
+        .unwrap();
+    let rows = drawn.rows();
+    let written = drawn.take();
+
+    // Shown, with what is not a character to draw left out of it.
+    assert!(
+        rows.iter()
+            .any(|row| row.trim_end() == "┌─ image · a]52;c;aGk=.png · read by re[2Jad · not shown"),
+        "{rows:#?}"
+    );
+    assert!(!written.contains("\x1b]52"), "{written:?}");
+    assert!(!written.contains("\x1b[2J"), "{written:?}");
+}
+
+#[test]
+fn ctrl_o_lists_each_image_a_turn_named_by_its_path_newest_first_shown_or_not() {
+    let mut drawn = pictured(40, 12, Printed::new(3, 2, 300));
+    drawn
+        .render
+        .image("out/plot.png", None, Ok(vec![1, 2, 3]))
+        .unwrap();
+    drawn
+        .render
+        .image(
+            "docs/a.png",
+            Some("read"),
+            Err(crate::chrome::Undrawn::ImageNotShown),
+        )
+        .unwrap();
+    drawn.take();
+
+    let sources: Vec<(&str, &str)> = drawn
+        .render
+        .sources()
+        .map(|source| (source.word, source.text))
+        .collect();
+    assert_eq!(
+        sources,
+        [("image", "docs/a.png"), ("image", "out/plot.png")]
+    );
+
+    let shown: Vec<crate::Shown<'_>> = sources
+        .iter()
+        .map(|&(called, text)| crate::Shown { called, text })
+        .collect();
+    let rows: Vec<String> = crate::Expanded {
+        shown: &shown,
+        from: 0,
+    }
+    .within(40, 12, Glyphs::Unicode)
+    .iter()
+    .map(|row| row.text().trim_end().to_owned())
+    .collect();
+    let at = |line: &str| rows.iter().position(|row| row == line);
+    assert!(
+        at("image").is_some()
+            && matches!((at("docs/a.png"), at("out/plot.png")), (Some(newer), Some(older)) if newer < older),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn every_cut_of_an_answer_naming_images_names_and_draws_what_the_whole_answer_does() {
+    // Each image's read is faked to settle at once, so what is compared is the
+    // naming and the drawing alone, and every cut gives the same of both.
+    let corpus: [(&str, &[&str]); 6] = [
+        (
+            "see ![plot](out/plot.png) and ![b](./b.png)\n",
+            &["out/plot.png", "./b.png"],
+        ),
+        (
+            "a line long enough that its image has to wrap onto the next row ![wide](docs/wide.png) end\n",
+            &["docs/wide.png"],
+        ),
+        (
+            "- ![listed](a.png)\n> ![quoted](b.png)\n\n![web](https://example.com/c.png) ![d](d.png)\n",
+            &["a.png", "b.png", "d.png"],
+        ),
+        (
+            "`![code](not.png)` and \\![escaped](no.png) and ![kept](yes.png)\n",
+            &["yes.png"],
+        ),
+        (
+            "```\n![fenced](no.png)\n```\n![after](after.png)\n",
+            &["after.png"],
+        ),
+        (
+            "| a |\n|---|\n| ![cell](c.png) |\n\n![r][x] [![inside](l.png)](x.md)\n\n[x]: r.png\n",
+            &[],
+        ),
+    ];
+    let shown = |answer: &str, cuts: &[usize]| {
+        let mut drawn = pictured(60, 40, Printed::new(3, 2, 300));
+        drawn.answer_in_pieces(answer, cuts);
+        let named = drawn.render.named_images();
+        for path in &named {
+            drawn.render.image(path, None, Ok(vec![1, 2, 3])).unwrap();
+        }
+        (named, drawn.rows())
+    };
+
+    for (answer, named) in corpus {
+        let whole = shown(answer, &[]);
+        let named: Vec<Box<str>> = named.iter().map(|&path| path.into()).collect();
+        assert_eq!(whole.0, named, "{answer:?}");
+        for cut in 1..answer.len() {
+            assert_eq!(shown(answer, &[cut]), whole, "cut at {cut} of {answer:?}");
+        }
+    }
+}

@@ -43,6 +43,15 @@
 //! Everything else is *set*: a box laid out by something that is gone is
 //! clipped rather than pretending it can be rebuilt.
 //!
+//! An image a turn named is a drawn block too ([`Record::image`]), put down
+//! after the turn: a top edge naming it by its path, and under it the picture
+//! the application read, or on the edge the reason there is none. Its source
+//! is the path, which is what the view of what was cut lists it by. It has no
+//! drawer, so the picture is made once, from the PNG handed in, and kept as
+//! what it was drawn from like any other: a new width, palette or size
+//! encodes that again, and one refused or drawn as text to make room for a
+//! newer picture stays its edge alone.
+//!
 //! A drawn block may be shown as a picture instead of its rows: a diagram
 //! drawn as an image, on a terminal that confirmed a picture protocol, where
 //! colour is written. It is then laid out as rows of cells the picture is
@@ -429,6 +438,64 @@ pub(crate) struct Drawn {
     /// Whether a later picture took its place among those kept, after which
     /// it is drawn as text for as long as it is held.
     fallen: bool,
+    /// What an image a turn named is shown under, where the block is one.
+    image: Option<Box<Imaged>>,
+}
+
+/// What an image block's edge says besides its path.
+#[derive(Debug)]
+struct Imaged {
+    /// The tool whose call read it, where one did.
+    by: Option<Box<str>>,
+    /// Why it has no picture, where it has none for a reason worth saying.
+    refusal: Option<Undrawn>,
+}
+
+/// An image a turn named: the path it was named by, and the tool whose call
+/// read it, where one did.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Named<'a> {
+    /// The path, as it was named.
+    pub(crate) path: &'a str,
+    /// The tool, where one read it.
+    pub(crate) by: Option<&'a str>,
+}
+
+/// The word an image block is listed under in the view of what was cut, with
+/// its path under it.
+const IMAGE: &str = "image";
+
+/// The words an image's edge gives for a picture refused for `why`: what
+/// would say a diagram's source is shown says, of an image, why it is not.
+const fn imaged(why: Undrawn) -> Undrawn {
+    match why {
+        Undrawn::TooWide | Undrawn::TooLargeToKeep | Undrawn::ImageTooLarge => {
+            Undrawn::ImageTooLarge
+        }
+        Undrawn::PastCap
+        | Undrawn::NotHere
+        | Undrawn::NotText
+        | Undrawn::Unsupported(_)
+        | Undrawn::ImageNotShown => Undrawn::ImageNotShown,
+        Undrawn::NotAnImage => Undrawn::NotAnImage,
+        Undrawn::NotReadInTime => Undrawn::NotReadInTime,
+        Undrawn::ChangedSinceRead => Undrawn::ChangedSinceRead,
+        Undrawn::PastTurnImages => Undrawn::PastTurnImages,
+        Undrawn::NotRedrawnOnResume => Undrawn::NotRedrawnOnResume,
+    }
+}
+
+/// `kept`, where it is placed in no more than `columns` and the most cells a
+/// picture is, and is no larger than the record keeps one.
+fn held(kept: KeptPicture, columns: usize) -> Result<KeptPicture, Undrawn> {
+    let (across, down) = kept.payload.cells();
+    if across > MOST_PLACED || down > MOST_PLACED || usize::from(across) > columns {
+        return Err(Undrawn::TooWide);
+    }
+    if kept.bytes() > MOST_KEPT_IMAGE_BYTES {
+        return Err(Undrawn::TooLargeToKeep);
+    }
+    Ok(kept)
 }
 
 /// What a block of an answer is laid out by: the links its addresses fold by,
@@ -505,9 +572,41 @@ impl Drawn {
             picture: None,
             refused: None,
             fallen: false,
+            image: None,
         };
         drawn.lay(columns, glyphs, by);
         drawn
+    }
+
+    /// The top edge of an image block: its path, the tool that read it, and
+    /// why it has no picture, each part made safe to stand in a row.
+    fn image_edge(&self, image: &Imaged, columns: usize, glyphs: Glyphs) -> Row {
+        let dot = glyphs.dot();
+        let mut name = format!("{IMAGE} {dot} ");
+        name.extend(self.block.source.chars().filter(|at| !at.is_control()));
+        if let Some(by) = &image.by {
+            name.push(' ');
+            name.push_str(dot);
+            name.push_str(" read by ");
+            name.extend(by.chars().filter(|at| !at.is_control()));
+        }
+        let refusal = image.refusal.or_else(|| {
+            if self.picture.is_some() {
+                self.pictured(columns)
+                    .is_none()
+                    .then_some(Undrawn::ImageTooLarge)
+            } else {
+                self.refused.as_ref().map(|refused| imaged(refused.1))
+            }
+        });
+        let top = chrome::Frame {
+            label: chrome::Label::whole(&name, glyphs),
+            refusal,
+        }
+        .top();
+        Row::new()
+            .then_structural(Slot::Quiet, &top)
+            .clipped(columns)
     }
 
     /// The rows its picture stands in, where it has one that fits in
@@ -548,16 +647,23 @@ impl Drawn {
                 shown = Shown::Reshaped;
             }
         }
-        let mut rows = self.pictured(columns).unwrap_or_else(|| {
-            let laid = lay(&self.block, columns, glyphs, by.links, drawers);
-            responsive_rows(
-                laid.iter()
-                    .flat_map(|row| {
-                        markdown::framed(row, columns).unwrap_or_else(|| row.fold(columns))
-                    })
-                    .collect(),
-            )
+        let imaged = self.image.as_deref().map(|image| {
+            let mut rows = vec![self.image_edge(image, columns, glyphs)];
+            rows.extend(self.pictured(columns).unwrap_or_default());
+            rows
         });
+        let mut rows = imaged
+            .or_else(|| self.pictured(columns))
+            .unwrap_or_else(|| {
+                let laid = lay(&self.block, columns, glyphs, by.links, drawers);
+                responsive_rows(
+                    laid.iter()
+                        .flat_map(|row| {
+                            markdown::framed(row, columns).unwrap_or_else(|| row.fold(columns))
+                        })
+                        .collect(),
+                )
+            });
         for edit in &self.edits {
             edit(&mut rows);
         }
@@ -600,11 +706,17 @@ impl Drawn {
                 .all(|glyphs| edge != chrome::bottom(glyphs))
     }
 
-    /// The block's source as line `line`, where its kind has one to read.
+    /// The block's source as line `line`, where its kind has one to read:
+    /// an image's is the path it was named by.
     fn source(&self, line: usize) -> Option<Source<'_>> {
+        let word = if self.image.is_some() {
+            IMAGE
+        } else {
+            self.block.kind.named()?
+        };
         Some(Source {
             line,
-            word: self.block.kind.named()?,
+            word,
             text: &self.block.source,
         })
     }
@@ -1121,6 +1233,103 @@ impl Record {
         }
     }
 
+    /// Puts down an image a turn named by `path`, read by the tool `by` where
+    /// one read it, as a top edge naming it and under it the picture made of
+    /// `png`, or as the edge alone with the reason `png` is not there.
+    ///
+    /// The picture is made only where a block would be shown as one: the
+    /// terminal confirmed a protocol and colour is written. It is held to the
+    /// caps every picture is, and the PNG is kept as what it was drawn from
+    /// and nowhere else.
+    pub(crate) fn image(
+        &mut self,
+        Named { path, by }: Named<'_>,
+        png: Result<Vec<u8>, Undrawn>,
+        glyphs: Glyphs,
+        theme: Theme,
+    ) {
+        self.end();
+        let columns = self.columns;
+        let mut drawn = Drawn {
+            block: Block {
+                kind: Kind::Image,
+                source: path.to_owned(),
+                closed: true,
+            },
+            rows: Vec::new(),
+            prefix: None,
+            weight: 0,
+            laid: (columns, glyphs, theme),
+            modes: self.modes,
+            edits: Vec::new(),
+            picture: None,
+            refused: None,
+            fallen: false,
+            image: Some(Box::new(Imaged {
+                by: by.map(Into::into),
+                refusal: None,
+            })),
+        };
+        let made = png.and_then(|png| {
+            let key = self
+                .picture_key(Kind::Image, columns)
+                .ok_or(Undrawn::NotHere)?;
+            self.made_image(path, &key, png, columns)
+                .map(|kept| (key, kept))
+        });
+        match made {
+            Ok((key, kept)) => {
+                self.make_room(kept.bytes(), columns, glyphs);
+                let window = self.picturing.keeps.then_some(self.picturing.window);
+                drawn.picture = Some(Box::new(Pictured {
+                    id: self.picturing.number(),
+                    key,
+                    kept,
+                    band: 0,
+                    window,
+                }));
+            }
+            Err(why) => {
+                if let Some(image) = drawn.image.as_mut() {
+                    image.refusal = Some(imaged(why));
+                }
+            }
+        }
+        let by = By {
+            links: &self.links,
+            drawers: &self.drawers,
+            modes: self.modes,
+            offers: self.offers,
+            window: self.picturing.window,
+        };
+        self.picturing.saw(drawn.lay(columns, glyphs, by));
+        self.put(Line::Drawn(drawn));
+    }
+
+    /// The picture of an image made from `png` under `key`, held to what a
+    /// block's picture is held to.
+    fn made_image(
+        &mut self,
+        path: &str,
+        key: &PictureKey,
+        png: Vec<u8>,
+        columns: usize,
+    ) -> Result<KeptPicture, Undrawn> {
+        if self.picturing.left == 0 {
+            return Err(Undrawn::PastCap);
+        }
+        let pictures = self.picturing.pictures.as_mut().ok_or(Undrawn::NotHere)?;
+        let form = Form::Png(png);
+        let payload = pictures.make(path, key, &form)?;
+        let kept = KeptPicture {
+            pixels: payload.pixels(),
+            form,
+            payload,
+            size: PictureSize::Fit,
+        };
+        held(kept, columns)
+    }
+
     /// Shows a block of an answer as a picture, made by `pictures`.
     ///
     /// Said once, by what composes the drawing. A block is shown as one only
@@ -1128,6 +1337,11 @@ impl Record {
     /// pictures are sent in ([`Self::pictured_as`]) and colour is written.
     pub(crate) fn pictures(&mut self, pictures: Box<dyn Pictures>) {
         self.picturing.pictures = Some(pictures);
+    }
+
+    /// Whether an image a turn named would be shown as a picture now.
+    pub(crate) fn shows_pictures(&self) -> bool {
+        self.picturing.pictures.is_some() && self.picture_key(Kind::Image, self.columns).is_some()
     }
 
     /// Numbers the next picture `first`, and those after it on from there.
@@ -1153,7 +1367,12 @@ impl Record {
     /// The key a block of `kind` is shown as a picture under at `columns`,
     /// where it is shown as one at all.
     fn picture_key(&self, kind: Kind, columns: usize) -> Option<PictureKey> {
-        if kind != Kind::Mermaid || self.modes.of(kind) != Some(Mode::Image) {
+        let wanted = match kind {
+            Kind::Mermaid => self.modes.of(kind) == Some(Mode::Image),
+            Kind::Image => true,
+            Kind::DisplayMath | Kind::Table | Kind::Rule | Kind::Heading(_) | Kind::Diff => false,
+        };
+        if !wanted {
             return None;
         }
         let Capability::Graphics { protocol, cell } = self.picturing.images else {
@@ -1190,6 +1409,11 @@ impl Record {
     /// picture kept under a key that differs from this one by its width alone
     /// is kept as it is, unless it is wanted now.
     fn settle(&mut self, drawn: &mut Drawn, columns: usize, glyphs: Glyphs) -> bool {
+        // An image's picture is made once, from what the application read;
+        // with none, there is nothing to make one from again.
+        if drawn.image.is_some() && drawn.picture.is_none() {
+            return false;
+        }
         let key = if drawn.fallen || !drawn.block.closed {
             None
         } else {
@@ -1228,7 +1452,14 @@ impl Record {
                     | Undrawn::NotText
                     | Undrawn::TooWide
                     | Undrawn::Unsupported(_)
-                    | Undrawn::TooLargeToKeep => key.palette,
+                    | Undrawn::TooLargeToKeep
+                    | Undrawn::ImageNotShown
+                    | Undrawn::ImageTooLarge
+                    | Undrawn::NotAnImage
+                    | Undrawn::NotReadInTime
+                    | Undrawn::ChangedSinceRead
+                    | Undrawn::PastTurnImages
+                    | Undrawn::NotRedrawnOnResume => key.palette,
                 };
                 PictureKey {
                     bucket: key.bucket,
@@ -1319,6 +1550,18 @@ impl Record {
         let Some(pictures) = self.picturing.pictures.as_mut() else {
             return Err(Undrawn::NotHere);
         };
+        // An image is encoded again from the PNG it keeps, and has no drawer.
+        if drawn.image.is_some() {
+            let picture = drawn.picture.as_ref().ok_or(Undrawn::NotHere)?;
+            let payload = pictures.reencode(&picture.kept, key)?;
+            let kept = KeptPicture {
+                pixels: payload.pixels(),
+                form: picture.kept.form.clone(),
+                payload,
+                size: picture.kept.size,
+            };
+            return held(kept, columns);
+        }
         let (drawer, source) =
             markdown::taken(&drawn.block, &self.drawers).ok_or(Undrawn::NotHere)?;
         let kept = if let Some(picture) = &drawn.picture {
@@ -1346,14 +1589,7 @@ impl Record {
                 size: PictureSize::Fit,
             }
         };
-        let (across, down) = kept.payload.cells();
-        if across > MOST_PLACED || down > MOST_PLACED || usize::from(across) > columns {
-            return Err(Undrawn::TooWide);
-        }
-        if kept.bytes() > MOST_KEPT_IMAGE_BYTES {
-            return Err(Undrawn::TooLargeToKeep);
-        }
-        Ok(kept)
+        held(kept, columns)
     }
 
     /// Whether one more picture of `bytes` is kept beside every picture kept
@@ -4322,6 +4558,100 @@ mod tests {
                 (2, "math", "$$\nx^2\n$$\n"),
                 (0, "table", table("alpha").source.as_str()),
             ]
+        );
+    }
+
+    /// An image named by `path`, read by `by`.
+    fn named<'a>(path: &'a str, by: Option<&'a str>) -> Named<'a> {
+        Named { path, by }
+    }
+
+    #[test]
+    fn an_image_is_listed_by_its_path_under_the_word_image() {
+        let (fake, _) = fake(100, 3, vec![]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+        record.image(
+            named("out/plot.png", None),
+            Ok(vec![1]),
+            Glyphs::Unicode,
+            Theme::Dark,
+        );
+        record.image(
+            named("gone.png", Some("read")),
+            Err(Undrawn::ImageNotShown),
+            Glyphs::Unicode,
+            Theme::Dark,
+        );
+
+        let walked: Vec<(usize, &str, &str)> = record
+            .sources()
+            .map(|source| (source.line, source.word, source.text))
+            .collect();
+
+        assert_eq!(
+            walked,
+            [(1, "image", "gone.png"), (0, "image", "out/plot.png")]
+        );
+    }
+
+    #[test]
+    fn an_image_is_made_once_and_encoded_again_from_its_png_for_a_new_theme_or_size() {
+        let (fake, asked) = fake(100, 20, vec![]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+        record.windowed(8, false);
+        record.image(
+            named("out/plot.png", None),
+            Ok(vec![1]),
+            Glyphs::Unicode,
+            Theme::Dark,
+        );
+        assert!(picturing::shown(&record, 0));
+        let folded = record.folded(0);
+        assert_eq!(
+            folded.first().map(Row::text).as_deref(),
+            Some("┌─ image · out/plot.png")
+        );
+        assert!(folded.len() > 1, "{folded:?}");
+
+        let light = picturing::coloured(Theme::Light);
+        record.pictured_as(
+            Capability::Graphics {
+                protocol: Protocol::Kitty,
+                cell: picturing::CELL,
+            },
+            light.identity(),
+        );
+        record.relay(30, Glyphs::Unicode, Theme::Light);
+        assert_eq!(picturing::asked(&asked), ["make out/plot.png", "reencode"]);
+        assert!(picturing::shown(&record, 0));
+
+        record.pictures_reshaped();
+        assert!(record.cycles(0), "an image has no larger size");
+        assert!(record.pictures_reshaped(), "shown larger and not told");
+    }
+
+    #[test]
+    fn an_image_refused_or_let_go_keeps_its_edge_and_is_never_made_again() {
+        let (mut fake, asked) = fake(100, 3, vec![]);
+        fake.refuses = Some(Undrawn::TooWide);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+        record.image(
+            named("big.png", None),
+            Ok(vec![1]),
+            Glyphs::Unicode,
+            Theme::Dark,
+        );
+
+        assert!(!picturing::shown(&record, 0));
+        assert_eq!(
+            record.folded(0).iter().map(Row::text).collect::<Vec<_>>(),
+            ["┌─ image · big.png · too large"]
+        );
+        record.relay(60, Glyphs::Ascii, Theme::Dark);
+        assert_eq!(picturing::asked(&asked), ["make big.png"]);
+        assert_eq!(
+            record.folded(0).iter().map(Row::text).collect::<Vec<_>>(),
+            ["+- image - big.png - too large"]
         );
     }
 

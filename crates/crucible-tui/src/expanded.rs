@@ -15,6 +15,9 @@
 //! says how many of the last items are sources, which is all the window needs
 //! to know to count them apart. They are [`Shown`]s like any other, so they
 //! borrow from where the record keeps them and nothing is copied into the view.
+//! An image a turn named is a source like these: its heading is `image` and
+//! its text the path it was named by, whether its picture was shown or not, so
+//! a refused image can still be found and opened by hand.
 //!
 //! **The complete text.** Explicit line breaks stay in place, and a line too
 //! wide for the window continues on rows below it. The transcript already

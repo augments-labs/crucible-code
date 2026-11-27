@@ -617,6 +617,7 @@ pub async fn account(
         | Command::Context
         | Command::Usage
         | Command::AskLimits
+        | Command::ShowImage(_)
         | Command::Exit => Performed::Refused(Refusal::from(ErrorCode::Busy)),
     }
 }

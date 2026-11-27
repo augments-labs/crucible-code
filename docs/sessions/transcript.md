@@ -482,7 +482,10 @@ An image, `![the build passing](https://example.com/build.png)`, is drawn as
 the link `[image: the build passing]`, or `[image]` with no words, followed by
 its quiet address; nothing is fetched. A `!` before any other bracket is drawn
 as itself, and so is one after a backslash, which stays in front of it:
-`\![x](https://example.com/y.png)` is drawn `\!x (example.com/y.png)`. An
+`\![x](https://example.com/y.png)` is drawn `\!x (example.com/y.png)`. One
+whose address is a path, written in the answer's prose, is also shown as a
+picture once the turn ends, where the session draws pictures: see [An image a
+turn named](#an-image-a-turn-named). An
 address written as its own words, bare or between angle brackets, has nothing
 after it. In a table's cell a link
 is drawn as it is in prose, an address as its reference included, but with
@@ -721,10 +724,11 @@ scrollback holds the cells it was placed in.
 
 A diagram with a letter the picture's one font has none for keeps its text
 drawing. Everywhere else, and
-for every formula and image file, what the transcript shows in a picture's
-place is text. No picture is drawn, and nothing is sent to the terminal for
-one, with `output.diagrams` at `text` or `written`, with no colour, or when
-the output is not a terminal.
+for every formula, what the transcript shows in a picture's place is text. No
+picture is drawn, and nothing is sent to the terminal for one, with
+`output.diagrams` at `text` or `written`, with no colour, or when the output is
+not a terminal. An image a turn named does not depend on `output.diagrams`,
+only on the last two.
 
 A session keeps at most 16 pictures, and at most 1.5 MiB of them, what each
 was drawn from and what the terminal was sent counted once each. Past either,
@@ -826,3 +830,69 @@ holding an SVG refuses the picture. A picture whose references lead round to
 themselves, such as three clips that each use the next, is refused, as is a
 marker drawn inside a marker, a clip or a filter inside a clip, and one the
 drawing cannot finish.
+
+### An image a turn named
+
+An image the answer wrote in its prose with a path, such as an image link to
+`out/plot.png`, is shown once the turn is over, under the answer
+and before the prompt comes back, where the session draws pictures. So is a
+picture a tool's call read, such as `read` on a PNG, after the images the
+answer named before that call. They are shown in the order the turn named
+them, each under an edge naming it by the path it was named by:
+
+```text
+┌─ image · out/plot.png
+┌─ image · docs/shot.png · read by read
+```
+
+Nothing is fetched: an image at an address on the web, or written `www.`,
+stays a link, as does one whose path opens with two slashes or backslashes:
+on Windows that is another computer's share, a device, or an extended-length
+path such as `\\?\C:\Users\you\project\plot.png`, which Windows opens
+exactly as written, without taking away a `.` or `..` or taking a `/` as a
+separator. So do one in a
+table's cell, one written as a reference, `![the plot][plot]`, and one inside
+a link's words. One in code or a fence is
+drawn as written.
+A path is read the way `read` reads it, inside the workspace, and only where
+the [permission rules](../permissions/rules.md#images-in-the-transcript) let
+`read` read it; nothing is ever asked about it. A path relative to the
+workspace is the safe way to name one. An absolute path is shown only when it
+is written under the workspace's directory as it resolves, with no link in
+it: one through a symbolic link, a short name or a drive letter in another
+case stays a link, though `read` would reach it. A path any of whose names
+lies outside the workspace, such as `/net/host/plot.png`, `../../plot.png` or
+`/net/host/../../home/you/project/plot.png`, is not looked up at all, even
+where a `..` after it comes back, so a directory that would reach another
+computer is never opened. That is how macOS and Linux follow a path, and an
+absolute path is judged the same way on Windows, so
+`C:\Users\you\x\..\project\plot.png` stays a link there too. On Windows a
+path relative to the workspace has each `.` and `..` taken away by its text
+when it is joined to the workspace, so there it is judged by where it lands,
+and no name before a `..` is looked up. Where
+the session draws no
+pictures nothing is read, and the answer's link is all there is.
+
+A turn shows at most eight images, and reads them for as long as two seconds
+last, so a slow disk never holds the prompt back for long: an image not yet
+read when they are spent is not read at all. Each one it names after the
+eighth, up to 64, is its edge alone, and so is an image that is not shown for
+any other reason, with the reason after its path:
+
+| The edge says | Because |
+| --- | --- |
+| `not shown` | The path leads outside the workspace, a rule refuses reading it, or there is no file there. The three are told apart nowhere, so the screen says no more about a file than the session may read of it. So is an image that could not be checked within its two seconds, and one asked for while an earlier image's read has still not returned: images are read one at a time, beside the tools, and a disk that stopped answering holds up at most that one. |
+| `too large` | The file is larger than 1 MiB, or its picture larger than a picture may be: see the bounds above. |
+| `not an image` | The file is not a PNG, JPEG, GIF or WebP picture. |
+| `not read in time` | Reading and decoding it took more than two seconds, or the turn's two seconds for its images were spent before it was asked for. Each image has its own two seconds, and it is not tried again. |
+| `changed since it was read` | A tool read the file, and it no longer holds what the tool read. |
+| `past the eighth image in this turn` | Eight were already shown for this turn. |
+| `not redrawn on resume` | The session was picked up again, and its two seconds for putting pictures back were spent. |
+
+A session picked up with `--continue` or `--resume` shows again the 16 most
+recent images its turns named, at the end of what it puts back rather than
+under their own turns, for as long as two seconds last. An image is read when
+it is shown, and its PNG is kept only as the picture's own, under the bounds
+every picture has. <kbd>Ctrl+O</kbd> lists each image under the
+word `image`, by the path it was named by, whether it was shown or not, so one
+that was refused can still be found and opened by hand.

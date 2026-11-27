@@ -473,6 +473,7 @@ name = "crucible-app"
 version = "0.51.0"
 dependencies = [
  "crucible-agents",
+ "crucible-attachments",
  "crucible-auth",
  "crucible-builtins",
  "crucible-client-api",
@@ -487,6 +488,7 @@ dependencies = [
  "crucible-models",
  "crucible-privacy",
  "crucible-provider",
+ "crucible-raster",
  "crucible-registry",
  "crucible-runner",
  "crucible-runtime",
@@ -560,6 +562,7 @@ dependencies = [
 name = "crucible-client-api"
 version = "0.51.0"
 dependencies = [
+ "base64 0.23.1",
  "crucible-types",
  "serde_core",
  "serde_json",

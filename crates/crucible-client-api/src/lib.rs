@@ -19,7 +19,13 @@
 //! whole frame. No field here is a path, a credential, a workspace, a trait
 //! object or an error's internals: a failure crosses as an [`ErrorCode`] and at
 //! most the sentence its owner would have shown a person, cut to
-//! [`bounds::TEXT_BYTES`]. Text a person or a model wrote is redacted from
+//! [`bounds::TEXT_BYTES`]. One field is a path, and only one command carries
+//! it: [`Command::ShowImage`] names the image a turn named by the path the
+//! turn wrote, as an [`ImagePath`] that is only words. The application decides
+//! what those words reach, as it would for a tool reading them, and answers
+//! with a PNG it wrote itself or with an [`ImageRefused`] that does not tell a
+//! file outside the workspace, one a rule hides and one that is not there
+//! apart. Text a person or a model wrote is redacted from
 //! `Debug`. Words for a reader are cut and say so ([`Text`]); words the host
 //! will act on are whole or refused ([`Said`], [`Prompt`]).
 //!
@@ -51,7 +57,7 @@
 //! would have to decide each of them first:
 //!
 //! - A [`Problem`]'s message and a permission question's subject are sentences
-//!   the host wrote for that person. No field is a path, but either sentence
+//!   the host wrote for that person. Neither is a path, but either sentence
 //!   can spell one — the file a tool wants to write, the file that could not be
 //!   opened — and neither is scrubbed here.
 //! - A [`PendingId`] is the next number from a counter. It is used once and
@@ -89,14 +95,16 @@ pub mod usage;
 mod wire;
 
 pub use bounds::{Name, Said, Text};
-pub use command::{Author, Command, Mode, Pace, Palette, Prompt, Replied, Rung, Theme};
+pub use command::{
+    Author, Command, ImagePath, ImageRef, Mode, Pace, Palette, Prompt, Replied, Rung, Theme,
+};
 pub use context::{Category, Context};
 pub use error::{ErrorCode, Refusal};
 pub use outcome::{
     AgentAction, AnswerOutcome, CacheOutcome, CleanOutcome, ClearOutcome, EffortOutcome, Forced,
-    Group, LoginOutcome, LogoutOutcome, Missing, ModelOutcome, NotesOutcome, Outcome, Problem,
-    Release, Resource, Response, ResumeOutcome, Retained, RoomOutcome, SandboxOutcome,
-    SettingOutcome, SpeedOutcome, Standing, Stop, ThemeOutcome, TurnOutcome,
+    Group, ImageRefused, LoginOutcome, LogoutOutcome, Missing, ModelOutcome, NotesOutcome, Outcome,
+    Problem, Release, Resource, Response, ResumeOutcome, Retained, RoomOutcome, SandboxOutcome,
+    SettingOutcome, Shown, SpeedOutcome, Standing, Stop, ThemeOutcome, TurnOutcome,
 };
 pub use pending::{Asked, Choice, Decision, Effect, Lasting, Pending, PendingId, Picked, Ruling};
 pub use progress::{Era, InstallProgress, Progress, SummaryKind, Waiting};
