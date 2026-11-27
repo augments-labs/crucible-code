@@ -199,8 +199,9 @@ const MOST_PICTURE_ID: u32 = 0x00FF_FFFF;
 ///
 /// A full screen cycles one picture through them when the reader asks
 /// ([`PictureSize::next`]), and the picture keeps the one it is at for as
-/// long as the record keeps it; a native session shows every picture at
-/// [`PictureSize::Fit`].
+/// long as the record keeps it; a native session shows every picture at the
+/// size it is first shown at, [`PictureSize::Fit`] for a diagram and
+/// [`PictureSize::Large`] for a formula.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PictureSize {
     /// At most half the window tall, so a diagram leaves room for the
@@ -1793,7 +1794,7 @@ impl Record {
                 pixels: payload.pixels(),
                 form,
                 payload,
-                size: PictureSize::Fit,
+                size: first_size(drawn.block.kind),
             }
         } else if self.picturing.drawing == Drawing::Restoring {
             return Err(Undrawn::NotHere);
@@ -1819,7 +1820,13 @@ impl Record {
                 size: PictureSize::Fit,
             }
         };
-        held(kept, columns)
+        let kept = held(kept, columns)?;
+        // A formula is held to the window however its picture came, read
+        // from the cache or encoded again, as one just made is.
+        if drawn.block.kind == Kind::DisplayMath {
+            return self.fits_window(kept);
+        }
+        Ok(kept)
     }
 
     /// `kept`, a formula's picture, where the window is as tall as it is: a

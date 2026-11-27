@@ -214,3 +214,53 @@ fn a_math_picture_arriving_after_its_block_left_changes_nothing() {
         picturing::asked(&asked)
     );
 }
+
+#[test]
+fn a_formula_put_back_natively_is_shown_large_where_the_window_holds_it_and_text_where_not() {
+    // Six rows is more than half an eight-row window, which a diagram's Fit
+    // would shrink it to; nine is more than the window holds.
+    for (rows, shown, folded) in [(6, true, 6), (9, false, 1)] {
+        let (fake, _) = fake(100, rows, vec!["kept"]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+        record.windowed(8, false);
+        record.resuming(true, ScreenMode::Native);
+        record.drawn(picturing::formula("kept"), Glyphs::Unicode, Theme::Dark);
+        record.resuming(false, ScreenMode::Native);
+
+        assert_eq!(picturing::shown(&record, 0), shown, "{rows} rows");
+        assert_eq!(record.folded(0).len(), folded, "{rows} rows");
+    }
+}
+
+#[test]
+fn a_math_picture_encoded_again_where_the_window_no_longer_holds_it_is_text() {
+    let (fake, asked) = fake(100, 6, vec![]);
+    let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+    record.windowed(8, false);
+    record.drawn(picturing::formula("x^2"), Glyphs::Unicode, Theme::Dark);
+    let told = record.formulas();
+    let formula = told.first().expect("one formula");
+    assert!(record.formula_made(formula, picturing::svg("x^2")));
+    assert_eq!(record.folded(0).len(), 6, "shown large");
+
+    // A new palette encodes it again, in a window it no longer fits.
+    record.windowed(5, false);
+    record.pictured_as(
+        Capability::Graphics {
+            protocol: Protocol::Kitty,
+            cell: picturing::CELL,
+        },
+        picturing::coloured(Theme::Light).identity(),
+    );
+    record.relay(40, Glyphs::Unicode, Theme::Light);
+
+    assert!(
+        picturing::asked(&asked)
+            .iter()
+            .any(|asked| asked.starts_with("reencode")),
+        "{:?}",
+        picturing::asked(&asked)
+    );
+    assert!(!picturing::shown(&record, 0));
+    assert_eq!(record.folded(0).len(), 1);
+}

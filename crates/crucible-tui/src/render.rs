@@ -2936,9 +2936,9 @@ impl<T: Terminal> Renderer<T> {
     /// now, and answers whether there was one to resize: what Enter on its
     /// source in the view of what was cut asks, whatever button is held.
     ///
-    /// Never in native mode, where every picture is shown at Fit. The frame
-    /// is drawn again where it was, so a Sixel picture is encoded for its new
-    /// size by the frame that shows it.
+    /// Never in native mode, where every picture stays at the size it is
+    /// first shown at. The frame is drawn again where it was, so a Sixel
+    /// picture is encoded for its new size by the frame that shows it.
     ///
     /// # Errors
     ///
