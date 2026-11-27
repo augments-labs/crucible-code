@@ -732,6 +732,14 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 # rather than adding a crate; only the safe system-call wrappers the probes and
 # that test name become reachable, and no pty or pipe code is reached by
 # crucible itself.
+[features]
+# The colour-on memory probe's build: every display formula is answered with one
+# kept picture, made without TeX or the sandbox, so the probe measures sixteen
+# math pictures kept on any runner. In no `default` and turned on by nothing
+# else; `scripts/sh/bench.sh` alone asks for it, for a copy of `crucible` that
+# never ships, and `scripts/sh/repo-checks.sh` holds it there.
+bench-math-stand-in = []
+
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { workspace = true, features = ["param", "pipe", "pty", "termios"] }
 
