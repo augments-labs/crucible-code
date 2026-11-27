@@ -471,13 +471,20 @@ fn every_file_of_the_corpus_in_a_fence_of_an_answer_is_drawn_or_shown_as_written
                     Shown(Undrawn::NotHere) => assert_eq!(first, "┌─ diff", "{name}"),
                     // A change has no text it cannot draw, is never too wide,
                     // since it is cut to its room, has no kind it leaves
-                    // undrawn and is never a picture to keep, so no row
-                    // expects any of the four.
+                    // undrawn, is never a picture to keep and is no image a
+                    // turn named, so no row expects any of these.
                     Shown(
                         refusal @ (Undrawn::NotText
                         | Undrawn::TooWide
                         | Undrawn::TooLargeToKeep
-                        | Undrawn::Unsupported(_)),
+                        | Undrawn::Unsupported(_)
+                        | Undrawn::ImageNotShown
+                        | Undrawn::ImageTooLarge
+                        | Undrawn::NotAnImage
+                        | Undrawn::NotReadInTime
+                        | Undrawn::ChangedSinceRead
+                        | Undrawn::PastTurnImages
+                        | Undrawn::NotRedrawnOnResume),
                     ) => {
                         panic!("{name}: no diff is refused as {refusal:?}")
                     }
