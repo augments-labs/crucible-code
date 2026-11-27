@@ -56,10 +56,13 @@
 //!   are one refusal, [`ImageRefused::NotShown`], so a client cannot tell which
 //!   it was and learns nothing about a file it may not read. Every other reason
 //!   is told only about a file the engine allowed.
-//! - Nothing is fetched from the network, since no path that could name
-//!   another host is resolved, and nothing is remembered: a decision is asked
-//!   for each image with [`Remember::Never`], and the PNG is handed back and
-//!   kept nowhere here.
+//! - No path that lies, by its words as written or as joined to the root,
+//!   outside a root the workspace grants is resolved, so no host such a path
+//!   names is reached by showing it. A link inside the workspace is followed
+//!   as the read tool follows it, and where it leads is the workspace's to
+//!   refuse.
+//! - Nothing is remembered: a decision is asked for each image with
+//!   [`Remember::Never`], and the PNG is handed back and kept nowhere here.
 //! - How many images a turn shows is the front end's to count, at most
 //!   [`PER_TURN`]; this answers one request at a time and counts nothing but
 //!   whether its lane is held.
