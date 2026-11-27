@@ -741,7 +741,7 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 bench-math-stand-in = []
 
 [target.'cfg(target_os = "linux")'.dependencies]
-rustix = { workspace = true, features = ["param", "pipe", "pty", "termios"] }
+rustix = { workspace = true, features = ["param", "pipe", "pty", "stdio", "termios"] }
 
 # What hears a hang-up or a termination while a turn is running, so the turn is
 # stopped and written down instead of lost, and a resize, so the next frame is

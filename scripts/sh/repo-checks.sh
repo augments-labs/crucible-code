@@ -1978,6 +1978,14 @@ fi
 # `bench-first-input-colour-silent` names `crucible_tui` in its test alone, for
 # the reply wait its budget is held to the sum of, and measures the built
 # binary like every other startup probe.
+# `bench-picture-wait` names `crucible_tui` for the renderer whose calls it
+# times and the formulas it tells, `crucible_tui_math` for the drawer that
+# draws a formula's text until its picture comes, and `crucible_raster` for
+# the picture maker that draws an answered formula to pixels in the call that
+# finds it, as a session's does. `bench-tex-slab` names `crucible_app` for the
+# math engine and the check a session finds it with, and `crucible_sandbox`
+# and `crucible_sandbox_local` for the service that check is handed, so what
+# it measures is a formula's run as a session makes it.
 probes='src/bin/bench-drawing.rs crucible_raster
 src/bin/bench-drawing.rs crucible_tui
 src/bin/bench-drawing.rs crucible_tui_diff
@@ -1994,6 +2002,9 @@ src/bin/bench-live-burst.rs crucible_tui
 src/bin/bench-live-burst.rs crucible_tui_diff
 src/bin/bench-live-burst.rs crucible_tui_math
 src/bin/bench-live-burst.rs crucible_tui_mermaid
+src/bin/bench-picture-wait.rs crucible_raster
+src/bin/bench-picture-wait.rs crucible_tui
+src/bin/bench-picture-wait.rs crucible_tui_math
 src/bin/bench-read-back.rs crucible_session
 src/bin/bench-read-back.rs crucible_types
 src/bin/bench-read-back.rs crucible_workspace
@@ -2008,6 +2019,9 @@ src/bin/bench-session-rss-colour.rs crucible_attachments
 src/bin/bench-session-rss-colour.rs crucible_config
 src/bin/bench-session-rss-colour.rs crucible_tui
 src/bin/bench-session-rss-colour.rs crucible_tui_mermaid
+src/bin/bench-tex-slab.rs crucible_app
+src/bin/bench-tex-slab.rs crucible_sandbox
+src/bin/bench-tex-slab.rs crucible_sandbox_local
 src/bin/bench-tools.rs crucible_builtins
 src/bin/bench-tools.rs crucible_runtime
 src/bin/bench-tools.rs crucible_sandbox_local
