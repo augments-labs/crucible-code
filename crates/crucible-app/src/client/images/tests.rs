@@ -65,13 +65,58 @@ fn unlocked(
     rules: &[(Disposition, &str)],
     image: &ImageRef,
 ) -> Result<Shown, ImageRefused> {
-    crucible_runtime::answered!(show(
-        image,
-        workspace,
-        &mut engine(rules),
-        None,
-        &Lane::default()
-    ))
+    lent(Lent::Nothing, workspace, rules, image)
+}
+
+/// What a host lends the route to show an image on.
+#[derive(Debug, Clone, Copy)]
+enum Lent {
+    /// Nothing: every step runs on the thread that asks.
+    Nothing,
+    /// A tool worker, on a runtime with a timer, as the application lends.
+    Worker,
+}
+
+/// Both ways a host may lend the route, for a case that holds of each.
+const BOTH: [Lent; 2] = [Lent::Nothing, Lent::Worker];
+
+/// The runtime a [`Lent::Worker`] runs on, one for every test that lends it.
+static TIMED: std::sync::LazyLock<tokio::runtime::Runtime> = std::sync::LazyLock::new(timed);
+
+/// [`shown`], lent `how`, for a thread whose test already shares the slot.
+fn lent(
+    how: Lent,
+    workspace: &Workspace,
+    rules: &[(Disposition, &str)],
+    image: &ImageRef,
+) -> Result<Shown, ImageRefused> {
+    let (mut permission, lane) = (engine(rules), Lane::default());
+    match how {
+        Lent::Nothing => {
+            crucible_runtime::answered!(show(image, workspace, &mut permission, None, &lane))
+        }
+        Lent::Worker => {
+            let worker = ToolWorker::new(TIMED.handle().clone());
+            TIMED.block_on(show(
+                image,
+                workspace,
+                &mut permission,
+                Some(&worker),
+                &lane,
+            ))
+        }
+    }
+}
+
+/// [`shown`], lent `how`.
+fn shown_lent(
+    how: Lent,
+    workspace: &Workspace,
+    rules: &[(Disposition, &str)],
+    image: &ImageRef,
+) -> Result<Shown, ImageRefused> {
+    let _shared = SLOT.read().unwrap_or_else(PoisonError::into_inner);
+    lent(how, workspace, rules, image)
 }
 
 /// A workspace holding the picture as `a.png`, a secret one under `secret/`,
@@ -122,12 +167,14 @@ fn a_workspace_picture_is_shown_by_every_spelling_that_reaches_it() {
     if cfg!(unix) {
         spellings.push("linked.png");
     }
-    for spelled in spellings {
-        let shown = shown(&workspace, &[], &answer(spelled));
-        assert!(
-            matches!(&shown, Ok(shown) if shown.pixels == (3, 2)),
-            "{spelled}: {shown:?}"
-        );
+    for how in BOTH {
+        for spelled in &spellings {
+            let shown = shown_lent(how, &workspace, &[], &answer(spelled));
+            assert!(
+                matches!(&shown, Ok(shown) if shown.pixels == (3, 2)),
+                "{spelled} lent {how:?}: {shown:?}"
+            );
+        }
     }
 }
 
@@ -148,16 +195,22 @@ fn outside_the_workspace_under_a_read_rule_and_missing_are_one_refusal_byte_for_
     if cfg!(unix) {
         hidden.push("out.png");
     }
-    let refusals: Vec<_> = hidden
-        .iter()
-        .map(|spelled| shown(&workspace, &rules, &answer(spelled)).err())
-        .collect();
-    for (spelled, refused) in hidden.iter().zip(&refusals) {
-        assert_eq!(refused, &Some(ImageRefused::NotShown), "{spelled}");
-    }
     let first = encoded(ImageRefused::NotShown);
-    for refused in refusals.into_iter().flatten() {
-        assert_eq!(encoded(refused), first);
+    for how in BOTH {
+        let refusals: Vec<_> = hidden
+            .iter()
+            .map(|spelled| shown_lent(how, &workspace, &rules, &answer(spelled)).err())
+            .collect();
+        for (spelled, refused) in hidden.iter().zip(&refusals) {
+            assert_eq!(
+                refused,
+                &Some(ImageRefused::NotShown),
+                "{spelled} lent {how:?}"
+            );
+        }
+        for refused in refusals.into_iter().flatten() {
+            assert_eq!(encoded(refused), first);
+        }
     }
 }
 
@@ -201,12 +254,18 @@ fn a_path_at_another_host_or_a_device_is_refused_before_anything_resolves_it() {
 fn an_ask_rule_is_answered_no_and_puts_no_question() {
     let (_sample, workspace) = tree("images-ask");
     let rules = [(Disposition::Ask, "read(secret/**)")];
-    assert_eq!(
-        shown(&workspace, &rules, &answer("secret/b.png")),
-        Err(ImageRefused::NotShown)
-    );
-    // The same rule leaves every other file as it was.
-    assert!(shown(&workspace, &rules, &answer("a.png")).is_ok());
+    for how in BOTH {
+        assert_eq!(
+            shown_lent(how, &workspace, &rules, &answer("secret/b.png")),
+            Err(ImageRefused::NotShown),
+            "lent {how:?}"
+        );
+        // The same rule leaves every other file as it was.
+        assert!(
+            shown_lent(how, &workspace, &rules, &answer("a.png")).is_ok(),
+            "lent {how:?}"
+        );
+    }
 }
 
 #[test]
@@ -287,12 +346,22 @@ fn a_tool_image_is_shown_only_while_its_bytes_are_the_ones_the_tool_read() {
         path: path("a.png"),
         hash: kept,
     };
-    assert!(shown(&workspace, &[], &tool).is_ok());
-
     let mut changed = picture();
     changed.extend_from_slice(b"one more byte");
-    fs::write(sample.root().join("a.png"), changed).expect("the picture, changed");
-    assert_eq!(shown(&workspace, &[], &tool), Err(ImageRefused::Changed));
+    for how in BOTH {
+        fs::write(sample.root().join("a.png"), picture()).expect("the picture");
+        assert!(
+            shown_lent(how, &workspace, &[], &tool).is_ok(),
+            "lent {how:?}"
+        );
+
+        fs::write(sample.root().join("a.png"), &changed).expect("the picture, changed");
+        assert_eq!(
+            shown_lent(how, &workspace, &[], &tool),
+            Err(ImageRefused::Changed),
+            "lent {how:?}"
+        );
+    }
 }
 
 #[test]
