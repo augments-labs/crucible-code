@@ -16035,6 +16035,366 @@
         "macos",
         "windows"
       ]
+    },
+    {
+      "id": "CASE-IMAGE-NOT-SHOWN-ONE-REFUSAL",
+      "family": "authority",
+      "obligation": "A path outside the workspace, one under a rule refusing its read, and a missing file are refused with one refusal whose encoding is byte for byte the same.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "client::images::tests::outside_the_workspace_under_a_read_rule_and_missing_are_one_refusal_byte_for_byte",
+      "source": "crates/crucible-app/src/client/images/tests.rs",
+      "body_sha256": "d1aee8b42e8c9be72a0cadf4fb8d73427fedccb74fe8944402c5f95b315d40a2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-IMAGE-ASK-IS-NO",
+      "family": "authority",
+      "obligation": "An image under an ask rule is not shown and no question is put to anybody.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "client::images::tests::an_ask_rule_is_answered_no_and_puts_no_question",
+      "source": "crates/crucible-app/src/client/images/tests.rs",
+      "body_sha256": "e100909c2e934fb975181cbb37793f16a37a404e566da56fe5f1c151d6edcbde",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-IMAGE-RULE-BEFORE-ITS-FILE",
+      "family": "authority",
+      "obligation": "A file a rule hides is not shown, and says nothing else about itself, however large or unreadable it is.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "client::images::tests::a_file_a_rule_hides_is_not_shown_whatever_else_is_wrong_with_it",
+      "source": "crates/crucible-app/src/client/images/tests.rs",
+      "body_sha256": "41198a36c043036ffbc697e56c7d71d2997076763eae56bc73029fb1a1da0afb",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-IMAGE-AS-THE-READ-TOOL",
+      "family": "authority",
+      "obligation": "An image is shown exactly where the read tool would be allowed to read its file.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "client::images::tests::an_image_is_shown_exactly_where_the_read_tool_would_be_allowed_to_read_it",
+      "source": "crates/crucible-app/src/client/images/tests.rs",
+      "body_sha256": "29d5edfbac08daa5cdb36530651b3d756a87172a3bcde217245bb3ecf8d53c0f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-IMAGE-PROOF-OF-ITS-FILE",
+      "family": "authority",
+      "obligation": "A proof settled about another file reads nothing.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "client::images::tests::a_proof_settled_about_another_file_reads_nothing",
+      "source": "crates/crucible-app/src/client/images/tests.rs",
+      "body_sha256": "266d7873aca5a0495529d36286cb0fa967b00d9c42421d5f35139e396de5236f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-IMAGE-PROOF-REQUIRED",
+      "family": "authority",
+      "obligation": "An image's file cannot be read without the proof the permission engine settled.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "doc",
+        "name": "crucible_app"
+      },
+      "case": "client::images::read",
+      "source": "crates/crucible-app/src/client/images.rs",
+      "body_sha256": "0ea80312233d2a11e77bacdb44b3485b45586530105e61fb05f64a9e82c67e3a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-IMAGE-READ-CEILING",
+      "family": "transcript-images",
+      "obligation": "A file of one mebibyte is read whole, and one a byte longer is too large.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "client::images::tests::a_file_of_the_ceiling_is_read_whole_and_a_byte_more_is_too_large",
+      "source": "crates/crucible-app/src/client/images/tests.rs",
+      "body_sha256": "7d0468c6cbe188a58dcc3818d4df49c63fc0c839ba8f01dd85d60e84969841a1",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-IMAGE-CHANGED-SINCE-READ",
+      "family": "transcript-images",
+      "obligation": "A tool's image is shown only while its file holds the bytes whose hash the tool's call kept.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "client::images::tests::a_tool_image_is_shown_only_while_its_bytes_are_the_ones_the_tool_read",
+      "source": "crates/crucible-app/src/client/images/tests.rs",
+      "body_sha256": "1eed86b9a8c0a81028746be92ababa449cdae0c9142458fd51c6c24fae2171b8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-IMAGE-ONE-DECODE-AT-A-TIME",
+      "family": "concurrency",
+      "obligation": "Sixteen images asked for at once are decoded one at a time, and each is shown.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "client::images::tests::sixteen_asked_at_once_are_decoded_one_at_a_time_and_each_is_shown",
+      "source": "crates/crucible-app/src/client/images/tests.rs",
+      "body_sha256": "fd53c59d4bdb4556a4c4a1ca87b142bb93b8d58358839babd4a1714d943f90d5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-IMAGE-OWN-DEADLINE",
+      "family": "transcript-images",
+      "obligation": "An image waits for the decode slot no longer than its own deadline.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "client::images::tests::an_image_waits_for_the_decode_slot_no_longer_than_its_own_deadline",
+      "source": "crates/crucible-app/src/client/images/tests.rs",
+      "body_sha256": "af53330e0b7b80963ed670d572747a9a71476e34bde97ce174a1835bced693ed",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-IMAGE-CONTRACT-CARRIES-LARGEST",
+      "family": "transcript-images",
+      "obligation": "The largest PNG the raster makes is one the contract carries.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "client::images::tests::the_largest_png_the_raster_makes_is_one_the_contract_carries",
+      "source": "crates/crucible-app/src/client/images/tests.rs",
+      "body_sha256": "172e09a344841f61e15311e930f6d04bd7bb5f7fcd4666512696f5581e637b68",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-IMAGE-ONE-FRAME",
+      "family": "transcript-images",
+      "obligation": "The largest image crosses in one frame, and one a byte larger is refused when the response is read.",
+      "package": "crucible-client-api",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_client_api"
+      },
+      "case": "tests::the_largest_image_crosses_in_one_frame_and_a_byte_more_is_refused",
+      "source": "crates/crucible-client-api/src/tests.rs",
+      "body_sha256": "05cba870945707d2ab4284d2de3385023a46b1037af318056c7a54d36c60f42d",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-IMAGE-REQUEST-SHAPE",
+      "family": "transcript-images",
+      "obligation": "An image is asked for by the path the turn wrote, and a tool's image by its path and the hash it kept, as 64 lowercase hex characters.",
+      "package": "crucible-client-api",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_client_api"
+      },
+      "case": "tests::an_image_is_asked_for_by_the_path_the_turn_wrote_and_a_tool_image_by_its_kept_hash",
+      "source": "crates/crucible-client-api/src/tests.rs",
+      "body_sha256": "4220c9f9fdfe4d80481ab506631ec6b7debff9ac967a2fb1f8691889c2aad69c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-IMAGE-EIGHT-PER-TURN",
+      "family": "transcript-images",
+      "obligation": "A turn draws its first eight images and names the ninth as past them, transmitting eight.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::tests::images::a_turn_draws_eight_images_and_names_the_ninth_as_past_them",
+      "source": "src/cli/converse/tests/images.rs",
+      "body_sha256": "ba207bf0bff89c7ccdab2f26fb1fb3c6b45fa9b19fb5cea6ef3bf68bf1e73f21",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-IMAGE-NOT-SHOWN-ON-SCREEN",
+      "family": "authority",
+      "obligation": "An image outside the workspace or missing is its edge saying not shown, and nothing is sent to the terminal.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::tests::images::an_image_outside_the_workspace_or_missing_is_its_edge_saying_not_shown_and_nothing_is_sent",
+      "source": "src/cli/converse/tests/images.rs",
+      "body_sha256": "50327a246a998a4c8c3af583aa3d554fe900f1c63ccbdb73606feb87d503c227",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-IMAGE-RULE-ON-SCREEN",
+      "family": "authority",
+      "obligation": "Through the whole loop, an image under a rule refusing its read is not shown and the one beside it is.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::tests::images::an_image_under_a_rule_refusing_its_read_is_not_shown_and_one_beside_it_is",
+      "source": "src/cli/converse/tests/images.rs",
+      "body_sha256": "800bf7d22dfe85ce1604b8a3c5c16a99c12cf5290e771b4a0e409e1e48271496",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-IMAGE-READ-BY-A-TOOL",
+      "family": "transcript-images",
+      "obligation": "An image the read tool took is drawn once the turn ends, its edge naming the tool.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::tests::images::an_image_the_read_tool_took_is_drawn_after_the_turn_named_by_the_tool",
+      "source": "src/cli/converse/tests/images.rs",
+      "body_sha256": "cf327af7c198087acc4ca335a58067b6efd53725eed14737f9387a566f45d253",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-IMAGE-REFUSALS-MAPPED",
+      "family": "transcript-images",
+      "obligation": "Every reason an image is not shown has words of its own on its edge, and none says it is shown as written.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::pictures::tests::every_reason_an_image_is_not_shown_has_words_of_its_own_and_none_says_shown_as_written",
+      "source": "src/cli/pictures.rs",
+      "body_sha256": "09a2e5b43d271a4b420488b659f8f01b26c4b25243a631ac72db88470e7e474e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-IMAGE-CTRL-O",
+      "family": "transcript-images",
+      "obligation": "Ctrl+O lists each image a turn named by its path, newest first, shown or not.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::ctrl_o_lists_each_image_a_turn_named_by_its_path_newest_first_shown_or_not",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "cb290d1fb62056ab37eefaa5dc21035d6d8abc87099d2b4877098ce4bf0a283e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-IMAGE-EVERY-CUT",
+      "family": "transcript-images",
+      "obligation": "Every cut of an answer naming images names and draws what the whole answer does.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::every_cut_of_an_answer_naming_images_names_and_draws_what_the_whole_answer_does",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "abdc23029930cc8bf18a418b18103317f48ec55f23c9ecef3a27810cf9808229",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
     }
   ]
 }

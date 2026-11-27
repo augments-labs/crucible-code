@@ -2102,7 +2102,10 @@ done <<<"$decided"
 # each to the agents door as it is. `crucible agents` names the catalog read and
 # every move and sign-in it has subcommands for, each built from the words of
 # its own command line on this host, and hands each to the agents door as it
-# is, with no conversation.
+# is, with no conversation. The conversation names the image a turn named, by
+# the path its answer wrote or the file its own read tool's call read, once
+# that turn on this host is over, and the application reads it only under the
+# permission engine's proof.
 naming='crates/crucible-app/src/client/accounts.rs
 crates/crucible-app/src/client/agents.rs
 crates/crucible-app/src/client/asking.rs
