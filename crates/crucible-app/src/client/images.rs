@@ -119,26 +119,27 @@ const CHUNK: usize = 64 * 1024;
 /// `workspace` is where the path is resolved and `permission` the engine the
 /// read is decided by, the session's own rules and mode, `worker` the one the
 /// read tool hands its blocking work to, and `lane` the route's one job on it,
-/// all lent by the host. Resolving
-/// the path, reading the file, waiting for the decode slot and decoding run
-/// there, so a mount that stops answering holds a worker's place rather than
-/// whoever asked; lent one, this answers within [`DEADLINE`] whether or not
-/// that work has ended. The engine is never left waiting on a
-/// person, since every question it would put is answered `deny` here.
+/// all lent by the host. Resolving the path, reading the file, waiting for the
+/// decode slot and decoding run there, so a mount that stops answering holds a
+/// worker's place rather than whoever asked; lent one, this answers within
+/// [`DEADLINE`] whether or not that work has ended. The engine is never left
+/// waiting on a person, since every question it would put is answered `deny`
+/// here.
 ///
 /// # Errors
 ///
-/// [`ImageRefused::NotShown`] for a path whose words lie outside every root
-/// the workspace grants, one that opens with two separators outside a root on
-/// a share, one that resolves outside the workspace, one a rule refuses or puts a question about, a file
-/// that is not there or cannot be read, a worker that would not start the
-/// work, a `lane` another image's job still holds, and [`DEADLINE`] passing before the engine allowed the read; for a
-/// file the engine allowed, [`ImageRefused::TooLarge`] past
-/// [`MOST_INPUT`] bytes or past what the decoder or encoder hold,
+/// [`ImageRefused::NotShown`] for a path whose words name anything outside
+/// every root the workspace grants and off the way to one, an absolute one not
+/// written under a root as the workspace spells it, one that opens with two
+/// separators outside a root on a share, one that resolves outside the
+/// workspace, one a rule refuses or puts a question about, a file that is not
+/// there or cannot be read, a worker that would not start the work, a `lane`
+/// another image's job still holds, and [`DEADLINE`] passing before the engine
+/// allowed the read; for a file the engine allowed, [`ImageRefused::TooLarge`]
+/// past [`MOST_INPUT`] bytes or past what the decoder or encoder hold,
 /// [`ImageRefused::NotAnImage`] for bytes no decoder reads,
-/// [`ImageRefused::NotInTime`] past [`DEADLINE`], and
-/// [`ImageRefused::Changed`] for a tool's image whose bytes are no longer the
-/// ones the tool read.
+/// [`ImageRefused::NotInTime`] past [`DEADLINE`], and [`ImageRefused::Changed`]
+/// for a tool's image whose bytes are no longer the ones the tool read.
 pub async fn show(
     image: &ImageRef,
     workspace: &Workspace,
