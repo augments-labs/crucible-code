@@ -4,6 +4,7 @@
 use std::cell::Cell;
 use std::io::Cursor;
 use std::sync::{Arc, PoisonError};
+use std::time::Duration;
 
 use crucible_runner::Tools;
 use crucible_session::Session;
@@ -12,7 +13,7 @@ use crucible_tui::graphics::{self, Capability, Protocol};
 use crucible_tui::{Recording, Renderer};
 use crucible_types::{Attachment, Modality, ToolId};
 
-use super::super::{First, Named, Naming, PER_TURN, Terms, converse, shown_images};
+use super::super::{First, Named, Naming, PER_TURN, Terms, converse, shown_images, turn_end};
 use super::{opening, paired, plain, saying, scripted};
 use crate::cli::fake::Script;
 use crate::cli::sample::Sample;
@@ -223,8 +224,7 @@ fn a_turn_asks_for_its_first_eight_images_in_order_and_names_the_rest_as_past_th
     let mut drawn = Vec::new();
     shown_images::<()>(
         &named,
-        |at| at < PER_TURN,
-        Undrawn::PastTurnImages,
+        turn_end(|| Duration::ZERO),
         |one| {
             asked.push(one.path.clone());
             Ok(vec![1])
@@ -255,6 +255,45 @@ fn a_turn_asks_for_its_first_eight_images_in_order_and_names_the_rest_as_past_th
 }
 
 #[test]
+fn a_turn_asks_for_no_image_once_its_two_seconds_are_spent_and_names_the_rest_as_late() {
+    // Each request moves the clock on by most of a second, as a slow mount
+    // would, so the third ends past the turn's two seconds: the rest of the
+    // first eight are late, and the ones past eight are past them still.
+    let spent = Cell::new(Duration::ZERO);
+    let mut asked = 0;
+    let mut whys = Vec::new();
+    shown_images::<()>(
+        &answered(PER_TURN + 2),
+        turn_end(|| spent.get()),
+        |_| {
+            asked += 1;
+            spent.set(spent.get().saturating_add(Duration::from_millis(700)));
+            Ok(vec![1])
+        },
+        |one, png| {
+            whys.push((one.path.to_string(), png.err()));
+            Ok(())
+        },
+    )
+    .unwrap();
+
+    assert_eq!(asked, 3);
+    let late = Some(Undrawn::NotReadInTime);
+    let past = Some(Undrawn::PastTurnImages);
+    let expected: Vec<_> = (0..PER_TURN + 2)
+        .map(|at| {
+            let why = match at {
+                0..3 => None,
+                _ if at < PER_TURN => late,
+                _ => past,
+            };
+            (format!("{at}.png"), why)
+        })
+        .collect();
+    assert_eq!(whys, expected);
+}
+
+#[test]
 fn once_the_time_for_images_is_spent_none_after_is_asked_for() {
     let mut asked = 0;
     let mut whys = Vec::new();
@@ -262,8 +301,7 @@ fn once_the_time_for_images_is_spent_none_after_is_asked_for() {
         &answered(4),
         // A budget that ran out at the second, and a clock that would say
         // otherwise later: what is past is past.
-        |at| at != 1,
-        Undrawn::NotRedrawnOnResume,
+        |at| (at == 1).then_some(Undrawn::NotRedrawnOnResume),
         |_| {
             asked += 1;
             Ok(vec![1])

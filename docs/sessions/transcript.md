@@ -854,16 +854,18 @@ the [permission rules](../permissions/rules.md#images-in-the-transcript) let
 `read` read it; nothing is ever asked about it. Where the session draws no
 pictures nothing is read, and the answer's link is all there is.
 
-A turn shows at most eight images. Each one it names after the eighth, up to
-64, is its edge alone, and so is an image that is not shown for any other
-reason, with the reason after its path:
+A turn shows at most eight images, and reads them for as long as two seconds
+last, so a slow disk never holds the prompt back for long: an image not yet
+read when they are spent is not read at all. Each one it names after the
+eighth, up to 64, is its edge alone, and so is an image that is not shown for
+any other reason, with the reason after its path:
 
 | The edge says | Because |
 | --- | --- |
 | `not shown` | The path leads outside the workspace, a rule refuses reading it, or there is no file there. The three are told apart nowhere, so the screen says no more about a file than the session may read of it. |
 | `too large` | The file is larger than 1 MiB, or its picture larger than a picture may be: see the bounds above. |
 | `not an image` | The file is not a PNG, JPEG, GIF or WebP picture. |
-| `not read in time` | Reading and decoding it took more than two seconds. Each image has its own two seconds, and it is not tried again. |
+| `not read in time` | Reading and decoding it took more than two seconds, or the turn's two seconds for its images were spent before it was asked for. Each image has its own two seconds, and it is not tried again. |
 | `changed since it was read` | A tool read the file, and it no longer holds what the tool read. |
 | `past the eighth image in this turn` | Eight were already shown for this turn. |
 | `not redrawn on resume` | The session was picked up again, and its two seconds for putting pictures back were spent. |

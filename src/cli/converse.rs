@@ -708,9 +708,8 @@ fn conversing<T: Terminal>(
     // long session is not held up putting pictures back; each after that is
     // named as not drawn again.
     let started = Instant::now();
-    let budget = |_: usize| started.elapsed() < DEADLINE;
-    let past = (budget, Undrawn::NotRedrawnOnResume);
-    imaged(renderer, terms, &mut conversation, &named, past)?;
+    let budget = put_back(|| started.elapsed());
+    imaged(renderer, terms, &mut conversation, &named, budget)?;
 
     // Answered rather than acted on. Making room is a request, and a request is
     // run the one way this file runs one — on a worker, with the box live under
@@ -1224,13 +1223,14 @@ fn ran<T: Terminal>(
     let mut conversation = took.conversation;
 
     // The images the turn named, under it, once it is over and before the box
-    // comes back: the first eight read and drawn, and each after them named
-    // as past them. A session leaving draws none.
+    // comes back: the first eight read and drawn while two seconds last, the
+    // rest of them named as late, and each after them named as past them. A
+    // session leaving draws none.
     let named = held.naming.taken(renderer);
     if !leaving {
-        let first = |at: usize| at < PER_TURN;
-        let past = (first, Undrawn::PastTurnImages);
-        imaged(renderer, terms, &mut conversation, &named, past)?;
+        let started = Instant::now();
+        let first = turn_end(move || started.elapsed());
+        imaged(renderer, terms, &mut conversation, &named, first)?;
     }
 
     // A speed, a model and a mode taken while the work ran are put on the
@@ -2719,8 +2719,33 @@ impl Naming {
     }
 }
 
+/// Why the image at a place in a session put back is not asked for, given
+/// how long the session's images have taken so far: none while two seconds
+/// last, and not drawn again after them.
+fn put_back(elapsed: impl Fn() -> Duration) -> impl FnMut(usize) -> Option<Undrawn> {
+    move |_| (elapsed() >= DEADLINE).then_some(Undrawn::NotRedrawnOnResume)
+}
+
+/// Why the image at a place in a turn's answer is not asked for, given how
+/// long the turn's images have taken so far: none for the first [`PER_TURN`]
+/// while two seconds last, late for the rest of them after, and past them for
+/// every one after the first eight.
+///
+/// The two seconds are the turn's, on top of each image's own: the one asked
+/// for as they run out keeps its own deadline, so the box comes back within
+/// two of them however many images a turn names or how slow their files are.
+fn turn_end(elapsed: impl Fn() -> Duration) -> impl FnMut(usize) -> Option<Undrawn> {
+    move |at| {
+        if at >= PER_TURN {
+            Some(Undrawn::PastTurnImages)
+        } else {
+            (elapsed() >= DEADLINE).then_some(Undrawn::NotReadInTime)
+        }
+    }
+}
+
 /// Draws the images `named`, each under its edge: asked of the application
-/// while `more` says the next may be, and named with `past` otherwise.
+/// until `stopped` names a reason not to, and named with that reason after.
 ///
 /// Where the terminal shows no pictures nothing is asked or drawn: the answer
 /// already wrote each path where it named it.
@@ -2729,7 +2754,7 @@ fn imaged<T: Terminal>(
     terms: &Terms,
     conversation: &mut Conversation,
     named: &[Named],
-    (more, past): (impl FnMut(usize) -> bool, Undrawn),
+    stopped: impl FnMut(usize) -> Option<Undrawn>,
 ) -> Result<(), Fatal> {
     if !renderer.shows_pictures() {
         return Ok(());
@@ -2737,8 +2762,7 @@ fn imaged<T: Terminal>(
     let root = terms.workspace.root();
     shown_images(
         named,
-        more,
-        past,
+        stopped,
         |one| asked_image(terms, conversation, one),
         |one, png| {
             let path = match &one.tool {
@@ -2752,19 +2776,25 @@ fn imaged<T: Terminal>(
     Ok(())
 }
 
-/// Each of `named` in order, asked for by `ask` while `more` says the next one
-/// may be and refused with `past` after, and drawn by `draw` either way.
+/// Each of `named` in order, asked for by `ask` until `stopped` names a
+/// reason not to, and drawn by `draw` either way.
+///
+/// Once stopped, none after is asked for, whatever `stopped` says of it: each
+/// is refused with the reason `stopped` gives at its place, or with the last
+/// reason given where it gives none there.
 pub(super) fn shown_images<E>(
     named: &[Named],
-    mut more: impl FnMut(usize) -> bool,
-    past: Undrawn,
+    mut stopped: impl FnMut(usize) -> Option<Undrawn>,
     mut ask: impl FnMut(&Named) -> Result<Vec<u8>, Undrawn>,
     mut draw: impl FnMut(&Named, Result<Vec<u8>, Undrawn>) -> Result<(), E>,
 ) -> Result<(), E> {
-    let mut asking = true;
+    let mut why = None;
     for (at, one) in named.iter().enumerate() {
-        asking = asking && more(at);
-        let png = if asking { ask(one) } else { Err(past) };
+        why = stopped(at).or(why);
+        let png = match why {
+            None => ask(one),
+            Some(why) => Err(why),
+        };
         draw(one, png)?;
     }
     Ok(())
