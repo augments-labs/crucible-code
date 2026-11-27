@@ -1,6 +1,7 @@
 //! Pictures of diagrams and display math, kept on disk so a session put back
 //! shows them again without drawing them.
 
+use std::collections::BinaryHeap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -18,6 +19,12 @@ pub(crate) const MOST_HELD: u64 = 32 << 20;
 
 /// The longest an entry is kept after it was written.
 pub(crate) const MOST_AGE: Duration = Duration::from_hours(14 * 24);
+
+/// The most entries one write holds the names of while it chooses which to
+/// take out: the oldest of them, so a directory of any number of names costs
+/// a write no more than these, and what they free short of the bound the
+/// next write goes on freeing.
+const MOST_LISTED: usize = 4096;
 
 /// How far ahead of now an entry may say it was written and still be kept: a
 /// clock a little out, and not a date set so it never ages.
@@ -47,6 +54,7 @@ const BODY: usize = 1 + 4 + 4 + 4;
 struct Bounds {
     held: u64,
     age: Duration,
+    names: usize,
 }
 
 /// The pictures kept under one home.
@@ -66,6 +74,7 @@ impl Cache {
             bounds: Bounds {
                 held: MOST_HELD,
                 age: MOST_AGE,
+                names: MOST_LISTED,
             },
         }
     }
@@ -184,15 +193,17 @@ impl Cache {
     }
 
     /// Removes every entry past its age or dated more than [`SKEW`] ahead,
-    /// then the oldest until those left
-    /// and `incoming` more bytes are within the bound. The entry `replacing`
+    /// then the oldest, of the [`MOST_LISTED`] oldest, until those left and
+    /// `incoming` more bytes are within the bound. The entry `replacing`
     /// names is not counted, since the write replaces it.
     fn prune(&self, replacing: Option<&str>, incoming: u64) {
         let Ok(listed) = fs::read_dir(&self.directory) else {
             return;
         };
         let now = SystemTime::now();
-        let mut kept: Vec<(SystemTime, String, u64)> = Vec::new();
+        // The oldest names alone, newest on top so it is the one let go.
+        let mut oldest: BinaryHeap<(SystemTime, String, u64)> = BinaryHeap::new();
+        let mut held = incoming;
         for found in listed.flatten() {
             let Ok(name) = found.file_name().into_string() else {
                 continue;
@@ -218,14 +229,13 @@ impl Cache {
                 let _ = fs::remove_file(&path);
                 continue;
             }
-            kept.push((written, name, metadata.len()));
+            held = held.saturating_add(metadata.len());
+            oldest.push((written, name, metadata.len()));
+            if oldest.len() > self.bounds.names {
+                oldest.pop();
+            }
         }
-        kept.sort();
-        let mut held = kept
-            .iter()
-            .map(|(_, _, length)| *length)
-            .fold(incoming, u64::saturating_add);
-        for (_, name, length) in kept {
+        for (_, name, length) in oldest.into_sorted_vec() {
             if held <= self.bounds.held {
                 break;
             }

@@ -375,6 +375,36 @@ fn an_entry_past_its_age_or_dated_more_than_a_day_ahead_is_a_miss() {
 }
 
 #[test]
+fn a_write_holds_no_more_names_than_its_bound_and_takes_the_oldest_of_them_out() {
+    let _turn = turn();
+    let (_sample, home) = home("names");
+    let mut cache = Cache::open(&home);
+    // Two hundred entries' names, a kilobyte each and each older than the
+    // one before it, against a bound of 150 kB: fifty and more must go.
+    let names: Vec<String> = (0..200_u32)
+        .map(|at| format!("{:064x}", u64::from(at) + 1))
+        .collect();
+    for (at, name) in names.iter().enumerate() {
+        written(&cache, name, &[0; 1000]);
+        aged(&cache, name, Duration::from_mins(1000 - at as u64));
+    }
+    cache.bounds.held = 150_000;
+    cache.bounds.names = 8;
+
+    let new = entry("new", &key(), &form(40, 20));
+    cache.put(&new);
+
+    // Only the eight oldest were held, so only they were taken out, and the
+    // next write takes out the next eight.
+    let left = entries(&cache);
+    let gone: Vec<&String> = names.iter().filter(|name| !left.contains(name)).collect();
+    assert_eq!(gone, names.iter().take(8).collect::<Vec<_>>());
+    assert!(left.contains(&new.name));
+    cache.put(&entry("newer", &key(), &form(40, 20)));
+    assert_eq!(entries(&cache).len(), 200 - 16 + 2);
+}
+
+#[test]
 fn trim_at_start_takes_the_cache_back_within_its_bounds() {
     let _turn = turn();
     let (_sample, home) = home("trim");
