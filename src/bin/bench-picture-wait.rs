@@ -20,9 +20,10 @@
 //! one that never answers. The answer streams in deltas of a few characters,
 //! and between deltas and after it the drawing thread rests as a session's
 //! does, with nothing typed, taking each rest's work through
-//! [`Renderer::waiting`] with no patience and then sleeping the renderer's own
-//! look interval. Every `stream`, `settle` and rest is timed while any
-//! formula told has no answer, and the longest is the reading.
+//! [`Renderer::waiting`](crucible_tui::Renderer::waiting) with no patience and
+//! then sleeping the renderer's own look interval. Every `stream`, `settle` and
+//! rest is timed while any formula told has no answer, and the longest is the
+//! reading.
 //!
 //! Its rests read the probe's standard input as a session reads its terminal,
 //! so standard input is made a pseudo-terminal of the probe's own with
@@ -58,6 +59,7 @@ use crucible_tui_math::Formulas as Maths;
 use rustix::pty::{self, OpenptFlags};
 
 /// The ceiling, in milliseconds, on any one call while a picture is pending.
+#[cfg(target_os = "linux")]
 const LIMIT: f64 = 20.0;
 
 /// A window tall enough to show every formula of the answer at once, so each
