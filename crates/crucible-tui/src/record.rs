@@ -4405,7 +4405,9 @@ mod tests {
         assert!(picturing::shown(&record, 1));
     }
 
-    mod resumed;
+    mod sources;
+
+    mod images;
 
     #[test]
     fn a_diagram_drawn_as_text_is_never_shown_as_a_picture() {
@@ -4798,118 +4800,120 @@ mod tests {
     }
 
     #[test]
-    fn every_row_of_a_drawn_block_gives_its_source_and_prose_rows_give_none() {
-        let mut record = Record::new(60);
-        record.write(Slot::Plain, "before\n", None);
-        record.drawn(table("alpha"), Glyphs::Unicode, Theme::Dark);
-        record.write(Slot::Plain, "after\n", None);
+    fn a_session_put_back_draws_what_the_cache_kept_and_the_rest_as_text_with_no_drawer() {
+        let (fake, asked) = fake(100, 3, vec!["kept"]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
 
-        let rows = rows_of(&record, 1);
-        assert!(rows.len() > 1, "a table draws more than a row: {rows:?}");
-        for row in rows {
-            assert_eq!(
-                record.source_of(row),
-                Some(table("alpha").source.as_str()),
-                "row {row}"
-            );
-        }
-        assert_eq!(record.source_of(0), None);
-        assert_eq!(record.source_of(rows_of(&record, 2).start), None);
-        assert_eq!(record.source_of(9_999), None);
-    }
+        record.resuming(true, ScreenMode::Fullscreen);
+        record.drawn(picturing::diagram("kept"), Glyphs::Unicode, Theme::Dark);
+        record.drawn(picturing::diagram("missed"), Glyphs::Unicode, Theme::Dark);
+        record.resuming(false, ScreenMode::Fullscreen);
 
-    #[test]
-    fn a_rule_has_no_source_to_give() {
-        let mut record = Record::new(40);
-        record.drawn(
-            block(markdown::Kind::Rule, "---\n"),
-            Glyphs::Unicode,
-            Theme::Dark,
-        );
-
-        assert_eq!(record.lines(), 1);
-        assert_eq!(record.source_of(0), None);
-        assert_eq!(record.sources().count(), 0);
-    }
-
-    #[test]
-    fn the_sources_are_walked_newest_first_by_the_word_they_are_called() {
-        let mut record = Record::new(60);
-        record.drawn(table("alpha"), Glyphs::Unicode, Theme::Dark);
-        record.write(Slot::Plain, "between\n", None);
-        record.drawn(
-            block(markdown::Kind::DisplayMath, "$$\nx^2\n$$\n"),
-            Glyphs::Unicode,
-            Theme::Dark,
-        );
-        record.drawn(
-            block(markdown::Kind::Diff, "```diff\n-a\n+b\n```\n"),
-            Glyphs::Unicode,
-            Theme::Dark,
-        );
-
-        let walked: Vec<(usize, &str, &str)> = record
-            .sources()
-            .map(|source| (source.line, source.word, source.text))
-            .collect();
-
+        assert!(picturing::shown(&record, 0), "the cache's picture");
+        assert!(!picturing::shown(&record, 1), "a miss was drawn");
+        // As a picture not drawn here: its text, with nothing said of it.
+        assert_eq!(picturing::refused(&record, 1), Some(Undrawn::NotHere));
         assert_eq!(
-            walked,
+            picturing::asked(&asked),
             [
-                (3, "diff", "```diff\n-a\n+b\n```\n"),
-                (2, "math", "$$\nx^2\n$$\n"),
-                (0, "table", table("alpha").source.as_str()),
+                "resuming true",
+                "cached kept",
+                "cached missed",
+                "resuming false"
             ]
         );
-    }
 
-    mod images;
-
-    /// Every row the record holds, as plain text.
-    fn all(record: &Record) -> Vec<String> {
-        (0..record.lines())
-            .flat_map(|line| record.folded(line))
-            .map(|row| row.text())
-            .collect()
-    }
-
-    #[test]
-    fn a_drawn_table_is_laid_out_again_for_a_new_width_and_a_new_glyph_set() {
-        let fresh = |columns, glyphs| {
-            let mut record = Record::new(columns);
-            record.drawn(table("alpha"), glyphs, Theme::Dark);
-            all(&record)
-        };
-        let mut record = Record::new(60);
-        record.drawn(table("alpha"), Glyphs::Unicode, Theme::Dark);
-        assert_eq!(all(&record), fresh(60, Glyphs::Unicode));
-
-        record.relay(20, Glyphs::Unicode, Theme::Dark);
-        assert_eq!(all(&record), fresh(20, Glyphs::Unicode));
-        assert_ne!(fresh(20, Glyphs::Unicode), fresh(60, Glyphs::Unicode));
-
-        record.relay(20, Glyphs::Ascii, Theme::Dark);
-        assert_eq!(all(&record), fresh(20, Glyphs::Ascii));
-        assert_ne!(fresh(20, Glyphs::Ascii), fresh(20, Glyphs::Unicode));
-        assert_eq!(record.rows, counted(&record));
+        // Once it is put back, a new block is drawn as live ones are.
+        record.drawn(picturing::diagram("live"), Glyphs::Unicode, Theme::Dark);
+        assert!(picturing::shown(&record, 2));
+        assert_eq!(
+            picturing::asked(&asked).get(4..),
+            Some(&["cached live", "picture live", "make live"].map(str::to_owned)[..])
+        );
     }
 
     #[test]
-    fn a_new_theme_paints_a_drawn_block_without_laying_it_out_again() {
-        let mut record = Record::new(40);
-        record.drawn(table("alpha"), Glyphs::Unicode, Theme::Dark);
-        let Some(Line::Drawn(before)) = record.lines.back() else {
-            panic!("the table is not a drawn block: {:?}", record.lines);
-        };
-        let rows = before.rows.clone();
+    fn a_session_put_back_reads_the_cache_only_for_the_pictures_it_keeps() {
+        let names: Vec<String> = (0..MOST_KEPT_IMAGES + 4)
+            .map(|at| format!("d{at}"))
+            .collect();
+        let cached: Vec<&'static str> = names
+            .iter()
+            .map(|name| &*Box::leak(name.clone().into_boxed_str()))
+            .collect();
+        let (fake, asked) = fake(100, 3, cached);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
 
+        record.resuming(true, ScreenMode::Fullscreen);
+        for name in &names {
+            record.drawn(picturing::diagram(name), Glyphs::Unicode, Theme::Dark);
+        }
+        assert_eq!(
+            picturing::asked(&asked),
+            ["resuming true"],
+            "the walk read the cache"
+        );
+        record.resuming(false, ScreenMode::Fullscreen);
+
+        let asked = picturing::asked(&asked);
+        let read = asked
+            .iter()
+            .filter(|said| said.starts_with("cached "))
+            .count();
+        assert_eq!(read, MOST_KEPT_IMAGES, "{asked:?}");
+        assert!(
+            !asked
+                .iter()
+                .any(|said| said.starts_with("picture ") || said.starts_with("make ")),
+            "{asked:?}"
+        );
+        assert_eq!(asked.last().map(String::as_str), Some("resuming false"));
+        // The newest are the ones shown, and the oldest are their text.
+        assert!((0..4).all(|line| !picturing::shown(&record, line)));
+        assert!((4..MOST_KEPT_IMAGES + 4).all(|line| picturing::shown(&record, line)));
+    }
+
+    #[test]
+    fn a_new_palette_after_a_session_put_back_asks_nothing_for_the_diagrams_it_did_not_keep() {
+        // The older diagrams the put back did not reach are text for as long
+        // as they are held, as those a live session drew past the cap are: a
+        // new palette encodes the kept pictures again and asks for no other.
+        let older = 10;
+        let names: Vec<String> = (0..MOST_KEPT_IMAGES + older)
+            .map(|at| format!("d{at}"))
+            .collect();
+        let cached: Vec<&'static str> = names
+            .iter()
+            .map(|name| &*Box::leak(name.clone().into_boxed_str()))
+            .collect();
+        let (fake, asked) = fake(100, 3, cached);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+        record.resuming(true, ScreenMode::Fullscreen);
+        for name in &names {
+            record.drawn(picturing::diagram(name), Glyphs::Unicode, Theme::Dark);
+        }
+        record.resuming(false, ScreenMode::Fullscreen);
+        let before = picturing::asked(&asked).len();
+
+        let light = picturing::coloured(Theme::Light);
+        record.pictured_as(
+            Capability::Graphics {
+                protocol: Protocol::Kitty,
+                cell: picturing::CELL,
+            },
+            light.identity(),
+        );
         record.relay(40, Glyphs::Unicode, Theme::Light);
 
-        let Some(Line::Drawn(after)) = record.lines.back() else {
-            panic!("the table is not a drawn block: {:?}", record.lines);
-        };
-        assert_eq!(after.rows, rows);
-        assert_eq!(after.laid, (40, Glyphs::Unicode, Theme::Light));
+        let after = picturing::asked(&asked);
+        let since = after.get(before..).unwrap_or_default();
+        assert!(
+            since.iter().all(|said| said == "reencode"),
+            "asked for a diagram not kept: {since:?}"
+        );
+        assert_eq!(since.len(), MOST_KEPT_IMAGES, "{since:?}");
+        assert!((0..older).all(|line| !picturing::shown(&record, line)));
+        assert!((older..MOST_KEPT_IMAGES + older).all(|line| picturing::shown(&record, line)));
     }
 
     #[test]
