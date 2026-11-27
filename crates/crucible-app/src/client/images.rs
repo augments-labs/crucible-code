@@ -20,16 +20,17 @@
 //!    it, the directory it resolved to, written as [`written`] writes it, so
 //!    a Windows root kept verbatim, `\\?\C:\…`, is spelled `C:/…`. On
 //!    Windows a path written with that verbatim prefix, `\\?\`, is refused
-//!    where any name after it is `.`, `..` or empty, which Win32 would open
-//!    as written rather than folded, and is otherwise read as its drive's path
-//!    where it names a drive. An absolute path written through a link, a
-//!    short name or a drive letter in another case is not shown, though the
-//!    read tool would reach it: telling such a spelling from another host's
-//!    would take a lookup of the very names in question. A path relative to
-//!    the root is the spelling that is. Only then is it
-//!    resolved, by [`Workspace::existing`], which is what the read tool
-//!    resolves it by. A link that leads out of the workspace and a file that
-//!    is not there stop there.
+//!    where it holds a `/`, because Win32 splits a verbatim path at `\` alone,
+//!    and where any name between its `\`s is `.`, `..` or empty, which Win32
+//!    would open as written rather than folded; it is otherwise read as its
+//!    drive's path where it names a drive. An absolute path written through a
+//!    link, a short name or a drive letter in another case is not shown,
+//!    though the read tool would reach it: telling such a spelling from
+//!    another host's would take a lookup of the very names in question. A path
+//!    relative to the root is the spelling that is. Only then is it resolved,
+//!    by [`Workspace::existing`], which is what the read tool resolves it by.
+//!    A link that leads out of the workspace and a file that is not there stop
+//!    there.
 //! 2. The permission engine decides the call the read tool would make for that
 //!    path, with the sensitivity the read tool would give it. Whoever asks is
 //!    never put a question: an `ask` rule is answered `deny`, so a picture
