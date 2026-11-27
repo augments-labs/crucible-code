@@ -126,6 +126,9 @@ struct Line {
     later: bool,
     /// Where the protocol it names is not drawn, which its row says.
     unavailable: Option<Unavailable>,
+    /// On the math row, what the session's check has said of math pictures,
+    /// read each time the row is drawn.
+    pictures: Option<crate::cli::math_engine::Outcome>,
 }
 
 /// Where a protocol `output.images` names is not drawn, as the terminal
@@ -724,6 +727,7 @@ impl Line {
             locked,
             later: takes(row.id(), &value) == Takes::NextStart,
             unavailable: unavailable(terms, row.id(), &value),
+            pictures: (row.id() == RowId::Math).then(|| terms.math.clone()),
             value,
         }
     }
@@ -741,8 +745,25 @@ impl Line {
     }
 
     /// What is said after the value: who set it, where what it names is not
-    /// drawn, or when it is read.
-    fn aside(&self) -> Option<&'static str> {
+    /// drawn, or when it is read; and on the math row, what the session's
+    /// check has said of math pictures, as it says it now.
+    fn aside(&self) -> Option<Cow<'static, str>> {
+        let said = self.settled_aside();
+        let Some(pictures) = self
+            .pictures
+            .as_ref()
+            .map(|outcome| pictured(&outcome.said()))
+        else {
+            return said.map(Cow::Borrowed);
+        };
+        Some(match said {
+            Some(said) => Cow::Owned(format!("{said}, {pictures}")),
+            None => Cow::Owned(pictures),
+        })
+    }
+
+    /// Who set it, where what it names is not drawn, or when it is read.
+    fn settled_aside(&self) -> Option<&'static str> {
         match self.locked {
             Some(Lock::Set(Forced::Project)) => Some("set by project config"),
             Some(Lock::Set(Forced::Environment)) => Some("set by the environment"),
@@ -754,6 +775,19 @@ impl Line {
                 None => self.later.then_some("applies at next start"),
             },
         }
+    }
+}
+
+/// What `said` says of math pictures, as the math row says it.
+///
+/// Written out case by case so a new state of the check is a decision here.
+fn pictured(said: &crate::cli::math_engine::Said) -> String {
+    use crate::cli::math_engine::Said;
+    match said {
+        Said::NotAsked => "math pictures not checked yet".to_owned(),
+        Said::Asking => "checking for math pictures".to_owned(),
+        Said::Available(toolchain) => format!("math pictures by {toolchain}"),
+        Said::Unavailable(reason) => format!("no math pictures: {reason}"),
     }
 }
 

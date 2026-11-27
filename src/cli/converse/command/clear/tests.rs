@@ -100,6 +100,7 @@ fn terms(sample: &Sample, ledger: &Ledger, plan: &Plan) -> Terms {
         commands: crate::cli::converse::command::builtins(&std::sync::Arc::default())
             .expect("the built-in commands register"),
         providers: crucible_app::providers::providers().expect("the built-in providers register"),
+        math: crate::cli::math_engine::Outcome::default(),
     }
 }
 

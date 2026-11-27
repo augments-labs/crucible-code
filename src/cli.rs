@@ -1259,6 +1259,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         pinning: Cell::new(settings.pin_after()),
         commands: converse::command::builtins(&settings.sandbox().enablement())?,
         providers,
+        math: math.clone(),
         reading: RefCell::new(settings.syntax_theme().map(str::to_owned)),
         settled: RefCell::default(),
         cancel: cancel.clone(),

@@ -99,6 +99,12 @@ impl Outcome {
         outcome
     }
 
+    /// Says `said`, as a check would.
+    #[cfg(test)]
+    pub(crate) fn now_says(&self, said: Said) {
+        self.says(said);
+    }
+
     fn says(&self, said: Said) {
         *self.0.lock().unwrap_or_else(PoisonError::into_inner) = said;
     }

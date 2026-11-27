@@ -321,6 +321,10 @@ pub(crate) struct Terms {
     /// and whatever is committed beside them later. Each reader takes its own
     /// snapshot, so a provider it names is one that was in force when it asked.
     pub(crate) providers: crucible_registry::Registry<crucible_app::providers::Arm>,
+    /// What the session's check has said of math pictures, which `/settings`
+    /// reads each time it draws, so a check that settles while it is open is
+    /// shown as it settles.
+    pub(crate) math: super::math_engine::Outcome,
 }
 
 impl Terms {
