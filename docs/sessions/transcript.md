@@ -282,12 +282,14 @@ new turn starts, the formulas of an earlier turn not yet begun stay text, so a
 new question never waits behind an old answer's math.
 
 The picture is drawn in the theme's colour for plain text, and drawn again in
-the new colour when the theme changes. It is shown at its own size, its
-letters about the height of the text around it, and never made smaller to
-fit: a formula whose picture is taller than the window is drawn as text. It is
-shown by the protocols, and in the screen modes, that show a diagram's
-picture, as [Pictures and image files](#pictures-and-image-files) says, and
-counts towards the pictures a session keeps.
+the new colour when the theme changes. Its letters stand as tall as the text
+around it: TeX's 10 pt text is drawn one cell tall. A formula wider than the
+transcript has room for is drawn narrower to fit, down to half that size; one
+that would need narrowing further is drawn as text, as is one whose picture is
+taller than the window. It is shown by the protocols, and in the screen
+modes, that show a diagram's picture, as [Pictures and image
+files](#pictures-and-image-files) says, and counts towards the pictures a
+session keeps.
 
 Display math stays text everywhere else:
 
@@ -769,7 +771,7 @@ see [Its size](#its-size). A change of theme draws it again in the new
 colours, and a resize draws it again to fit the new width; in native mode a
 picture already in the scrollback changes only when the scrollback is written
 again, once the window has been resized. A display formula TeX made is shown
-the same way, but at its own size, as [Math as a
+the same way, but at the size its text sets, as [Math as a
 picture](#math-as-a-picture) says.
 
 How it is drawn depends on the protocol and the
@@ -799,9 +801,10 @@ go on the cell you pressed, so a drag that starts on a picture selects instead:
 - **Full**: the picture's own size, at most 64 rows. After Full it goes back
   to Fit.
 
-A display formula is first shown at Large, which leaves it at its own size,
-since no picture is drawn larger than that and a formula taller than the window
-is drawn as text.
+A display formula is first shown at Large, which shows it at the size it was
+drawn, since no picture is shown larger than that and a formula taller than
+the window is drawn as text. At Fit it is smaller only where it is taller than
+half the window.
 
 At every size the picture keeps its shape and is never wider than the
 transcript or larger than its own size. Each picture keeps the size it was
@@ -810,10 +813,11 @@ picture Kitty's protocol draws is placed again in its new cells without being
 sent again. One iTerm2's protocol draws is written again from the same image,
 and at Large or Full it is at most the transcript's height when it is placed,
 since it is drawn only while every row of it is in view. In native mode every
-picture stays at the size it was first shown at, Fit for a diagram and Large
-for a formula, and no click or key changes it; it keeps the rows it was
-first shown in when the window's height changes, since your terminal's
-scrollback holds the cells it was placed in.
+picture stays at the size it was first shown at, Large for a formula made in
+this session and Fit for a diagram or for a formula read back from an earlier
+one, and no click or key changes it; it keeps the rows it was first shown
+in when the window's height changes, since your terminal's scrollback holds
+the cells it was placed in.
 
 A diagram with a letter the picture's one font has none for keeps its text
 drawing, and a formula stays text where [Math as a
