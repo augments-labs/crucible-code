@@ -833,8 +833,8 @@ drawing cannot finish.
 
 ### An image a turn named
 
-An image the answer wrote in its prose with a path, such as
-`![the plot](out/plot.png)`, is shown once the turn is over, under the answer
+An image the answer wrote in its prose with a path, such as an image link to
+`out/plot.png`, is shown once the turn is over, under the answer
 and before the prompt comes back, where the session draws pictures. So is a
 picture a tool's call read, such as `read` on a PNG, after the images the
 answer named before that call. They are shown in the order the turn named

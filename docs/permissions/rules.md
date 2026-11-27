@@ -89,7 +89,7 @@ its own, the way a command does.
 
 An image a turn named is shown only where `read` would be allowed to read its
 file, so a read rule also hides an image from the transcript: under
-`deny read(secret/**)`, `![the plan](secret/plan.png)` in an answer stays a
+`deny read(secret/**)`, an answer's image link to `secret/plan.png` stays a
 link and its edge says `not shown`. Nothing is asked to show one. An `ask` rule
 that matches it hides it the way a `deny` rule does, and so does a path that
 leads outside the workspace, since an image cannot stand a question in front
