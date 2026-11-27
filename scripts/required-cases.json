@@ -16101,7 +16101,7 @@
       },
       "case": "client::images::tests::an_image_is_shown_exactly_where_the_read_tool_would_be_allowed_to_read_it",
       "source": "crates/crucible-app/src/client/images/tests.rs",
-      "body_sha256": "29d5edfbac08daa5cdb36530651b3d756a87172a3bcde217245bb3ecf8d53c0f",
+      "body_sha256": "af12e1376da5a24e2a7b971de36202936226e89ee0caf318b49025a8cbc9d57e",
       "platforms": [
         "linux",
         "macos",
@@ -16507,7 +16507,7 @@
     {
       "id": "CASE-IMAGE-WORDS-BEFORE-RESOLVING",
       "family": "authority",
-      "obligation": "A path any of whose names, joined to the root and walked name by name, lies outside every root and off the way to one, an answer's or a tool's, is not shown and resolved by nothing, even where a later `..` comes back inside; one that stays inside is shown.",
+      "obligation": "A path any of whose names, joined to the root and walked name by name, lies outside every root and off the way to one, an answer's or a tool's, is not shown and resolved by nothing, even where a later `..` comes back inside, except on Windows, which takes that `..` away by its text first and looks no name before it up; one that stays inside is shown.",
       "package": "crucible-app",
       "target": {
         "kind": "lib",
@@ -16515,7 +16515,7 @@
       },
       "case": "client::images::tests::a_path_whose_words_leave_every_root_is_refused_before_anything_resolves_it",
       "source": "crates/crucible-app/src/client/images/tests.rs",
-      "body_sha256": "165513b60b16ae6b63651a3095d7bd4c3cf72a73e6968bb58bdd37459ed1c8ee",
+      "body_sha256": "7bb7bed3e3ae4b5f1893e4000c0890e8251a1da6073a98e74608455577962ed1",
       "platforms": [
         "linux",
         "macos",
@@ -16534,6 +16534,24 @@
       "case": "client::images::tests::a_path_is_under_a_root_only_by_names_on_the_way_to_it_and_a_share_s_path_under_a_share",
       "source": "crates/crucible-app/src/client/images/tests.rs",
       "body_sha256": "6f95f10a2aa635ce71568a0833305d2785d5ff3afe99f97f879bd00dc3e9f3d4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-IMAGE-VERBATIM-DRIVE-BY-ITS-DRIVE",
+      "family": "authority",
+      "obligation": "A verbatim drive path, as Windows spells the root the model is told, is walked as the drive path it names and is under the root only as that is, refused where any of its names is `.`, `..` or empty, which Win32 opens as written; a verbatim share is left to be walked towards a share.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "client::images::tests::a_verbatim_drive_path_is_walked_as_its_drive_s_path_and_refused_with_a_dot_or_empty_name",
+      "source": "crates/crucible-app/src/client/images/tests.rs",
+      "body_sha256": "117dfcbb2b9f9c58ecee7a10f832d2a383e205e0e7c6889e3e11e7102752913e",
       "platforms": [
         "linux",
         "macos",

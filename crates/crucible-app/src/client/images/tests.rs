@@ -16,7 +16,7 @@ use crucible_tools::{
     Approved, Disposition, Mode, Permission, Rules, Settled, Tool as _, ToolWorker,
 };
 use crucible_types::{ToolArgs, ToolCall, ToolId};
-use crucible_workspace::{PathError, Workspace, WorkspacePath};
+use crucible_workspace::{PathError, Workspace, WorkspacePath, written};
 
 use super::{CHUNK, DEADLINE, Lane, Steps, Unasked, pictured, read, show, showing, under};
 use crate::sample::Sample;
@@ -159,6 +159,8 @@ fn the_largest_png_the_raster_makes_is_one_the_contract_carries() {
 #[test]
 fn a_workspace_picture_is_shown_by_every_spelling_that_reaches_it() {
     let (sample, workspace) = tree("images-spellings");
+    // Used only where a test may make a link without privileges, on unix.
+    #[cfg_attr(not(unix), allow(unused_variables))]
     let root = sample.root();
     #[cfg(unix)]
     std::os::unix::fs::symlink(root.join("a.png"), root.join("linked.png")).expect("a link");
@@ -373,6 +375,10 @@ fn a_tool_image_is_shown_only_while_its_bytes_are_the_ones_the_tool_read() {
 
 #[test]
 fn an_image_is_shown_exactly_where_the_read_tool_would_be_allowed_to_read_it() {
+    // The sample is used only where a test may make a link without
+    // privileges, on unix, and is kept to the end either way: dropping it
+    // removes the tree.
+    #[cfg_attr(not(unix), allow(unused_variables))]
     let (sample, workspace) = tree("images-as-read");
     #[cfg(unix)]
     std::os::unix::fs::symlink(outside(&sample.root()), sample.root().join("out.png"))
@@ -735,23 +741,22 @@ fn a_path_whose_words_leave_every_root_is_refused_before_anything_resolves_it() 
         .expect("the root's name")
         .to_string_lossy()
         .into_owned();
-    let beside = canonical
-        .parent()
-        .expect("the root's parent")
-        .join("x")
-        .join("..")
-        .join(&name)
-        .join("a.png")
-        .to_string_lossy()
-        .into_owned();
+    // Written out rather than joined, which on Windows would fold the `..`
+    // away by its text, and in the drive spelling, which a `..` in a verbatim
+    // path would be refused before any walk for.
+    let parent = written(canonical.parent().expect("the root's parent"));
+    let beside = format!("{parent}/x/../{name}/a.png");
+    // Joined to the verbatim root on Windows, the `..` is folded away by its
+    // text before anything is opened, so no name before it is looked up and
+    // the path is the workspace's own file, resolved once.
     let back = format!("../x/../{name}/a.png");
     let mut leaving = vec![
         "/net/host/x.png".to_owned(),
         "../../net/host/x.png".to_owned(),
         beside,
-        back,
     ];
     if cfg!(unix) {
+        leaving.push(back.clone());
         let through = format!(
             "/net/attacker.example/../..{}/a.png",
             canonical.to_string_lossy()
@@ -766,6 +771,19 @@ fn a_path_whose_words_leave_every_root_is_refused_before_anything_resolves_it() 
             path: path(spelled),
             hash: unchecked,
         });
+    }
+    let folded = [
+        (answer(&back), Ok((3, 2))),
+        (
+            ImageRef::Tool {
+                path: path(&back),
+                hash: unchecked,
+            },
+            Err(ImageRefused::Changed),
+        ),
+    ];
+    if cfg!(windows) {
+        asked.extend(folded.iter().map(|(image, _)| image.clone()));
     }
     asked.push(answer("sub/../a.png"));
     let _shared = SLOT.read().unwrap_or_else(PoisonError::into_inner);
@@ -792,6 +810,13 @@ fn a_path_whose_words_leave_every_root_is_refused_before_anything_resolves_it() 
         .collect();
     if let Some(last) = expected.last_mut() {
         *last = ("sub/../a.png".to_owned(), Ok((3, 2)), 1);
+    }
+    if cfg!(windows) {
+        let at = expected.len().saturating_sub(1);
+        let shown = folded
+            .into_iter()
+            .map(|(image, answer)| (image.path().as_str().to_owned(), answer, 1));
+        expected.splice(at..at, shown);
     }
     assert_eq!(answered, expected);
 }
@@ -909,5 +934,51 @@ fn a_path_is_under_a_root_only_by_names_on_the_way_to_it_and_a_share_s_path_unde
             reaches,
             "{requested} as {spelled} under {roots:?}"
         );
+    }
+}
+
+#[test]
+fn a_verbatim_drive_path_is_walked_as_its_drive_s_path_and_refused_with_a_dot_or_empty_name() {
+    // Windows keeps a workspace's root verbatim, `\\?\C:\…`, and tells the
+    // model so: a path copied from it is read as the drive path it names,
+    // as the root itself is written. Win32 takes a verbatim path as written,
+    // `.` and `..` and all, so one holding such a name, or an empty one, is
+    // refused rather than folded. A verbatim share is left as it is.
+    let local = ["C:/w".to_owned()];
+    let share = ["//?/UNC/server/share".to_owned()];
+    let judged = [
+        (r"\\?\C:\w\a.png", &local[..], true),
+        (r"\\?\C:\w\sub\a.png", &local, true),
+        ("//?/C:/w/a.png", &local, true),
+        (r"\\?\C:\w", &local, true),
+        (r"\\?\C:\w\.\a.png", &local, false),
+        (r"\\?\C:\w\sub\..\a.png", &local, false),
+        (r"\\?\C:\w\..\w\a.png", &local, false),
+        ("//?/C:/w/sub/../a.png", &local, false),
+        (r"\\?\C:\w\\a.png", &local, false),
+        (r"\\?\C:\w\a.png\", &local, false),
+        (r"\\?\C:\w/../w/a.png", &local, false),
+        (r"\\?\C:\", &local, false),
+        (r"\\?\D:\w\a.png", &local, false),
+        (r"\\?\C:\wx\a.png", &local, false),
+        // A drive letter in another case is another spelling of the root,
+        // which only a lookup could tell is the same.
+        (r"\\?\c:\w\a.png", &local, false),
+        (r"\\?/C:/w/a.png", &local, false),
+        (r"\\?\C:/w/a.png", &local, false),
+        (r"\\?\UNC\server\share\a.png", &local, false),
+        (r"\\?\UNC\server\share\a.png", &share, true),
+        (r"\\?\UNC\server\other\a.png", &share, false),
+        (r"\\?\C:\w\a.png", &share, false),
+    ];
+    for (requested, roots, reaches) in judged {
+        // What `reaches` walks on Windows, where such a path is absolute and
+        // its written spelling has every separator turned to `/`.
+        let walked = super::drive(requested)
+            .is_some_and(|plain| under(&plain.replace('\\', "/"), roots, &plain));
+        assert_eq!(walked, reaches, "{requested} under {roots:?}");
+    }
+    for unchanged in [r"\\?\UNC\server\share\a.png", "//?/UNC/server/share/a.png"] {
+        assert_eq!(super::drive(unchanged).as_deref(), Some(unchanged));
     }
 }
