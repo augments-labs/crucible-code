@@ -1213,7 +1213,11 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // Where it draws is read here, once: a session cannot move between a
     // screen of its own and the terminal's buffer without leaving half of
     // itself in a scrollback the other does not keep.
-    let mut renderer = screen(&settings, &home);
+    // What the session's check finds of math pictures, shared by the task
+    // that makes them, the pictures kept under the toolchain it names, and
+    // `/settings`.
+    let math = math_engine::Outcome::default();
+    let (mut renderer, kept) = screen(&settings, &home, &math);
     watch_size(&mut renderer);
 
     // The mode the files named, or the one that asks. `None` is "no layer
@@ -1450,10 +1454,13 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     let conversation = conversation.remembering_caches_in(home.path());
     // Display formulas are made into pictures on the sandbox service the
     // conversation's commands run on, by a task on its runtime, and handed
-    // back to the renderer as it rests.
-    renderer.makes_formulas(Box::new(math_engine::MathEngine::start(
+    // back to the renderer as it rests; one a session put back is read from
+    // the picture cache by the same task, and never made.
+    renderer.makes_formulas(Box::new(math_engine::MathEngine::reading(
         &terms.runtime,
         math_engine::checking(sandbox),
+        math,
+        pictures::kept_formulas(kept),
     )));
     let outcome = converse::converse(
         conversation,
@@ -1624,12 +1631,20 @@ fn watch_size<T: crucible_tui::Terminal>(_renderer: &mut Renderer<T>) {}
 /// names none of them, what draws a diagram's picture to pixels for a terminal
 /// that confirmed it can show one, and how `output.math` asks math to be drawn
 /// and `output.diagrams` a diagram, which `/settings` changes at once.
-fn screen(settings: &Settings, home: &Home) -> Renderer<SystemTerminal> {
-    furnished(
+/// Answers the picture cache too, from which a formula a session put back is
+/// read under the toolchain `math` names.
+fn screen(
+    settings: &Settings,
+    home: &Home,
+    math: &math_engine::Outcome,
+) -> (Renderer<SystemTerminal>, picture_cache::Cache) {
+    let cache = picture_cache::Cache::open(home.path());
+    let renderer = furnished(
         SystemTerminal::stdout(),
         settings,
-        kept_pictures(home.path()),
-    )
+        kept_pictures(cache.clone(), math),
+    );
+    (renderer, cache)
 }
 
 /// A session's renderer on `terminal`, furnished as [`screen`] says, its
@@ -1648,18 +1663,20 @@ fn furnished<T: crucible_tui::Terminal>(
 }
 
 /// The session's pictures, each new one handed to the one thread that writes
-/// the picture cache under `home`, which trims it before its first write, and
-/// read back from that cache while a session put back is drawn. A thread that
-/// cannot be started leaves the cache out, since nothing is drawn from it that
-/// could not be drawn again.
-fn kept_pictures(home: &Path) -> Box<dyn crucible_tui::graphics::Pictures> {
-    let cache = picture_cache::Cache::open(home);
+/// `cache`, which trims it before its first write, and read back from that
+/// cache while a session put back is drawn, a formula's under the toolchain
+/// `math` names. A thread that cannot be started leaves the cache out, since
+/// nothing is drawn from it that could not be drawn again.
+fn kept_pictures(
+    cache: picture_cache::Cache,
+    math: &math_engine::Outcome,
+) -> Box<dyn crucible_tui::graphics::Pictures> {
     let (queue, writer) = picture_cache::writing(cache.clone());
     let started = std::thread::Builder::new()
         .name("picture-cache".to_owned())
         .spawn(move || writer.run());
     match started {
-        Ok(_) => Box::new(pictures::Caching::new(cache, queue)),
+        Ok(_) => Box::new(pictures::Caching::new(cache, queue, math.clone())),
         Err(_) => Box::new(pictures::Raster),
     }
 }

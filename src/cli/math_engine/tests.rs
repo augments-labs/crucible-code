@@ -122,7 +122,10 @@ fn answers(engine: &mut MathEngine<u32>, count: usize) -> Vec<(u32, Option<Strin
         match engine.answered() {
             Some((ticket, made)) => answers.push((
                 ticket,
-                made.map(|svg| String::from_utf8(svg.bytes().to_vec()).unwrap()),
+                made.map(|picture| match picture {
+                    Picture::Made(svg) => String::from_utf8(svg.bytes().to_vec()).unwrap(),
+                    Picture::Kept(svg) => format!("kept {}", svg.as_str()),
+                }),
             )),
             None => std::thread::sleep(Duration::from_millis(1)),
         }
@@ -380,4 +383,122 @@ fn the_task_ends_when_the_drawing_side_is_gone() {
 
     drop(engine);
     until(|| shared.strong_count() == 0);
+}
+
+/// Each ticket a reader was asked for, with the toolchain it was asked under.
+type Noted = Arc<Mutex<Vec<(u32, String)>>>;
+
+/// A reader that keeps a picture of each odd ticket, and notes each ticket
+/// it is asked for with the toolchain it is asked under.
+fn reader() -> (Read<u32>, Noted) {
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let noted = Arc::clone(&asked);
+    let read: Read<u32> = Arc::new(move |ticket: &u32, toolchain: &str| {
+        noted.lock().unwrap().push((*ticket, toolchain.to_owned()));
+        (ticket % 2 == 1)
+            .then(|| crucible_tui::drawing::Svg::new(format!("<svg id=\"{ticket}\"/>")).unwrap())
+    });
+    (read, asked)
+}
+
+#[test]
+fn a_formula_put_back_is_read_under_the_toolchain_the_check_found_and_never_made() {
+    let runtime = runtime();
+    let stand_in = Arc::new(StandIn::default());
+    let checking = Checking::open(&stand_in);
+    let (read, asked) = reader();
+    let mut engine =
+        MathEngine::reading(runtime.handle(), checking.check(), Outcome::default(), read);
+
+    engine.kept(1);
+    engine.kept(2);
+    assert_eq!(
+        answers(&mut engine, 2),
+        [(1, Some("kept <svg id=\"1\"/>".to_owned())), (2, None)]
+    );
+    assert!(!engine.pending());
+    assert!(stand_in.made().is_empty(), "made {:?}", stand_in.made());
+    assert_eq!(checking.started(), 1, "found as any formula is");
+    assert_eq!(
+        *asked.lock().unwrap(),
+        [(1, "stand-in".to_owned()), (2, "stand-in".to_owned())]
+    );
+}
+
+#[test]
+fn a_formula_put_back_where_no_engine_is_found_stays_text_and_nothing_is_read() {
+    for unavailable in [Unavailable::ProgramMissing, Unavailable::NotReached] {
+        let runtime = runtime();
+        let stand_in = Arc::new(StandIn::default());
+        let checking = Checking::open(&stand_in);
+        checking.says(Err(unavailable));
+        let (read, asked) = reader();
+        let mut engine =
+            MathEngine::reading(runtime.handle(), checking.check(), Outcome::default(), read);
+
+        engine.kept(1);
+        assert_eq!(answers(&mut engine, 1), [(1, None)], "{unavailable:?}");
+        assert!(asked.lock().unwrap().is_empty(), "{unavailable:?}");
+        assert!(stand_in.made().is_empty(), "{unavailable:?}");
+    }
+}
+
+#[test]
+fn a_turn_starting_keeps_the_formulas_put_back_and_no_more_wait_than_a_session_shows() {
+    let runtime = runtime();
+    let stand_in = Arc::new(StandIn::default());
+    let checking = Checking::shut(&stand_in);
+    let (read, _) = reader();
+    let mut engine =
+        MathEngine::reading(runtime.handle(), checking.check(), Outcome::default(), read);
+
+    // The first is taken as the check starts; the rest wait behind it.
+    engine.kept(1);
+    until(|| checking.started() == 1);
+    let past = u32::try_from(crucible_tui::MOST_KEPT_IMAGES).unwrap() + 3;
+    for ticket in 3..=past {
+        engine.kept(ticket);
+    }
+    engine.told(2, "a");
+    engine.turns();
+    checking.lets_one();
+
+    let answered = answers(&mut engine, crucible_tui::MOST_KEPT_IMAGES + 1);
+    let tickets: Vec<u32> = answered.iter().map(|(ticket, _)| *ticket).collect();
+    let waited: Vec<u32> = (3..past).collect();
+    assert_eq!(tickets, [&[1][..], &waited].concat());
+    settle();
+    assert!(engine.answered().is_none(), "{past} and the formula told");
+    assert!(stand_in.made().is_empty());
+}
+
+#[test]
+fn the_outcome_says_what_the_check_said_last() {
+    let runtime = runtime();
+    let stand_in = Arc::new(StandIn::default());
+    let checking = Checking::shut(&stand_in);
+    let outcome = Outcome::default();
+    let mut engine = MathEngine::reading(
+        runtime.handle(),
+        checking.check(),
+        outcome.clone(),
+        Arc::new(|_, _| None),
+    );
+    assert_eq!(outcome.said(), Said::NotAsked);
+
+    checking.says(Err(Unavailable::NotReached));
+    engine.told(1, "a");
+    until(|| checking.started() == 1);
+    assert_eq!(outcome.said(), Said::Asking);
+    checking.lets_one();
+    answers(&mut engine, 1);
+    assert_eq!(outcome.said(), Said::Unavailable(Unavailable::NotReached));
+    assert_eq!(outcome.toolchain(), None);
+
+    checking.says(Ok(()));
+    engine.told(2, "b");
+    checking.lets_one();
+    answers(&mut engine, 1);
+    assert_eq!(outcome.said(), Said::Available("stand-in".into()));
+    assert_eq!(outcome.toolchain().as_deref(), Some("stand-in"));
 }

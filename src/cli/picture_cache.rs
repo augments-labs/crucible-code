@@ -491,7 +491,7 @@ impl Entry {
 
     /// The entry for the picture `toolchain` made of `source` under `key`,
     /// as [`Self::of`] makes one.
-    fn made_by(
+    pub(crate) fn made_by(
         source: &str,
         key: &PictureKey,
         toolchain: &str,
@@ -620,9 +620,12 @@ impl Queue {
         form: &Form,
         payload: &Payload,
     ) -> bool {
-        let Some(entry) = Entry::of(source, key, form, payload) else {
-            return false;
-        };
+        Entry::of(source, key, form, payload).is_some_and(|entry| self.sent(entry))
+    }
+
+    /// Hands `entry` to the writer, or drops it where the queue has no room
+    /// for it; never waits.
+    pub(crate) fn sent(&self, entry: Entry) -> bool {
         let length = entry.bytes.len();
         let reserved = self
             .queued

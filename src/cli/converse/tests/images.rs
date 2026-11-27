@@ -565,7 +565,11 @@ fn caching(
     let cache = crate::cli::picture_cache::Cache::open(home);
     let (queue, writer) = crate::cli::picture_cache::writing(cache.clone());
     (
-        Box::new(crate::cli::pictures::Caching::new(cache, queue)),
+        Box::new(crate::cli::pictures::Caching::new(
+            cache,
+            queue,
+            crate::cli::math_engine::Outcome::default(),
+        )),
         writer,
     )
 }
