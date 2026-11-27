@@ -4907,10 +4907,12 @@ fn release_notes_list_down_then_enter_puts_the_second_version_alone_in_the_trans
         !picture.contains("this version"),
         "the newest came too: {picture}"
     );
-    assert!(
-        !picture.contains('\u{25c7}'),
-        "an older release came too: {picture}"
-    );
+    for version in every.iter().copied().filter(|version| *version != second) {
+        assert!(
+            !picture.contains(&format!("\u{25c7} {version}")),
+            "an older release came too, {version}: {picture}"
+        );
+    }
     assert!(
         !picture.contains("enter opens it"),
         "the list stayed: {picture}"
