@@ -392,7 +392,7 @@ fn settle<T: Terminal>(
         (Ok(name), Ok(value)) => terms.keep(api::Command::Setting { name, value }),
         (Err(refused), _) | (_, Err(refused)) => Performed::Refused(refused),
     };
-    match asked {
+    let left = match asked {
         Performed::Setting(Setting::Remembered) => {
             line.later = match takes(row.id(), &word) {
                 Takes::Now => !worn(row, &word, renderer, terms),
@@ -430,7 +430,17 @@ fn settle<T: Terminal>(
             panel.note = Some(astray(&other));
             None
         }
+    };
+    // Where nothing named a syntax theme, its row shows the one the table in
+    // force draws code in, and a new table may have changed that.
+    if row.id() == RowId::Theme {
+        for line in &mut panel.lines {
+            if line.row.id() == RowId::SyntaxTheme {
+                *line = Line::read(terms, line.row);
+            }
+        }
     }
+    left
 }
 
 /// When a change to a row reaches the running session.
@@ -716,6 +726,12 @@ impl Line {
             .or(settled)
             .or_else(|| terms.settings.stated(row, &from))
             .or_else(|| row.usual().map(str::to_owned))
+            // The one row whose default follows the ground, so the files state
+            // none: the syntax theme the table in force draws code in.
+            .or_else(|| {
+                (row.id() == RowId::SyntaxTheme)
+                    .then(|| terms.style().syntax_unless_said().to_owned())
+            })
             .unwrap_or_default();
         let locked = if unoffered {
             Some(Lock::FullscreenOnly)

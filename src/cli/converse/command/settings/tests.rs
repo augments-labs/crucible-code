@@ -475,7 +475,7 @@ fn other(line: &Line) -> String {
         ),
         Values::Named => crucible_tui::syntax::every_theme()
             .into_iter()
-            .find(|name| *name != line.value && *name != crucible_tui::syntax::THEME_UNLESS_SAID),
+            .find(|name| *name != line.value),
     }
     .unwrap_or_else(|| panic!("{} offers one value", line.row.label()))
 }
@@ -1349,4 +1349,97 @@ fn the_math_row_says_what_the_check_found_of_math_pictures_each_time_it_is_drawn
             "{said:?}: {rows:#?}"
         );
     }
+}
+
+#[test]
+fn the_syntax_theme_row_says_which_one_the_table_in_force_draws_code_in() {
+    // Nothing named one, so the files state no default: the row shows the one
+    // in force, and that follows the ground the table is drawn for.
+    for theme in [crucible_tui::Theme::Dark, crucible_tui::Theme::Light] {
+        let terms = Terms {
+            style: std::cell::Cell::new(Style::plain().wearing(theme)),
+            ..plain()
+        };
+        let counted = counted();
+        let panel = Panel::new(&terms, &counted);
+        let line = panel
+            .lines
+            .iter()
+            .find(|line| line.row.id() == RowId::SyntaxTheme)
+            .expect("a syntax theme row");
+
+        assert_eq!(
+            line.value,
+            crucible_tui::syntax::theme_unless_said(theme, None),
+            "{theme:?}"
+        );
+    }
+}
+
+#[test]
+fn a_new_theme_moves_the_syntax_theme_row_with_it_and_its_old_default_can_be_taken() {
+    // Nothing named a syntax theme, so the row shows the one the table draws
+    // code in: changing the table changes it, and the one it showed before is
+    // then a change like any other.
+    let sample = Sample::new("settings-code-follows");
+    let terms = keeping(&sample);
+    terms.style.set(Style::resolve(
+        crate::cli::style::Output::default(),
+        true,
+        None,
+        None,
+        &|name| (name == "COLORTERM").then(|| "truecolor".to_owned()),
+    ));
+    let dark = crucible_tui::syntax::theme_unless_said(crucible_tui::Theme::Dark, None);
+    let light = crucible_tui::syntax::theme_unless_said(crucible_tui::Theme::Light, None);
+    let string = |style: Style| {
+        style
+            .palette()
+            .open(crucible_tui::Slot::Str)
+            .as_str()
+            .to_owned()
+    };
+    let dark_string = string(terms.style());
+    let counted = counted();
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut panel = Panel::new(&terms, &counted);
+    let at = |panel: &Panel, id: RowId| {
+        panel
+            .lines
+            .iter()
+            .position(|line| line.row.id() == id)
+            .expect("the row is offered")
+    };
+    let code = at(&panel, RowId::SyntaxTheme);
+    assert_eq!(
+        panel.lines.get(code).map(|line| line.value.as_str()),
+        Some(dark)
+    );
+
+    panel.asked = Some((at(&panel, RowId::Theme), "light".to_owned()));
+    settle(&mut renderer, &terms, &mut panel);
+    assert_eq!(
+        panel.lines.get(code).map(|line| line.value.as_str()),
+        Some(light)
+    );
+    assert_ne!(string(terms.style()), dark_string);
+
+    // Picked from the row's own list, as a reader would.
+    panel.marked = panel
+        .shown()
+        .iter()
+        .position(|shown| *shown == code)
+        .expect("the row is shown");
+    key(&mut panel, Pressed::Key(Key::Enter));
+    let opened = panel.opened.as_mut().expect("the list opened");
+    opened.at = opened
+        .options
+        .iter()
+        .position(|named| named == dark)
+        .expect("the dark default is offered");
+    assert_eq!(key(&mut panel, Pressed::Key(Key::Enter)), Moved::Took);
+    settle(&mut renderer, &terms, &mut panel);
+
+    assert_eq!(terms.reading.borrow().as_deref(), Some(dark));
+    assert_eq!(string(terms.style()), dark_string);
 }

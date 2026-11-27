@@ -587,10 +587,12 @@ const OUTPUT: &[Field] = &[
     },
     Field {
         name: "syntaxTheme",
-        about: "Which theme fenced code is drawn in — a name from /theme, such as Monokai Extended, GitHub, Dracula or Nord",
+        about: "Which theme fenced code is drawn in — a name from /theme, such as GitHub, Dracula or Nord. Unset, it follows the ground the theme is drawn for: Monokai Extended on a dark one, Coldark-Cold on a light one",
         shape: Shape::Text,
         examples: &["Monokai Extended", "GitHub"],
-        usual: Some("Monokai Extended"),
+        // Two answers, one for each ground, so none a document could state:
+        // the one an editor wrote in would be unreadable on the other ground.
+        usual: None,
         needed: false,
         widens: false,
     },

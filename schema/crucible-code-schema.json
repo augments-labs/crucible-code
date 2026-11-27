@@ -583,8 +583,7 @@
           "type": "boolean"
         },
         "syntaxTheme": {
-          "default": "Monokai Extended",
-          "description": "Which theme fenced code is drawn in — a name from /theme, such as Monokai Extended, GitHub, Dracula or Nord",
+          "description": "Which theme fenced code is drawn in — a name from /theme, such as GitHub, Dracula or Nord. Unset, it follows the ground the theme is drawn for: Monokai Extended on a dark one, Coldark-Cold on a light one",
           "examples": [
             "Monokai Extended",
             "GitHub"

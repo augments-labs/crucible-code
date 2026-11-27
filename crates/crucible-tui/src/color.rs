@@ -1678,7 +1678,7 @@ impl Palette {
     /// or dropped where there is no colour at all.
     ///
     /// Said once, when the first fence is read, and again when `/theme` takes a
-    /// different syntax theme.
+    /// different syntax theme, or with none named a table for the other ground.
     #[must_use]
     pub fn reading(self, code: [(u8, u8, u8); 6]) -> Self {
         let ink = |at: usize| {

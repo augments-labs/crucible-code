@@ -189,7 +189,23 @@ fn the_syntax_themes_people_name_are_the_ones_offered() {
 
 #[test]
 fn the_one_drawn_unless_somebody_said_is_one_of_them() {
-    assert!(every_theme().iter().any(|named| named == THEME_UNLESS_SAID));
+    // Under every table, on every ground a terminal can report or not.
+    let every = every_theme();
+    for theme in [
+        Theme::Dark,
+        Theme::Light,
+        Theme::ColourblindDark,
+        Theme::ColourblindLight,
+        Theme::Ansi,
+    ] {
+        for ground in [None, Some(Ground::Dark), Some(Ground::Light)] {
+            let named = theme_unless_said(theme, ground);
+            assert!(
+                every.iter().any(|offered| offered == named),
+                "{theme:?} {ground:?}: {named}"
+            );
+        }
+    }
 }
 
 #[test]
