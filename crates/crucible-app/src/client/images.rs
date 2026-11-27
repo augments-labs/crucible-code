@@ -19,13 +19,14 @@
 //!    too, a workspace on a share. A root is spelled as the workspace keeps
 //!    it, the directory it resolved to, written as [`written`] writes it, so
 //!    a Windows root kept verbatim, `\\?\C:\…`, is spelled `C:/…`. On
-//!    Windows a path written with that verbatim drive prefix is read as its
-//!    drive's path too, and refused where any of its names is `.`, `..` or
-//!    empty, which Win32 would open as written. An absolute path written
-//!    through a link, a short name or a drive letter in another case is not
-//!    shown, though the read tool would reach it: telling such a spelling
-//!    from another host's would take a lookup of the very names in question.
-//!    A path relative to the root is the spelling that is. Only then is it
+//!    Windows a path written with that verbatim prefix, `\\?\`, is refused
+//!    where any name after it is `.`, `..` or empty, which Win32 would open
+//!    as written rather than folded, and is otherwise read as its drive's path
+//!    where it names a drive. An absolute path written through a link, a
+//!    short name or a drive letter in another case is not shown, though the
+//!    read tool would reach it: telling such a spelling from another host's
+//!    would take a lookup of the very names in question. A path relative to
+//!    the root is the spelling that is. Only then is it
 //!    resolved, by [`Workspace::existing`], which is what the read tool
 //!    resolves it by. A link that leads out of the workspace and a file that
 //!    is not there stop there.
@@ -70,11 +71,13 @@
 //! - No path that names, by its words as written or as joined to the root, a
 //!   name outside a root the workspace grants and off the way to one is
 //!   resolved, so no host such a path names is reached by showing it. On
-//!   Windows a path's `.` and `..` are taken away by its text before anything
-//!   is opened, so there a path is judged by where its words land, no name
-//!   before a `..` is looked up, and a verbatim drive path holding one is not
-//!   shown. A link inside the workspace is followed as the read tool follows
-//!   it, and where it leads is the workspace's to refuse.
+//!   Windows a path relative to the workspace has its `.` and `..` taken away
+//!   by its text when it is joined to the root, so there it is judged by where
+//!   it lands and no name before a `..` is looked up; an absolute one is
+//!   walked by its names as on macOS and Linux, and a verbatim one, `\\?\…`,
+//!   holding a `.`, `..` or empty name is not shown. A link inside the
+//!   workspace is followed as the read tool follows it, and where it leads is
+//!   the workspace's to refuse.
 //! - Nothing is remembered: a decision is asked for each image with
 //!   [`Remember::Never`], and the PNG is handed back and kept nowhere here.
 //! - How many images a turn shows is the front end's to count, at most
@@ -139,8 +142,8 @@ const CHUNK: usize = 64 * 1024;
 /// [`ImageRefused::NotShown`] for a path whose words name anything outside
 /// every root the workspace grants and off the way to one, an absolute one not
 /// written under a root as the workspace spells it, one that opens with two
-/// separators outside a root on a share, a verbatim drive path holding a `.`,
-/// `..` or empty name, one that resolves outside the workspace, one a rule
+/// separators outside a root on a share, a verbatim path, `\\?\…`, holding a
+/// `.`, `..` or empty name, one that resolves outside the workspace, one a rule
 /// refuses or puts a question about, a file that is not there or cannot be
 /// read, a worker that would not start the work, a `lane` another image's job
 /// still holds, and [`DEADLINE`] passing before the engine allowed the read;
@@ -313,12 +316,12 @@ where
 }
 
 /// Whether `requested`, by its words alone, lies under a root `workspace`
-/// grants: on Windows read by [`drive`] where it is verbatim, joined to the
+/// grants: on Windows read by [`verbatim`] where it is verbatim, joined to the
 /// root as [`Workspace::existing`] joins it, spelled as [`written`] spells a
 /// path, and walked by [`under`]. Nothing here asks the filesystem.
 fn reaches(workspace: &Workspace, requested: &str) -> bool {
     let requested = if cfg!(windows) {
-        let Some(plain) = drive(requested) else {
+        let Some(plain) = verbatim(requested) else {
             return false;
         };
         plain
@@ -336,34 +339,34 @@ fn reaches(workspace: &Workspace, requested: &str) -> bool {
     under(&written(&joined), &roots, requested)
 }
 
-/// `requested` read as the drive path it names where it opens with a
-/// verbatim drive prefix, `\\?\C:\` or `//?/C:/`, each with its own
-/// separator, which is how Windows spells the root the model is told, and
-/// `requested` as it is otherwise.
+/// `requested` as the walk reads it where it opens with the verbatim prefix
+/// `\\?\`, and as it is otherwise: a verbatim drive path, `\\?\C:\…`, which is
+/// how Windows spells the root the model is told, read as the drive path it
+/// names, and any other verbatim path, a share's `\\?\UNC\…` among them, left
+/// as it is to be walked as two separators are.
 ///
-/// Nothing where such a path holds a `.`, `..` or empty name, at either
-/// separator: Win32 opens a verbatim path as written rather than folding it,
-/// and the walk would fold it. A verbatim share, `\\?\UNC\…`, is left as
-/// it is, and walked only towards a root on a share.
-fn drive(requested: &str) -> Option<Cow<'_, str>> {
-    let (rest, separator) = match requested.strip_prefix(r"\\?\") {
-        Some(rest) => (rest, b'\\'),
-        None => match requested.strip_prefix("//?/") {
-            Some(rest) => (rest, b'/'),
-            None => return Some(Cow::Borrowed(requested)),
-        },
+/// Nothing where a verbatim path holds a `.`, `..` or empty name after the
+/// prefix, at either separator: Win32 opens such a path as written rather
+/// than folding it, and the walk would fold it, so it would check names that
+/// are not the ones opened. A path written `//?/` is not verbatim to Win32,
+/// which folds it as the walk does, and is left as it is.
+fn verbatim(requested: &str) -> Option<Cow<'_, str>> {
+    let Some(rest) = requested.strip_prefix(r"\\?\") else {
+        return Some(Cow::Borrowed(requested));
     };
-    let (letter, names) = match rest.as_bytes() {
-        [letter, b':', after, ..] if letter.is_ascii_alphabetic() && *after == separator => {
-            (char::from(*letter), rest.get(3..)?)
-        }
-        _ => return Some(Cow::Borrowed(requested)),
-    };
-    let names: Vec<&str> = names.split(['\\', '/']).collect();
-    if names.iter().any(|name| matches!(*name, "" | "." | "..")) {
+    if rest
+        .split(['\\', '/'])
+        .any(|name| matches!(name, "" | "." | ".."))
+    {
         return None;
     }
-    Some(Cow::Owned(format!("{letter}:/{}", names.join("/"))))
+    match rest.as_bytes() {
+        [letter, b':', b'\\', ..] if letter.is_ascii_alphabetic() => {
+            let names = rest.get(3..)?.replace('\\', "/");
+            Some(Cow::Owned(format!("{}:/{names}", char::from(*letter))))
+        }
+        _ => Some(Cow::Borrowed(requested)),
+    }
 }
 
 /// Whether `spelled`, the written spelling of the path `requested` names,

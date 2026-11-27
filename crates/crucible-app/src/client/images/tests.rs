@@ -772,20 +772,22 @@ fn a_path_whose_words_leave_every_root_is_refused_before_anything_resolves_it() 
             hash: unchecked,
         });
     }
-    let folded = [
-        (answer(&back), Ok((3, 2))),
-        (
+    // Each of these is shown, its file resolved once, and asked for after
+    // every refused one, so each asked image is expected exactly once.
+    let mut shown = Vec::new();
+    if cfg!(windows) {
+        shown.push((answer(&back), Ok((3, 2))));
+        shown.push((
             ImageRef::Tool {
                 path: path(&back),
                 hash: unchecked,
             },
             Err(ImageRefused::Changed),
-        ),
-    ];
-    if cfg!(windows) {
-        asked.extend(folded.iter().map(|(image, _)| image.clone()));
+        ));
     }
-    asked.push(answer("sub/../a.png"));
+    shown.push((answer("sub/../a.png"), Ok((3, 2))));
+    let refused = asked.len();
+    asked.extend(shown.iter().map(|(image, _)| image.clone()));
     let _shared = SLOT.read().unwrap_or_else(PoisonError::into_inner);
     let answered: Vec<_> = asked
         .iter()
@@ -798,8 +800,9 @@ fn a_path_whose_words_leave_every_root_is_refused_before_anything_resolves_it() 
             (image.path().as_str().to_owned(), answered, RESOLVED.get())
         })
         .collect();
-    let mut expected: Vec<_> = asked
+    let expected: Vec<_> = asked
         .iter()
+        .take(refused)
         .map(|image| {
             (
                 image.path().as_str().to_owned(),
@@ -807,17 +810,12 @@ fn a_path_whose_words_leave_every_root_is_refused_before_anything_resolves_it() 
                 0,
             )
         })
+        .chain(
+            shown
+                .into_iter()
+                .map(|(image, answer)| (image.path().as_str().to_owned(), answer, 1)),
+        )
         .collect();
-    if let Some(last) = expected.last_mut() {
-        *last = ("sub/../a.png".to_owned(), Ok((3, 2)), 1);
-    }
-    if cfg!(windows) {
-        let at = expected.len().saturating_sub(1);
-        let shown = folded
-            .into_iter()
-            .map(|(image, answer)| (image.path().as_str().to_owned(), answer, 1));
-        expected.splice(at..at, shown);
-    }
     assert_eq!(answered, expected);
 }
 
@@ -943,13 +941,15 @@ fn a_verbatim_drive_path_is_walked_as_its_drive_s_path_and_refused_with_a_dot_or
     // model so: a path copied from it is read as the drive path it names,
     // as the root itself is written. Win32 takes a verbatim path as written,
     // `.` and `..` and all, so one holding such a name, or an empty one, is
-    // refused rather than folded. A verbatim share is left as it is.
+    // refused rather than folded. A verbatim share is left as it is, and a
+    // drive path written `//?/C:/`, which Win32 folds rather than taking as
+    // written, is left to be walked as two separators are.
     let local = ["C:/w".to_owned()];
     let share = ["//?/UNC/server/share".to_owned()];
     let judged = [
         (r"\\?\C:\w\a.png", &local[..], true),
         (r"\\?\C:\w\sub\a.png", &local, true),
-        ("//?/C:/w/a.png", &local, true),
+        ("//?/C:/w/a.png", &local, false),
         (r"\\?\C:\w", &local, true),
         (r"\\?\C:\w\.\a.png", &local, false),
         (r"\\?\C:\w\sub\..\a.png", &local, false),
@@ -974,11 +974,37 @@ fn a_verbatim_drive_path_is_walked_as_its_drive_s_path_and_refused_with_a_dot_or
     for (requested, roots, reaches) in judged {
         // What `reaches` walks on Windows, where such a path is absolute and
         // its written spelling has every separator turned to `/`.
-        let walked = super::drive(requested)
+        let walked = super::verbatim(requested)
             .is_some_and(|plain| under(&plain.replace('\\', "/"), roots, &plain));
         assert_eq!(walked, reaches, "{requested} under {roots:?}");
     }
     for unchanged in [r"\\?\UNC\server\share\a.png", "//?/UNC/server/share/a.png"] {
-        assert_eq!(super::drive(unchanged).as_deref(), Some(unchanged));
+        assert_eq!(super::verbatim(unchanged).as_deref(), Some(unchanged));
+    }
+}
+
+#[test]
+fn a_verbatim_share_path_holding_a_dot_or_empty_name_is_refused() {
+    // Win32 opens a verbatim share path as written too, so one holding a
+    // `.`, `..` or empty name is refused rather than walked folded, and one
+    // without is left as it is, to be walked towards a root on a share. One
+    // written `//?/UNC/` is folded by Win32 as the walk folds it.
+    let share = ["//?/UNC/server/share".to_owned()];
+    let judged = [
+        (r"\\?\UNC\server\share\a.png", true),
+        (r"\\?\UNC\server\share\sub\a.png", true),
+        (r"\\?\UNC\server\share\sub\..\a.png", false),
+        (r"\\?\UNC\server\share\.\a.png", false),
+        (r"\\?\UNC\server\share\\a.png", false),
+        (r"\\?\UNC\server\share\a.png\", false),
+        (r"\\?\UNC\server\other\..\share\a.png", false),
+        (r"\\?\unc\server\share\sub\..\a.png", false),
+        ("//?/UNC/server/share/sub/../a.png", true),
+    ];
+    for (requested, reaches) in judged {
+        // What `reaches` walks on Windows, as in the drive rows above.
+        let walked = super::verbatim(requested)
+            .is_some_and(|plain| under(&plain.replace('\\', "/"), &share, &plain));
+        assert_eq!(walked, reaches, "{requested} under {share:?}");
     }
 }

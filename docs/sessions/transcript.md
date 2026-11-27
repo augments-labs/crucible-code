@@ -863,10 +863,12 @@ case stays a link, though `read` would reach it. A path any of whose names
 lies outside the workspace, such as `/net/host/plot.png`, `../../plot.png` or
 `/net/host/../../home/you/project/plot.png`, is not looked up at all, even
 where a `..` after it comes back, so a directory that would reach another
-computer is never opened. That is how macOS and Linux follow a path. Windows
-takes each `.` and `..` away by the path's text before it opens anything, so
-there a path is judged by where it lands, and no name before a `..` is looked
-up. Where the session draws no
+computer is never opened. That is how macOS and Linux follow a path, and how
+Windows follows an absolute one, so `C:\Users\you\x\..\project\plot.png`
+stays a link there too. A path relative to the workspace has each `.` and
+`..` taken away by its text when Windows joins it to the workspace, so there
+it is judged by where it lands, and no name before a `..` is looked up. Where
+the session draws no
 pictures nothing is read, and the answer's link is all there is.
 
 A turn shows at most eight images, and reads them for as long as two seconds

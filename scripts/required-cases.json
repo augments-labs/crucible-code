@@ -16515,7 +16515,7 @@
       },
       "case": "client::images::tests::a_path_whose_words_leave_every_root_is_refused_before_anything_resolves_it",
       "source": "crates/crucible-app/src/client/images/tests.rs",
-      "body_sha256": "7bb7bed3e3ae4b5f1893e4000c0890e8251a1da6073a98e74608455577962ed1",
+      "body_sha256": "e226a05545eadfa79c3fd4bc65520de3803ea259d394779d16044a862760e486",
       "platforms": [
         "linux",
         "macos",
@@ -16543,7 +16543,7 @@
     {
       "id": "CASE-IMAGE-VERBATIM-DRIVE-BY-ITS-DRIVE",
       "family": "authority",
-      "obligation": "A verbatim drive path, as Windows spells the root the model is told, is walked as the drive path it names and is under the root only as that is, refused where any of its names is `.`, `..` or empty, which Win32 opens as written; a verbatim share is left to be walked towards a share.",
+      "obligation": "A verbatim drive path, as Windows spells the root the model is told, is walked as the drive path it names and is under the root only as that is, refused where any of its names is `.`, `..` or empty, which Win32 opens as written; one written `//?/` is walked as two separators are, and a verbatim share is left to be walked towards a share.",
       "package": "crucible-app",
       "target": {
         "kind": "lib",
@@ -16551,7 +16551,25 @@
       },
       "case": "client::images::tests::a_verbatim_drive_path_is_walked_as_its_drive_s_path_and_refused_with_a_dot_or_empty_name",
       "source": "crates/crucible-app/src/client/images/tests.rs",
-      "body_sha256": "117dfcbb2b9f9c58ecee7a10f832d2a383e205e0e7c6889e3e11e7102752913e",
+      "body_sha256": "9a62abb057320a0bc6ab7af680a68a890e3769a8c2a035a9eb66b2b3b3a8a62a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-IMAGE-VERBATIM-SHARE-AS-OPENED",
+      "family": "authority",
+      "obligation": "A verbatim share path holding a `.`, `..` or empty name after `\\\\?\\UNC\\` is refused rather than walked folded, since Win32 opens it as written; one without is walked towards a root on a share as it is, and one written `//?/UNC/` is walked folded, as Win32 folds it.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "client::images::tests::a_verbatim_share_path_holding_a_dot_or_empty_name_is_refused",
+      "source": "crates/crucible-app/src/client/images/tests.rs",
+      "body_sha256": "192ca2ecf06ce8cc6c04511a72f4a6825daea8b5f5697542f05946158fb1f6d2",
       "platforms": [
         "linux",
         "macos",
