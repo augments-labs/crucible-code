@@ -18,7 +18,7 @@ use crucible_tools::{
 use crucible_types::{ToolArgs, ToolCall, ToolId};
 use crucible_workspace::{Workspace, WorkspacePath};
 
-use super::{CHUNK, DEADLINE, Unasked, pictured, read, show, showing};
+use super::{CHUNK, DEADLINE, Steps, Unasked, pictured, read, show, showing};
 use crate::sample::Sample;
 
 /// A picture three pixels wide and two high, as a file a model could name.
@@ -388,7 +388,8 @@ fn sixteen_asked_at_once_are_decoded_one_at_a_time_and_each_is_shown() {
     let workspace = Arc::new(workspace);
     let decoded = |workspace: &Workspace| {
         let (image, mut permission) = (answer("a.png"), engine(&[]));
-        let showing = showing(&image, workspace, &mut permission, None, (read, counted));
+        let steps: Steps<_> = (Workspace::existing, read, counted);
+        let showing = showing(&image, workspace, &mut permission, None, steps);
         crucible_runtime::answered!(showing)
     };
     let asked: Vec<_> = (0..16)
@@ -429,7 +430,7 @@ fn a_read_that_never_returns_is_answered_not_in_time_within_the_deadline() {
         &workspace,
         &mut engine(&[]),
         Some(&worker),
-        (reader, crucible_raster::decode),
+        (Workspace::existing, reader, crucible_raster::decode),
     ));
     let waited = started.elapsed();
     let _ = release.send(());

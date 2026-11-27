@@ -57,7 +57,7 @@ use crucible_tools::{
     Approved, Ask, Permission, Remember, Sensitivity, Settled, Target, ToolWorker, Unrun, Verdict,
 };
 use crucible_types::{ToolArgs, ToolCall, ToolId};
-use crucible_workspace::{Workspace, WorkspacePath};
+use crucible_workspace::{PathError, Workspace, WorkspacePath};
 
 #[cfg(test)]
 mod tests;
@@ -115,14 +115,19 @@ pub async fn show(
         workspace,
         permission,
         worker,
-        (read, crucible_raster::decode),
+        (Workspace::existing, read, crucible_raster::decode),
     )
     .await
 }
 
-/// How a file is read and its bytes decoded: [`read`] and the raster's own
-/// decoder outside the tests, which put a slow or a stuck one in their place.
-type Steps<R> = (R, fn(&[u8]) -> Result<Pixels, Refused>);
+/// How a path is resolved, its file read and its bytes decoded:
+/// [`Workspace::existing`], [`read`] and the raster's own decoder outside the
+/// tests, which put one that counts, a slow one or a stuck one in their place.
+type Steps<R> = (
+    fn(&Workspace, &str) -> Result<WorkspacePath, PathError>,
+    R,
+    fn(&[u8]) -> Result<Pixels, Refused>,
+);
 
 /// [`show`], reading and decoding by `steps`.
 async fn showing<R>(
@@ -130,7 +135,7 @@ async fn showing<R>(
     workspace: &Workspace,
     permission: &mut Permission,
     worker: Option<&ToolWorker>,
-    (reader, decode): Steps<R>,
+    (resolve, reader, decode): Steps<R>,
 ) -> Result<Shown, ImageRefused>
 where
     R: FnOnce(&Approved, &Workspace, &WorkspacePath, Instant) -> Result<Taken, ImageRefused>
@@ -149,7 +154,7 @@ where
     within(started, worker, async {
         let (owned, asked) = (workspace.clone(), requested.to_owned());
         let (path, sensitivity) = blocking(worker, move || {
-            let path = owned.existing(&asked).map_err(|_| ImageRefused::NotShown)?;
+            let path = resolve(&owned, &asked).map_err(|_| ImageRefused::NotShown)?;
             let target = Target::resolved(&owned, &path);
             Ok((path, Sensitivity::ReadOnly { target }))
         })
