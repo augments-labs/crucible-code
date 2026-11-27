@@ -369,3 +369,36 @@ fn a_dropped_call_raises_its_job_s_token_and_the_place_comes_back_only_when_the_
         .await;
     });
 }
+
+#[test]
+fn work_given_a_deadline_by_a_poller_with_no_timer_is_given_up_by_it() {
+    // The worker's runtime has the timer; whoever waits has none, as a front
+    // end's own runtime may not, and the deadline still fires on time.
+    // Driven by a thread of its own, as the application's runtime is by its
+    // workers, until the test is over.
+    let lending = runtime();
+    let worker = ToolWorker::new(lending.handle().clone());
+    let (over, ending) = tokio::sync::oneshot::channel::<()>();
+    let driving = std::thread::spawn(move || {
+        let _ = lending.block_on(ending);
+    });
+    let waiting = Builder::new_current_thread()
+        .build()
+        .expect("a runtime with no timer");
+    let deadline = Duration::from_millis(50);
+
+    let began = std::time::Instant::now();
+    let given_up = waiting.block_on(async {
+        worker
+            .within(deadline, std::future::pending::<()>())
+            .await
+            .is_err()
+    });
+    let waited = began.elapsed();
+    let _ = over.send(());
+    driving.join().expect("the worker's runtime");
+
+    assert!(given_up, "work that never ends answered");
+    assert!(waited >= deadline, "given up early, after {waited:?}");
+    assert!(waited < PATIENCE, "given up only after {waited:?}");
+}

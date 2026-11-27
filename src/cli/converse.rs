@@ -51,23 +51,27 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::oneshot;
 
-use crucible_app::client::Ended;
+use crucible_app::client::images::{DEADLINE, PER_TURN};
+use crucible_app::client::{Ended, Performed};
 use crucible_app::providers::{Lookup, Served, Serving, Sourcing, available};
 use crucible_app::startup::ProviderAuth;
 use crucible_app::subscription::Subscriptions;
 use crucible_app::{Conversation, Settled};
 use crucible_auth::Store;
 use crucible_builtins::{Background, Ledger, Plan};
-use crucible_client_api::{AnswerOutcome, Author, Command, ErrorCode, Outcome, Prompt, Refusal};
+use crucible_client_api::{
+    AnswerOutcome, Author, Command, ErrorCode, ImagePath, ImageRef, Outcome, Prompt, Refusal,
+};
 use crucible_context::Room;
 use crucible_runner::{Event, TurnError, Turned};
 use crucible_runtime::Cancel;
 use crucible_session::Session;
+use crucible_tui::chrome::Undrawn;
 use crucible_tui::{
-    Editor, Held as TerminalModes, Pasting, Raw, Renderer, Reporting, Screen, ScreenMode, Sending,
-    Spelling, Terminal, TerminalError,
+    Editor, Held as TerminalModes, MOST_KEPT_IMAGES, Pasting, Raw, Renderer, Reporting, Screen,
+    ScreenMode, Sending, Spelling, Terminal, TerminalError,
 };
-use crucible_types::{Attachment, Compacting, SessionId, Spend};
+use crucible_types::{Attachment, Compacting, SessionId, Spend, ToolId};
 
 use super::draw;
 use super::gathering::Gathering;
@@ -158,8 +162,8 @@ pub(crate) struct Terms {
     /// nothing rather than marking the row `auto` happens to have resolved to.
     pub(crate) chosen: Cell<Option<crucible_config::ThemeChoice>>,
     /// Which syntax theme fenced code is read in, where a layer named one or
-    /// `/theme` took one. `None` is "nothing said", and the first fence settles
-    /// on whatever this build draws code in unless somebody says otherwise.
+    /// `/theme` took one. `None` is "nothing said", and code is drawn in the one
+    /// made for the ground the table in force is drawn for.
     pub(crate) reading: RefCell<Option<String>>,
     /// What `/settings` has written down this session, by key, one entry a
     /// row: the settings above were read at the start and are not read again,
@@ -317,6 +321,10 @@ pub(crate) struct Terms {
     /// and whatever is committed beside them later. Each reader takes its own
     /// snapshot, so a provider it names is one that was in force when it asked.
     pub(crate) providers: crucible_registry::Registry<crucible_app::providers::Arm>,
+    /// What the session's check has said of math pictures, which `/settings`
+    /// reads each time it draws, so a check that settles while it is open is
+    /// shown as it settles.
+    pub(crate) math: super::math_engine::Outcome,
 }
 
 impl Terms {
@@ -697,8 +705,13 @@ fn conversing<T: Terminal>(
     // be this screen undoing what that pruning was run to do.
     let pruned = conversation.session().take_pruned();
     let against = replaying::Replay::of(conversation.settled(), terms, &pruned);
-    replaying::replayed(renderer, &against, conversation.session(), &mut held.kept)?;
+    let named = replaying::replayed(renderer, &against, conversation.session(), &mut held.kept)?;
     drop(pruned);
+
+    // What its turns named, read again in order while two seconds last, so a
+    // long session is not held up putting pictures back; each after that is
+    // named as not drawn again.
+    replaying::redrawn(renderer, terms, &mut conversation, &named)?;
 
     // Answered rather than acted on. Making room is a request, and a request is
     // run the one way this file runs one — on a worker, with the box live under
@@ -847,7 +860,7 @@ fn conversing<T: Terminal>(
             }
 
             // Taken above, by the state that holds what it stands over.
-            Asked::Expand | Asked::Clicked(_) => continue,
+            Asked::Expand | Asked::Clicked(_) | Asked::Labelled(_) => continue,
 
             Asked::Untyped => {
                 match unboxed(renderer, conversation.settled(), style, held.answers.input)? {
@@ -949,9 +962,10 @@ fn conversing<T: Terminal>(
 
     // In the terminal's own buffer the live region is closed while the modes
     // are still held, so what they and any held-back panic write on the way
-    // out lands below it. Nothing on a screen of crucible's own. Closed here
-    // so a terminal that refuses is reported; `closing` covers every other
-    // way out, and does nothing once this has run.
+    // out lands below it. On a screen of crucible's own only the end of a
+    // picture part way out and any deletes still owed are written. Closed
+    // here so a terminal that refuses is reported; `closing` covers every
+    // other way out, and does nothing once this has run.
     renderer.closes()?;
 
     // Whatever was said about the log while the screen was still up went with
@@ -1209,6 +1223,17 @@ fn ran<T: Terminal>(
 
     let leaving = matches!(took.meanwhile, typing::Meanwhile::Leaving);
     let mut conversation = took.conversation;
+
+    // The images the turn named, under it, once it is over and before the box
+    // comes back: the first eight read and drawn while two seconds last, the
+    // rest of them named as late, and each after them named as past them. A
+    // session leaving draws none.
+    let named = held.naming.taken(renderer);
+    if !leaving {
+        let started = Instant::now();
+        let first = turn_end(move || started.elapsed());
+        imaged(renderer, terms, &mut conversation, &named, first)?;
+    }
 
     // A speed, a model and a mode taken while the work ran are put on the
     // runner now, the moment it is this side's again, so the row between turns
@@ -2306,6 +2331,8 @@ struct Held<'a> {
     /// waits is read and an answer settled while a turn has the
     /// conversation. `None` where the conversation holds none.
     questions: Option<crucible_app::client::Questions>,
+    /// The images the turn under way has named, shown once it ends.
+    naming: Naming,
 }
 
 impl<'a> Held<'a> {
@@ -2343,6 +2370,7 @@ impl<'a> Held<'a> {
             opening,
             docking: docking::Docking::default(),
             questions: None,
+            naming: Naming::default(),
         }
     }
 }
@@ -2470,6 +2498,18 @@ fn shown<T: Terminal>(
 ) -> Result<(), Fatal> {
     let style = terms.style();
 
+    // Every call and what it came back with, counted or drawn, because a
+    // picture a counted read took is named all the same.
+    match &one {
+        Seen::Turn(Event::ToolRequested { call, .. }) => {
+            held.naming.calling(&call.id, &call.name);
+        }
+        Seen::Turn(Event::ToolFinished { call, output, .. }) => {
+            held.naming.came_back(renderer, call, output.attachments());
+        }
+        _ => {}
+    }
+
     match one {
         // A call the run above it is counting. No row is drawn for it — the
         // count is its row — but what it came back with is kept either way,
@@ -2567,6 +2607,228 @@ fn shown<T: Terminal>(
     }
 
     Ok(())
+}
+
+/// How many images one turn may name before the rest go unheard: past
+/// [`PER_TURN`] each is only an edge saying so, and past this not even that.
+const NAMED: usize = 64;
+
+/// How many tool calls a turn keeps the names of while they are out: a call's
+/// result follows it within one batch, so a window this size finds it.
+const CALLS: usize = 64;
+
+/// One image a turn named, as it will be asked for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Named {
+    /// The path the answer wrote, or the file the tool read.
+    path: Box<str>,
+    /// The tool that read it, and the SHA-256 of what it read; none for an
+    /// image the answer named.
+    tool: Option<(Box<str>, [u8; 32])>,
+}
+
+/// The images a turn named, in the order it named them, held until it ends.
+///
+/// An answer names one by the path it wrote, which the renderer keeps as the
+/// answer streams and hands over here; a tool names one by the file it read
+/// and the hash of what it read there. Both are bounded: the calls by
+/// [`CALLS`], and the images by [`NAMED`] for a turn, the first that many, or,
+/// for a session put back, the most recent [`MOST_KEPT_IMAGES`], since no
+/// more than that are ever kept as pictures.
+#[derive(Debug, Default)]
+pub(super) struct Naming {
+    /// The calls out, by id, with their tool's name, newest last.
+    calls: std::collections::VecDeque<(ToolId, Box<str>)>,
+    /// What was named, in order.
+    named: std::collections::VecDeque<Named>,
+    /// Whether past the bound the oldest goes, rather than the newest.
+    recent: bool,
+}
+
+impl Naming {
+    /// What a session put back keeps: its most recent images.
+    pub(super) fn recent() -> Self {
+        Self {
+            recent: true,
+            ..Self::default()
+        }
+    }
+
+    /// The bound on what is named.
+    const fn most(&self) -> usize {
+        if self.recent { MOST_KEPT_IMAGES } else { NAMED }
+    }
+
+    fn push(&mut self, named: Named) {
+        if self.named.len() >= self.most() {
+            if !self.recent {
+                return;
+            }
+            self.named.pop_front();
+        }
+        self.named.push_back(named);
+    }
+
+    /// The images the answer named since it was last asked, in its order.
+    pub(super) fn answered<T: Terminal>(&mut self, renderer: &mut Renderer<T>) {
+        for path in renderer.named_images() {
+            self.push(Named { path, tool: None });
+        }
+    }
+
+    /// A call that went out, which a picture it reads will be named by.
+    pub(super) fn calling(&mut self, call: &ToolId, tool: &str) {
+        if self.calls.len() >= CALLS {
+            self.calls.pop_front();
+        }
+        self.calls.push_back((call.clone(), tool.into()));
+    }
+
+    /// What `call` came back with: each picture it read, after what the
+    /// answer named before it.
+    pub(super) fn came_back<T: Terminal>(
+        &mut self,
+        renderer: &mut Renderer<T>,
+        call: &ToolId,
+        attachments: &[Attachment],
+    ) {
+        self.answered(renderer);
+        let tool = self
+            .calls
+            .iter()
+            .position(|(out, _)| out == call)
+            .and_then(|at| self.calls.remove(at))
+            .map(|(_, tool)| tool);
+        let Some(tool) = tool else {
+            return;
+        };
+        let pictures = attachments
+            .iter()
+            .filter(|attachment| attachment.modality == crucible_types::Modality::Image);
+        for attachment in pictures {
+            self.push(Named {
+                path: attachment.path.clone(),
+                tool: Some((tool.clone(), attachment.hash)),
+            });
+        }
+    }
+
+    /// Everything named, the answer's last words included, leaving none.
+    pub(super) fn taken<T: Terminal>(&mut self, renderer: &mut Renderer<T>) -> Vec<Named> {
+        self.answered(renderer);
+        self.calls.clear();
+        self.named.drain(..).collect()
+    }
+}
+
+/// Why the image at a place in a session put back is not asked for, given
+/// how long the session's images have taken so far: none while two seconds
+/// last, and not drawn again after them.
+fn put_back(elapsed: impl Fn() -> Duration) -> impl FnMut(usize) -> Option<Undrawn> {
+    move |_| (elapsed() >= DEADLINE).then_some(Undrawn::NotRedrawnOnResume)
+}
+
+/// Why the image at a place in a turn's answer is not asked for, given how
+/// long the turn's images have taken so far: none for the first [`PER_TURN`]
+/// while two seconds last, late for the rest of them after, and past them for
+/// every one after the first eight.
+///
+/// The two seconds are the turn's, on top of each image's own: the one asked
+/// for as they run out keeps its own deadline, so the box comes back within
+/// two of them however many images a turn names or how slow their files are.
+fn turn_end(elapsed: impl Fn() -> Duration) -> impl FnMut(usize) -> Option<Undrawn> {
+    move |at| {
+        if at >= PER_TURN {
+            Some(Undrawn::PastTurnImages)
+        } else {
+            (elapsed() >= DEADLINE).then_some(Undrawn::NotReadInTime)
+        }
+    }
+}
+
+/// Draws the images `named`, each under its edge: asked of the application
+/// until `stopped` names a reason not to, and named with that reason after.
+///
+/// Where the terminal shows no pictures nothing is asked or drawn: the answer
+/// already wrote each path where it named it.
+fn imaged<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    terms: &Terms,
+    conversation: &mut Conversation,
+    named: &[Named],
+    stopped: impl FnMut(usize) -> Option<Undrawn>,
+) -> Result<(), Fatal> {
+    if !renderer.shows_pictures() {
+        return Ok(());
+    }
+    let root = terms.workspace.root();
+    shown_images(
+        named,
+        stopped,
+        |one| asked_image(terms, conversation, one),
+        |one, png| {
+            let path = match &one.tool {
+                None => one.path.to_string(),
+                Some(_) => under(&one.path, root),
+            };
+            let by = one.tool.as_ref().map(|(tool, _)| &**tool);
+            renderer.image(&path, by, png)
+        },
+    )?;
+    Ok(())
+}
+
+/// Each of `named` in order, asked for by `ask` until `stopped` names a
+/// reason not to, and drawn by `draw` either way.
+///
+/// Once stopped, none after is asked for, whatever `stopped` says of it: each
+/// is refused with the reason `stopped` gives at its place, or with the last
+/// reason given where it gives none there.
+pub(super) fn shown_images<E>(
+    named: &[Named],
+    mut stopped: impl FnMut(usize) -> Option<Undrawn>,
+    mut ask: impl FnMut(&Named) -> Result<Vec<u8>, Undrawn>,
+    mut draw: impl FnMut(&Named, Result<Vec<u8>, Undrawn>) -> Result<(), E>,
+) -> Result<(), E> {
+    let mut why = None;
+    for (at, one) in named.iter().enumerate() {
+        why = stopped(at).or(why);
+        let png = match why {
+            None => ask(one),
+            Some(why) => Err(why),
+        };
+        draw(one, png)?;
+    }
+    Ok(())
+}
+
+/// The PNG the application answers `one` with, or the words for why not.
+fn asked_image(
+    terms: &Terms,
+    conversation: &mut Conversation,
+    one: &Named,
+) -> Result<Vec<u8>, Undrawn> {
+    let path = ImagePath::new(&one.path).map_err(|_| Undrawn::ImageNotShown)?;
+    let image = match &one.tool {
+        None => ImageRef::Answer { path },
+        Some((_, hash)) => ImageRef::Tool { path, hash: *hash },
+    };
+    match terms.perform(conversation, Command::ShowImage(image)) {
+        Performed::Image(Ok(shown)) => Ok(shown.png),
+        Performed::Image(Err(refused)) => Err(super::pictures::refused(refused)),
+        // Another answer to this request is no picture.
+        _ => Err(Undrawn::ImageNotShown),
+    }
+}
+
+/// `path` relative to `root` where it is under it, whole where it is not,
+/// with the separators every path this program prints is written with.
+fn under(path: &str, root: &std::path::Path) -> String {
+    let path = crucible_workspace::written(std::path::Path::new(path));
+    let root = crucible_workspace::written(root);
+    path.strip_prefix(&root)
+        .and_then(|relative| relative.strip_prefix('/'))
+        .map_or_else(|| path.clone(), ToOwned::to_owned)
 }
 
 #[cfg(test)]

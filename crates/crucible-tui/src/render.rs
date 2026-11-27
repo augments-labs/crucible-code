@@ -37,6 +37,7 @@
 //! goes near one.
 
 use crate::bands::{Bands, Wants};
+use crate::chrome::Undrawn;
 use crate::clipboard;
 use crate::color::{Palette, Slot, Theme};
 use crate::drawing::{Drawers, Mode};
@@ -44,12 +45,14 @@ use crate::escape::Escapes;
 use crate::files::Files;
 use crate::forge::Forge;
 use crate::glyphs::Glyphs;
-use crate::markdown::{self, Block, Markdown, Offers, Said};
-use crate::record::{Modes, Record, Source};
+use crate::markdown::{self, Block, Markdown, NAMED_CAP, Offers, Said};
+use crate::record::{Modes, Named, Record, Source};
 use crate::row::Row;
 use crate::scroll_rail::{self, ScrollRail};
 use crate::select::{self, Place, Taken, View};
-use crate::terminal::graphics::Capability;
+use crate::terminal::graphics::{
+    Capability, Formula, Formulas, Passthrough, Pictures, Protocol, Sent,
+};
 use crate::terminal::keys::{Pressed, pressed, waiting};
 use crate::terminal::system::ResizeFlag;
 use crate::terminal::{Size, Terminal, TerminalError};
@@ -84,6 +87,11 @@ const NOTCH: i32 = 3;
 /// pointer back before more than a line or two has gone, quick enough that a
 /// reader who wants the paragraph above gets there without letting go.
 const CREEP: Duration = Duration::from_millis(60);
+
+/// How long an input wait rests before it looks again for a formula's
+/// picture while one is owed: soon enough that a picture made while the
+/// reader sits at the prompt is shown as it comes.
+const FORMULA_LOOK: Duration = Duration::from_millis(50);
 
 /// The most of a native window [`Renderer::room`] gives a panel standing over
 /// or in place of the box: half, rounded down.
@@ -421,6 +429,10 @@ pub struct Renderer<T: Terminal> {
     /// Held here rather than made fresh per delta, for the reason the escapes
     /// above are: a fence arrives split across two deltas as often as not.
     markdown: Markdown,
+    /// The images the answers since they were last asked for named, in the
+    /// order they were named, at most [`NAMED_CAP`]: kept here as each reader
+    /// is let go, so a tool call in the middle of a turn loses none.
+    named: Vec<Box<str>>,
     /// Whether an answer is still arriving.
     ///
     /// Set by the first piece of one and put down by [`Renderer::settle`],
@@ -492,6 +504,15 @@ pub struct Renderer<T: Terminal> {
     /// just arrived under the pointer, and what a drag resting at an edge of
     /// the transcript scrolls towards.
     held: Option<(usize, usize)>,
+    /// The line whose picture a press on it asked to show at its next size
+    /// ([`Self::resizes_when_let_go`]), shown at it once the button comes up
+    /// on the cell it went down on.
+    ///
+    /// Held until then because a press is both ends of what the pointer can
+    /// do: either button going down is one, and so is the start of a drag,
+    /// which selects rather than resizes. Dropped by the next press and by
+    /// the pointer moving under the button.
+    sizing: Option<usize>,
     /// When a drag resting at an edge of the transcript next carries it a row.
     creeps: Option<Instant>,
     /// Which window row and column the pointer was last reported on.
@@ -504,6 +525,8 @@ pub struct Renderer<T: Terminal> {
     pointing: Option<(usize, usize)>,
     /// What may call off a wait on the keyboard, where anything may.
     recall: Option<Arc<dyn Recall>>,
+    /// What makes display formulas into pictures, where anything does.
+    formulas: Option<Box<dyn Formulas>>,
     /// What says the window changed size, where anything does.
     resizes: Option<ResizeFlag>,
     /// What the session draws pictures with.
@@ -511,6 +534,43 @@ pub struct Renderer<T: Terminal> {
     /// Text until [`Renderer::images`] says otherwise, so a renderer nobody
     /// told — a preview, a test, a redirected run — draws no picture.
     images: Capability,
+    /// What the terminal has been sent of the pictures shown, and is owed.
+    sent: Sent,
+    /// Reused across frames: the graphics commands one frame sends.
+    commands: String,
+    /// The iTerm2 and Sixel images the last frame left on screen, each with
+    /// what the rows under it were painted as. Emptied wherever the screen
+    /// is forgotten, by `forget_screen` alone, since a row written
+    /// again erases what was over it.
+    overlaid: Vec<Over>,
+}
+
+/// An iTerm2 or Sixel image on screen, wholly inside the transcript band.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Over {
+    /// The picture, by its number.
+    id: u32,
+    /// The screen row its first row is on.
+    top: usize,
+    /// The screen column its first column is on.
+    column: usize,
+    /// How many cells it covers, across and down.
+    cells: (u16, u16),
+    /// What each row under it was painted as, and what of it is selected.
+    under: Vec<(String, Option<Range<usize>>)>,
+}
+
+impl Over {
+    /// Whether this is the same picture, at the same place and size.
+    fn stands_as(&self, other: &Self) -> bool {
+        (self.id, self.top, self.column, self.cells)
+            == (other.id, other.top, other.column, other.cells)
+    }
+
+    /// The screen rows it covers.
+    fn rows(&self) -> Range<usize> {
+        self.top..self.top + usize::from(self.cells.1)
+    }
 }
 
 impl<T: Terminal> Renderer<T> {
@@ -555,6 +615,7 @@ impl<T: Terminal> Renderer<T> {
             unwritten: String::new(),
             escapes: Escapes::default(),
             markdown: Markdown::default(),
+            named: Vec::new(),
             arriving: Arriving::Nothing,
             palette: Palette::plain(),
             glyphs: Glyphs::default(),
@@ -565,11 +626,16 @@ impl<T: Terminal> Renderer<T> {
             notch: NOTCH,
             taken: None,
             held: None,
+            sizing: None,
             creeps: None,
             pointing: None,
             recall: None,
+            formulas: None,
             resizes: None,
             images: Capability::Text,
+            sent: Sent::default(),
+            commands: String::new(),
+            overlaid: Vec::new(),
         }
     }
 
@@ -739,6 +805,7 @@ impl<T: Terminal> Renderer<T> {
                 let view = self.view(&bands);
                 self.taken = Some(Taken::opened(row, column, &view));
                 self.held = Some((row, column));
+                self.sizing = None;
                 self.creeps = None;
                 if had {
                     self.draw()?;
@@ -747,6 +814,7 @@ impl<T: Terminal> Renderer<T> {
             }
             Pressed::Dragged { row, column } => {
                 self.held = Some((row, column));
+                self.sizing = None;
                 if self.taken.is_some() {
                     // The band scrolls a row towards a pointer at its edge
                     // before the drag is placed, so the words that arrive
@@ -762,13 +830,18 @@ impl<T: Terminal> Renderer<T> {
             }
             // Copied where the drag covered something, and quietly dropped
             // where it did not: a button coming up after a plain click is not
-            // an empty clipboard, it is nothing at all.
-            Pressed::Released { .. } => {
-                self.held = None;
+            // an empty clipboard, it is nothing at all. Where the press asked
+            // for a picture's next size and the button comes up on the cell it
+            // went down on, that is the click the size waited for.
+            Pressed::Released { row, column } => {
+                let clicked = self.held.take() == Some((row, column));
+                let sizing = self.sizing.take();
                 self.creeps = None;
                 if self.taken.is_some_and(|taken| !taken.empty()) {
                     let said = self.selected();
                     self.copied(&said)?;
+                } else if let Some(line) = sizing.filter(|_| clicked) {
+                    self.resizes(line)?;
                 }
                 Ok(None)
             }
@@ -930,9 +1003,10 @@ impl<T: Terminal> Renderer<T> {
         self.standing.running.len().min(bands.turn.len())
     }
 
-    /// Whether the row that tells of a held block stands at the foot of the
-    /// transcript band: while a block is held, for as long as the reader is at
-    /// the foot to see it, in a band with a row to put it in.
+    /// Whether the row that tells of what the reader holds stands at the foot
+    /// of the transcript band: while a block, a phrase after a single tilde or
+    /// a span of math or of code is held, for as long as the reader is at the
+    /// foot to see it, in a band with a row to put it in.
     fn holds_row(&self, bands: &Bands) -> bool {
         (self.markdown.holding().is_some()
             || self.markdown.holds_a_phrase()
@@ -1229,9 +1303,8 @@ impl<T: Terminal> Renderer<T> {
     /// place.
     pub fn wears(&mut self, palette: Palette) {
         self.palette = palette;
-        self.record
-            .relay(self.folds(), self.glyphs, self.palette.theme());
-        self.painted.forget();
+        self.relaid(self.glyphs);
+        self.forget_screen();
     }
 
     /// Tells this renderer which characters it may draw with.
@@ -1250,9 +1323,8 @@ impl<T: Terminal> Renderer<T> {
     pub fn draws(&mut self, glyphs: Glyphs) {
         self.glyphs = glyphs;
         self.markdown.draws(glyphs);
-        self.record
-            .relay(self.folds(), glyphs, self.palette.theme());
-        self.painted.forget();
+        self.relaid(glyphs);
+        self.forget_screen();
     }
 
     /// Tells this renderer how math in an answer is drawn.
@@ -1271,9 +1343,8 @@ impl<T: Terminal> Renderer<T> {
             math: mode,
             diagrams: self.diagrams,
         });
-        self.record
-            .relay(self.folds(), self.glyphs, self.palette.theme());
-        self.painted.forget();
+        self.relaid(self.glyphs);
+        self.forget_screen();
     }
 
     /// How math in an answer is drawn.
@@ -1288,17 +1359,16 @@ impl<T: Terminal> Renderer<T> {
     /// written is laid out again in `mode` now, and math is left drawn as it
     /// was. Under [`Mode::Written`] the live foot names a diagram still
     /// arriving by its fence rather than by its drawer, since it will not be
-    /// drawn. Until a picture can be shown in its place, [`Mode::Image`] draws
-    /// a diagram as [`Mode::Text`] does.
+    /// drawn. Under [`Mode::Image`] a diagram is a picture where the terminal
+    /// confirmed Kitty and colour is written, and is text everywhere else.
     pub fn diagrams(&mut self, mode: Mode) {
         self.diagrams = mode;
         self.record.draws_in(Modes {
             math: self.math,
             diagrams: mode,
         });
-        self.record
-            .relay(self.folds(), self.glyphs, self.palette.theme());
-        self.painted.forget();
+        self.relaid(self.glyphs);
+        self.forget_screen();
     }
 
     /// How a diagram in an answer is drawn.
@@ -1316,7 +1386,7 @@ impl<T: Terminal> Renderer<T> {
     /// has always been.
     pub fn counts(&mut self, forge: Option<Forge>) {
         self.record.links_mut().forge = forge;
-        self.markdown = self.reader();
+        self.renew();
     }
 
     /// Tells this renderer which checkout a link to a path in the answer is
@@ -1326,7 +1396,7 @@ impl<T: Terminal> Renderer<T> {
     /// hands a path on as it was written.
     pub fn reads_paths(&mut self, files: Option<Files>) {
         self.record.links_mut().files = files;
-        self.markdown = self.reader();
+        self.renew();
     }
 
     /// Hands this renderer the drawers a closed fence of an answer is drawn
@@ -1343,7 +1413,61 @@ impl<T: Terminal> Renderer<T> {
             Offers::Withdrawn
         };
         self.record.draws_with(drawers, offers);
+        self.renew();
+    }
+
+    /// Lets the reader go for a new one, keeping the images it named.
+    fn renew(&mut self) {
+        self.keep_named();
         self.markdown = self.reader();
+    }
+
+    /// Moves what the reader named into what is kept, up to [`NAMED_CAP`].
+    fn keep_named(&mut self) {
+        let room = NAMED_CAP.saturating_sub(self.named.len());
+        let named = self.markdown.named();
+        self.named.extend(named.into_iter().take(room));
+    }
+
+    /// The paths of the images the answers named since this was last asked,
+    /// in the order they were named, at most 64 of them: an image
+    /// written in the answer's own markdown with a path, not an address.
+    ///
+    /// Asked when a turn ends, and before a tool's image is counted, so what
+    /// the answer named first is shown first.
+    pub fn named_images(&mut self) -> Vec<Box<str>> {
+        self.keep_named();
+        std::mem::take(&mut self.named)
+    }
+
+    /// Whether an image a turn named would be shown as a picture here: the
+    /// terminal confirmed a protocol, something makes pictures, and colour is
+    /// written. Where not, none is asked for.
+    #[must_use]
+    pub fn shows_pictures(&self) -> bool {
+        self.record.shows_pictures()
+    }
+
+    /// Puts down an image a turn named by `path`, read by the tool `by` where
+    /// one read it: a top edge naming it and the picture of `png` under it,
+    /// or the edge alone with why there is none.
+    ///
+    /// Drawn at once, in the next row of the transcript, as a block of its
+    /// own, after anything an answer still held back is put down.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn image(
+        &mut self,
+        path: &str,
+        by: Option<&str>,
+        png: Result<Vec<u8>, Undrawn>,
+    ) -> Result<(), TerminalError> {
+        let theme = self.palette.theme();
+        self.record
+            .image(Named { path, by }, png, self.glyphs, theme);
+        self.draw()
     }
 
     /// A reader for the next message, drawing, counting and opening the way
@@ -1358,34 +1482,62 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// Called after the blank parting it from the previous block and before the
     /// prompt rows themselves, so the rail's mark for it stands for the words it
-    /// names.
+    /// names. A line steered into a running turn is marked here too, and starts
+    /// no turn: the formulas that turn told are still its own.
     pub fn landmark(&mut self) {
         self.record.landmark();
     }
 
-    /// How long an input wait may sleep before a drag resting at an edge of
-    /// the transcript carries it another row, or a native window that changed
-    /// size has settled. `None` where neither is pending.
-    #[must_use]
-    fn rests_in(&self) -> Option<Duration> {
-        let now = Instant::now();
-        let creeps = self.creeps.map(|due| due.saturating_duration_since(now));
-        match (creeps, self.settles_in(now)) {
-            (Some(creeps), Some(settles)) => Some(creeps.min(settles)),
-            (creeps, settles) => creeps.or(settles),
+    /// Marks the next record line as the start of a prompt that starts a
+    /// turn, as [`Renderer::landmark`] does, and says so to what makes
+    /// display formulas into pictures, so an earlier turn's formulas it has
+    /// not begun stay their text.
+    pub fn starts_turn(&mut self) {
+        self.landmark();
+        if let Some(formulas) = &mut self.formulas {
+            formulas.turns();
         }
     }
 
-    /// Does whatever fell due while an input wait slept: carries the
-    /// transcript a row towards a drag resting at its edge, and gives a native
-    /// window that has settled at a new size what was kept.
+    /// How long an input wait may sleep before a drag resting at an edge of
+    /// the transcript carries it another row, a native window that changed
+    /// size has settled, or it looks for a formula's picture still owed; not
+    /// at all while a picture is part way out to the terminal. `None` where
+    /// none of them is pending.
+    #[must_use]
+    fn rests_in(&self) -> Option<Duration> {
+        if self.sent.pending() && self.terminal.is_terminal() {
+            return Some(Duration::ZERO);
+        }
+        let now = Instant::now();
+        let creeps = self.creeps.map(|due| due.saturating_duration_since(now));
+        let looks = self
+            .formulas
+            .as_ref()
+            .is_some_and(|formulas| formulas.pending())
+            .then_some(FORMULA_LOOK);
+        [creeps, self.settles_in(now), looks]
+            .into_iter()
+            .flatten()
+            .min()
+    }
+
+    /// Does whatever fell due while an input wait slept: shows each formula's
+    /// picture made since, carries the
+    /// transcript a row towards a drag resting at its edge, gives a native
+    /// window that has settled at a new size what was kept, and sends the
+    /// terminal the next part of a picture still going out.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the frame could not be drawn.
     fn repose(&mut self) -> Result<bool, TerminalError> {
+        self.answers()?;
         let crept = self.crept()?;
         self.settled(Instant::now())?;
+        if self.sent.pending() {
+            self.draw()?;
+        }
         Ok(crept)
     }
 
@@ -1403,8 +1555,8 @@ impl<T: Terminal> Renderer<T> {
     /// whole of every address an answer was drawn with shorter than it was
     /// written, newest first.
     ///
-    /// A table, display math, a diagram or a diff; not a rule, which draws all
-    /// there is of it. An address cut short in its quiet form, or drawn as a
+    /// A table, display math, a diagram or a diff, and an image a turn named,
+    /// by its path; not a rule, which draws all there is of it. An address cut short in its quiet form, or drawn as a
     /// forge's reference; not a reference the answer wrote short itself. The
     /// record is the only copy, so what lists these reads it where it stands.
     pub fn sources(&self) -> impl Iterator<Item = Source<'_>> + '_ {
@@ -1433,6 +1585,129 @@ impl<T: Terminal> Renderer<T> {
     /// stays text.
     pub fn images(&mut self, capability: Capability) {
         self.images = capability;
+        self.relaid(self.glyphs);
+    }
+
+    /// Tells this renderer whether tmux passes its pictures through, so each
+    /// command is wrapped for it to.
+    ///
+    /// Said once, at startup, where tmux's server was asked.
+    pub fn passes_through(&mut self, passthrough: Passthrough) {
+        self.sent.passes_through(passthrough);
+    }
+
+    /// Hands this renderer what turns a block of an answer into a picture,
+    /// where the session draws pictures with a protocol it confirmed.
+    ///
+    /// Said once, at startup, for the reason [`Renderer::counts`] is. A
+    /// renderer handed none draws every block as text.
+    pub fn pictures(&mut self, pictures: Box<dyn Pictures>) {
+        self.record.pictures(pictures);
+        self.relaid(self.glyphs);
+    }
+
+    /// Hands this renderer what makes each display formula it would show as
+    /// a picture into one, away from the drawing thread.
+    ///
+    /// From then on the renderer tells it each such formula as its block
+    /// closes, which [`Renderer::formulas`] then no longer returns, says a
+    /// turn has started when [`Renderer::starts_turn`] marks a prompt, and
+    /// shows each picture it answers with as [`Renderer::formula_made`]
+    /// would, looking for one every time an input wait rests while any
+    /// formula told is unanswered.
+    pub fn makes_formulas(&mut self, formulas: Box<dyn Formulas>) {
+        self.formulas = Some(formulas);
+    }
+
+    /// Tells what makes pictures each formula the record told of since.
+    fn tells(&mut self) {
+        if let Some(formulas) = &mut self.formulas {
+            for formula in self.record.formulas() {
+                formulas.told(formula);
+            }
+        }
+    }
+
+    /// Shows every picture answered since last looked.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be redrawn.
+    fn answers(&mut self) -> Result<(), TerminalError> {
+        while let Some((formula, svg)) = self.formulas.as_mut().and_then(|f| f.answered()) {
+            if let Some(svg) = svg {
+                self.formula_made(&formula, svg)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The display formulas closed since last asked that are shown as their
+    /// text until a picture made of each is handed to
+    /// [`Renderer::formula_made`].
+    pub fn formulas(&mut self) -> Vec<Formula> {
+        self.record.formulas()
+    }
+
+    /// Shows the block `formula` names as `svg`, a picture made of it, under
+    /// the caps every picture kept is.
+    ///
+    /// On a full screen the picture takes the text's place. In native mode
+    /// it does while the block is in the live region; one already in the
+    /// terminal's scrollback stays its text there, and the picture is kept
+    /// with its block for the next rewrite of what is kept: a settled
+    /// resize, or a new theme or glyph set. A block no longer held, and one
+    /// shown as a picture already, is left as it is.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be redrawn.
+    pub fn formula_made(
+        &mut self,
+        formula: &Formula,
+        svg: crate::drawing::Svg,
+    ) -> Result<(), TerminalError> {
+        if self.record.formula_made(formula, svg) {
+            self.draw()?;
+        }
+        Ok(())
+    }
+
+    /// Draws what follows as a session put back, `resuming`, or live again.
+    ///
+    /// On a full screen, while it is put back every block is drawn as its
+    /// text and nothing is read or drawn for it. Once it is, the newest
+    /// diagrams, no more than the record keeps pictures for, are shown as
+    /// what the pictures kept from an earlier run, and any other stays its
+    /// text, as one not drawn here is; a display formula among them is told
+    /// to what [`Renderer::makes_formulas`] was handed, to be read off this
+    /// thread, and shown once its picture is answered. In native mode each
+    /// diagram or formula is shown
+    /// as what was kept of it as it is drawn, since it goes into the
+    /// scrollback as it is then, and one with nothing kept is its text. Said
+    /// around the walk that puts a session back, so the walk runs no drawer
+    /// and reads only what it will show.
+    pub fn resuming(&mut self, resuming: bool) {
+        self.record.resuming(resuming, self.screen());
+    }
+
+    /// Forgets what is on screen, rows and the images written over them
+    /// together, so the next frame writes every row and every image again:
+    /// a row written again erases an image over it, and an image believed
+    /// still there would not be written back.
+    fn forget_screen(&mut self) {
+        self.painted.forget();
+        self.overlaid.clear();
+    }
+
+    /// Lays the record out again in `glyphs`, with pictures in what the
+    /// terminal confirmed and the palette worn now.
+    fn relaid(&mut self, glyphs: Glyphs) {
+        self.record
+            .pictured_as(self.images, self.palette.identity());
+        self.record.windowed(self.size.rows, self.native.is_some());
+        self.record
+            .relay(self.folds(), glyphs, self.palette.theme());
     }
 
     /// What the session draws pictures with.
@@ -1455,10 +1730,9 @@ impl<T: Terminal> Renderer<T> {
         // scrollbar is the rail.
         self.rails = on && self.native.is_none();
         self.grip = None;
-        self.record
-            .relay(self.folds(), self.glyphs, self.palette.theme());
+        self.relaid(self.glyphs);
         self.unselects();
-        self.painted.forget();
+        self.forget_screen();
     }
 
     /// Appends streamed output and puts a frame on screen.
@@ -1537,7 +1811,8 @@ impl<T: Terminal> Renderer<T> {
 
     /// Reads a line that may still be the header of a table or the title of a
     /// heading as the prose it was said to be, and settles a phrase or a span
-    /// of math it holds, for a call that is about to end the line it is on.
+    /// of math or of code it holds, for a call that is about to end the line it
+    /// is on.
     fn undoubted(&mut self) -> Result<(), TerminalError> {
         if !self.markdown.in_doubt()
             && !self.markdown.holds_a_phrase()
@@ -2077,7 +2352,7 @@ impl<T: Terminal> Renderer<T> {
         // The markers belong to the message that is ending. A fence the model
         // opened and never closed would otherwise read the tool result under it
         // as code, and the whole of the next answer after that.
-        self.markdown = self.reader();
+        self.renew();
 
         // And the answer they belonged to is over, whatever ended it: the next
         // block down is a block of its own and is owed the row that says so.
@@ -2185,8 +2460,7 @@ impl<T: Terminal> Renderer<T> {
 
         self.native_resize(size);
         self.size = size;
-        self.record
-            .relay(self.folds(), self.glyphs, self.palette.theme());
+        self.relaid(self.glyphs);
         self.standing.repaint(self.folds(), size.columns);
         self.prompt_target = None;
         self.pointed_changed = false;
@@ -2195,7 +2469,7 @@ impl<T: Terminal> Renderer<T> {
 
         // Every row of the window is now showing something drawn for a size it
         // no longer has, so the next frame may not skip any of them.
-        self.painted.forget();
+        self.forget_screen();
 
         self.draw()
     }
@@ -2206,17 +2480,39 @@ impl<T: Terminal> Renderer<T> {
     /// may have written anything on the screen, and this process has no record
     /// of it: the bytes the last frame left are no longer what is there. The
     /// screen is not laid out again, unlike [`Renderer::resized`] — the size
-    /// did not change — but every row is painted and written.
+    /// did not change — but every row is painted and written. The child may
+    /// have taken every picture the terminal held too: a full screen sends
+    /// again those it shows, and a native session every Kitty picture the
+    /// record keeps, since cells in its scrollback name them. An iTerm2 or
+    /// Sixel image is held by no number, so there is nothing to send again.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn repaint(&mut self) -> Result<(), TerminalError> {
+        // Whatever had the terminal may have taken every picture with it: a
+        // full screen sends again those it shows, and a native session every
+        // Kitty picture it keeps, since the cells in the scrollback still name
+        // them. Only those are sent the Kitty way.
+        self.sent.forget();
         // A native session paints into the terminal's own buffer, where the
         // renderer holds no picture it could trust: its live region is laid
         // down afresh on every frame already.
         if self.native.is_none() {
-            self.painted.forget();
+            self.forget_screen();
+        } else {
+            for id in self.record.picture_ids() {
+                let named =
+                    self.record
+                        .payload(id)
+                        .is_some_and(|payload| match payload.protocol() {
+                            Protocol::Kitty => true,
+                            Protocol::Iterm2 | Protocol::Sixel => false,
+                        });
+                if named {
+                    self.sent.wants(id);
+                }
+            }
         }
         self.draw()
     }
@@ -2266,7 +2562,7 @@ impl<T: Terminal> Renderer<T> {
 
         // Every row of the band is showing a line that is no longer in the
         // record, so the next frame may not skip any of them.
-        self.painted.forget();
+        self.forget_screen();
 
         self.draw()
     }
@@ -2610,6 +2906,98 @@ impl<T: Terminal> Renderer<T> {
         None
     }
 
+    /// The line, counted from the first of the session, whose picture
+    /// stands in cell `column` of window row `at`: what a click there
+    /// resizes ([`Self::resizes_when_let_go`]).
+    ///
+    /// None for any other cell, so a click beside a picture or on a block
+    /// drawn as text lands where it always did; and none in native mode,
+    /// where no press arrives and a picture keeps its size.
+    #[must_use]
+    pub fn pictured(&self, at: usize, column: usize) -> Option<usize> {
+        if self.native.is_some() {
+            return None;
+        }
+        let bands = self.bands();
+        if !bands.transcript.contains(&at) {
+            return None;
+        }
+        let rows = self.record_rows(&bands);
+        let into = at - bands.transcript.start;
+        let top = self.record.top_row(rows);
+        self.record
+            .row_at(top + into)
+            .filter(|row| column < self.folds() && row.pictured_at(column))?;
+        self.record.at(into, rows)
+    }
+
+    /// Shows the picture of line `line`, counted from the first of the
+    /// session, at the size after the one it is at, round from Full to Fit,
+    /// now, and answers whether there was one to resize: what Enter on its
+    /// source in the view of what was cut asks, whatever button is held.
+    ///
+    /// Never in native mode, where every picture stays at the size it is
+    /// first shown at. The frame is drawn again where it was, so a Sixel
+    /// picture is encoded for its new size by the frame that shows it.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be redrawn.
+    pub fn resizes(&mut self, line: usize) -> Result<bool, TerminalError> {
+        if self.native.is_some() || !self.terminal.is_terminal() {
+            return Ok(false);
+        }
+        if !self.record.cycles(line) {
+            return Ok(false);
+        }
+        self.draw()?;
+        Ok(true)
+    }
+
+    /// Shows the picture of line `line` at its next size, as
+    /// [`Self::resizes`] does, once the button that went down on it comes up
+    /// on the cell it went down on, and answers whether there is one to
+    /// resize: what a press that landed on a picture asks.
+    ///
+    /// Held until then so a drag that starts on a picture selects and leaves
+    /// its size alone. Never in native mode, where no press arrives.
+    pub fn resizes_when_let_go(&mut self, line: usize) -> bool {
+        if self.native.is_some() || !self.terminal.is_terminal() {
+            return false;
+        }
+        let pictured = self.record.pictured(line);
+        self.sizing = pictured.then_some(line);
+        pictured
+    }
+
+    /// Whether [`Self::resizes`] would resize line `line`'s picture, for a
+    /// footer to name the key only where it does something.
+    #[must_use]
+    pub fn resizable(&self, line: usize) -> bool {
+        self.native.is_none() && self.record.pictured(line)
+    }
+
+    /// The line, counted from the first of the session, of the block whose
+    /// label window row `at` is: the top edge of a block drawn as text that
+    /// has a source to read, its kind's word and any refusal on it. What a
+    /// click there opens the block's source for.
+    ///
+    /// None for any other row, and in native mode.
+    #[must_use]
+    pub fn labelled(&self, at: usize) -> Option<usize> {
+        if self.native.is_some() {
+            return None;
+        }
+        let bands = self.bands();
+        if !bands.transcript.contains(&at) {
+            return None;
+        }
+        let rows = self.record_rows(&bands);
+        let into = at - bands.transcript.start;
+        let top = self.record.top_row(rows);
+        self.record.labelled(top + into)
+    }
+
     /// The cells of window row `at` that a click or a resting pointer counts
     /// on: from the first cell the row drew to its last, in terminal cells.
     ///
@@ -2710,8 +3098,8 @@ impl<T: Terminal> Renderer<T> {
     }
 
     /// The row that tells of a block the reader is holding, or shows the
-    /// phrase it holds after a single tilde or the span of math it holds,
-    /// drawn `columns` wide; `None` while nothing is held.
+    /// phrase it holds after a single tilde or the span of math or of code it
+    /// holds, drawn `columns` wide; `None` while nothing is held.
     ///
     /// Shown in place of what is held until it settles, in both screen modes:
     /// none of it is drawn until it can be drawn as it will stand.
@@ -2725,6 +3113,7 @@ impl<T: Terminal> Renderer<T> {
 
     /// One frame.
     fn draw(&mut self) -> Result<(), TerminalError> {
+        self.tells();
         // A redirected run has already been given every byte, at the moment
         // each arrived. What is left is to make sure it has them.
         if !self.terminal.is_terminal() {
@@ -2747,6 +3136,11 @@ impl<T: Terminal> Renderer<T> {
         }
 
         let bands = self.bands();
+        // A Sixel picture kept for another width is encoded for this one
+        // only once the band is about to show it, and before anything is
+        // worked out from how tall what it shows is.
+        let record_rows = self.record_rows(&bands);
+        self.record.freshens(record_rows);
         // Worked out once for the whole frame, and it names rows rather than
         // setting a mode: the result under the pointer is painted from the lit
         // palette and everything else on screen from the plain one.
@@ -2754,7 +3148,7 @@ impl<T: Terminal> Renderer<T> {
         let palette = self.palette;
         let pointed = self.palette.pointing(true);
         let view = self.view(&bands);
-        self.painted.selects(self.taken, view);
+        self.painted.selects(self.taken, view.clone());
         self.painted.open(self.size.rows, self.size.columns);
 
         // The rail's cells, one a band row, set after the row beside them has
@@ -2771,8 +3165,34 @@ impl<T: Terminal> Renderer<T> {
         // A block being held stands at the foot as one row saying so, under
         // what is above it, for as long as the reader is at the foot to see it.
         let held = self.holding(folds).filter(|_| self.holds_row(&bands));
-        let mut showing = self.record.view(self.record_rows(&bands));
+        let mut showing = self.record.view(record_rows);
         showing.extend(held);
+        // The pictures this frame shows are the ones the terminal must hold,
+        // and only where their cells are drawn.
+        if self.palette.writes_color() {
+            for id in showing.iter().flat_map(Row::pictures) {
+                self.sent.wants(id);
+            }
+        }
+        // An iTerm2 or Sixel image is written over its rows only where the
+        // band shows every one of them; one partly shown is its blank rows.
+        // The rows an image stood on that no image stands on in the same
+        // place now are written again, which erases what was over them,
+        // whichever band they belong to now: a row the box or the turn grew
+        // over may paint exactly as the row held for the image did.
+        let mut over = if self.palette.writes_color() {
+            self.placed_over(&showing, bands.transcript.start, folds)
+        } else {
+            Vec::new()
+        };
+        for was in &self.overlaid {
+            if !over.iter().any(|now| now.stands_as(was)) {
+                for at in was.rows() {
+                    self.painted.blank(at);
+                }
+            }
+        }
+        let covering = (!over.is_empty()).then(|| view.clone());
         let mut showing = showing.into_iter();
         for at in bands.transcript.start..bands.transcript.end {
             let row = match (showing.next(), rail.next()) {
@@ -2786,6 +3206,19 @@ impl<T: Terminal> Renderer<T> {
                 }
                 (row, None) => row,
             };
+            if let (Some(row), Some(view)) = (&row, &covering)
+                && let Some(image) = over.iter_mut().find(|image| image.rows().contains(&at))
+            {
+                let worn = if lit.contains(&at) {
+                    &pointed
+                } else {
+                    &palette
+                };
+                let covered = self
+                    .taken
+                    .and_then(|taken| taken.covers(at, self.size.columns, view));
+                image.under.push((row.paint(worn), covered));
+            }
             match row {
                 Some(row) if lit.contains(&at) => self.painted.paint(at, &row, &pointed),
                 Some(row) => self.painted.paint(at, &row, &palette),
@@ -2823,6 +3256,33 @@ impl<T: Terminal> Renderer<T> {
         }
         self.standing.prompt = prompt;
 
+        // A picture the record let go of is shown nowhere on this screen
+        // again, so the terminal lets go of it too.
+        if self.record.let_pictures_go() {
+            self.sent.keeps(self.record.picture_ids());
+        }
+        self.owed();
+        let record = &self.record;
+        // After every row, so each image is written over rows already blank
+        // for it, and only where they or it changed.
+        for image in &mut over {
+            if self.overlaid.contains(image) {
+                continue;
+            }
+            let mut written = format!("\x1b[{};{}H", image.top + 1, image.column + 1);
+            let drawn = record
+                .payload(image.id)
+                .is_some_and(|payload| self.sent.image(payload, &mut written));
+            if drawn {
+                self.commands.push_str(&written);
+            } else {
+                // Not written, so not on screen: asked again next frame.
+                image.under.clear();
+            }
+        }
+        self.overlaid = over;
+        self.painted.graphics(&self.commands);
+
         let (row, column) = self.parked(&bands);
         self.painted.park(row, column);
 
@@ -2835,6 +3295,64 @@ impl<T: Terminal> Renderer<T> {
 
         self.terminal.write(self.painted.sealed())?;
         self.terminal.flush()
+    }
+
+    /// Sets the commands to what the terminal is owed of the pictures the
+    /// frame shows. Every picture held is looked up again, to be placed in
+    /// the cells it is shown in now, only after the record says one of them
+    /// changed: a look-up walks every line the record holds, and a frame
+    /// that did that for each picture held would cost what the session has
+    /// grown to.
+    fn owed(&mut self) {
+        if self.record.pictures_reshaped() {
+            self.sent.reshaped();
+        }
+        self.commands.clear();
+        let record = &self.record;
+        self.sent.write(|id| record.payload(id), &mut self.commands);
+    }
+
+    /// Every iTerm2 or Sixel image `showing` stands wholly in, its first
+    /// row on screen row `start`: rows held blank for one picture, from its
+    /// first row to its last, each at the same column and all of its width
+    /// inside `folds`, under nothing yet.
+    fn placed_over(&self, showing: &[Row], start: usize, folds: usize) -> Vec<Over> {
+        let mut over = Vec::new();
+        let mut at = 0;
+        while let Some(row) = showing.get(at) {
+            let placed = row.held().and_then(|(column, held, across)| {
+                let payload = self.record.payload(held.id)?;
+                let cells = payload.cells();
+                let fits = held.row == 0
+                    && held.column == 0
+                    && across == usize::from(cells.0)
+                    && column + across <= folds;
+                let whole = (1..cells.1).all(|down| {
+                    showing
+                        .get(at + usize::from(down))
+                        .and_then(Row::held)
+                        .is_some_and(|(at_column, below, wide)| {
+                            (at_column, below.id, below.row, below.column, wide)
+                                == (column, held.id, down, 0, across)
+                        })
+                });
+                (fits && whole).then(|| Over {
+                    id: held.id,
+                    top: start + at,
+                    column,
+                    cells,
+                    under: Vec::new(),
+                })
+            });
+            match placed {
+                Some(image) => {
+                    at += usize::from(image.cells.1).max(1);
+                    over.push(image);
+                }
+                None => at += 1,
+            }
+        }
+        over
     }
 
     /// Where the cursor goes, in window rows and columns.

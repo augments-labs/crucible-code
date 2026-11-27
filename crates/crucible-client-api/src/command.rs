@@ -4,10 +4,14 @@
 //! terminal, and none besides: a command that does not ship has no arm, so
 //! there is no spelling a decoder could take for it.
 //!
-//! Nothing here reaches the host's files. A prompt is its words and who wrote
-//! them; what is attached to it is chosen on the host, by the front end
-//! standing there, and handed to the application beside the request rather
-//! than named inside it. A
+//! Nothing here reaches the host's files but one command. A prompt is its
+//! words and who wrote them; what is attached to it is chosen on the host, by
+//! the front end standing there, and handed to the application beside the
+//! request rather than named inside it. [`Command::ShowImage`] is the
+//! exception: it names an image a turn named by the path the turn wrote, and
+//! the application reads that file only where its workspace reaches it and
+//! its permission rules let it be read, as a tool reading it would be, with a
+//! question that would have been asked answered no. A
 //! login names a provider and never the credential: the secret is stored on
 //! the host, and the command says only that it now can be read.
 //!
@@ -35,7 +39,7 @@ use std::str::FromStr;
 use crucible_types::{QuestionId, SessionId};
 use serde_json::Value;
 
-use crate::bounds::{Name, PROMPT_BYTES};
+use crate::bounds::{Name, PATH_BYTES, PROMPT_BYTES};
 use crate::error::{ErrorCode, Refusal};
 use crate::pending::{Decision, Picked};
 use crate::progress::Era;
@@ -256,13 +260,17 @@ pub enum Command {
         /// nothing else.
         method: Name,
     },
+    /// Show the image a turn named: the application reads the file, checks
+    /// it is a picture it can draw, and answers with it as a PNG or with why
+    /// it is not shown.
+    ShowImage(ImageRef),
     /// Leave the conversation.
     Exit,
 }
 
 impl Command {
     /// The word each arm crosses as, in the order the arms are declared.
-    pub const KINDS: [&'static str; 37] = [
+    pub const KINDS: [&'static str; 38] = [
         "prompt",
         "compact",
         "cancel",
@@ -299,6 +307,7 @@ impl Command {
         "remove_agent",
         "verify_agent",
         "sign_in_agent",
+        "show_image",
         "exit",
     ];
 
@@ -342,6 +351,7 @@ impl Command {
             Self::RemoveAgent { .. } => "remove_agent",
             Self::VerifyAgent { .. } => "verify_agent",
             Self::SignInAgent { .. } => "sign_in_agent",
+            Self::ShowImage(_) => "show_image",
             Self::Exit => "exit",
         }
     }
@@ -394,6 +404,7 @@ impl Command {
             | Self::Context
             | Self::Usage
             | Self::AskLimits
+            | Self::ShowImage(_)
             | Self::Exit => None,
         }
     }
@@ -442,6 +453,7 @@ impl Command {
                 object.maybe("instance", instance.as_ref().map(Name::as_str))
             }
             Self::Sandbox { enabled } => object.with("enabled", *enabled),
+            Self::ShowImage(image) => object.with("image", image.written()),
             Self::Theme(theme) => object.with("part", theme.part()).with("name", theme.name()),
             Self::Setting { name, value } => object
                 .with("name", name.as_str())
@@ -562,11 +574,141 @@ impl Command {
                 instance: fields.name("instance")?,
                 method: fields.name("method")?,
             },
+            "show_image" => Self::ShowImage(ImageRef::read(fields.take("image")?)?),
             "exit" => Self::Exit,
             _ => return Err(ErrorCode::UnknownCommand.into()),
         };
         fields.done()?;
         Ok(command)
+    }
+}
+
+/// An image a turn named, as a front end asks for it to be shown.
+///
+/// Which of the two it is decides what the application checks the file
+/// against, and nothing else: both are read under the same reach, the same
+/// rules and the same ceilings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImageRef {
+    /// An image the answer named, by the path it wrote, read as it is now.
+    Answer {
+        /// The path, as written.
+        path: ImagePath,
+    },
+    /// An image a tool read, by the path it read, and the SHA-256 of what it
+    /// read then: a file that no longer says that is not shown.
+    Tool {
+        /// The path the tool read.
+        path: ImagePath,
+        /// What the tool read, as its SHA-256.
+        hash: [u8; 32],
+    },
+}
+
+impl ImageRef {
+    fn written(&self) -> Value {
+        match self {
+            Self::Answer { path } => Writing::kind("answer").with("path", path.as_str()),
+            Self::Tool { path, hash } => Writing::kind("tool")
+                .with("path", path.as_str())
+                .with("hash", hex(hash)),
+        }
+        .finish()
+    }
+
+    fn read(value: Value) -> Result<Self, Refusal> {
+        let mut fields = Fields::of(value)?;
+        let image = match fields.kind()?.as_str() {
+            "answer" => Self::Answer {
+                path: ImagePath::new(&fields.string("path")?)?,
+            },
+            "tool" => Self::Tool {
+                path: ImagePath::new(&fields.string("path")?)?,
+                hash: unhex(&fields.string("hash")?).ok_or(ErrorCode::Malformed)?,
+            },
+            _ => return Err(ErrorCode::Malformed.into()),
+        };
+        fields.done()?;
+        Ok(image)
+    }
+
+    /// The path, whichever it is.
+    #[must_use]
+    pub const fn path(&self) -> &ImagePath {
+        match self {
+            Self::Answer { path } | Self::Tool { path, .. } => path,
+        }
+    }
+}
+
+/// The 32 bytes as 64 lowercase hex characters.
+fn hex(bytes: &[u8; 32]) -> String {
+    use fmt::Write as _;
+    bytes
+        .iter()
+        .fold(String::with_capacity(64), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
+}
+
+/// The 32 bytes `word` spells as 64 lowercase hex characters, and nothing
+/// for any other spelling of them.
+fn unhex(word: &str) -> Option<[u8; 32]> {
+    let digit = |at: u8| match at {
+        b'0'..=b'9' => Some(at - b'0'),
+        b'a'..=b'f' => Some(at - b'a' + 10),
+        _ => None,
+    };
+    let word = word.as_bytes();
+    if word.len() != 64 {
+        return None;
+    }
+    let mut bytes = [0; 32];
+    for (byte, pair) in bytes.iter_mut().zip(word.chunks_exact(2)) {
+        let [high, low] = pair else { return None };
+        *byte = digit(*high)? << 4 | digit(*low)?;
+    }
+    Some(bytes)
+}
+
+/// The path an image is asked for by, as the turn wrote it: never empty,
+/// never over [`PATH_BYTES`], and free of control characters.
+///
+/// Only the words: what they reach is the application's to decide, and
+/// nothing here resolves, joins or opens them. Redacted from `Debug`, because
+/// a model wrote them.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ImagePath(Box<str>);
+
+impl ImagePath {
+    /// The path `written` spells.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorCode::TooLarge`] over [`PATH_BYTES`], checked before anything is
+    /// copied; [`ErrorCode::InvalidArgument`] for an empty path or one
+    /// holding a control character.
+    pub fn new(written: &str) -> Result<Self, Refusal> {
+        if written.len() > PATH_BYTES {
+            return Err(ErrorCode::TooLarge.into());
+        }
+        if written.is_empty() || written.chars().any(char::is_control) {
+            return Err(ErrorCode::InvalidArgument.into());
+        }
+        Ok(Self(written.into()))
+    }
+
+    /// The path, as written.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for ImagePath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ImagePath([redacted; {} bytes])", self.0.len())
     }
 }
 

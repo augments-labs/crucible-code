@@ -150,19 +150,26 @@ const ADDED: usize = 40;
 
 /// The answers a burst's transcript holds: two changes, each written as the
 /// unified diff a model writes one as, in a fence a drawer takes by its name,
-/// a formula in a line of prose beside one set apart between `$$`, and a
-/// state diagram in a fence the diagram drawer takes.
+/// a formula in a line of prose beside one set apart between `$$`, and
+/// diagrams of four kinds in fences the diagram drawer takes.
 ///
 /// The first is made to two files and the second is long enough to fold, so
 /// the rows a drawer lays them out as are the kinds a session's are: a file's
 /// line, a second file's, a hunk, changed lines and context, and a fold. Each
 /// ends after its fence has closed, since only a closed fence is a drawer's.
 /// The third is drawn as math is: its span as the line is read, and its block
-/// once its closing marker has come. The fourth is drawn as text once its
-/// fence has closed, with a start, an end and a labelled line among its own.
+/// once its closing marker has come. The fourth's are each drawn once its
+/// fence has closed, as a picture where the renderer was handed what a
+/// terminal that confirmed Kitty gives a session, and as text elsewhere: a
+/// state diagram with a start, an end and a labelled line among its own, a
+/// sequence of labelled messages between lifelines, a gantt's bars in two
+/// sections, and a git graph's branch merged back.
 ///
-/// Which drawer draws them is each probe's to say in its own file, where what
-/// a probe names is read and held against the list of what it may name.
+/// Which drawer draws them, and what draws a diagram's picture, is each
+/// probe's to say in its own file, where what a probe names is read and held
+/// against the list of what it may name. Both probes time a renderer handed
+/// pictures, so a burst's diagrams are timed as the pictures a Kitty terminal
+/// is sent.
 pub(crate) fn answers() -> Vec<String> {
     let two = "The reader keeps the block, and the window asks for its rows:\n\n\
         ```diff\n\
@@ -207,6 +214,34 @@ pub(crate) fn answers() -> Vec<String> {
         \x20   [*] --> Held\n\
         \x20   Held --> Drawn: closed\n\
         \x20   Drawn --> [*]\n\
+        ```\n\n\
+        The reader and the window take turns over it:\n\n\
+        ```mermaid\n\
+        sequenceDiagram\n\
+        \x20   participant R as Reader\n\
+        \x20   participant W as Window\n\
+        \x20   R->>W: block closed\n\
+        \x20   W-->>R: rows laid out\n\
+        ```\n\n\
+        It ships over two weeks:\n\n\
+        ```mermaid\n\
+        gantt\n\
+        \x20   dateFormat YYYY-MM-DD\n\
+        \x20   section Build\n\
+        \x20   Reader :r1, 2026-11-02, 4d\n\
+        \x20   Window :w1, after r1, 3d\n\
+        \x20   section Ship\n\
+        \x20   Probe :2026-11-09, 5d\n\
+        ```\n\n\
+        And lands on its branch:\n\n\
+        ```mermaid\n\
+        gitGraph\n\
+        \x20   commit id: \"held\"\n\
+        \x20   branch drawn\n\
+        \x20   commit id: \"laid\"\n\
+        \x20   checkout main\n\
+        \x20   commit id: \"read\"\n\
+        \x20   merge drawn\n\
         ```\n\n";
 
     vec![

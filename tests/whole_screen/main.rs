@@ -4907,10 +4907,12 @@ fn release_notes_list_down_then_enter_puts_the_second_version_alone_in_the_trans
         !picture.contains("this version"),
         "the newest came too: {picture}"
     );
-    assert!(
-        !picture.contains('\u{25c7}'),
-        "an older release came too: {picture}"
-    );
+    for version in every.iter().copied().filter(|version| *version != second) {
+        assert!(
+            !picture.contains(&format!("\u{25c7} {version}")),
+            "an older release came too, {version}: {picture}"
+        );
+    }
     assert!(
         !picture.contains("enter opens it"),
         "the list stayed: {picture}"
@@ -7620,6 +7622,40 @@ fn transcript_sources_80_fullscreen() {
     window.types("\x1b");
     let closed = window.picture();
     assert!(!closed.contains("source 3 of 3"), "{closed}");
+    assert!(closed.contains(transcript::END), "{closed}");
+}
+
+#[test]
+fn transcript_mermaid_label_80_fullscreen() {
+    // A click on a drawn block's label opens the Ctrl+O view on that block's
+    // source alone, as a click on a cut result opens its result: the state
+    // diagram's label shows the state diagram as the model wrote it, and not
+    // the versioned one drawn below it or the flowchart above.
+    let vendor = Vendor::answering(transcript::said("mermaid_graphs"));
+    let mut window = Watched::in_default_colours(
+        "transcript-mermaid-label-80-fullscreen",
+        (80, 58),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    let picture = window.picture();
+    let label = picture
+        .lines()
+        .skip(1)
+        .position(|row| row.contains("┌─ mermaid · state diagram"))
+        .expect("the state diagram's label is on screen");
+    window.clicks(label, 4);
+    let opened = window.picture();
+    assert!(opened.contains("stateDiagram"), "{opened}");
+    assert!(!opened.contains("stateDiagram-v2"), "{opened}");
+    assert!(!opened.contains("A[Start] --> B{Ok?}"), "{opened}");
+    insta::assert_snapshot!("transcript_mermaid_label_80_fullscreen", opened);
+
+    window.types("\x1b");
+    let closed = window.picture();
+    assert!(!closed.contains("[*] --> Idle"), "{closed}");
     assert!(closed.contains(transcript::END), "{closed}");
 }
 

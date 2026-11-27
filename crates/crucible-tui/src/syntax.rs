@@ -37,7 +37,8 @@ use syntect::highlighting::Theme as Highlighting;
 use syntect::parsing::{SyntaxReference, SyntaxSet};
 use two_face::theme::LazyThemeSet;
 
-use crate::color::Slot;
+use crate::color::{Slot, Theme};
+use crate::ground::Ground;
 
 /// The syntax definitions, read once and kept.
 ///
@@ -46,11 +47,35 @@ use crate::color::Slot;
 /// from line to line is [`Syntax`], which is per block.
 static PARSERS: OnceLock<SyntaxSet> = OnceLock::new();
 
-/// What a session draws code in when nothing has said.
+/// What a session draws code in when nothing has said, under the table
+/// `theme` on a terminal that reported `ground`.
 ///
-/// One of the dark ones, because that is what the theme `auto` settles on where
-/// a terminal will not say what its background is.
-pub const THEME_UNLESS_SAID: &str = "Monokai Extended";
+/// Fenced code has no ground of its own: it is drawn on the reader's, so a
+/// syntax theme made for the other one is unreadable rather than merely off.
+/// The table decides which ground that is, because a table is chosen for one;
+/// `ansi` is the terminal's own sixteen, chosen for whichever ground the
+/// terminal says it has. Where nothing says, dark, which is what `auto`
+/// settles on too.
+///
+/// Monokai Extended on a dark ground. Coldark-Cold on a light one, because it
+/// is the theme offered here whose six colours all stand at least 6:1 on
+/// white; Monokai Extended's string is 1.4:1 there, and GitHub's comment 2.9:1.
+#[must_use]
+pub const fn theme_unless_said(theme: Theme, ground: Option<Ground>) -> &'static str {
+    let drawn_on = match theme {
+        Theme::Light | Theme::ColourblindLight => Ground::Light,
+        Theme::Dark | Theme::ColourblindDark => Ground::Dark,
+        Theme::Ansi => match ground {
+            Some(ground) => ground,
+            None => Ground::Dark,
+        },
+    };
+
+    match drawn_on {
+        Ground::Dark => "Monokai Extended",
+        Ground::Light => "Coldark-Cold",
+    }
+}
 
 /// The syntax definitions, loading them if this is the first fence.
 fn parsers() -> &'static SyntaxSet {

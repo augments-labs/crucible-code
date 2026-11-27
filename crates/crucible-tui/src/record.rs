@@ -43,23 +43,84 @@
 //! Everything else is *set*: a box laid out by something that is gone is
 //! clipped rather than pretending it can be rebuilt.
 //!
+//! An image a turn named is a drawn block too ([`Record::image`]), put down
+//! after the turn: a top edge naming it by its path, and under it the picture
+//! the application read, or on the edge the reason there is none. Its source
+//! is the path, which is what the view of what was cut lists it by. It has no
+//! drawer, so the picture is made once, from the PNG handed in, and kept as
+//! what it was drawn from like any other: a new width, palette or size
+//! encodes that again, and one refused or drawn as text to make room for a
+//! newer picture stays its edge alone.
+//!
+//! A drawn block may be shown as a picture instead of its rows: a diagram or
+//! a display formula drawn as an image, on a terminal that confirmed a
+//! picture protocol, where colour is written. A diagram's drawer draws its
+//! picture as it closes. A formula's is made elsewhere, off the drawing
+//! thread: a live record tells each display formula its drawer converts out
+//! as it closes ([`Record::formulas`]), shows it as its text meanwhile, and
+//! shows the picture handed back for it ([`Record::formula_made`]) as any
+//! other, at its own size and only where the window is as tall as it is. A
+//! session put back tells nothing out, and a formula it kept no picture of
+//! stays its text. It is then laid out as rows of cells the picture is
+//! placed in, by Kitty, or held blank for an iTerm2 or Sixel image written
+//! over them, and keeps what it was drawn from beside what the terminal is
+//! sent, so a new width or a new palette encodes it again without asking its
+//! drawer. A Sixel picture is quantised, which costs far more than a PNG, so
+//! a new width alone encodes one again only once the band shows it
+//! ([`Record::freshens`]) or a native session gives its scrollback back
+//! ([`Record::freshens_all`]); until then it keeps the cells it had. Those two cost far more than a row, so pictures have caps of their
+//! own: [`MOST_KEPT_IMAGES`] of them and [`MOST_KEPT_IMAGE_BYTES`] together.
+//! Past either, the oldest is drawn as its text again for as long as it is
+//! held, and the reader stays on the line they were reading, as they do for
+//! any block that changes height.
+//! A block refused its picture is not asked for one again at a new width, nor
+//! in a new palette where it was refused for its size, so a resize or a new
+//! theme encodes the kept pictures and no more. Each picture made is told
+//! to the terminal by a number of its own, counted on from one drawn at
+//! random, since the terminal's numbers are shared with every other program
+//! writing to it: see [`MOST_PICTURE_ID`].
+//!
+//! A picture is shown at a [`PictureSize`]: at Fit, where a diagram starts,
+//! it is never taller than half the window, and at Large, where a formula
+//! does, never taller than the window; and a click on it or Enter on its source goes on to
+//! Large and Full and back ([`Record::cycles`]), in a full screen only, for
+//! as long as the session holds it. Kitty and iTerm2 scale the one image
+//! they were sent into the cells a size gives it, so a new size or a window
+//! of another height lays it out again and sends nothing new; a Sixel bitmap
+//! is drawn cell for cell, so it is encoded again for them once the band
+//! shows it, as for a new width, and a size it is too large to keep at, or
+//! kept at only by drawing another picture as text, is passed over rather
+//! than drawn as text. A native session's picture keeps
+//! the rows it was first shown in, whatever the window's height becomes,
+//! since the cells in the terminal's scrollback were laid for them and
+//! nothing it sent is placed again ([`Record::windowed`]).
+//!
 //! The opening is responsive for the same reason. It is drawn from facts read
 //! once at launch and kept for the whole session, so what laid it is still here
 //! and a resize replaces those lines with the same card drawn for the window
 //! there is now, in the glyph set in force now: a reader who changed it since
 //! launch is not handed the card back in the characters they turned away from.
 
+mod formulas;
+
 use std::fmt;
 
 use std::collections::VecDeque;
+use std::collections::hash_map::RandomState;
+use std::hash::BuildHasher as _;
 use std::ops::Range;
 
-use crate::color::{Slot, Theme};
-use crate::drawing::{Drawers, Mode, Room};
+use crate::chrome::{self, Undrawn};
+use crate::color::{PaletteIdentity, Slot, Theme};
+use crate::drawing::{Bucket, Drawers, Mode, Room, Svg};
 use crate::glyphs::Glyphs;
 use crate::markdown::{self, Block, Kind, Links, Offers};
+use crate::render::ScreenMode;
 use crate::row::Row;
 use crate::scroll_rail::Place;
+use crate::terminal::graphics::{
+    Capability, Form, Formula, Payload, PictureKey, Pictures, Protocol,
+};
 
 /// The most retained units the record keeps.
 ///
@@ -94,6 +155,283 @@ const MOST_LANDMARKS: usize = 256;
 /// list: past it the oldest are let go, and an address that went is still in
 /// the session log as the answer wrote it.
 const MOST_SHORTENED: usize = markdown::SHORTENED_CAP;
+
+/// The most blocks the record keeps shown as pictures at once.
+///
+/// A picture is kept twice over, as what it was drawn from and as what the
+/// terminal is sent, so it is held to a count of its own beside the record's
+/// lines; the oldest past it is drawn as text again.
+pub const MOST_KEPT_IMAGES: usize = 16;
+
+/// The most bytes every kept picture may come to together, what each was
+/// drawn from and what the terminal is sent counted once each.
+///
+/// The oldest picture past it is drawn as text again, and one that alone is
+/// more than this is never kept: see [`Undrawn::TooLargeToKeep`].
+pub(crate) const MOST_KEPT_IMAGE_BYTES: usize = 1536 * 1024;
+
+/// The most display formulas told out and not yet taken.
+///
+/// What draws the record takes them as each block closes, and no more than
+/// this many of a turn are queued for a picture, so one past it stays text
+/// as one past a turn's queue does.
+const MOST_TOLD: usize = 16;
+
+/// The most cells a picture may cover across or down: the placeholder cells
+/// that stand for one name their row and column by one of 64 marks, and a
+/// picture past them is drawn as text.
+pub const MOST_PLACED: u16 = 64;
+
+/// The largest number a picture is told to the terminal by, since it is
+/// written as a 24-bit colour, and how many numbers one record gives out.
+///
+/// The terminal's numbers are one namespace for every program writing to it,
+/// another session in the same window or another pane under the same tmux,
+/// and a picture sent under a number replaces the one the terminal held by
+/// it. So a record starts at a number drawn at random, goes on up to this one
+/// and round from 1, never 0, and gives out no more than this many: a picture
+/// it sent is never named by another of its own, and two sessions sharing a
+/// terminal are unlikely to name pictures by the same numbers.
+const MOST_PICTURE_ID: u32 = 0x00FF_FFFF;
+
+/// How large a block's picture is shown: never wider than the transcript,
+/// never larger than its own size, and always its own shape.
+///
+/// A full screen cycles one picture through them when the reader asks
+/// ([`PictureSize::next`]), and the picture keeps the one it is at for as
+/// long as the record keeps it; a native session shows every picture at the
+/// size it is first shown at, [`PictureSize::Fit`] for a diagram and
+/// [`PictureSize::Large`] for a formula.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PictureSize {
+    /// At most half the window tall, so a diagram leaves room for the
+    /// answer around it.
+    #[default]
+    Fit,
+    /// At most the window tall, to be looked at on its own.
+    Large,
+    /// Its own size, at most [`MOST_PLACED`] rows.
+    Full,
+}
+
+impl PictureSize {
+    /// The size a reader asking again goes on to, round from the largest to
+    /// the first.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Fit => Self::Large,
+            Self::Large => Self::Full,
+            Self::Full => Self::Fit,
+        }
+    }
+
+    /// The most rows a picture at this size is shown in, in a window
+    /// `window` rows tall whose transcript band was `band` rows when the
+    /// reader asked, by `protocol`; [`MOST_PLACED`] where the window's
+    /// height is not known.
+    ///
+    /// An iTerm2 or Sixel image is written only while the band shows every
+    /// row of it, so it is never taller than the band was; Kitty's cells
+    /// show whatever part of it the band does.
+    fn rows(self, protocol: Protocol, window: usize, band: usize) -> u16 {
+        let most = usize::from(MOST_PLACED);
+        if window == 0 {
+            return MOST_PLACED;
+        }
+        let band = if band == 0 { window } else { band };
+        let written_over = protocol != Protocol::Kitty;
+        let rows = match self {
+            Self::Fit => window / 2,
+            Self::Large if written_over => band.min(window),
+            Self::Large => window,
+            Self::Full if written_over => band,
+            Self::Full => most,
+        };
+        u16::try_from(rows.clamp(1, most)).unwrap_or(MOST_PLACED)
+    }
+}
+
+/// A block's picture as the record keeps it: its size in pixels, what it was
+/// drawn from, what the terminal is sent, and how large it is shown.
+#[derive(Debug)]
+pub struct KeptPicture {
+    /// Its size in pixels, across and down.
+    pub pixels: (u32, u32),
+    /// What it was drawn from, worn again for a new palette or width.
+    pub form: Form,
+    /// What the terminal is sent.
+    pub payload: Payload,
+    /// How large it is shown.
+    pub size: PictureSize,
+}
+
+impl KeptPicture {
+    /// How many bytes it holds: what it was drawn from and what the terminal
+    /// is sent, once each, and once in all where the two are the same image.
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        match &self.form {
+            Form::Png(png) if png.as_slice() == self.payload.bytes() => png.len(),
+            form => form.len().saturating_add(self.payload.bytes().len()),
+        }
+    }
+}
+
+/// A drawn block's picture, the key it was made under and the number the
+/// terminal is told it by.
+#[derive(Debug)]
+struct Pictured {
+    id: u32,
+    key: PictureKey,
+    kept: KeptPicture,
+    /// How many rows the transcript band was when the reader last chose its
+    /// size; none until they do.
+    band: usize,
+    /// How many rows the window was when it was first shown, where it keeps
+    /// the rows it was shown in then, even none before the window said; no
+    /// count where it follows the window.
+    window: Option<usize>,
+}
+
+impl Pictured {
+    /// The most rows it is shown in, in a window `window` rows tall, or in
+    /// the one it was first shown in where it keeps that.
+    fn rows(&self, window: usize) -> u16 {
+        let window = self.window.unwrap_or(window);
+        self.kept.size.rows(self.key.protocol, window, self.band)
+    }
+}
+
+/// Whether a picture is shown in the cells it was before a layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum Shown {
+    #[default]
+    AsBefore,
+    /// In other cells, which the terminal holding it has to be told.
+    Reshaped,
+}
+
+/// What a block of an answer is shown as a picture by, and in.
+struct Picturing {
+    /// What makes the payload; none until the composition gives one.
+    pictures: Option<Box<dyn Pictures>>,
+    /// What the terminal said it shows, and in which cells.
+    images: Capability,
+    /// The palette a picture is worn in; none until the drawing says.
+    palette: Option<PaletteIdentity>,
+    /// The number the next picture is told to the terminal by.
+    next: u32,
+    /// How many numbers are left to give out.
+    left: u32,
+    /// Whether a picture kept was let go of since the drawing last asked.
+    let_go: bool,
+    /// Whether a picture kept was shown in other cells since the drawing
+    /// last asked, which is what has every picture held looked up again to
+    /// be placed there.
+    shown: Shown,
+    /// Whether a Sixel picture kept for another width is encoded for this
+    /// one now, as it is where it is in view, rather than left until it is.
+    now: bool,
+    /// How many rows the window is; none until the drawing says.
+    window: usize,
+    /// Whether a picture keeps the rows it was first shown in rather than
+    /// following the window's height: a native session's, whose scrollback
+    /// holds the cells it was placed in.
+    keeps: bool,
+    /// How many rows the transcript band was at the last frame.
+    band: usize,
+    /// What is being drawn: a live session, or one put back, when only a
+    /// kept picture is shown, and only once the walk is over.
+    drawing: Drawing,
+    /// The display formulas told out and not yet taken, oldest first.
+    told: Vec<Formula>,
+    /// A formula's picture handed back, while its block is settled with it.
+    arrived: Option<Svg>,
+}
+
+/// What blocks are being drawn for, which decides whether a drawer may run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Drawing {
+    /// A live session: a block not kept is drawn afresh.
+    Live,
+    /// A session put back on a full screen, while it is walked: every block
+    /// is its text, and nothing is read for it yet.
+    PutBack,
+    /// A session put back, where a block is read from what was kept and one
+    /// not kept is its text: on a full screen once it is walked, for the
+    /// newest blocks the record keeps pictures for; in a native session
+    /// while it is walked, for each block as it is drawn, since what goes
+    /// into the scrollback stays as it went.
+    Restoring,
+}
+
+impl fmt::Debug for Picturing {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.debug_struct("Picturing")
+            .field("pictures", &self.pictures.is_some())
+            .field("images", &self.images)
+            .field("palette", &self.palette)
+            .field("next", &self.next)
+            .field("left", &self.left)
+            .field("let_go", &self.let_go)
+            .field("shown", &self.shown)
+            .field("now", &self.now)
+            .field("window", &self.window)
+            .field("keeps", &self.keeps)
+            .field("band", &self.band)
+            .field("drawing", &self.drawing)
+            .field("told", &self.told.len())
+            .field("arrived", &self.arrived.is_some())
+            .finish()
+    }
+}
+
+impl Default for Picturing {
+    fn default() -> Self {
+        Self {
+            pictures: None,
+            images: Capability::Text,
+            palette: None,
+            next: Self::first_number(),
+            left: MOST_PICTURE_ID,
+            let_go: false,
+            shown: Shown::AsBefore,
+            now: false,
+            window: 0,
+            keeps: false,
+            band: 0,
+            drawing: Drawing::Live,
+            told: Vec::new(),
+            arrived: None,
+        }
+    }
+}
+
+impl Picturing {
+    /// Remembers a picture kept shown in other cells, where `shown` says one
+    /// was, until the drawing asks.
+    fn saw(&mut self, shown: Shown) {
+        if shown == Shown::Reshaped {
+            self.shown = shown;
+        }
+    }
+
+    /// A number at random from 1 to [`MOST_PICTURE_ID`], the first a record
+    /// gives out.
+    fn first_number() -> u32 {
+        let drawn = RandomState::new().hash_one(()) % u64::from(MOST_PICTURE_ID);
+        u32::try_from(drawn).map_or(1, |drawn| drawn + 1)
+    }
+
+    /// Gives out the next number, going round from [`MOST_PICTURE_ID`] to 1.
+    fn number(&mut self) -> u32 {
+        let id = self.next;
+        self.next = if id >= MOST_PICTURE_ID { 1 } else { id + 1 };
+        self.left = self.left.saturating_sub(1);
+        id
+    }
+}
 
 /// One line of the record, and whether a narrower window may re-fold it.
 enum Line {
@@ -140,6 +478,86 @@ pub(crate) struct Drawn {
     modes: Modes,
     /// Edits made to the rows since, applied again at every layout.
     edits: Vec<fn(&mut [Row])>,
+    /// The picture it is shown as, where it is shown as one.
+    ///
+    /// Boxed, as what follows is, so a block that is not one costs a word.
+    picture: Option<Box<Pictured>>,
+    /// Why it is drawn as text under the key it was last asked for a picture
+    /// under, so the same key is not asked again.
+    refused: Option<Box<(PictureKey, Undrawn)>>,
+    /// Whether a later picture took its place among those kept, after which
+    /// it is drawn as text for as long as it is held.
+    fallen: bool,
+    /// What an image a turn named is shown under, where the block is one.
+    image: Option<Box<Imaged>>,
+}
+
+/// What an image block's edge says besides its path.
+#[derive(Debug)]
+struct Imaged {
+    /// The tool whose call read it, where one did.
+    by: Option<Box<str>>,
+    /// Why it has no picture, where it has none for a reason worth saying.
+    refusal: Option<Undrawn>,
+}
+
+/// An image a turn named: the path it was named by, and the tool whose call
+/// read it, where one did.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Named<'a> {
+    /// The path, as it was named.
+    pub(crate) path: &'a str,
+    /// The tool, where one read it.
+    pub(crate) by: Option<&'a str>,
+}
+
+/// The word an image block is listed under in the view of what was cut, with
+/// its path under it.
+const IMAGE: &str = "image";
+
+/// The words an image's edge gives for a picture refused for `why`: what
+/// would say a diagram's source is shown says, of an image, why it is not.
+const fn imaged(why: Undrawn) -> Undrawn {
+    match why {
+        Undrawn::TooWide | Undrawn::TooLargeToKeep | Undrawn::ImageTooLarge => {
+            Undrawn::ImageTooLarge
+        }
+        Undrawn::PastCap
+        | Undrawn::NotHere
+        | Undrawn::NotText
+        | Undrawn::Unsupported(_)
+        | Undrawn::ImageNotShown => Undrawn::ImageNotShown,
+        Undrawn::NotAnImage => Undrawn::NotAnImage,
+        Undrawn::NotReadInTime => Undrawn::NotReadInTime,
+        Undrawn::ChangedSinceRead => Undrawn::ChangedSinceRead,
+        Undrawn::PastTurnImages => Undrawn::PastTurnImages,
+        Undrawn::NotRedrawnOnResume => Undrawn::NotRedrawnOnResume,
+    }
+}
+
+/// The size a block of `kind` is first shown as a picture at: a diagram at
+/// most half the window tall, leaving room for the answer around it, and a
+/// formula at most the window tall, since it is shown at its own size.
+const fn first_size(kind: Kind) -> PictureSize {
+    match kind {
+        Kind::DisplayMath => PictureSize::Large,
+        Kind::Mermaid | Kind::Image | Kind::Table | Kind::Rule | Kind::Heading(_) | Kind::Diff => {
+            PictureSize::Fit
+        }
+    }
+}
+
+/// `kept`, where it is placed in no more than `columns` and the most cells a
+/// picture is, and is no larger than the record keeps one.
+fn held(kept: KeptPicture, columns: usize) -> Result<KeptPicture, Undrawn> {
+    let (across, down) = kept.payload.cells();
+    if across > MOST_PLACED || down > MOST_PLACED || usize::from(across) > columns {
+        return Err(Undrawn::TooWide);
+    }
+    if kept.bytes() > MOST_KEPT_IMAGE_BYTES {
+        return Err(Undrawn::TooLargeToKeep);
+    }
+    Ok(kept)
 }
 
 /// What a block of an answer is laid out by: the links its addresses fold by,
@@ -151,6 +569,8 @@ struct By<'a> {
     drawers: &'a Drawers,
     modes: Modes,
     offers: Offers,
+    /// How many rows the window is, which bounds a picture's height.
+    window: usize,
 }
 
 /// The mode each kind of block a setting chooses the drawing of is drawn in.
@@ -189,8 +609,8 @@ impl Modes {
     }
 
     /// Whether a block of `kind` is handed to its drawer at all: never in
-    /// [`Mode::Written`], which shows it as it was written. Until a picture
-    /// can be shown in its place, [`Mode::Image`] is drawn as text.
+    /// [`Mode::Written`], which shows it as it was written. [`Mode::Image`]
+    /// is drawn as text wherever no picture is shown in its place.
     pub(crate) const fn draws(self, kind: Kind) -> bool {
         match self.of(kind) {
             Some(Mode::Written) => false,
@@ -211,14 +631,63 @@ impl Drawn {
             laid: (columns, glyphs, theme),
             modes: by.modes,
             edits: Vec::new(),
+            picture: None,
+            refused: None,
+            fallen: false,
+            image: None,
         };
         drawn.lay(columns, glyphs, by);
         drawn
     }
 
+    /// The top edge of an image block: its path, the tool that read it, and
+    /// why it has no picture, each part made safe to stand in a row.
+    fn image_edge(&self, image: &Imaged, columns: usize, glyphs: Glyphs) -> Row {
+        let dot = glyphs.dot();
+        let mut name = format!("{IMAGE} {dot} ");
+        name.extend(self.block.source.chars().filter(|at| !at.is_control()));
+        if let Some(by) = &image.by {
+            name.push(' ');
+            name.push_str(dot);
+            name.push_str(" read by ");
+            name.extend(by.chars().filter(|at| !at.is_control()));
+        }
+        let refusal = image.refusal.or_else(|| {
+            if self.picture.is_some() {
+                self.pictured(columns)
+                    .is_none()
+                    .then_some(Undrawn::ImageTooLarge)
+            } else {
+                self.refused.as_ref().map(|refused| imaged(refused.1))
+            }
+        });
+        let top = chrome::Frame {
+            label: chrome::Label::whole(&name, glyphs),
+            refusal,
+        }
+        .top();
+        Row::new()
+            .then_structural(Slot::Quiet, &top)
+            .clipped(columns)
+    }
+
+    /// The rows its picture stands in, where it has one that fits in
+    /// `columns`.
+    fn pictured(&self, columns: usize) -> Option<Vec<Row>> {
+        let picture = self.picture.as_ref()?;
+        let (across, down) = picture.kept.payload.cells();
+        let row = match picture.kept.payload.protocol() {
+            Protocol::Kitty => Row::picture,
+            Protocol::Iterm2 | Protocol::Sixel => Row::reserved,
+        };
+        (usize::from(across) <= columns)
+            .then(|| (0..down).map(|at| row(picture.id, at, across)).collect())
+    }
+
     /// Lays the block out again for `columns` in `glyphs`, by what `by`
-    /// holds, with every edit and the prefix it was given since.
-    fn lay(&mut self, columns: usize, glyphs: Glyphs, by: By<'_>) {
+    /// holds, with every edit and the prefix it was given since, and answers
+    /// whether its picture is shown in other cells than it was.
+    fn lay(&mut self, columns: usize, glyphs: Glyphs, by: By<'_>) -> Shown {
         let lay = match by.offers {
             Offers::Stand => markdown::lay,
             Offers::Withdrawn => markdown::lay_unoffered,
@@ -231,12 +700,32 @@ impl Drawn {
         } else {
             &none
         };
-        let laid = lay(&self.block, columns, glyphs, by.links, drawers);
-        let mut rows = responsive_rows(
-            laid.iter()
-                .flat_map(|row| markdown::framed(row, columns).unwrap_or_else(|| row.fold(columns)))
-                .collect(),
-        );
+        let mut shown = Shown::AsBefore;
+        if let Some(picture) = self.picture.as_mut() {
+            let rows = picture.rows(by.window);
+            let was = picture.kept.payload.cells();
+            picture.kept.payload.shown_in(rows);
+            if picture.kept.payload.cells() != was {
+                shown = Shown::Reshaped;
+            }
+        }
+        let imaged = self.image.as_deref().map(|image| {
+            let mut rows = vec![self.image_edge(image, columns, glyphs)];
+            rows.extend(self.pictured(columns).unwrap_or_default());
+            rows
+        });
+        let mut rows = imaged
+            .or_else(|| self.pictured(columns))
+            .unwrap_or_else(|| {
+                let laid = lay(&self.block, columns, glyphs, by.links, drawers);
+                responsive_rows(
+                    laid.iter()
+                        .flat_map(|row| {
+                            markdown::framed(row, columns).unwrap_or_else(|| row.fold(columns))
+                        })
+                        .collect(),
+                )
+            });
         for edit in &self.edits {
             edit(&mut rows);
         }
@@ -249,13 +738,47 @@ impl Drawn {
         self.laid.0 = columns;
         self.laid.1 = glyphs;
         self.modes = by.modes;
+        shown
     }
 
-    /// The block's source as line `line`, where its kind has one to read.
+    /// Whether its first row is the label of a block drawn as text with a
+    /// source to read: the top edge of its frame, past any mark it hangs
+    /// under, and not the border of a table, which is no edge.
+    fn labelled(&self) -> bool {
+        if self.picture.is_some() || self.block.kind.named().is_none() {
+            return false;
+        }
+        let Some(first) = self.rows.first() else {
+            return false;
+        };
+        let text = first.text();
+        let hung = self
+            .prefix
+            .as_ref()
+            .filter(|prefix| !prefix.keeps_first)
+            .map(|prefix| {
+                let mut first = prefix.marks_first;
+                prefix.row(&mut first).text()
+            })
+            .unwrap_or_default();
+        let edge = text.strip_prefix(hung.as_str()).unwrap_or(&text).trim_end();
+        chrome::is_edge(edge)
+            && [Glyphs::Unicode, Glyphs::Ascii]
+                .into_iter()
+                .all(|glyphs| edge != chrome::bottom(glyphs))
+    }
+
+    /// The block's source as line `line`, where its kind has one to read:
+    /// an image's is the path it was named by.
     fn source(&self, line: usize) -> Option<Source<'_>> {
+        let word = if self.image.is_some() {
+            IMAGE
+        } else {
+            self.block.kind.named()?
+        };
         Some(Source {
             line,
-            word: self.block.kind.named()?,
+            word,
             text: &self.block.source,
         })
     }
@@ -501,6 +1024,8 @@ pub(crate) struct Record {
     /// What becomes of a key a drawer offers in the rows kept here: it
     /// stands, unless what draws this record said no key is read there.
     offers: Offers,
+    /// What a block of an answer is shown as a picture by, and in.
+    picturing: Picturing,
 }
 
 /// Where in the record a display row is: a line, and how far into it.
@@ -548,6 +1073,7 @@ impl Record {
             drawers: Drawers::default(),
             modes: Modes::default(),
             offers: Offers::Stand,
+            picturing: Picturing::default(),
         }
     }
 
@@ -750,11 +1276,862 @@ impl Record {
             drawers: &self.drawers,
             modes: self.modes,
             offers: self.offers,
+            window: self.picturing.window,
         };
-        let drawn = Drawn::new(block, room, theme, by);
-        if !drawn.rows.is_empty() {
-            self.put(Line::Drawn(drawn));
+        let mut drawn = Drawn::new(block, room, theme, by);
+        if self.settle(&mut drawn, self.columns, glyphs) {
+            let by = By {
+                links: &self.links,
+                drawers: &self.drawers,
+                modes: self.modes,
+                offers: self.offers,
+                window: self.picturing.window,
+            };
+            self.picturing.saw(drawn.lay(self.columns, glyphs, by));
+            self.remeasure_all();
         }
+        if !drawn.rows.is_empty() {
+            let formula = self.waits_for_picture(&drawn, room);
+            let line = self.gone + self.lines.len();
+            self.put(Line::Drawn(drawn));
+            if let Some(source) = formula
+                && self.picturing.told.len() < MOST_TOLD
+            {
+                self.picturing.told.push(Formula {
+                    line,
+                    source,
+                    kept: None,
+                });
+            }
+        }
+    }
+
+    /// Puts down an image a turn named by `path`, read by the tool `by` where
+    /// one read it, as a top edge naming it and under it the picture made of
+    /// `png`, or as the edge alone with the reason `png` is not there.
+    ///
+    /// The picture is made only where a block would be shown as one: the
+    /// terminal confirmed a protocol and colour is written. It is held to the
+    /// caps every picture is, and the PNG is kept as what it was drawn from
+    /// and nowhere else.
+    pub(crate) fn image(
+        &mut self,
+        Named { path, by }: Named<'_>,
+        png: Result<Vec<u8>, Undrawn>,
+        glyphs: Glyphs,
+        theme: Theme,
+    ) {
+        self.end();
+        let columns = self.columns;
+        let mut drawn = Drawn {
+            block: Block {
+                kind: Kind::Image,
+                source: path.to_owned(),
+                closed: true,
+            },
+            rows: Vec::new(),
+            prefix: None,
+            weight: 0,
+            laid: (columns, glyphs, theme),
+            modes: self.modes,
+            edits: Vec::new(),
+            picture: None,
+            refused: None,
+            fallen: false,
+            image: Some(Box::new(Imaged {
+                by: by.map(Into::into),
+                refusal: None,
+            })),
+        };
+        let made = png.and_then(|png| {
+            let key = self
+                .picture_key(Kind::Image, columns)
+                .ok_or(Undrawn::NotHere)?;
+            self.made_image(path, &key, png, columns)
+                .map(|kept| (key, kept))
+        });
+        match made {
+            Ok((key, kept)) => {
+                self.make_room(kept.bytes(), columns, glyphs);
+                let window = self.picturing.keeps.then_some(self.picturing.window);
+                drawn.picture = Some(Box::new(Pictured {
+                    id: self.picturing.number(),
+                    key,
+                    kept,
+                    band: 0,
+                    window,
+                }));
+            }
+            Err(why) => {
+                if let Some(image) = drawn.image.as_mut() {
+                    image.refusal = Some(imaged(why));
+                }
+            }
+        }
+        let by = By {
+            links: &self.links,
+            drawers: &self.drawers,
+            modes: self.modes,
+            offers: self.offers,
+            window: self.picturing.window,
+        };
+        self.picturing.saw(drawn.lay(columns, glyphs, by));
+        self.put(Line::Drawn(drawn));
+    }
+
+    /// The picture of an image made from `png` under `key`, held to what a
+    /// block's picture is held to.
+    fn made_image(
+        &mut self,
+        path: &str,
+        key: &PictureKey,
+        png: Vec<u8>,
+        columns: usize,
+    ) -> Result<KeptPicture, Undrawn> {
+        if self.picturing.left == 0 {
+            return Err(Undrawn::PastCap);
+        }
+        let pictures = self.picturing.pictures.as_mut().ok_or(Undrawn::NotHere)?;
+        let form = Form::Png(png);
+        let payload = pictures.make(path, key, &form)?;
+        let kept = KeptPicture {
+            pixels: payload.pixels(),
+            form,
+            payload,
+            size: PictureSize::Fit,
+        };
+        held(kept, columns)
+    }
+
+    /// Shows a block of an answer as a picture, made by `pictures`.
+    ///
+    /// Said once, by what composes the drawing. A block is shown as one only
+    /// where its kind is drawn as an image, the terminal confirmed a protocol
+    /// pictures are sent in ([`Self::pictured_as`]) and colour is written.
+    pub(crate) fn pictures(&mut self, pictures: Box<dyn Pictures>) {
+        self.picturing.pictures = Some(pictures);
+    }
+
+    /// Draws what follows as a session put back, `resuming`, or live again,
+    /// on `screen`.
+    ///
+    /// On a full screen, while it is put back, every block is drawn as its
+    /// text and nothing is read for it. Once it is, the newest blocks, as
+    /// many as [`MOST_KEPT_IMAGES`], are given the pictures their pictures
+    /// kept from an earlier session, and one they did not keep stays its
+    /// text, as one not drawn here is: putting a session back runs no
+    /// drawer, and reads no more pictures than the record keeps. A display
+    /// formula among them is not read here: it is told out, with the key its
+    /// picture was kept under, for what makes formulas to read off this
+    /// thread, and stays its text until a picture is answered for it.
+    ///
+    /// In a native session each block is given its kept picture as it is
+    /// drawn, since one that goes into the scrollback goes once and stays as
+    /// it went, and the scrollback shows every picture it was sent; one not
+    /// kept is its text, and no drawer runs either.
+    pub(crate) fn resuming(&mut self, resuming: bool, screen: ScreenMode) {
+        if resuming {
+            self.picturing.drawing = match screen {
+                ScreenMode::Fullscreen => Drawing::PutBack,
+                ScreenMode::Native => Drawing::Restoring,
+            };
+        } else {
+            if self.picturing.drawing == Drawing::PutBack {
+                self.picturing.drawing = Drawing::Restoring;
+                self.restore();
+            }
+            self.picturing.drawing = Drawing::Live;
+        }
+        if let Some(pictures) = self.picturing.pictures.as_mut() {
+            pictures.resuming(resuming);
+        }
+    }
+
+    /// Gives the newest blocks put back that are still to go out, as many as
+    /// [`MOST_KEPT_IMAGES`], the pictures kept of them, oldest first so the
+    /// newest is the last to make room; a display formula among them is told
+    /// out to be read, as many as the record tells, and is not read here.
+    ///
+    /// Only a block the walk put off: one wanting a picture, with none, not
+    /// fallen back to text, and refused as not drawn here. A line already
+    /// gone out keeps the text it went out as. One put off that is older
+    /// than those is already its text, and falls back to it as a block a
+    /// live session drew past the cap does, laid out as it is, so a new
+    /// palette, protocol or cell asks nothing for it.
+    fn restore(&mut self) {
+        let from = self.first().saturating_sub(self.gone);
+        let mut put_off: Vec<usize> = Vec::new();
+        for at in (from..self.lines.len()).rev() {
+            let Some(Line::Drawn(drawn)) = self.lines.get_mut(at) else {
+                continue;
+            };
+            let waits = drawn.picture.is_none()
+                && drawn.image.is_none()
+                && !drawn.fallen
+                && drawn
+                    .refused
+                    .as_ref()
+                    .is_some_and(|refused| refused.1 == Undrawn::NotHere);
+            if !waits {
+                continue;
+            }
+            if put_off.len() < MOST_KEPT_IMAGES {
+                put_off.push(at);
+            } else {
+                drawn.fallen = true;
+            }
+        }
+        if put_off.is_empty() {
+            return;
+        }
+        let columns = self.columns;
+        for at in put_off.into_iter().rev() {
+            if self.tells_kept(at, columns) {
+                continue;
+            }
+            // Out of the lines while its picture is settled, since keeping
+            // one may draw an older picture as text.
+            let Some(Line::Drawn(mut drawn)) = self
+                .lines
+                .get_mut(at)
+                .map(|line| std::mem::replace(line, Line::Set(Row::new())))
+            else {
+                continue;
+            };
+            drawn.refused = None;
+            // In the glyphs it was laid in, which a put back does not change.
+            let glyphs = drawn.laid.1;
+            if self.settle(&mut drawn, columns, glyphs) {
+                let by = By {
+                    links: &self.links,
+                    drawers: &self.drawers,
+                    modes: self.modes,
+                    offers: self.offers,
+                    window: self.picturing.window,
+                };
+                let was = drawn.weight;
+                self.picturing.saw(drawn.lay(columns, glyphs, by));
+                self.weight = self.weight.saturating_sub(was).saturating_add(drawn.weight);
+            }
+            if let Some(line) = self.lines.get_mut(at) {
+                *line = Line::Drawn(drawn);
+            }
+        }
+        self.remeasure_all();
+        self.spill();
+    }
+
+    /// Whether an image a turn named would be shown as a picture now.
+    pub(crate) fn shows_pictures(&self) -> bool {
+        self.picturing.pictures.is_some() && self.picture_key(Kind::Image, self.columns).is_some()
+    }
+
+    /// Numbers the next picture `first`, and those after it on from there.
+    #[cfg(test)]
+    pub(crate) fn numbers_from(&mut self, first: u32) {
+        self.picturing.next = first;
+    }
+
+    /// Leaves `left` numbers to give out.
+    #[cfg(test)]
+    pub(crate) fn numbers_left(&mut self, left: u32) {
+        self.picturing.left = left;
+    }
+
+    /// Shows pictures in what `images` says the terminal shows, worn in
+    /// `palette`: said at startup and whenever either changes, and a block
+    /// already drawn is shown in them by the next [`Self::relay`].
+    pub(crate) fn pictured_as(&mut self, images: Capability, palette: PaletteIdentity) {
+        self.picturing.images = images;
+        self.picturing.palette = Some(palette);
+    }
+
+    /// The key a block of `kind` is shown as a picture under at `columns`,
+    /// where it is shown as one at all.
+    fn picture_key(&self, kind: Kind, columns: usize) -> Option<PictureKey> {
+        let wanted = match kind {
+            Kind::Mermaid | Kind::DisplayMath => self.modes.of(kind) == Some(Mode::Image),
+            Kind::Image => true,
+            Kind::Table | Kind::Rule | Kind::Heading(_) | Kind::Diff => false,
+        };
+        if !wanted {
+            return None;
+        }
+        let Capability::Graphics { protocol, cell } = self.picturing.images else {
+            return None;
+        };
+        let palette = self.picturing.palette.filter(PaletteIdentity::draws)?;
+        Some(PictureKey {
+            kind,
+            bucket: Bucket::of(columns),
+            palette,
+            protocol,
+            cell,
+            rows: MOST_PLACED,
+        })
+    }
+
+    /// Gives `drawn`, which is not among the record's lines while it is
+    /// asked, the picture the record now shows it as, or takes away one it
+    /// no longer is; answers whether that changed what it is laid out as.
+    ///
+    /// A picture it keeps under another key is encoded again from what it
+    /// was drawn from; a block with none is asked of the cache first and of
+    /// its drawer only where the cache has nothing. Where keeping the picture
+    /// would pass [`MOST_KEPT_IMAGES`] or [`MOST_KEPT_IMAGE_BYTES`], the
+    /// oldest kept is drawn as text instead, laid out again at `columns` in
+    /// `glyphs`, until it fits.
+    ///
+    /// A block refused its picture is asked again in a new protocol or cell,
+    /// and not at a new width: a width change encodes again only the
+    /// pictures kept, so it costs what they do, however many diagrams the
+    /// session has drawn as text. Nor is one refused for its size asked again
+    /// in a new palette, which changes no size; one not drawn here is, since
+    /// that is also what a picture refused for want of time is told. A Sixel
+    /// picture kept under a key that differs from this one by its width alone
+    /// is kept as it is, unless it is wanted now.
+    /// The key `drawn`'s picture is made and kept under at `columns`, where
+    /// one is wanted of it and it is not fallen back to its text.
+    fn key_of(&self, drawn: &Drawn, columns: usize) -> Option<PictureKey> {
+        if drawn.fallen || !drawn.block.closed {
+            return None;
+        }
+        self.picture_key(drawn.block.kind, columns)
+            .map(|key| PictureKey {
+                rows: self.encoded_rows(drawn, key.protocol),
+                ..key
+            })
+    }
+
+    fn settle(&mut self, drawn: &mut Drawn, columns: usize, glyphs: Glyphs) -> bool {
+        // An image's picture is made once, from what the application read;
+        // with none, there is nothing to make one from again.
+        if drawn.image.is_some() && drawn.picture.is_none() {
+            return false;
+        }
+        let Some(key) = self.key_of(drawn, columns) else {
+            let had = drawn.picture.take().is_some();
+            self.picturing.let_go |= had;
+            return had;
+        };
+        let put_off = !self.picturing.now
+            && drawn.picture.as_ref().is_some_and(|picture| {
+                picture.key.protocol == Protocol::Sixel
+                    && PictureKey {
+                        bucket: picture.key.bucket,
+                        rows: picture.key.rows,
+                        ..key
+                    } == picture.key
+            });
+        if put_off {
+            return false;
+        }
+        if drawn
+            .picture
+            .as_ref()
+            .is_some_and(|picture| picture.key == key)
+            || drawn.refused.as_ref().is_some_and(|refused| {
+                let (was, why) = (refused.0, refused.1);
+                let palette = match why {
+                    Undrawn::NotHere => was.palette,
+                    Undrawn::PastCap
+                    | Undrawn::NotText
+                    | Undrawn::TooWide
+                    | Undrawn::Unsupported(_)
+                    | Undrawn::TooLargeToKeep
+                    | Undrawn::ImageNotShown
+                    | Undrawn::ImageTooLarge
+                    | Undrawn::NotAnImage
+                    | Undrawn::NotReadInTime
+                    | Undrawn::ChangedSinceRead
+                    | Undrawn::PastTurnImages
+                    | Undrawn::NotRedrawnOnResume => key.palette,
+                };
+                PictureKey {
+                    bucket: key.bucket,
+                    palette,
+                    rows: key.rows,
+                    ..was
+                } == key
+            })
+        {
+            return false;
+        }
+        let mut key = key;
+        let mut made = self.make(drawn, &key, glyphs, columns);
+        // A Sixel picture the reader made larger, too large to keep at that
+        // size or kept there only by drawing another as text: the size after
+        // it, and back to the first, rather than text. At the first it is
+        // what a picture nobody resized would be.
+        for _ in 0..2 {
+            let window = self.picturing.window;
+            let passed = match &made {
+                Err(Undrawn::TooLargeToKeep) => true,
+                Ok(kept) => !self.room_for(kept.bytes()),
+                Err(_) => false,
+            };
+            if !passed {
+                break;
+            }
+            let Some(picture) = drawn.picture.as_mut().filter(|picture| {
+                picture.key.protocol == Protocol::Sixel && picture.kept.size != PictureSize::Fit
+            }) else {
+                break;
+            };
+            picture.kept.size = picture.kept.size.next();
+            key.rows = picture.rows(window);
+            if key == picture.key {
+                return false;
+            }
+            made = self.make(drawn, &key, glyphs, columns);
+        }
+        let (band, first) = drawn
+            .picture
+            .as_ref()
+            .map_or((0, None), |picture| (picture.band, picture.window));
+        let had = drawn.picture.take().is_some();
+        self.picturing.let_go |= had;
+        let kept = match made {
+            Ok(kept) => kept,
+            Err(why) => {
+                drawn.refused = Some(Box::new((key, why)));
+                return had;
+            }
+        };
+        self.make_room(kept.bytes(), columns, glyphs);
+        drawn.refused = None;
+        // Encoded again, a picture keeps the window it was first shown in.
+        let window = self
+            .picturing
+            .keeps
+            .then(|| first.unwrap_or(self.picturing.window));
+        drawn.picture = Some(Box::new(Pictured {
+            id: self.picturing.number(),
+            key,
+            kept,
+            band,
+            window,
+        }));
+        true
+    }
+
+    /// The most rows `drawn`'s picture is encoded to cover by `protocol`: a
+    /// Sixel bitmap is drawn cell for cell, so it is encoded for the rows it
+    /// is shown in, and Kitty and iTerm2 scale one image into any cells, so
+    /// theirs is encoded once for the most there are.
+    fn encoded_rows(&self, drawn: &Drawn, protocol: Protocol) -> u16 {
+        match protocol {
+            Protocol::Kitty | Protocol::Iterm2 => MOST_PLACED,
+            Protocol::Sixel => drawn.picture.as_ref().map_or_else(
+                || first_size(drawn.block.kind).rows(protocol, self.picturing.window, 0),
+                |picture| picture.rows(self.picturing.window),
+            ),
+        }
+    }
+
+    /// Tells out the display formula at `at`, put back, to be read from
+    /// what an earlier session kept of it; answers whether it is one.
+    ///
+    /// A formula's kept picture is named by the toolchain that made it, which
+    /// only the check made off the drawing thread knows, so it is read there
+    /// too, and the formula is its text until [`Self::formula_made`] is handed
+    /// what was read. Nothing makes it: one with nothing kept stays its text.
+    fn tells_kept(&mut self, at: usize, columns: usize) -> bool {
+        let Some(Line::Drawn(drawn)) = self.lines.get(at) else {
+            return false;
+        };
+        if drawn.block.kind != Kind::DisplayMath {
+            return false;
+        }
+        let key = self.key_of(drawn, columns);
+        let source = markdown::taken(&drawn.block, &self.drawers).map(|(_, source)| source);
+        if let (Some(key), Some(source)) = (key, source)
+            && self.picturing.told.len() < MOST_TOLD
+        {
+            self.picturing.told.push(Formula {
+                line: self.gone + at,
+                source: source.into(),
+                kept: Some(key),
+            });
+        }
+        true
+    }
+
+    /// `drawn`'s picture under `key`, or why it is drawn as text.
+    fn make(
+        &mut self,
+        drawn: &Drawn,
+        key: &PictureKey,
+        glyphs: Glyphs,
+        columns: usize,
+    ) -> Result<KeptPicture, Undrawn> {
+        if self.picturing.left == 0 {
+            return Err(Undrawn::PastCap);
+        }
+        let Some(pictures) = self.picturing.pictures.as_mut() else {
+            return Err(Undrawn::NotHere);
+        };
+        // An image is encoded again from the PNG it keeps, and has no drawer.
+        if drawn.image.is_some() {
+            let picture = drawn.picture.as_ref().ok_or(Undrawn::NotHere)?;
+            let payload = pictures.reencode(&picture.kept, key)?;
+            let kept = KeptPicture {
+                pixels: payload.pixels(),
+                form: picture.kept.form.clone(),
+                payload,
+                size: picture.kept.size,
+            };
+            return held(kept, columns);
+        }
+        let (drawer, source) =
+            markdown::taken(&drawn.block, &self.drawers).ok_or(Undrawn::NotHere)?;
+        let kept = if let Some(picture) = &drawn.picture {
+            let payload = pictures.reencode(&picture.kept, key)?;
+            KeptPicture {
+                pixels: payload.pixels(),
+                form: picture.kept.form.clone(),
+                payload,
+                size: picture.kept.size,
+            }
+        } else if self.picturing.drawing == Drawing::PutBack {
+            // Read once the walk is over, and only if the record keeps it.
+            return Err(Undrawn::NotHere);
+        } else if let Some((form, payload)) = pictures.cached(source, key) {
+            KeptPicture {
+                pixels: payload.pixels(),
+                form,
+                payload,
+                size: first_size(drawn.block.kind),
+            }
+        } else if self.picturing.drawing == Drawing::Restoring {
+            return Err(Undrawn::NotHere);
+        } else if drawn.block.kind == Kind::DisplayMath {
+            // Made elsewhere, off the drawing thread, and handed back; until
+            // it is, the formula is its text.
+            let form = Form::Svg(self.picturing.arrived.take().ok_or(Undrawn::NotHere)?);
+            let payload = pictures.make(source, key, &form)?;
+            let kept = KeptPicture {
+                pixels: payload.pixels(),
+                form,
+                payload,
+                size: first_size(Kind::DisplayMath),
+            };
+            return self.fits_window(held(kept, columns)?);
+        } else {
+            let form = Form::Svg(drawer.picture(source, &Room { columns, glyphs })?);
+            let payload = pictures.make(source, key, &form)?;
+            KeptPicture {
+                pixels: payload.pixels(),
+                form,
+                payload,
+                size: PictureSize::Fit,
+            }
+        };
+        let kept = held(kept, columns)?;
+        // A formula read from the cache is held to the window as one just
+        // made is; one shown already keeps the size it was given.
+        if drawn.block.kind == Kind::DisplayMath && drawn.picture.is_none() {
+            return self.fits_window(kept);
+        }
+        Ok(kept)
+    }
+
+    /// `kept`, a formula's picture, where the window is as tall as it is: a
+    /// formula is first shown at its own size or not at all, since one made
+    /// smaller to fit is not the formula its text says. Only that first size
+    /// is judged, of a picture just made or read back from the cache; one
+    /// shown already keeps the size it was given, as any picture does.
+    fn fits_window(&self, kept: KeptPicture) -> Result<KeptPicture, Undrawn> {
+        let window = self.picturing.window;
+        let (_, down) = kept.payload.cells();
+        if window > 0 && usize::from(down) > window {
+            return Err(Undrawn::TooWide);
+        }
+        Ok(kept)
+    }
+
+    /// Whether one more picture of `bytes` is kept beside every picture kept
+    /// now, under both caps, with none drawn as text for it.
+    fn room_for(&self, bytes: usize) -> bool {
+        let (count, held) = self.kept_pictures();
+        count < MOST_KEPT_IMAGES && held.saturating_add(bytes) <= MOST_KEPT_IMAGE_BYTES
+    }
+
+    /// Draws the oldest kept pictures as text, each laid out again at
+    /// `columns` in `glyphs`, until one more of `bytes` fits under both caps.
+    fn make_room(&mut self, bytes: usize, columns: usize, glyphs: Glyphs) {
+        loop {
+            if self.room_for(bytes) {
+                return;
+            }
+            let by = By {
+                links: &self.links,
+                drawers: &self.drawers,
+                modes: self.modes,
+                offers: self.offers,
+                window: self.picturing.window,
+            };
+            let oldest = self.lines.iter_mut().find_map(|line| match line {
+                Line::Drawn(drawn) if drawn.picture.is_some() => Some(drawn),
+                _ => None,
+            });
+            let Some(oldest) = oldest else {
+                return;
+            };
+            oldest.picture = None;
+            oldest.fallen = true;
+            self.picturing.let_go = true;
+            let was = oldest.weight;
+            self.picturing.saw(oldest.lay(columns, glyphs, by));
+            self.weight = self
+                .weight
+                .saturating_sub(was)
+                .saturating_add(oldest.weight);
+            self.remeasure_all();
+        }
+    }
+
+    /// Encodes again for the width there is now each Sixel picture a band
+    /// `rows` tall shows that was kept for another, and answers whether any
+    /// was.
+    ///
+    /// Asked before the band is drawn. One encoded again may change height
+    /// and so what the band shows, so the band is looked at again after each;
+    /// each is encoded at most once, so this ends within the pictures kept.
+    pub(crate) fn freshens(&mut self, rows: usize) -> bool {
+        self.picturing.band = rows;
+        let mut any = false;
+        for _ in 0..=MOST_KEPT_IMAGES {
+            let from = if self.following {
+                self.foot(rows)
+            } else {
+                self.top
+            };
+            let mut at = from.line.saturating_sub(self.gone);
+            let mut into = usize::from(from.into);
+            let mut left = rows;
+            let mut stale = None;
+            while left > 0 {
+                let Some(&tall) = self.tall.get(at) else {
+                    break;
+                };
+                if self.stale(at) {
+                    stale = Some(at);
+                    break;
+                }
+                left = left.saturating_sub(usize::from(tall).saturating_sub(into));
+                into = 0;
+                at += 1;
+            }
+            let Some(at) = stale else {
+                break;
+            };
+            self.freshen(at);
+            any = true;
+        }
+        if any {
+            self.spill();
+        }
+        any
+    }
+
+    /// Encodes again for the width there is now every Sixel picture kept for
+    /// another, and answers whether any was: for a native session about to
+    /// give back every line it keeps.
+    pub(crate) fn freshens_all(&mut self) -> bool {
+        let mut any = false;
+        for at in 0..self.lines.len() {
+            if self.stale(at) {
+                self.freshen(at);
+                any = true;
+            }
+        }
+        if any {
+            self.spill();
+        }
+        any
+    }
+
+    /// Whether line `at` of those held is a Sixel picture kept for a width
+    /// other than the one there is now, or for other rows than its size
+    /// shows it in now.
+    fn stale(&self, at: usize) -> bool {
+        let bucket = Bucket::of(self.columns);
+        matches!(
+            self.lines.get(at),
+            Some(Line::Drawn(Drawn { picture: Some(picture), .. }))
+                if picture.key.protocol == Protocol::Sixel
+                    && (picture.key.bucket != bucket
+                        || picture.key.rows != picture.rows(self.picturing.window))
+        )
+    }
+
+    /// Settles line `at`'s picture as one wanted now, and lays it out again
+    /// where that changed it.
+    fn freshen(&mut self, at: usize) {
+        let Some(Line::Drawn(mut drawn)) = self
+            .lines
+            .get_mut(at)
+            .map(|line| std::mem::replace(line, Line::Set(Row::new())))
+        else {
+            return;
+        };
+        let (columns, glyphs) = (self.columns, drawn.laid.1);
+        self.picturing.now = true;
+        let settled = self.settle(&mut drawn, columns, glyphs);
+        self.picturing.now = false;
+        if settled {
+            let by = By {
+                links: &self.links,
+                drawers: &self.drawers,
+                modes: self.modes,
+                offers: self.offers,
+                window: self.picturing.window,
+            };
+            let was = drawn.weight;
+            self.picturing.saw(drawn.lay(columns, glyphs, by));
+            self.weight = self.weight.saturating_sub(was).saturating_add(drawn.weight);
+        }
+        if let Some(line) = self.lines.get_mut(at) {
+            *line = Line::Drawn(drawn);
+        }
+        self.remeasure_at(at);
+    }
+
+    /// Works out line `at`'s height again, after its rows were laid again,
+    /// keeping the band on the row it was at within the line where it can.
+    fn remeasure_at(&mut self, at: usize) {
+        let (Some(line), Some(&was)) = (self.lines.get(at), self.tall.get(at)) else {
+            return;
+        };
+        let now = Self::measure(line, self.columns);
+        if let Some(tall) = self.tall.get_mut(at) {
+            *tall = now;
+        }
+        let (was, now16) = (usize::from(was), now);
+        let now = usize::from(now);
+        self.rows = self.rows.saturating_sub(was).saturating_add(now);
+        for end in self.ends.iter_mut().skip(at) {
+            *end = end.saturating_sub(was).saturating_add(now);
+        }
+        if self.top.line == self.gone + at {
+            self.top.into = self.top.into.min(now16.saturating_sub(1));
+        }
+    }
+
+    /// Bounds the pictures by a window `rows` tall: said before each
+    /// [`Self::relay`], which shows each in the rows its size gives it there.
+    ///
+    /// Where `keeps`, as in a native session, a picture shown already keeps
+    /// the rows it was first shown in and only a picture made from now on is
+    /// bounded by this window: its cells in the terminal's scrollback were
+    /// laid for those rows, and placing its number in others would show
+    /// those cells broken.
+    pub(crate) fn windowed(&mut self, rows: usize, keeps: bool) {
+        self.picturing.window = rows;
+        self.picturing.keeps = keeps;
+    }
+
+    /// Shows the picture of line `line`, counted from the first of the
+    /// session, at the size after the one it is at, and answers whether it
+    /// has one to show.
+    ///
+    /// A Kitty or iTerm2 picture is the same image in other cells, laid out
+    /// again now; a Sixel one is encoded again for them by the frame it is
+    /// next in view in, as one kept for another width is.
+    pub(crate) fn cycles(&mut self, line: usize) -> bool {
+        let Some(at) = line.checked_sub(self.gone) else {
+            return false;
+        };
+        let by = By {
+            links: &self.links,
+            drawers: &self.drawers,
+            modes: self.modes,
+            offers: self.offers,
+            window: self.picturing.window,
+        };
+        let Some(Line::Drawn(drawn)) = self.lines.get_mut(at) else {
+            return false;
+        };
+        let Some(picture) = drawn.picture.as_mut() else {
+            return false;
+        };
+        picture.kept.size = picture.kept.size.next();
+        picture.band = self.picturing.band;
+        let was = drawn.weight;
+        let (columns, glyphs) = (drawn.laid.0, drawn.laid.1);
+        self.picturing.saw(drawn.lay(columns, glyphs, by));
+        self.weight = self.weight.saturating_sub(was).saturating_add(drawn.weight);
+        self.remeasure_at(at);
+        true
+    }
+
+    /// Whether line `line`, counted from the first of the session, is shown
+    /// as a picture.
+    pub(crate) fn pictured(&self, line: usize) -> bool {
+        line.checked_sub(self.gone)
+            .and_then(|at| self.lines.get(at))
+            .is_some_and(|line| {
+                matches!(
+                    line,
+                    Line::Drawn(Drawn {
+                        picture: Some(_),
+                        ..
+                    })
+                )
+            })
+    }
+
+    /// Whether a picture the record kept has been let go since this was last
+    /// asked: answered once.
+    pub(crate) fn let_pictures_go(&mut self) -> bool {
+        std::mem::take(&mut self.picturing.let_go)
+    }
+
+    /// Whether a picture the record keeps has been shown in other cells
+    /// since this was last asked, as one whose size the reader or the
+    /// window's height changed: answered once.
+    pub(crate) fn pictures_reshaped(&mut self) -> bool {
+        std::mem::take(&mut self.picturing.shown) == Shown::Reshaped
+    }
+
+    /// What the terminal is sent for picture `id`, while the record keeps it.
+    pub(crate) fn payload(&self, id: u32) -> Option<&Payload> {
+        self.kept_by_number()
+            .find(|picture| picture.id == id)
+            .map(|picture| &picture.kept.payload)
+    }
+
+    /// The number of every picture the record keeps, oldest first.
+    pub(crate) fn picture_ids(&self) -> impl Iterator<Item = u32> + '_ {
+        self.kept_by_number().map(|picture| picture.id)
+    }
+
+    /// Every picture the record keeps, oldest first.
+    fn kept_by_number(&self) -> impl Iterator<Item = &Pictured> {
+        self.lines.iter().filter_map(|line| match line {
+            Line::Drawn(Drawn {
+                picture: Some(picture),
+                ..
+            }) => Some(&**picture),
+            _ => None,
+        })
+    }
+
+    /// How many pictures the record keeps, and how many bytes they hold.
+    fn kept_pictures(&self) -> (usize, usize) {
+        self.lines
+            .iter()
+            .filter_map(|line| match line {
+                Line::Drawn(Drawn {
+                    picture: Some(picture),
+                    ..
+                }) => Some(picture.kept.bytes()),
+                _ => None,
+            })
+            .fold((0, 0), |(count, bytes), more| {
+                (count + 1, bytes.saturating_add(more))
+            })
     }
 
     /// Lays the record out for `columns`, `glyphs` and `theme`.
@@ -787,26 +2164,54 @@ impl Record {
     /// in the mode its kind is drawn in now, and answers whether any was.
     fn relay_drawn(&mut self, columns: usize, glyphs: Glyphs) -> bool {
         let mut any = false;
-        let by = By {
-            links: &self.links,
-            drawers: &self.drawers,
-            modes: self.modes,
-            offers: self.offers,
-        };
-        for line in &mut self.lines {
+        for at in 0..self.lines.len() {
+            let Some(line) = self.lines.get_mut(at) else {
+                continue;
+            };
+            // Out of the lines while its picture is settled, since keeping
+            // one may draw an older picture as text.
             let Line::Drawn(drawn) = line else {
                 continue;
             };
             let kind = drawn.block.kind;
-            if (drawn.laid.0, drawn.laid.1) == (columns, glyphs)
-                && drawn.modes.of(kind) == self.modes.of(kind)
-            {
+            let window = self.picturing.window;
+            // A window of another height shows a picture in other rows.
+            let reshown = drawn.picture.as_ref().is_some_and(|picture| {
+                let payload = &picture.kept.payload;
+                payload.cells() != payload.shown_at(picture.rows(window))
+            });
+            let unlaid = (drawn.laid.0, drawn.laid.1) != (columns, glyphs)
+                || drawn.modes.of(kind) != self.modes.of(kind)
+                || reshown;
+            let wants = drawn.picture.is_some()
+                || (!drawn.fallen && self.picture_key(kind, columns).is_some());
+            if !unlaid && !wants {
                 continue;
             }
-            let was = drawn.weight;
-            drawn.lay(columns, glyphs, by);
-            self.weight = self.weight.saturating_sub(was).saturating_add(drawn.weight);
-            any = true;
+            let Some(Line::Drawn(mut drawn)) = self
+                .lines
+                .get_mut(at)
+                .map(|line| std::mem::replace(line, Line::Set(Row::new())))
+            else {
+                continue;
+            };
+            let settled = self.settle(&mut drawn, columns, glyphs);
+            if unlaid || settled {
+                let by = By {
+                    links: &self.links,
+                    drawers: &self.drawers,
+                    modes: self.modes,
+                    offers: self.offers,
+                    window: self.picturing.window,
+                };
+                let was = drawn.weight;
+                self.picturing.saw(drawn.lay(columns, glyphs, by));
+                self.weight = self.weight.saturating_sub(was).saturating_add(drawn.weight);
+                any = true;
+            }
+            if let Some(line) = self.lines.get_mut(at) {
+                *line = Line::Drawn(drawn);
+            }
         }
         any
     }
@@ -973,6 +2378,12 @@ impl Record {
         if let Some(line) = self.lines.pop_front() {
             self.weight = self.weight.saturating_sub(line.weight());
             self.parted_before = Self::blank(&line) || self.parting == Some(self.gone);
+            if let Line::Drawn(Drawn {
+                picture: Some(_), ..
+            }) = line
+            {
+                self.picturing.let_go = true;
+            }
         }
         let tall = self.tall.pop_front().unwrap_or(0);
         self.before = self.ends.pop_front().unwrap_or(self.before);
@@ -1119,6 +2530,8 @@ impl Record {
         // stable boundary taken before the reset cannot alias the first line of
         // the replacement conversation.
         self.gone += self.lines.len() + 1;
+        let kept = self.kept_by_number().next().is_some();
+        self.picturing.let_go |= kept;
         self.lines.clear();
         self.tall.clear();
         self.ends.clear();
@@ -1387,6 +2800,23 @@ impl Record {
         let line = self.spot_at(row).line;
         match self.lines.get(line.checked_sub(self.gone)?)? {
             Line::Drawn(drawn) => drawn.source(line).map(|source| source.text),
+            _ => None,
+        }
+    }
+
+    /// The line, counted from the first of the session, of the block whose
+    /// label absolute display row `row` is: the first row of a block drawn
+    /// as text with a source to read, where it is the top edge of a frame.
+    pub(crate) fn labelled(&self, row: usize) -> Option<usize> {
+        if row < self.before || self.last_row().is_none_or(|last| row > last) {
+            return None;
+        }
+        let spot = self.spot_at(row);
+        if spot.into != 0 {
+            return None;
+        }
+        match self.lines.get(spot.line.checked_sub(self.gone)?)? {
+            Line::Drawn(drawn) if drawn.labelled() => Some(spot.line),
             _ => None,
         }
     }
@@ -2729,6 +4159,636 @@ mod tests {
         assert_eq!(record.at(0, 3), Some(record.gone));
     }
 
+    /// What a test hands the record to make its pictures, and what it was
+    /// asked, in order.
+    mod picturing {
+        use std::sync::{Arc, Mutex};
+
+        use super::super::*;
+        use crate::color::Palette;
+        use crate::drawing::{Draws, Laid, Svg};
+        use crate::terminal::graphics::Cell;
+
+        /// What each call to the fake was, in order.
+        pub(super) type Asked = Arc<Mutex<Vec<String>>>;
+
+        /// A drawer for `mermaid` fences that lays each as one row of text
+        /// and draws it as a picture, noting each picture it draws.
+        pub(super) struct Diagrams(pub(super) Asked);
+
+        impl Draws for Diagrams {
+            fn names(&self) -> &'static [&'static str] {
+                &["mermaid"]
+            }
+
+            fn block(&self, source: &str, _: &Room) -> Result<Laid, Undrawn> {
+                let rows: Vec<Row> = source.lines().map(Row::plain).collect();
+                Ok(Laid {
+                    natural: (8, rows.len()),
+                    rows,
+                    narrow: None,
+                })
+            }
+
+            fn picture(&self, source: &str, _: &Room) -> Result<Svg, Undrawn> {
+                if let Ok(mut asked) = self.0.lock() {
+                    asked.push(format!("picture {}", source.trim()));
+                }
+                Svg::new(format!("<svg>{}</svg>", source.trim()))
+            }
+        }
+
+        /// A drawer for display math that lays each formula as one row of
+        /// text: one holding `bad` does not convert, and one holding `wide`
+        /// converts and is wider than any room. It draws no picture of its
+        /// own; a formula's picture is made elsewhere and handed back.
+        pub(super) struct Math;
+
+        impl Draws for Math {
+            fn names(&self) -> &'static [&'static str] {
+                &["math"]
+            }
+
+            fn block(&self, source: &str, _: &Room) -> Result<Laid, Undrawn> {
+                if source.contains("bad") {
+                    return Err(Undrawn::NotText);
+                }
+                if source.contains("wide") {
+                    return Err(Undrawn::TooWide);
+                }
+                let rows: Vec<Row> = source.trim().lines().map(Row::plain).collect();
+                Ok(Laid {
+                    natural: (8, rows.len()),
+                    rows,
+                    narrow: None,
+                })
+            }
+        }
+
+        /// A closed display formula, between `$$`, saying `formula`.
+        pub(super) fn formula(formula: &str) -> Block {
+            Block {
+                kind: Kind::DisplayMath,
+                source: format!("$$\n{formula}\n$$\n"),
+                closed: true,
+            }
+        }
+
+        /// The picture the engine hands back for a formula.
+        pub(super) fn svg(formula: &str) -> Svg {
+            Svg::new(format!("<svg>{formula}</svg>")).expect("a picture")
+        }
+
+        /// What each formula told out since last asked says.
+        pub(super) fn told(record: &mut Record) -> Vec<String> {
+            record
+                .formulas()
+                .iter()
+                .map(|formula| formula.source().trim().to_owned())
+                .collect()
+        }
+
+        /// Pictures `rows` cells down and two across, each payload `bytes`
+        /// long, with what the cache holds by source, and why it refuses to
+        /// make one, where it does.
+        pub(super) struct Fake {
+            pub(super) asked: Asked,
+            pub(super) bytes: usize,
+            pub(super) rows: u16,
+            pub(super) cached: Vec<&'static str>,
+            pub(super) refuses: Option<Undrawn>,
+        }
+
+        impl Fake {
+            fn payload(&self, key: &PictureKey) -> Payload {
+                let height = u32::from(self.rows) * u32::from(key.cell.height);
+                let width = 2 * u32::from(key.cell.width);
+                Payload::new(key.protocol, vec![7; self.bytes], (width, height), key.cell)
+            }
+
+            fn note(&self, said: String) {
+                if let Ok(mut asked) = self.asked.lock() {
+                    asked.push(said);
+                }
+            }
+        }
+
+        impl Pictures for Fake {
+            fn cached(&mut self, source: &str, key: &PictureKey) -> Option<(Form, Payload)> {
+                self.note(format!("cached {}", source.trim()));
+                self.cached
+                    .contains(&source.trim())
+                    .then(|| (Form::Png(vec![7; self.bytes]), self.payload(key)))
+            }
+
+            fn make(
+                &mut self,
+                source: &str,
+                key: &PictureKey,
+                _: &Form,
+            ) -> Result<Payload, Undrawn> {
+                self.note(format!("make {}", source.trim()));
+                self.refuses.map_or_else(|| Ok(self.payload(key)), Err)
+            }
+
+            fn reencode(&mut self, _: &KeptPicture, key: &PictureKey) -> Result<Payload, Undrawn> {
+                self.note("reencode".to_owned());
+                Ok(self.payload(key))
+            }
+
+            fn resuming(&mut self, resuming: bool) {
+                self.note(format!("resuming {resuming}"));
+            }
+        }
+
+        /// The cell every test's terminal draws in.
+        pub(super) const CELL: Cell = Cell {
+            width: 8,
+            height: 16,
+        };
+
+        /// A record `columns` wide drawing diagrams with [`Diagrams`] and
+        /// pictures with `fake`, on a Kitty terminal, in `palette`.
+        pub(super) fn record(columns: usize, fake: Fake, palette: &Palette) -> Record {
+            let mut record = Record::new(columns);
+            record.draws_with(
+                Drawers::default()
+                    .with(Arc::new(Diagrams(Arc::clone(&fake.asked))))
+                    .with(Arc::new(Math)),
+                Offers::Stand,
+            );
+            record.pictures(Box::new(fake));
+            record.pictured_as(
+                Capability::Graphics {
+                    protocol: Protocol::Kitty,
+                    cell: CELL,
+                },
+                palette.identity(),
+            );
+            record
+        }
+
+        /// A closed diagram whose one line is `name`.
+        pub(super) fn diagram(name: &str) -> Block {
+            Block {
+                kind: Kind::Mermaid,
+                source: format!("```mermaid\n{name}\n```\n"),
+                closed: true,
+            }
+        }
+
+        /// A palette that writes colour, in `theme`.
+        pub(super) fn coloured(theme: Theme) -> Palette {
+            let truecolor = |name: &str| (name == "COLORTERM").then(|| "truecolor".to_owned());
+            Palette::resolve(true, theme, None, &truecolor)
+        }
+
+        /// How many blocks the record shows as pictures, and their bytes.
+        pub(super) fn kept(record: &Record) -> (usize, usize) {
+            record.kept_pictures()
+        }
+
+        /// Whether line `line` is shown as a picture.
+        pub(super) fn shown(record: &Record, line: usize) -> bool {
+            matches!(
+                record.lines.get(line),
+                Some(Line::Drawn(Drawn {
+                    picture: Some(_),
+                    ..
+                }))
+            )
+        }
+
+        /// Why line `line` is drawn as text, where it said.
+        pub(super) fn refused(record: &Record, line: usize) -> Option<Undrawn> {
+            match record.lines.get(line) {
+                Some(Line::Drawn(drawn)) => drawn.refused.as_ref().map(|refused| refused.1),
+                _ => None,
+            }
+        }
+
+        /// What the fake was asked, in order.
+        pub(super) fn asked(asked: &Asked) -> Vec<String> {
+            asked.lock().map(|asked| asked.clone()).unwrap_or_default()
+        }
+    }
+
+    /// A fake making pictures `rows` down of `bytes` each, its log, and what
+    /// its cache holds.
+    fn fake(
+        bytes: usize,
+        rows: u16,
+        cached: Vec<&'static str>,
+    ) -> (picturing::Fake, picturing::Asked) {
+        let asked = picturing::Asked::default();
+        let fake = picturing::Fake {
+            asked: std::sync::Arc::clone(&asked),
+            bytes,
+            rows,
+            cached,
+            refuses: None,
+        };
+        (fake, asked)
+    }
+
+    mod formulas;
+
+    #[test]
+    fn a_diagram_is_shown_as_its_picture_where_the_terminal_confirmed_kitty() {
+        let (fake, _) = fake(100, 3, vec![]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+
+        record.drawn(picturing::diagram("a"), Glyphs::Unicode, Theme::Dark);
+
+        assert!(picturing::shown(&record, 0));
+        let folded = record.folded(0);
+        assert_eq!(folded.len(), 3, "one row a cell down");
+        assert!(folded.iter().all(|row| row.text() == "  "), "{folded:?}");
+    }
+
+    #[test]
+    fn the_cache_is_asked_before_the_drawer_and_a_hit_draws_nothing() {
+        let (fake, asked) = fake(100, 3, vec!["kept"]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+
+        record.drawn(picturing::diagram("new"), Glyphs::Unicode, Theme::Dark);
+        record.drawn(picturing::diagram("kept"), Glyphs::Unicode, Theme::Dark);
+
+        assert_eq!(
+            picturing::asked(&asked),
+            ["cached new", "picture new", "make new", "cached kept"]
+        );
+        assert!(picturing::shown(&record, 1));
+    }
+
+    mod sources;
+
+    mod images;
+
+    #[test]
+    fn a_diagram_drawn_as_text_is_never_shown_as_a_picture() {
+        for mode in [Mode::Text, Mode::Written] {
+            let (fake, asked) = fake(100, 3, vec![]);
+            let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+            record.draws_in(Modes {
+                math: Mode::Image,
+                diagrams: mode,
+            });
+
+            record.drawn(picturing::diagram("a"), Glyphs::Unicode, Theme::Dark);
+
+            assert!(!picturing::shown(&record, 0), "{mode:?}");
+            assert!(picturing::asked(&asked).is_empty(), "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn no_picture_is_made_where_no_colour_is_written() {
+        let (fake, asked) = fake(100, 3, vec![]);
+        let plain = crate::color::Palette::plain();
+        let mut record = picturing::record(40, fake, &plain);
+
+        record.drawn(picturing::diagram("a"), Glyphs::Unicode, Theme::Dark);
+
+        assert!(!picturing::shown(&record, 0));
+        assert!(picturing::asked(&asked).is_empty());
+    }
+
+    #[test]
+    fn past_the_count_the_oldest_picture_is_drawn_as_text() {
+        let (fake, _) = fake(100, 3, vec![]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+
+        for line in 0..=MOST_KEPT_IMAGES {
+            record.drawn(
+                picturing::diagram(&format!("d{line}")),
+                Glyphs::Unicode,
+                Theme::Dark,
+            );
+        }
+
+        assert_eq!(picturing::kept(&record).0, MOST_KEPT_IMAGES);
+        assert!(!picturing::shown(&record, 0), "the oldest fell back");
+        assert_eq!(record.folded(0).len(), 1, "laid out as its text again");
+        assert!((1..=MOST_KEPT_IMAGES).all(|line| picturing::shown(&record, line)));
+    }
+
+    #[test]
+    fn past_the_bytes_the_oldest_falls_back_and_a_png_is_counted_once() {
+        // Three pictures of a third of the bytes each fill the cap, once a
+        // cached picture whose form is its own payload is counted once.
+        let third = MOST_KEPT_IMAGE_BYTES / 3;
+        let (fake, _) = fake(third, 3, vec!["a", "b", "c", "d"]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+
+        for name in ["a", "b", "c"] {
+            record.drawn(picturing::diagram(name), Glyphs::Unicode, Theme::Dark);
+        }
+        assert_eq!(picturing::kept(&record), (3, 3 * third));
+
+        record.drawn(picturing::diagram("d"), Glyphs::Unicode, Theme::Dark);
+
+        assert_eq!(picturing::kept(&record), (3, 3 * third));
+        assert!(!picturing::shown(&record, 0));
+        assert!((1..4).all(|line| picturing::shown(&record, line)));
+    }
+
+    #[test]
+    fn a_picture_larger_than_every_kept_picture_together_is_drawn_as_text() {
+        let (fake, _) = fake(MOST_KEPT_IMAGE_BYTES, 3, vec![]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+
+        // Drawn from its drawer's picture, so what is kept is that picture and
+        // a payload as large as the cap: past it together.
+        record.drawn(picturing::diagram("a"), Glyphs::Unicode, Theme::Dark);
+
+        assert!(!picturing::shown(&record, 0));
+        assert_eq!(
+            picturing::refused(&record, 0),
+            Some(Undrawn::TooLargeToKeep)
+        );
+        assert_eq!(record.folded(0).len(), 1, "laid out as its text");
+    }
+
+    #[test]
+    fn a_picture_more_than_its_marks_can_place_is_drawn_as_text() {
+        // Each placeholder cell names its row by one of MOST_PLACED marks: a
+        // picture that many cells down is shown, and one a cell more is not.
+        let (drawer, _) = fake(100, MOST_PLACED, vec![]);
+        let mut record = picturing::record(40, drawer, &picturing::coloured(Theme::Dark));
+        record.drawn(picturing::diagram("a"), Glyphs::Unicode, Theme::Dark);
+        assert!(picturing::shown(&record, 0));
+
+        let (drawer, _) = fake(100, MOST_PLACED + 1, vec![]);
+        let mut record = picturing::record(40, drawer, &picturing::coloured(Theme::Dark));
+        record.drawn(picturing::diagram("a"), Glyphs::Unicode, Theme::Dark);
+        assert!(!picturing::shown(&record, 0));
+        assert_eq!(picturing::refused(&record, 0), Some(Undrawn::TooWide));
+        assert_eq!(record.folded(0).len(), 1, "laid out as its text");
+
+        // Two cells across, in a record one column wide.
+        let (drawer, _) = fake(100, 3, vec![]);
+        let mut record = picturing::record(1, drawer, &picturing::coloured(Theme::Dark));
+        record.drawn(picturing::diagram("a"), Glyphs::Unicode, Theme::Dark);
+        assert!(!picturing::shown(&record, 0));
+        assert_eq!(picturing::refused(&record, 0), Some(Undrawn::TooWide));
+    }
+
+    #[test]
+    fn once_every_number_is_given_out_a_diagram_is_drawn_as_text() {
+        // A record gives out as many numbers as a 24-bit colour holds: the
+        // last one is given out, and the picture after it is never named by
+        // one already sent.
+        let (fake, _) = fake(100, 3, vec![]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+        record.numbers_left(1);
+
+        record.drawn(picturing::diagram("last"), Glyphs::Unicode, Theme::Dark);
+        record.drawn(picturing::diagram("past"), Glyphs::Unicode, Theme::Dark);
+
+        assert!(picturing::shown(&record, 0));
+        assert!(!picturing::shown(&record, 1));
+        assert_eq!(picturing::refused(&record, 1), Some(Undrawn::PastCap));
+    }
+
+    #[test]
+    fn numbers_go_on_from_the_largest_to_one_and_never_to_zero() {
+        // A record's numbers start anywhere: from the largest a 24-bit
+        // colour holds, the next picture is 1, since no cell names a
+        // picture 0.
+        let (fake, _) = fake(100, 3, vec![]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+        record.numbers_from(MOST_PICTURE_ID);
+
+        record.drawn(picturing::diagram("last"), Glyphs::Unicode, Theme::Dark);
+        record.drawn(picturing::diagram("first"), Glyphs::Unicode, Theme::Dark);
+
+        assert_eq!(
+            record.picture_ids().collect::<Vec<_>>(),
+            [MOST_PICTURE_ID, 1]
+        );
+    }
+
+    #[test]
+    fn every_way_a_kept_picture_is_let_go_of_is_told() {
+        type Way = fn(&mut Record, &crate::color::Palette);
+
+        // A full screen deletes what the terminal holds of a picture once
+        // the record lets it go, which it hears of only here.
+        let pictured = || {
+            let (fake, _) = fake(100, 3, vec![]);
+            let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+            record.drawn(picturing::diagram("a"), Glyphs::Unicode, Theme::Dark);
+            assert!(picturing::shown(&record, 0));
+            assert!(!record.let_pictures_go(), "one drawn is none let go");
+            record
+        };
+        let plain = crate::color::Palette::plain();
+        let ways: [(&str, Way); 5] = [
+            ("encoded again at another width", |record, _| {
+                record.relay(100, Glyphs::Unicode, Theme::Dark);
+            }),
+            (
+                "drawn as text where colour is not written",
+                |record, plain| {
+                    record.pictured_as(
+                        Capability::Graphics {
+                            protocol: Protocol::Kitty,
+                            cell: picturing::CELL,
+                        },
+                        plain.identity(),
+                    );
+                    record.relay(40, Glyphs::Unicode, Theme::Dark);
+                },
+            ),
+            ("drawn as text past the count", |record, _| {
+                for line in 1..=MOST_KEPT_IMAGES {
+                    record.drawn(
+                        picturing::diagram(&format!("d{line}")),
+                        Glyphs::Unicode,
+                        Theme::Dark,
+                    );
+                }
+            }),
+            ("spilled", |record, _| {
+                record.lay((0..MOST).map(|_| set("after")));
+            }),
+            ("emptied", |record, _| record.empties()),
+        ];
+        for (way, lets_go) in ways {
+            let mut record = pictured();
+            let first = record.picture_ids().next();
+            lets_go(&mut record, &plain);
+            assert_ne!(record.picture_ids().next(), first, "{way}: still kept");
+            assert!(record.let_pictures_go(), "{way}: not told");
+            assert!(!record.let_pictures_go(), "{way}: told twice");
+        }
+    }
+
+    #[test]
+    fn a_picture_shown_in_other_cells_is_told_once_and_none_laid_since_is_never_told() {
+        // A yes has the frame look every picture the terminal holds up
+        // again, a walk over every line, so no is the answer wherever no
+        // picture has been laid out in other cells since it last asked.
+        let (fake, _) = fake(100, 20, vec![]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+        record.windowed(8, false);
+        record.drawn(picturing::diagram("a"), Glyphs::Unicode, Theme::Dark);
+        assert!(picturing::shown(&record, 0));
+        record.pictures_reshaped();
+        assert!(!record.pictures_reshaped(), "told with none laid since");
+
+        assert!(record.cycles(0), "no picture to show larger");
+        assert!(record.pictures_reshaped(), "not told");
+        assert!(!record.pictures_reshaped(), "told twice");
+    }
+
+    #[test]
+    fn a_diagram_refused_its_picture_is_not_drawn_again_at_another_width() {
+        // A width change encodes again only the pictures kept: a block
+        // refused one is laid out again as its text, and neither the cache,
+        // its drawer nor the pictures are asked for it again.
+        let (drawer, asked) = fake(100, MOST_PLACED + 1, vec![]);
+        let mut record = picturing::record(40, drawer, &picturing::coloured(Theme::Dark));
+        record.drawn(picturing::diagram("a"), Glyphs::Unicode, Theme::Dark);
+        assert_eq!(picturing::refused(&record, 0), Some(Undrawn::TooWide));
+        let before = picturing::asked(&asked);
+
+        record.resized(80, Glyphs::Unicode);
+
+        assert_eq!(picturing::asked(&asked), before);
+        assert_eq!(picturing::refused(&record, 0), Some(Undrawn::TooWide));
+        assert_eq!(record.folded(0).len(), 1, "laid out as its text");
+    }
+
+    #[test]
+    fn a_diagram_refused_its_picture_for_its_size_is_not_drawn_again_in_a_new_palette() {
+        // No palette changes a picture's size, so a block refused one for it
+        // is laid out again as its text in the new colours, and nothing is
+        // asked for it; one not drawn here may be drawn now, and is asked.
+        let refusals = [
+            (fake(100, MOST_PLACED + 1, vec![]), Undrawn::TooWide),
+            (
+                fake(MOST_KEPT_IMAGE_BYTES, 3, vec![]),
+                Undrawn::TooLargeToKeep,
+            ),
+            (fake(100, 3, vec![]), Undrawn::PastCap),
+            (fake(100, 3, vec![]), Undrawn::NotHere),
+        ];
+        let light = picturing::coloured(Theme::Light);
+        for ((mut fake, asked), why) in refusals {
+            if matches!(why, Undrawn::PastCap | Undrawn::NotHere) {
+                fake.refuses = Some(why);
+            }
+            let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+            record.drawn(picturing::diagram("a"), Glyphs::Unicode, Theme::Dark);
+            assert_eq!(picturing::refused(&record, 0), Some(why));
+            let before = picturing::asked(&asked);
+
+            record.pictured_as(
+                Capability::Graphics {
+                    protocol: Protocol::Kitty,
+                    cell: picturing::CELL,
+                },
+                light.identity(),
+            );
+            record.relay(40, Glyphs::Unicode, Theme::Light);
+
+            let after = picturing::asked(&asked);
+            if why == Undrawn::NotHere {
+                assert_eq!(
+                    after.get(before.len()..),
+                    Some(before.as_slice()),
+                    "{why:?}: not asked again"
+                );
+            } else {
+                assert_eq!(after, before, "{why:?}: asked again");
+            }
+            assert_eq!(picturing::refused(&record, 0), Some(why), "{why:?}");
+            assert_eq!(record.folded(0).len(), 1, "{why:?}: laid out as its text");
+        }
+    }
+
+    #[test]
+    fn a_new_theme_encodes_a_kept_picture_again_without_its_drawer() {
+        let (fake, asked) = fake(100, 3, vec![]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+        record.drawn(picturing::diagram("a"), Glyphs::Unicode, Theme::Dark);
+
+        let light = picturing::coloured(Theme::Light);
+        record.pictured_as(
+            Capability::Graphics {
+                protocol: Protocol::Kitty,
+                cell: picturing::CELL,
+            },
+            light.identity(),
+        );
+        record.relay(40, Glyphs::Unicode, Theme::Light);
+
+        assert_eq!(
+            picturing::asked(&asked),
+            ["cached a", "picture a", "make a", "reencode"]
+        );
+        assert!(picturing::shown(&record, 0));
+    }
+
+    #[test]
+    fn a_kept_picture_first_shown_before_the_window_said_its_height_keeps_those_rows() {
+        // A native session keeps a picture in the rows it was first shown in,
+        // and a terminal that has not yet said how tall it is has shown it in
+        // rows all the same; the height it says next places nothing again.
+        let (fake, asked) = fake(100, 20, vec![]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+        let placed = |record: &Record| match record.lines.front() {
+            Some(Line::Drawn(Drawn {
+                picture: Some(picture),
+                ..
+            })) => Some((picture.id, picture.key.rows, picture.kept.payload.cells())),
+            _ => None,
+        };
+        record.windowed(0, true);
+        record.drawn(picturing::diagram("a"), Glyphs::Unicode, Theme::Dark);
+        let first = placed(&record);
+        let folded = record.folded(0);
+        assert!(first.is_some(), "the diagram is shown as a picture");
+
+        record.windowed(8, true);
+        record.relay(40, Glyphs::Unicode, Theme::Dark);
+
+        assert_eq!(placed(&record), first, "its number, rows and cells");
+        assert_eq!(record.folded(0), folded, "the rows it is laid in");
+        assert_eq!(
+            picturing::asked(&asked),
+            ["cached a", "picture a", "make a"]
+        );
+    }
+
+    #[test]
+    fn a_picture_falling_back_to_text_leaves_the_reader_on_the_line_they_were_on() {
+        // Every picture three rows tall, and its text one, so the oldest
+        // falling back moves every row under it up by two.
+        let (fake, _) = fake(100, 3, vec![]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+        for line in 0..MOST_KEPT_IMAGES {
+            record.drawn(
+                picturing::diagram(&format!("d{line}")),
+                Glyphs::Unicode,
+                Theme::Dark,
+            );
+            record.write(Slot::Plain, &format!("said {line}\n"), None);
+        }
+
+        // On the line under the second picture, above the foot.
+        record.seek(rows_of(&record, 3).start, 4);
+        let reading = said(&record, 4);
+        assert_eq!(reading.first().map(String::as_str), Some("said 1"));
+
+        record.drawn(picturing::diagram("last"), Glyphs::Unicode, Theme::Dark);
+
+        assert!(!picturing::shown(&record, 0), "the oldest fell back");
+        assert_eq!(said(&record, 4), reading);
+    }
+
     /// A closed table whose only body row says `name`.
     fn table(name: &str) -> Block {
         Block {
@@ -2756,116 +4816,120 @@ mod tests {
     }
 
     #[test]
-    fn every_row_of_a_drawn_block_gives_its_source_and_prose_rows_give_none() {
-        let mut record = Record::new(60);
-        record.write(Slot::Plain, "before\n", None);
-        record.drawn(table("alpha"), Glyphs::Unicode, Theme::Dark);
-        record.write(Slot::Plain, "after\n", None);
+    fn a_session_put_back_draws_what_the_cache_kept_and_the_rest_as_text_with_no_drawer() {
+        let (fake, asked) = fake(100, 3, vec!["kept"]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
 
-        let rows = rows_of(&record, 1);
-        assert!(rows.len() > 1, "a table draws more than a row: {rows:?}");
-        for row in rows {
-            assert_eq!(
-                record.source_of(row),
-                Some(table("alpha").source.as_str()),
-                "row {row}"
-            );
-        }
-        assert_eq!(record.source_of(0), None);
-        assert_eq!(record.source_of(rows_of(&record, 2).start), None);
-        assert_eq!(record.source_of(9_999), None);
-    }
+        record.resuming(true, ScreenMode::Fullscreen);
+        record.drawn(picturing::diagram("kept"), Glyphs::Unicode, Theme::Dark);
+        record.drawn(picturing::diagram("missed"), Glyphs::Unicode, Theme::Dark);
+        record.resuming(false, ScreenMode::Fullscreen);
 
-    #[test]
-    fn a_rule_has_no_source_to_give() {
-        let mut record = Record::new(40);
-        record.drawn(
-            block(markdown::Kind::Rule, "---\n"),
-            Glyphs::Unicode,
-            Theme::Dark,
-        );
-
-        assert_eq!(record.lines(), 1);
-        assert_eq!(record.source_of(0), None);
-        assert_eq!(record.sources().count(), 0);
-    }
-
-    #[test]
-    fn the_sources_are_walked_newest_first_by_the_word_they_are_called() {
-        let mut record = Record::new(60);
-        record.drawn(table("alpha"), Glyphs::Unicode, Theme::Dark);
-        record.write(Slot::Plain, "between\n", None);
-        record.drawn(
-            block(markdown::Kind::DisplayMath, "$$\nx^2\n$$\n"),
-            Glyphs::Unicode,
-            Theme::Dark,
-        );
-        record.drawn(
-            block(markdown::Kind::Diff, "```diff\n-a\n+b\n```\n"),
-            Glyphs::Unicode,
-            Theme::Dark,
-        );
-
-        let walked: Vec<(usize, &str, &str)> = record
-            .sources()
-            .map(|source| (source.line, source.word, source.text))
-            .collect();
-
+        assert!(picturing::shown(&record, 0), "the cache's picture");
+        assert!(!picturing::shown(&record, 1), "a miss was drawn");
+        // As a picture not drawn here: its text, with nothing said of it.
+        assert_eq!(picturing::refused(&record, 1), Some(Undrawn::NotHere));
         assert_eq!(
-            walked,
+            picturing::asked(&asked),
             [
-                (3, "diff", "```diff\n-a\n+b\n```\n"),
-                (2, "math", "$$\nx^2\n$$\n"),
-                (0, "table", table("alpha").source.as_str()),
+                "resuming true",
+                "cached kept",
+                "cached missed",
+                "resuming false"
             ]
         );
-    }
 
-    /// Every row the record holds, as plain text.
-    fn all(record: &Record) -> Vec<String> {
-        (0..record.lines())
-            .flat_map(|line| record.folded(line))
-            .map(|row| row.text())
-            .collect()
-    }
-
-    #[test]
-    fn a_drawn_table_is_laid_out_again_for_a_new_width_and_a_new_glyph_set() {
-        let fresh = |columns, glyphs| {
-            let mut record = Record::new(columns);
-            record.drawn(table("alpha"), glyphs, Theme::Dark);
-            all(&record)
-        };
-        let mut record = Record::new(60);
-        record.drawn(table("alpha"), Glyphs::Unicode, Theme::Dark);
-        assert_eq!(all(&record), fresh(60, Glyphs::Unicode));
-
-        record.relay(20, Glyphs::Unicode, Theme::Dark);
-        assert_eq!(all(&record), fresh(20, Glyphs::Unicode));
-        assert_ne!(fresh(20, Glyphs::Unicode), fresh(60, Glyphs::Unicode));
-
-        record.relay(20, Glyphs::Ascii, Theme::Dark);
-        assert_eq!(all(&record), fresh(20, Glyphs::Ascii));
-        assert_ne!(fresh(20, Glyphs::Ascii), fresh(20, Glyphs::Unicode));
-        assert_eq!(record.rows, counted(&record));
+        // Once it is put back, a new block is drawn as live ones are.
+        record.drawn(picturing::diagram("live"), Glyphs::Unicode, Theme::Dark);
+        assert!(picturing::shown(&record, 2));
+        assert_eq!(
+            picturing::asked(&asked).get(4..),
+            Some(&["cached live", "picture live", "make live"].map(str::to_owned)[..])
+        );
     }
 
     #[test]
-    fn a_new_theme_paints_a_drawn_block_without_laying_it_out_again() {
-        let mut record = Record::new(40);
-        record.drawn(table("alpha"), Glyphs::Unicode, Theme::Dark);
-        let Some(Line::Drawn(before)) = record.lines.back() else {
-            panic!("the table is not a drawn block: {:?}", record.lines);
-        };
-        let rows = before.rows.clone();
+    fn a_session_put_back_reads_the_cache_only_for_the_pictures_it_keeps() {
+        let names: Vec<String> = (0..MOST_KEPT_IMAGES + 4)
+            .map(|at| format!("d{at}"))
+            .collect();
+        let cached: Vec<&'static str> = names
+            .iter()
+            .map(|name| &*Box::leak(name.clone().into_boxed_str()))
+            .collect();
+        let (fake, asked) = fake(100, 3, cached);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
 
+        record.resuming(true, ScreenMode::Fullscreen);
+        for name in &names {
+            record.drawn(picturing::diagram(name), Glyphs::Unicode, Theme::Dark);
+        }
+        assert_eq!(
+            picturing::asked(&asked),
+            ["resuming true"],
+            "the walk read the cache"
+        );
+        record.resuming(false, ScreenMode::Fullscreen);
+
+        let asked = picturing::asked(&asked);
+        let read = asked
+            .iter()
+            .filter(|said| said.starts_with("cached "))
+            .count();
+        assert_eq!(read, MOST_KEPT_IMAGES, "{asked:?}");
+        assert!(
+            !asked
+                .iter()
+                .any(|said| said.starts_with("picture ") || said.starts_with("make ")),
+            "{asked:?}"
+        );
+        assert_eq!(asked.last().map(String::as_str), Some("resuming false"));
+        // The newest are the ones shown, and the oldest are their text.
+        assert!((0..4).all(|line| !picturing::shown(&record, line)));
+        assert!((4..MOST_KEPT_IMAGES + 4).all(|line| picturing::shown(&record, line)));
+    }
+
+    #[test]
+    fn a_new_palette_after_a_session_put_back_asks_nothing_for_the_diagrams_it_did_not_keep() {
+        // The older diagrams the put back did not reach are text for as long
+        // as they are held, as those a live session drew past the cap are: a
+        // new palette encodes the kept pictures again and asks for no other.
+        let older = 10;
+        let names: Vec<String> = (0..MOST_KEPT_IMAGES + older)
+            .map(|at| format!("d{at}"))
+            .collect();
+        let cached: Vec<&'static str> = names
+            .iter()
+            .map(|name| &*Box::leak(name.clone().into_boxed_str()))
+            .collect();
+        let (fake, asked) = fake(100, 3, cached);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+        record.resuming(true, ScreenMode::Fullscreen);
+        for name in &names {
+            record.drawn(picturing::diagram(name), Glyphs::Unicode, Theme::Dark);
+        }
+        record.resuming(false, ScreenMode::Fullscreen);
+        let before = picturing::asked(&asked).len();
+
+        let light = picturing::coloured(Theme::Light);
+        record.pictured_as(
+            Capability::Graphics {
+                protocol: Protocol::Kitty,
+                cell: picturing::CELL,
+            },
+            light.identity(),
+        );
         record.relay(40, Glyphs::Unicode, Theme::Light);
 
-        let Some(Line::Drawn(after)) = record.lines.back() else {
-            panic!("the table is not a drawn block: {:?}", record.lines);
-        };
-        assert_eq!(after.rows, rows);
-        assert_eq!(after.laid, (40, Glyphs::Unicode, Theme::Light));
+        let after = picturing::asked(&asked);
+        let since = after.get(before..).unwrap_or_default();
+        assert!(
+            since.iter().all(|said| said == "reencode"),
+            "asked for a diagram not kept: {since:?}"
+        );
+        assert_eq!(since.len(), MOST_KEPT_IMAGES, "{since:?}");
+        assert!((0..older).all(|line| !picturing::shown(&record, line)));
+        assert!((older..MOST_KEPT_IMAGES + older).all(|line| picturing::shown(&record, line)));
     }
 
     #[test]

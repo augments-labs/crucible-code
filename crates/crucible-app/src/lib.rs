@@ -49,6 +49,7 @@ pub mod external;
 mod following;
 pub mod installing;
 pub mod launching;
+pub mod math;
 pub mod mcp;
 mod models;
 pub mod native;

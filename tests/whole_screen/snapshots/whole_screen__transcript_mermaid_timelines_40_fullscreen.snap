@@ -3,19 +3,19 @@ source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
 40x44 cursor 41,4 scrolled 0
-|› show me the corpus                   │|
-|                                       │|
-|A sequence diagram:                    ●|
-|                                       ┃|
-|┌─ mermaid · sequence diagram · not dra┃|
-|│ sequenceDiagram                      ┃|
-|│   Alice->>Bob: Hello                 ┃|
-|│   Bob-->>Alice: Hi                   ┃|
+|│       ┆ Hello         ┆              │|
+|│       ────────────────▸              │|
+|│       ┆ Hi            ┆              ●|
+|│       ◂┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄              │|
+|│       ┆               ┆              │|
+|│  ┌─────────┐      ┌───────┐          │|
+|│  │  Alice  │      │  Bob  │          │|
+|│  └─────────┘      └───────┘          │|
 |└─                                     ┃|
 |                                       ┃|
 |A gantt chart:                         ┃|
 |                                       ┃|
-|┌─ mermaid · gantt · not drawn as text ┃|
+|┌─ mermaid · too wide to draw at this w┃|
 |│ gantt                                ┃|
 |│   title Release                      ┃|
 |│   section Tests                      ┃|
@@ -24,13 +24,13 @@ expression: window.picture()
 |                                       ┃|
 |A git graph:                           ┃|
 |                                       ┃|
-|┌─ mermaid · git graph · not drawn as t┃|
-|│ gitGraph                             ┃|
-|│   commit id: "one"                   ┃|
-|│   branch feature                     ┃|
-|│   commit id: "two"                   ┃|
-|│   checkout main                      ┃|
-|│   merge feature                      ┃|
+|┌─ mermaid · git graph                 ┃|
+|│ *    one                             ┃|
+|│ ╭─╮                                  ┃|
+|│ │ *  two                             ┃|
+|│ ╰─╯                                  ┃|
+|│ M │  c2                              ┃|
+|│ main feature                         ┃|
 |└─                                     ┃|
 |                                       ┃|
 |A kind with no drawing of its own:     ┃|

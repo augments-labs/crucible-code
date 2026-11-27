@@ -213,6 +213,32 @@ shipped directory. A directory with no claim beside it, such as one left by a
 build from before claims were written, is never removed this way; delete it by
 hand if you want it gone.
 
+The tests that run display math through the installed TeX in the sandbox,
+`crucible-app`'s `math_sandboxed`, need the broker built first in the same way.
+Each of them reads this host for itself and asserts the half it decides: with
+TeX and a sandbox that holds TeX's policy, the picture is made and every bound
+holds; without either, the check names the first thing missing and the formula
+stays text. Neither half is a skip. To run the TeX half on Linux you need:
+
+- TeX where crucible looks for it: `latex` and `dvisvgm` in `/usr/bin` or
+  `/bin`, the only `PATH` TeX's run is given, with that directory on your own
+  `PATH` too, which is where the tests look; and `/etc/texmf` and
+  `/var/lib/texmf`, as the Debian-family packages install them. TeX installed
+  only elsewhere, such as under `/usr/local/texlive`, is not found. On Debian
+  or Ubuntu, `sudo apt install texlive-latex-base dvisvgm`.
+- Bubblewrap 0.11.0 or newer that lists `--size` (`bwrap --help` shows it),
+  and a kernel of 5.14 or newer.
+- Unprivileged user namespaces. Ubuntu restricts them with AppArmor; relax
+  that with `sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0`.
+
+Then run them on their own, and read the line each test prints, `ran the
+TeX-present half` or `ran the TeX-absent half`, to see which one ran:
+
+```bash
+cargo build -p crucible-sandbox-broker
+cargo test -p crucible-app --test math_sandboxed -- --show-output
+```
+
 `scripts/required-cases.json` names the obligations that must keep running
 whatever the tests are called: `scripts/sh/rust-checks.sh` checks that each one
 is still discovered by the same selection the suite runs under, is not ignored,
@@ -359,9 +385,33 @@ scripts/sh/bench.sh
 ```
 
 The probes and thresholds are owned by that script. Use its `startup`,
-`tools`, `mem`, `grep`, `stream`, or `live` argument to run one family. Shared
-CI runners provide a trend; release measurements are taken on a quiet machine
-as described in [`RELEASING.md`](RELEASING.md).
+`tools`, `mem`, `grep`, `stream`, `live`, `drawing`, `picture-wait` or
+`tex-slab` argument to run one family:
+
+- `drawing` times a diff, formula or diagram drawer laying out the largest
+  block it accepts at its caps, and a diagram made into a picture.
+- `picture-wait` times the drawing thread while a display formula's picture is
+  being made, and needs nothing but the default build.
+- `tex-slab` weighs the host's kernel memory while TeX writes files in the
+  sandbox. It runs only when named, never in a run with no argument, and on a
+  host without TeX or the sandbox's backend it fails rather than skips. It
+  needs the TeX, Bubblewrap, kernel and user namespaces the `math_sandboxed`
+  tests need above, on Linux, and it builds `crucible-sandbox-broker` in
+  release for you.
+- `mem`'s colour probe measures a `crucible` built with the
+  `bench-math-stand-in` feature, which answers every display formula with one
+  kept picture without TeX or the sandbox. The script builds that probe and
+  `crucible` with the feature, copies them into
+  `target/bench-math-stand-in/release/`, builds the default straight away,
+  which costs one more build and link of the root package, then runs the
+  colour probe from the copy. A run that completes leaves the default build at
+  `target/release/crucible`; one stopped between the two builds, killed or
+  failed (a failed default build also leaves it), leaves the stand-in there
+  until the next run replaces it. No other build names the feature, and a
+  build that ships must not.
+
+Shared CI runners provide a trend; release measurements are taken on a quiet
+machine as described in [`RELEASING.md`](RELEASING.md).
 
 Compile-time changes can also be compared without an absolute gate:
 

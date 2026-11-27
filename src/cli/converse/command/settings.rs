@@ -126,6 +126,9 @@ struct Line {
     later: bool,
     /// Where the protocol it names is not drawn, which its row says.
     unavailable: Option<Unavailable>,
+    /// On the math row, what the session's check has said of math pictures,
+    /// read each time the row is drawn.
+    pictures: Option<crate::cli::math_engine::Outcome>,
 }
 
 /// Where a protocol `output.images` names is not drawn, as the terminal
@@ -389,7 +392,7 @@ fn settle<T: Terminal>(
         (Ok(name), Ok(value)) => terms.keep(api::Command::Setting { name, value }),
         (Err(refused), _) | (_, Err(refused)) => Performed::Refused(refused),
     };
-    match asked {
+    let left = match asked {
         Performed::Setting(Setting::Remembered) => {
             line.later = match takes(row.id(), &word) {
                 Takes::Now => !worn(row, &word, renderer, terms),
@@ -427,7 +430,17 @@ fn settle<T: Terminal>(
             panel.note = Some(astray(&other));
             None
         }
+    };
+    // Where nothing named a syntax theme, its row shows the one the table in
+    // force draws code in, and a new table may have changed that.
+    if row.id() == RowId::Theme {
+        for line in &mut panel.lines {
+            if line.row.id() == RowId::SyntaxTheme {
+                *line = Line::read(terms, line.row);
+            }
+        }
     }
+    left
 }
 
 /// When a change to a row reaches the running session.
@@ -549,6 +562,7 @@ fn worn<T: Terminal>(
                 if setting.passthrough == graphics::Passthrough::Unknown {
                     setting.passthrough = graphics::passthrough(from, style.platform(), setting);
                     terms.style.set(style.passing(setting.passthrough));
+                    renderer.passes_through(setting.passthrough);
                 }
                 let candidate = graphics::select(from, style.platform(), setting);
                 renderer.images(graphics::unasked(candidate, renderer.terminal().cell()));
@@ -712,6 +726,12 @@ impl Line {
             .or(settled)
             .or_else(|| terms.settings.stated(row, &from))
             .or_else(|| row.usual().map(str::to_owned))
+            // The one row whose default follows the ground, so the files state
+            // none: the syntax theme the table in force draws code in.
+            .or_else(|| {
+                (row.id() == RowId::SyntaxTheme)
+                    .then(|| terms.style().syntax_unless_said().to_owned())
+            })
             .unwrap_or_default();
         let locked = if unoffered {
             Some(Lock::FullscreenOnly)
@@ -723,6 +743,7 @@ impl Line {
             locked,
             later: takes(row.id(), &value) == Takes::NextStart,
             unavailable: unavailable(terms, row.id(), &value),
+            pictures: (row.id() == RowId::Math).then(|| terms.math.clone()),
             value,
         }
     }
@@ -740,8 +761,25 @@ impl Line {
     }
 
     /// What is said after the value: who set it, where what it names is not
-    /// drawn, or when it is read.
-    fn aside(&self) -> Option<&'static str> {
+    /// drawn, or when it is read; and on the math row, what the session's
+    /// check has said of math pictures, as it says it now.
+    fn aside(&self) -> Option<Cow<'static, str>> {
+        let said = self.settled_aside();
+        let Some(pictures) = self
+            .pictures
+            .as_ref()
+            .map(|outcome| pictured(&outcome.said()))
+        else {
+            return said.map(Cow::Borrowed);
+        };
+        Some(match said {
+            Some(said) => Cow::Owned(format!("{said}, {pictures}")),
+            None => Cow::Owned(pictures),
+        })
+    }
+
+    /// Who set it, where what it names is not drawn, or when it is read.
+    fn settled_aside(&self) -> Option<&'static str> {
         match self.locked {
             Some(Lock::Set(Forced::Project)) => Some("set by project config"),
             Some(Lock::Set(Forced::Environment)) => Some("set by the environment"),
@@ -753,6 +791,19 @@ impl Line {
                 None => self.later.then_some("applies at next start"),
             },
         }
+    }
+}
+
+/// What `said` says of math pictures, as the math row says it.
+///
+/// Written out case by case so a new state of the check is a decision here.
+fn pictured(said: &crate::cli::math_engine::Said) -> String {
+    use crate::cli::math_engine::Said;
+    match said {
+        Said::NotAsked => "math pictures not checked yet".to_owned(),
+        Said::Asking => "checking for math pictures".to_owned(),
+        Said::Available(toolchain) => format!("math pictures by {toolchain}"),
+        Said::Unavailable(reason) => format!("no math pictures: {reason}"),
     }
 }
 

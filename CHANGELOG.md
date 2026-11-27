@@ -8,6 +8,30 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.52.0] - 2026-11-27
+
+**Crucible 0.52.0 draws diagrams, display math and images as pictures in the terminals that can show them.** Mermaid diagrams become pictures in Kitty, and in WezTerm or iTerm2 in the full screen; display math does too on Linux with TeX Live; images a turn names are shown under its answer; and a resumed session gets its diagrams back from an owner-only cache. Sequence diagrams, gantts and git graphs are now drawn as text, and code on a light terminal is readable again. A script client must move to client protocol revision 7, which adds `show_image`.
+
+### Added
+
+- **Diagrams are drawn as pictures in Kitty.** A Mermaid diagram in an answer is shown as a picture in the theme's colours, in both screen modes, and scrolls with the transcript; inside tmux passing through to Kitty, set `output.images = kitty` and use the native screen. Up to 16 pictures or 1.5 MiB are kept, and the oldest goes back to text first. Set `output.diagrams = text` or `output.images = off` to keep diagrams as text.
+- **Images a turn names are drawn.** In a terminal that draws pictures, an image the answer names by a workspace path, or a picture a tool read, is shown under the answer once the turn ends, up to eight per turn. It is read only where `read` may read it, and nothing is ever fetched from the network.
+- **A resumed session shows its diagrams as pictures.** Diagrams drawn as pictures are kept in an owner-only cache in `~/.crucible/pictures/`, at most 32 MiB and 14 days, so `--continue`, `--resume` and `/resume` show them again without drawing them afresh. A resumed session also shows again the images its turns named.
+- **Diagrams now draw as pictures in WezTerm and iTerm2.** In the full screen, a Mermaid diagram is shown as an image through iTerm2's protocol where the terminal support table draws it, and it is written only while the whole picture is in view. Sixel and native-mode iTerm2 pictures stay as text until those terminals have been verified.
+- **Resize a picture by clicking it.** In fullscreen, a click on a diagram drawn as a picture, or Ctrl+O Enter, cycles it through Fit, Large and Full. A click on a drawn block's label opens its source. Native mode keeps each picture at the size it is first shown at: Fit for a diagram, Large for a formula.
+- **Display math is drawn as a picture.** On Linux with TeX Live (`latex` and `dvisvgm`) and the sandbox's Linux backend, a display formula is made into a picture by TeX, run in the sandbox off the drawing thread, and replaces its text in Kitty, and in WezTerm or iTerm2 in the full screen; everywhere else it stays text. `/settings` says beside the Math row whether math pictures were found, and why not.
+
+### Changed
+
+- **A client with no terminal can show an image a turn named.** Client protocol revision 7 adds the `show_image` command, which names an image by the path the turn wrote and returns it as a PNG or says why it is not shown; the file is read only where a tool reading it could. A client must now send revision 7, since a build speaks only its own revision.
+- **Mermaid sequence diagrams, gantts and git graphs are drawn as text.** They are drawn whole with box characters, within per-kind size caps, or shown exactly as written with the reason, as flowcharts, state and ER diagrams already are. A diagram too wide for the terminal, or using a statement that is not drawn (a note, a milestone, a cherry-pick), is shown as written.
+
+### Fixed
+
+- **Code on a light terminal is readable again.** With a light theme, or a light background your terminal reports, and no `syntaxTheme` set, fenced code was drawn in Monokai Extended, whose strings stand at 1.4:1 on white. It is now drawn in Coldark-Cold, whose colours all stand at 6:1 or better. A dark background keeps Monokai Extended, and a `syntaxTheme` you set is kept.
+- **Nested, quoted and listed code blocks stay inside their frames.** A block opened with four backticks is no longer closed by an inner line of three, and a block inside a quote or list item now closes on its own fence without the quote marker or the item's indent on its rows. A backtick fence whose info string holds a backtick reads as prose, and inline code opened by two backticks closes only on two, so ``a `tick` inside`` shows its inner backticks.
+- **Diagrams the layout engine would draw wrong are shown as written.** An entity-relationship diagram whose lines would cross its boxes, and a flowchart or state diagram whose labels would sit on the wrong line, are now shown as their Mermaid source with the reason (`tangled relationships` or `misplaced labels`), never drawn wrong. Diagrams the engine lays out correctly draw as before.
+
 ## [0.51.0] - 2026-11-16
 
 **Crucible 0.51.0 draws what the model writes, and lets its questions wait while it works: tables at every width, alerts, links, footnotes, diffs, math and Mermaid flowcharts, state and ER diagrams are laid out as text, and a question the model asks without stopping its turn waits in a dock above the prompt.** Client protocol revision 6 lets a client with no terminal answer those questions and refuses a revision 5 frame, and after compaction or a resume the model is shown your request again word for word. Under the new `output.images` setting's `auto`, a terminal known to draw pictures is asked what it draws before the first key is read, and one that never answers can add about 2 seconds to start; `off` skips the question.
@@ -5550,7 +5574,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.51.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.52.0...HEAD
+[0.52.0]: https://github.com/augments-labs/crucible-code/compare/v0.51.0...v0.52.0
 [0.51.0]: https://github.com/augments-labs/crucible-code/compare/v0.50.0...v0.51.0
 [0.50.0]: https://github.com/augments-labs/crucible-code/compare/v0.49.0...v0.50.0
 [0.49.0]: https://github.com/augments-labs/crucible-code/compare/v0.48.2...v0.49.0

@@ -84,6 +84,16 @@ impl Frame {
         self
     }
 
+    /// Appends graphics: Kitty's commands, which move no cursor and draw
+    /// nothing until the cells that name their picture are on screen, and
+    /// iTerm2 and Sixel images, each opened by the absolute address of the
+    /// first cell held for it, so they go after the rows they are written
+    /// over and before the cursor is parked.
+    pub(crate) fn graphics(&mut self, commands: &str) -> &mut Self {
+        self.buffer.push_str(commands);
+        self
+    }
+
     /// Leaves the cursor where the reader is typing.
     ///
     /// Absolute, and the last thing a frame writes, so it does not matter in

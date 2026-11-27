@@ -31,10 +31,12 @@ impl Version {
     /// the words answering questions without stopping brings: the command,
     /// the report of what waits, the outcome of an answer no turn was run for,
     /// the two codes an answer is refused with, the `by` that says a prompt
-    /// is the application's own, and the rows a question's answer shows. A
-    /// test holds the number and what the frames are made of together, so
+    /// is the application's own, and the rows a question's answer shows, and
+    /// the seventh the words showing an image a turn named brings: the
+    /// command naming it by its path, and the outcome carrying it as a PNG or
+    /// saying why it is not shown. A test holds the number and what the frames are made of together, so
     /// that one cannot move without the other being looked at.
-    pub const CURRENT: Self = Self(6);
+    pub const CURRENT: Self = Self(7);
 
     /// The revision numbered `number`, spoken or not.
     #[must_use]

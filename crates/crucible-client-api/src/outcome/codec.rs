@@ -7,11 +7,11 @@ use serde_json::Value;
 
 use super::{
     AgentAction, CacheOutcome, CleanOutcome, ClearOutcome, EffortOutcome, Forced, Group,
-    LoginOutcome, LogoutOutcome, ModelOutcome, NotesOutcome, Problem, Release, Resource,
-    ResumeOutcome, Retained, RoomOutcome, SandboxOutcome, SettingOutcome, SpeedOutcome, Standing,
-    Stop, ThemeOutcome, TurnOutcome, maybe_problem,
+    ImageRefused, LoginOutcome, LogoutOutcome, ModelOutcome, NotesOutcome, Problem, Release,
+    Resource, ResumeOutcome, Retained, RoomOutcome, SandboxOutcome, SettingOutcome, Shown,
+    SpeedOutcome, Standing, Stop, ThemeOutcome, TurnOutcome, maybe_problem,
 };
-use crate::bounds::Name;
+use crate::bounds::{IMAGE_BYTES, Name};
 use crate::error::{ErrorCode, Refusal};
 use crate::wire::{self, Fields, Writing};
 
@@ -792,4 +792,42 @@ impl NotesOutcome {
         fields.done()?;
         Ok(notes)
     }
+}
+
+/// An image shown, or why it is not, as one object whose kind says which: the
+/// PNG as base64 beside its size, or the reason alone.
+pub(super) fn image(image: &Result<Shown, ImageRefused>) -> Value {
+    match image {
+        Ok(Shown { png, pixels }) => Writing::kind("shown")
+            .bytes("png", png)
+            .with("width", pixels.0)
+            .with("height", pixels.1),
+        Err(why) => Writing::kind(why.as_str()),
+    }
+    .finish()
+}
+
+/// The image [`image`] wrote: a PNG over [`IMAGE_BYTES`] is refused by the
+/// length of its base64, before any of it is decoded.
+pub(super) fn read_image(value: Value) -> Result<Result<Shown, ImageRefused>, Refusal> {
+    let mut fields = Fields::of(value)?;
+    let kind = fields.kind()?;
+    let image = if kind == "shown" {
+        let png = fields.bytes("png", IMAGE_BYTES)?;
+        let mut side = |key| {
+            u32::try_from(fields.number(key)?)
+                .ok()
+                .filter(|side| *side > 0)
+                .ok_or_else(|| Refusal::new(ErrorCode::Malformed))
+        };
+        let pixels = (side("width")?, side("height")?);
+        Ok(Shown { png, pixels })
+    } else {
+        Err(ImageRefused::EVERY
+            .into_iter()
+            .find(|why| why.as_str() == kind)
+            .ok_or(ErrorCode::Malformed)?)
+    };
+    fields.done()?;
+    Ok(image)
 }

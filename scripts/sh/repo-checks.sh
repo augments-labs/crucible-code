@@ -956,6 +956,16 @@ fi
 # the formula drawer, so math in an answer is drawn as text.
 # `code tui-mermaid` ships: the command line hands every renderer of a
 # session the diagram drawer, so a mermaid fence in an answer is drawn as text.
+# `code raster` ships: the command line draws a diagram's picture to pixels
+# and a PNG for a terminal that confirmed it can show one, the drawing probe
+# times a diagram's picture rasterised and encoded as it is shown, and the
+# tests hold the font the raster draws with to the characters a drawer lets
+# into a picture. A drawer names no raster type; it hands an SVG to whatever
+# composes it.
+# `app attachments` and `app raster` ship: an image a turn named is read for a
+# front end by the application, under the permission engine's proof, through
+# the bounded open a prompt's attachment is read with, and decoded and encoded
+# again as a PNG under the raster's ceilings and its one decode slot.
 allowed='code app
 code attachments
 code auth
@@ -969,6 +979,7 @@ code mcp
 code models
 code privacy
 code provider
+code raster
 code registry
 code update
 code runner
@@ -987,6 +998,7 @@ code tui-mermaid
 code types
 code workspace
 app agents
+app attachments
 app auth
 app builtins
 app client-api
@@ -1001,6 +1013,7 @@ app mcp
 app models
 app privacy
 app provider
+app raster
 app registry
 app runner
 app runtime
@@ -1570,6 +1583,80 @@ while IFS= read -r line; do
     failed=1
 done <<<"$signer_feature"
 
+section "the colour probe's stand-in engine stays out of a release"
+# The colour-on memory probe measures a session that keeps sixteen math
+# pictures on any runner, TeX or none, so `scripts/sh/bench.sh` builds a copy of
+# `crucible` whose engine answers every formula with one kept picture. That
+# copy comes from the root package's one bench-only feature, and a build that
+# shipped with it would draw every user's formulas as the same picture. So the
+# feature is held as the `proof` seam is above: the root package declares it
+# and turns nothing else on with it, no `default` and no other feature of any
+# package names it, no dependency asks for it, and no workflow or script but
+# `bench.sh`, which asks for it, and this check names it. `release.yml` may not
+# build with every feature on, which would turn it on without naming it. The
+# selection that reads it is `src/cli/math_engine.rs`'s, and no other Rust file
+# may name it, so no test can be gated on it. A check that finds no reader or
+# no declaration measured nothing and fails.
+stand_in_feature=bench-math-stand-in
+stand_in_reader="src/cli/math_engine.rs"
+if ! grep -qF "$stand_in_feature" "$stand_in_reader"; then
+    printf '    FAIL %s does not name %s; this check measured nothing\n' "$stand_in_reader" "$stand_in_feature"
+    failed=1
+fi
+while IFS= read -r file; do
+    [[ -z "$file" || "$file" == "$stand_in_reader" ]] && continue
+    printf '    FAIL %s names %s; only %s may, so no test is gated on it\n' "$file" "$stand_in_feature" "$stand_in_reader"
+    failed=1
+done < <(git ls-files -z -- '*.rs' | xargs -0 grep -lF "$stand_in_feature" -- 2>/dev/null || true)
+while IFS= read -r file; do
+    [[ -z "$file" || "$file" == scripts/sh/bench.sh || "$file" == scripts/sh/repo-checks.sh ]] && continue
+    printf '    FAIL %s names %s; only scripts/sh/bench.sh asks for it\n' "$file" "$stand_in_feature"
+    failed=1
+done < <(git ls-files -z -- .github/workflows scripts | xargs -0 grep -lF "$stand_in_feature" -- 2>/dev/null || true)
+if grep -nE -- '--all-features' .github/workflows/release.yml >/dev/null; then
+    printf '    FAIL .github/workflows/release.yml builds with --all-features, which turns on %s\n' "$stand_in_feature"
+    failed=1
+fi
+stand_in_manifests=$(cargo metadata --no-deps --offline --format-version 1 --color never --manifest-path Cargo.toml 2>/dev/null |
+    python3 -c '
+import json, sys
+
+OWNER, FEATURE = "crucible-code", "bench-math-stand-in"
+packages = json.load(sys.stdin)["packages"]
+owner = [package for package in packages if package["name"] == OWNER]
+if len(owner) != 1 or FEATURE not in owner[0]["features"]:
+    sys.exit(0)
+for enabled in owner[0]["features"][FEATURE]:
+    print(f"{OWNER}/{FEATURE} turns on {enabled}; it changes the root package alone")
+for package in packages:
+    name = package["name"]
+    keys = set()
+    for dependency in package["dependencies"]:
+        if dependency["name"] != OWNER:
+            continue
+        keys.add(dependency.get("rename") or dependency["name"])
+        if FEATURE in dependency["features"]:
+            kind = dependency["kind"] or "normal"
+            print(f"{name} turns on {OWNER}/{FEATURE} in a {kind} dependency")
+    for feature, enables in package["features"].items():
+        if name == OWNER:
+            named = feature != FEATURE and FEATURE in enables
+        else:
+            named = any(f"{key}{joint}{FEATURE}" in enables for key in keys for joint in ("/", "?/"))
+        if named:
+            print(f"{name} turns on {OWNER}/{FEATURE} through its feature {feature}, which a release build can ask for")
+print("measured")
+')
+if ! grep -Fxq measured <<<"$stand_in_manifests"; then
+    printf '    FAIL the root package was not found declaring %s; this check measured nothing\n' "$stand_in_feature"
+    failed=1
+fi
+while IFS= read -r line; do
+    [[ -z "$line" || "$line" == measured ]] && continue
+    printf '    FAIL %s\n' "$line"
+    failed=1
+done <<<"$stand_in_manifests"
+
 section "the external route is removable"
 # Running a conversation on an installed agent is one route a release can drop
 # by deleting what it adds, so every tracked file that names it is one this list
@@ -1715,7 +1802,10 @@ section "shipping source boundary"
 # purpose since: `src/main.rs` settles where the sandbox broker is looked for
 # before anything else runs, because only then does the executable's path still
 # name the release the process was started from, and the application is built
-# after that.
+# after that. Another: `src/cli/picture_cache.rs` keeps the pictures the terminal
+# drew owner-only through `crucible_privacy`, as a session log is kept, because
+# they are pictures of what the model wrote and the drawing is the terminal's,
+# not the application's.
 #
 # Files that compile only under test are left out, because a fixture has to
 # build the thing it stands in for -- which is why a test module that names one
@@ -1776,6 +1866,7 @@ src/cli/converse/resuming.rs crucible_session
 src/cli/converse/typing.rs crucible_builtins
 src/cli/draw.rs crucible_builtins
 src/cli/draw/opening.rs crucible_session
+src/cli/picture_cache.rs crucible_privacy
 src/cli/standing.rs crucible_builtins
 src/main.rs crucible_sandbox_local'
 concrete=$(grep -E ' crucible_(auth|builtins|privacy|provider|sandbox_broker|sandbox_local|session)$' <<<"$named")
@@ -1814,8 +1905,12 @@ done < <(grep -rnE --include='*.rs' 'std::net|std::os::unix::net|TcpListener|Tcp
 # That is a search of the source, and a crate that speaks HTTP needs none of
 # those words written here to be used. So what the contract takes is written
 # down whole, in every dependency table, and Cargo is asked for it rather than
-# the manifest being read: one dependency can be spelled many ways.
-contract_takes='crucible-types
+# the manifest being read: one dependency can be spelled many ways. `base64`
+# writes and reads the one field of bytes that crosses, the PNG an image a turn
+# named is shown as, since JSON has no bytes; it is an encoding and no
+# transport.
+contract_takes='base64
+crucible-types
 serde_core
 serde_json'
 if ! contract_taken=$(cargo metadata --no-deps --offline --format-version 1 --color never --manifest-path Cargo.toml 2>/dev/null |
@@ -1862,17 +1957,37 @@ fi
 # `crucible_tui_math` and `crucible_tui_mermaid` for the drawers whose worst
 # blocks it times, and `crucible_tui` for the contract those drawers are called
 # through and the room each is handed, so what it times is the call the drawing
-# thread makes. `bench-render-burst` names `crucible_tui_diff`,
+# thread makes; it names `crucible_raster` for the rasterising and encoding
+# a diagram's picture is timed through, so a picture's time is what drawing
+# it to pixels costs. `bench-render-burst` names `crucible_tui_diff`,
 # `crucible_tui_math` and `crucible_tui_mermaid` for the drawers it hands the
 # renderer it streams to, so the diff fences, formulas and diagrams of its burst
 # are timed drawn as a session draws them, and `bench-live-burst` names them for
 # the drawers that draw the answers its band stands over, so a frame is timed
 # over a record that keeps a drawer's rows; each builds the drawers in its own
-# file, where this list reads what it names.
+# file, where this list reads what it names. Both name `crucible_raster` for
+# the pictures their renderer is handed, as a session on a terminal that
+# confirmed Kitty is, so a frame is timed with diagrams drawn to pixels and
+# sent as pictures; each draws them in its own file for the same reason.
+# `bench-session-rss-colour` names `crucible_tui` for the count of pictures a
+# session keeps, which its last answer's gantts go one past, and in its test
+# for the room, glyphs and refusal the drawer is asked in; it names
+# `crucible_tui_mermaid` for the caps those gantts are built at, and in its
+# test for the drawer that shows each is drawn as a picture as wide as the
+# measured window takes.
 # `bench-first-input-colour-silent` names `crucible_tui` in its test alone, for
 # the reply wait its budget is held to the sum of, and measures the built
 # binary like every other startup probe.
-probes='src/bin/bench-drawing.rs crucible_tui
+# `bench-picture-wait` names `crucible_tui` for the renderer whose calls it
+# times and the formulas it tells, `crucible_tui_math` for the drawer that
+# draws a formula's text until its picture comes, and `crucible_raster` for
+# the picture maker that draws an answered formula to pixels in the call that
+# finds it, as a session's does. `bench-tex-slab` names `crucible_app` for the
+# math engine and the check a session finds it with, and `crucible_sandbox`
+# and `crucible_sandbox_local` for the service that check is handed, so what
+# it measures is a formula's run as a session makes it.
+probes='src/bin/bench-drawing.rs crucible_raster
+src/bin/bench-drawing.rs crucible_tui
 src/bin/bench-drawing.rs crucible_tui_diff
 src/bin/bench-drawing.rs crucible_tui_math
 src/bin/bench-drawing.rs crucible_tui_mermaid
@@ -1882,13 +1997,18 @@ src/bin/bench-grep.rs crucible_runtime
 src/bin/bench-grep.rs crucible_tools
 src/bin/bench-grep.rs crucible_types
 src/bin/bench-grep.rs crucible_workspace
+src/bin/bench-live-burst.rs crucible_raster
 src/bin/bench-live-burst.rs crucible_tui
 src/bin/bench-live-burst.rs crucible_tui_diff
 src/bin/bench-live-burst.rs crucible_tui_math
 src/bin/bench-live-burst.rs crucible_tui_mermaid
+src/bin/bench-picture-wait.rs crucible_raster
+src/bin/bench-picture-wait.rs crucible_tui
+src/bin/bench-picture-wait.rs crucible_tui_math
 src/bin/bench-read-back.rs crucible_session
 src/bin/bench-read-back.rs crucible_types
 src/bin/bench-read-back.rs crucible_workspace
+src/bin/bench-render-burst.rs crucible_raster
 src/bin/bench-render-burst.rs crucible_tui
 src/bin/bench-render-burst.rs crucible_tui_diff
 src/bin/bench-render-burst.rs crucible_tui_math
@@ -1897,6 +2017,11 @@ src/bin/bench-session-rss.rs crucible_attachments
 src/bin/bench-session-rss.rs crucible_config
 src/bin/bench-session-rss-colour.rs crucible_attachments
 src/bin/bench-session-rss-colour.rs crucible_config
+src/bin/bench-session-rss-colour.rs crucible_tui
+src/bin/bench-session-rss-colour.rs crucible_tui_mermaid
+src/bin/bench-tex-slab.rs crucible_app
+src/bin/bench-tex-slab.rs crucible_sandbox
+src/bin/bench-tex-slab.rs crucible_sandbox_local
 src/bin/bench-tools.rs crucible_builtins
 src/bin/bench-tools.rs crucible_runtime
 src/bin/bench-tools.rs crucible_sandbox_local
@@ -1928,7 +2053,7 @@ while IFS= read -r line; do
 done <<<"$probes"
 
 section "a request read from bytes is decided about first"
-# Seventeen commands change what the session may do or whom it acts as, or ask
+# Eighteen commands change what the session may do or whom it acts as, or ask
 # the host to work for whoever sent them: a permission mode, the sandbox, an
 # account signed in or out, an installed agent disconnected, removed or signed
 # out, a provider connected through one, and the catalog of agents listed,
@@ -1937,7 +2062,7 @@ section "a request read from bytes is decided about first"
 # while every request is built on the host by the front end standing there.
 # `Request::decode` is where one could come from somewhere else, and nothing
 # that ships calls it. A file that starts to is written down here with what it
-# does about each of the seventeen, so that reading requests from outside is a
+# does about each of the eighteen, so that reading requests from outside is a
 # decision taken command by command and not a line added. A row is
 # `file command what-is-done-about-it`.
 request_owner=crates/crucible-client-api/src
@@ -1954,6 +2079,7 @@ remove_integration
 rollback_agent
 sandbox
 set_mode
+show_image
 sign_in_agent
 sign_out
 update_agent
@@ -1994,10 +2120,14 @@ kinds=$(sed -n '/pub const KINDS: \[/,/\];/p' "$request_owner/command.rs" | grep
 # waiting, the thirty-seventh, settles them where they wait and, when nothing
 # runs, starts the turn that delivers them, as a prompt does: it is no ruling
 # on a pending action and no yes to a route, so it changes nothing a session
-# may do and stayed out.
+# may do and stayed out. Showing an image a turn named, the thirty-eighth,
+# reads a file of the host's for whoever sent it, by a path the request names,
+# so it joined them: the application reads it only under the permission
+# engine's proof, but a client from outside would be asking this host to read
+# its files, and that is decided command by command with the rest.
 # One more is one nobody has asked this of.
-if (($(grep -c . <<<"$kinds") != 37)); then
-    printf '    FAIL the client contract no longer has the 37 commands the seventeen were picked out of; decide whether the new one changes what a session may do, then move the 37 in this check\n'
+if (($(grep -c . <<<"$kinds") != 38)); then
+    printf '    FAIL the client contract no longer has the 38 commands the eighteen were picked out of; decide whether the new one changes what a session may do, then move the 38 in this check\n'
     failed=1
 fi
 while IFS= read -r word; do
@@ -2045,7 +2175,7 @@ done <<<"$decided"
 # Reading bytes is one way a request arrives from somewhere else. The other is
 # an adapter that reads a format of its own and builds the command: the variants
 # are public, and no `decode` is named on that road. So the files that name one
-# of the seventeen are written down too. They are the terminal, which builds
+# of the eighteen are written down too. They are the terminal, which builds
 # them from keys pressed on the host, and the application, which performs them,
 # or, at the door that asks a plan for its limits and the door for an installed
 # agent's account, refuses those it does not own unperformed. A file that joins
@@ -2064,7 +2194,10 @@ done <<<"$decided"
 # each to the agents door as it is. `crucible agents` names the catalog read and
 # every move and sign-in it has subcommands for, each built from the words of
 # its own command line on this host, and hands each to the agents door as it
-# is, with no conversation.
+# is, with no conversation. The conversation names the image a turn named, by
+# the path its answer wrote or the file its own read tool's call read, once
+# that turn on this host is over, and the application reads it only under the
+# permission engine's proof.
 naming='crates/crucible-app/src/client/accounts.rs
 crates/crucible-app/src/client/agents.rs
 crates/crucible-app/src/client/asking.rs
@@ -2100,13 +2233,13 @@ named=$(grep -rlE --include='*.rs' "(^|[^A-Za-z0-9_])Command::($variants)([^A-Za
 while IFS= read -r file; do
     [[ -z "$file" ]] && continue
     if ! grep -Fxq "$file" <<<"$naming"; then
-        printf '    FAIL %s names a command that changes what a session may do, and is not one of the files known to; find where its commands come from, decide about each of the seventeen if that is outside the host, then add the file here\n' "$file"
+        printf '    FAIL %s names a command that changes what a session may do, and is not one of the files known to; find where its commands come from, decide about each of the eighteen if that is outside the host, then add the file here\n' "$file"
         failed=1
     fi
 done <<<"$named"
 while IFS= read -r file; do
     if ! grep -Fxq "$file" <<<"$named"; then
-        printf '    FAIL %s was not found naming one of the seventeen; take it out, or the search measured nothing\n' "$file"
+        printf '    FAIL %s was not found naming one of the eighteen; take it out, or the search measured nothing\n' "$file"
         failed=1
     fi
 done <<<"$naming"

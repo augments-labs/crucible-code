@@ -10,8 +10,18 @@ use crate::drawing::{Drawers, Draws, Laid, Mode, Room, Run};
 
 /// A diagram drawer that draws a fence's first line behind a mark of the
 /// glyph set it is asked in, and math behind another, so one test can tell
-/// which of the two a setting reached.
+/// which of the two a setting reached. It names a fence by the kind its first
+/// line opens, as [`TOLD`] does.
 struct Boxed;
+
+/// What [`Boxed`] names a fence opened by each word: a flowchart, and the
+/// diagrams drawn in order.
+const TOLD: [(&str, &str); 4] = [
+    ("graph", "a boxed graph"),
+    ("sequenceDiagram", "a boxed sequence diagram"),
+    ("gantt", "a boxed gantt"),
+    ("gitGraph", "a boxed git graph"),
+];
 
 impl Boxed {
     fn mark(glyphs: Glyphs) -> &'static str {
@@ -28,7 +38,9 @@ impl Draws for Boxed {
     }
 
     fn label(&self, _: &str, first_line: &str) -> Option<&'static str> {
-        first_line.starts_with("graph").then_some("a boxed graph")
+        TOLD.iter()
+            .find(|(opened, _)| first_line.starts_with(opened))
+            .map(|(_, told)| *told)
     }
 
     fn block(&self, source: &str, room: &Room) -> Result<Laid, Undrawn> {
@@ -94,6 +106,26 @@ fn a_diagram_drawn_is_laid_out_again_when_the_glyphs_change() {
     drawn.render.draws(Glyphs::Ascii);
     drawn.render.draw().unwrap();
     assert_eq!(drawn.rows(), ["# graph TD", "» y"]);
+}
+
+/// An answer with a sequence diagram, a gantt and a git graph in it.
+const TIMELINES: &str = "```mermaid\nsequenceDiagram\nA->>B: hi\n```\n\n\
+    ```mermaid\ngantt\nT :2026-01-01, 1d\n```\n\n\
+    ```mermaid\ngitGraph\ncommit\n```\n";
+
+#[test]
+fn a_timeline_drawn_is_laid_out_again_when_the_glyphs_change() {
+    let mut drawn = boxing();
+    drawn.answer(TIMELINES);
+    assert_eq!(drawn.rows(), ["▣ sequenceDiagram", "▣ gantt", "▣ gitGraph"]);
+
+    drawn.render.draws(Glyphs::Ascii);
+    drawn.render.draw().unwrap();
+    assert_eq!(drawn.rows(), ["# sequenceDiagram", "# gantt", "# gitGraph"]);
+
+    drawn.render.draws(Glyphs::Unicode);
+    drawn.render.draw().unwrap();
+    assert_eq!(drawn.rows(), ["▣ sequenceDiagram", "▣ gantt", "▣ gitGraph"]);
 }
 
 #[test]
@@ -164,6 +196,27 @@ fn a_diagram_being_streamed_is_named_by_its_drawer_in_the_live_foot() {
             "{summed} drawing a boxed graph {dot} 3 lines so far"
         ))
     );
+}
+
+#[test]
+fn a_timeline_being_streamed_is_named_by_its_drawer_in_the_live_foot() {
+    let (summed, dot) = (Glyphs::Unicode.summed(), Glyphs::Unicode.dot());
+    for (streamed, told) in [
+        (
+            "```mermaid\nsequenceDiagram\nA->>B: hi\n",
+            "a boxed sequence diagram",
+        ),
+        ("```mermaid\ngantt\nT :2026-01-01, 1d\n", "a boxed gantt"),
+        ("```mermaid\ngitGraph\ncommit\n", "a boxed git graph"),
+    ] {
+        let mut drawn = boxing();
+        drawn.render.stream(streamed).unwrap();
+        assert_eq!(
+            foot(&drawn),
+            Some(format!("{summed} drawing {told} {dot} 3 lines so far")),
+            "{streamed:?}"
+        );
+    }
 }
 
 #[test]

@@ -60,7 +60,12 @@ pub(super) const MAX_LOCAL_COMMANDS: usize = 16;
 /// reports a command that has been stopped as one that could not be, so this
 /// allows a second; a leader still not reapable after it is reported as failed
 /// cleanup, and left for a retry.
-const REAP: Duration = Duration::from_secs(1);
+///
+/// Public, with [`CANCELLED`], because the TeX engine that makes math pictures
+/// waits for a run's last word a fixed margin past its command time, and that
+/// margin is derived from these and the Linux broker's cancel grace: a test
+/// there compares them, so a change here is a change it sees.
+pub const REAP: Duration = Duration::from_secs(1);
 
 /// How often a command's status task looks at it. It bounds deadline
 /// overshoot, and how late an exit nobody asked about is seen, without
@@ -71,7 +76,10 @@ const SUPERVISE: Duration = Duration::from_millis(5);
 /// and reaped the command. A cancel waits for the leader's exit, which that
 /// kill has just brought about, so it ends within a poll of its own; one that
 /// has not ended by then is reported as failed cleanup and left for a retry.
-const CANCELLED: Duration = Duration::from_millis(250);
+///
+/// Public for the reason [`REAP`] is: the TeX engine's margin past a run's
+/// command time is derived from it.
+pub const CANCELLED: Duration = Duration::from_millis(250);
 
 const NO_VIOLATION: u8 = 0;
 const COMMAND_TIME_VIOLATION: u8 = 1;

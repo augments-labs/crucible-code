@@ -123,6 +123,9 @@ pub struct Conversation {
     /// When the plan behind each credential was last asked how much of its
     /// limits is used, and which credentials are not to be asked again.
     pub(crate) asks: crate::client::asking::Asks,
+    /// The one job the image route may have on the runner's tool worker at a
+    /// time, held by a read that has not returned yet.
+    pub(crate) images: crate::client::images::Lane,
     /// The model's questions asked without waiting, and the session they
     /// belong to, where the front end supplied a handle on them. Every
     /// replacement of [`Self::session`] goes through [`Self::replaced`],
@@ -161,6 +164,7 @@ impl Conversation {
             steps: None,
             web: crate::following::Following::default(),
             asks: crate::client::asking::Asks::default(),
+            images: crate::client::images::Lane::default(),
             questions: None,
         }
     }

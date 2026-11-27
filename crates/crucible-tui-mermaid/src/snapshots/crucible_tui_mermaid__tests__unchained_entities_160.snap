@@ -1,0 +1,14 @@
+---
+source: crates/crucible-tui-mermaid/src/tests.rs
+expression: shown
+---
+<Quiet>┌─ mermaid · er diagram</>                                                                                                                                         
+<Quiet>│ </>                          carries              records                 runs_on                                                                                
+<Quiet>│ </>┌──────────────────────┐           ┌────────┐           ┌───────────┐           ┌──────────────────────┐                                                      
+<Quiet>│ </>│      ATTACHMENT      ┤*─────────1├  TURN  ┤*─────────1├  SESSION  ┤1─────────1├        ROUTE         │                                                      
+<Quiet>│ </>├──────────────────────┤           └────────┘           └───────────┘           ├──────────────────────┤                                                      
+<Quiet>│ </>│  string path         │                                                        │  string driver       │                                                      
+<Quiet>│ </>│  string media_type   │                                                        │  string instance     │                                                      
+<Quiet>│ </>│  string hash         │                                                        │  int    generation   │                                                      
+<Quiet>│ </>└──────────────────────┘                                                        └──────────────────────┘                                                      
+<Quiet>└─</>

@@ -68,7 +68,15 @@ impl Emulator {
     /// Replays `bytes` onto the buffer.
     fn feed(&mut self, bytes: &str) {
         let mut left = bytes.chars().peekable();
+        // The marks after a picture's placeholder name its row and column,
+        // and go into the placeholder's cell as a terminal puts them.
+        let mut placed = false;
         while let Some(character) = left.next() {
+            let mark = placed && unicode_width::UnicodeWidthChar::width(character) == Some(0);
+            placed = character == '\u{10EEEE}' || mark;
+            if mark {
+                continue;
+            }
             match character {
                 '\r' => {
                     self.at.1 = 0;
@@ -90,9 +98,9 @@ impl Emulator {
                         };
                         self.control(ending, &parameters);
                     }
-                    Some(']') => {
+                    Some(opened @ (']' | '_' | 'P' | '^' | 'X')) => {
                         while let Some(byte) = left.next() {
-                            if byte == '\x07' {
+                            if byte == '\x07' && opened == ']' {
                                 break;
                             }
                             if byte == '\x1b' && left.peek() == Some(&'\\') {
@@ -4057,5 +4065,739 @@ fn a_native_hostile_path_or_line_in_a_drawn_fence_writes_no_escape() {
                 );
             }
         }
+    }
+}
+
+// Diagrams drawn as Kitty pictures, into a terminal's own buffer.
+
+mod pictures {
+    use super::*;
+    use crate::render::tests::pictures::{
+        DIAGRAM, FORMULA, Printed, commands, formula_picture, graphics_bytes, images, pictured_by,
+        pictured_in, placeholders, printed_bytes, printed_iterm2, printed_sixel, transmitted,
+    };
+    use crate::terminal::graphics;
+
+    /// A native renderer on `window` that draws pictures with `printed`,
+    /// with the box under it.
+    fn pictured(window: &Window, printed: Printed) -> Renderer<Window> {
+        let mut render = native(window);
+        pictured_by(&mut render, printed);
+        stands(&mut render);
+        render
+    }
+
+    /// An answer that is a diagram, and then enough lines to carry it into
+    /// the scrollback.
+    fn answered(render: &mut Renderer<Window>) {
+        render.stream(DIAGRAM).unwrap();
+        render.settle().unwrap();
+        for line in 0..12 {
+            render.commit(&format!("line {line}")).unwrap();
+        }
+        render.seal().unwrap();
+        stands(render);
+    }
+
+    #[test]
+    fn a_native_diagram_goes_into_the_scrollback_as_its_cells_and_is_sent_once() {
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, 300));
+        answered(&mut render);
+
+        let written = window.written();
+        let commands = commands(&written);
+        assert_eq!(transmitted(&commands), [(1, printed_bytes(0, 300))]);
+        assert_eq!(
+            commands
+                .iter()
+                .filter(|command| command.starts_with("a=p"))
+                .collect::<Vec<_>>(),
+            [&"a=p,U=1,i=1,c=3,r=2,q=2"]
+        );
+        // Nothing a terminal keeps in its scrollback is ever taken back.
+        assert!(commands.iter().all(|command| !command.starts_with("a=d")));
+        assert!(written.contains(&placeholders(1, 0, 3)), "{written:?}");
+        assert!(written.contains(&placeholders(1, 1, 3)), "{written:?}");
+        let back = window.scrollback();
+        assert_eq!(
+            back.iter()
+                .filter(|row| row.contains("\u{10EEEE}\u{10EEEE}\u{10EEEE}"))
+                .count(),
+            2,
+            "{back:#?}"
+        );
+    }
+
+    #[test]
+    fn a_native_session_put_back_sends_each_kept_diagram_into_the_scrollback_as_its_picture() {
+        // What goes into the scrollback while a session is put back stays
+        // as it went, so a diagram the cache kept goes as its picture, read
+        // as it is drawn; one it did not keep goes as its text, drawn by no
+        // drawer.
+        let window = Window::new(40, 8);
+        let (printed, read) = Printed::kept(3, 2, 300);
+        let mut render = pictured(&window, printed);
+
+        render.resuming(true);
+        for _ in 0..3 {
+            answered(&mut render);
+        }
+        render.resuming(false);
+
+        assert_eq!(read.get(), 3, "one read a diagram");
+        let written = window.written();
+        assert_eq!(
+            transmitted(&commands(&written)),
+            [
+                (1, printed_bytes(0, 300)),
+                (2, printed_bytes(1, 300)),
+                (3, printed_bytes(2, 300))
+            ]
+        );
+        let back = window.scrollback();
+        assert_eq!(
+            back.iter()
+                .filter(|row| row.contains("\u{10EEEE}\u{10EEEE}\u{10EEEE}"))
+                .count(),
+            6,
+            "{back:#?}"
+        );
+
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, 300));
+        render.resuming(true);
+        answered(&mut render);
+        render.resuming(false);
+        let written = window.written();
+        assert!(commands(&written).is_empty(), "{written:?}");
+        assert!(window.scrollback().iter().any(|row| row.contains("graph")));
+    }
+
+    /// A formula answered and told out, and the formula it was told as.
+    fn formula_answered(render: &mut Renderer<Window>) -> crate::terminal::graphics::Formula {
+        render.stream(FORMULA).unwrap();
+        render.settle().unwrap();
+        let told = render.formulas();
+        assert_eq!(told.len(), 1, "{told:?}");
+        told.into_iter().next().expect("one formula")
+    }
+
+    /// Enough lines after the formula to carry it into the scrollback.
+    fn sealed(render: &mut Renderer<Window>) {
+        for line in 0..12 {
+            render.commit(&format!("line {line}")).unwrap();
+        }
+        render.seal().unwrap();
+        stands(render);
+    }
+
+    #[test]
+    fn a_native_formula_picture_that_comes_while_its_text_is_live_replaces_it() {
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, 300));
+        let formula = formula_answered(&mut render);
+        window.take();
+
+        render.formula_made(&formula, formula_picture()).unwrap();
+        sealed(&mut render);
+
+        let written = window.written();
+        assert_eq!(
+            transmitted(&commands(&written)),
+            [(1, printed_bytes(0, 300))]
+        );
+        let back = window.scrollback();
+        assert!(!back.iter().any(|row| row.contains("x^2")), "{back:#?}");
+        assert_eq!(
+            back.iter()
+                .filter(|row| row.contains("\u{10EEEE}\u{10EEEE}\u{10EEEE}"))
+                .count(),
+            2,
+            "{back:#?}"
+        );
+    }
+
+    #[test]
+    fn a_native_formula_picture_that_comes_after_the_seal_is_drawn_by_the_next_rewrite() {
+        // The text went into the scrollback, where it stays: the picture is
+        // kept with its block, and the next settled resize draws it.
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, 300));
+        let formula = formula_answered(&mut render);
+        sealed(&mut render);
+        window.take();
+
+        render.formula_made(&formula, formula_picture()).unwrap();
+        let after = window.take();
+        assert!(commands(&after).is_empty(), "{after:?}");
+        assert!(
+            window.scrollback().iter().any(|row| row.contains("x^2")),
+            "{:#?}",
+            window.scrollback()
+        );
+
+        // Made when it came, and encoded again for the new width.
+        settles_at(&window, &mut render, 100, 8);
+        let rewritten = window.take();
+        assert_eq!(
+            transmitted(&commands(&rewritten)),
+            [(2, printed_bytes(1, 300))]
+        );
+        assert!(rewritten.contains(&placeholders(2, 0, 3)), "{rewritten:?}");
+        assert!(rewritten.contains(&placeholders(2, 1, 3)), "{rewritten:?}");
+        assert!(!window.scrollback().iter().any(|row| row.contains("x^2")));
+    }
+
+    #[test]
+    fn a_native_formula_picture_that_comes_after_the_seal_is_drawn_by_a_new_theme() {
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::worn(3, 2, 300));
+        let formula = formula_answered(&mut render);
+        sealed(&mut render);
+        render.formula_made(&formula, formula_picture()).unwrap();
+        window.take();
+
+        // A new theme is worn by the rewrite that gives the scrollback
+        // back, as an image already there is: encoded over its ground.
+        let light = Palette::resolve(true, Theme::Light, None, &|name| {
+            (name == "COLORTERM").then(|| "truecolor".to_owned())
+        });
+        render.wears(light);
+        settles_at(&window, &mut render, 100, 8);
+        let rewritten = window.take();
+        let [ground, _, _] = light.identity().ground();
+        let sent = transmitted(&commands(&rewritten));
+        let [(id, bytes)] = sent.as_slice() else {
+            panic!("one picture sent: {sent:?}");
+        };
+        assert_eq!(*bytes, printed_bytes(ground, 300));
+        assert!(
+            rewritten.contains(&placeholders(*id, 0, 3)),
+            "{rewritten:?}"
+        );
+        assert!(!window.scrollback().iter().any(|row| row.contains("x^2")));
+    }
+
+    #[test]
+    fn a_native_repaint_sends_every_kept_picture_again_though_it_is_in_the_scrollback() {
+        // What the frame after a child had the terminal draws: the cells in
+        // the scrollback are still there, and the picture they stand for may
+        // not be.
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, 300));
+        answered(&mut render);
+        window.take();
+
+        render.repaint().unwrap();
+        let again = window.take();
+        assert_eq!(transmitted(&commands(&again)), [(1, printed_bytes(0, 300))]);
+        assert!(commands(&again).contains(&"a=p,U=1,i=1,c=3,r=2,q=2"));
+    }
+
+    #[test]
+    fn a_native_window_settled_at_a_new_width_gives_the_picture_back_placed_again() {
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, 300));
+        answered(&mut render);
+        window.take();
+
+        settles_at(&window, &mut render, 100, 8);
+        let after = window.take();
+        assert_eq!(transmitted(&commands(&after)), [(2, printed_bytes(1, 300))]);
+        assert!(after.contains(&placeholders(2, 0, 3)), "{after:?}");
+        assert!(after.contains(&placeholders(2, 1, 3)), "{after:?}");
+        assert!(
+            commands(&after)
+                .iter()
+                .all(|command| !command.starts_with("a=d"))
+        );
+    }
+
+    #[test]
+    fn a_native_window_settled_at_a_new_height_leaves_a_picture_where_it_was_placed() {
+        // The scrollback still holds the cells the picture was placed in,
+        // laid for the height the window had then: a native session never
+        // places what it sent again, so the picture keeps those cells.
+        let window = Window::new(40, 14);
+        let mut render = pictured(&window, Printed::new(3, 6, 300));
+        answered(&mut render);
+        let id = render.record.picture_ids().next().unwrap();
+        assert_eq!(render.record.payload(id).unwrap().cells(), (3, 6));
+        window.take();
+
+        settles_at(&window, &mut render, 40, 8);
+        let after = window.take();
+        let named = format!(",i={id},");
+        assert!(
+            commands(&after).iter().all(|command| {
+                let placed_again = command.starts_with("a=p") && command.contains(&named);
+                !(command.starts_with("a=d") || placed_again)
+            }),
+            "{after:?}"
+        );
+        assert_eq!(render.record.picture_ids().collect::<Vec<_>>(), [id]);
+        assert_eq!(render.record.payload(id).unwrap().cells(), (3, 6));
+        assert!(transmitted(&commands(&after)).is_empty(), "{after:?}");
+    }
+
+    /// The protocols whose images are written over cells held for them.
+    const WRITTEN_OVER: [graphics::Protocol; 2] =
+        [graphics::Protocol::Iterm2, graphics::Protocol::Sixel];
+
+    /// What is written for the `made`th picture [`Printed`] makes, three by
+    /// two cells of `bytes` bytes, in `protocol`.
+    fn image(protocol: graphics::Protocol, made: u8, bytes: usize) -> String {
+        match protocol {
+            graphics::Protocol::Sixel => String::from_utf8(printed_sixel(made, bytes)).unwrap(),
+            graphics::Protocol::Iterm2 | graphics::Protocol::Kitty => {
+                printed_iterm2(made, bytes, 3, 2)
+            }
+        }
+    }
+
+    /// A native renderer on `window` that draws `protocol`'s pictures with
+    /// `printed`, with the box under it.
+    fn pictured_as(
+        window: &Window,
+        protocol: graphics::Protocol,
+        printed: Printed,
+    ) -> Renderer<Window> {
+        let mut render = native(window);
+        pictured_in(&mut render, protocol, printed);
+        stands(&mut render);
+        render
+    }
+
+    /// Each image `written` holds, where it was written straight after the
+    /// rows held for it: the cursor kept, taken up the picture's two rows to
+    /// its first column, and put back after it.
+    fn over_its_rows(written: &str) -> Vec<String> {
+        images(written)
+            .into_iter()
+            .map(|(before, image)| {
+                let after = &written[before.len() + image.len()..];
+                assert!(
+                    before.ends_with("\r\n\x1b7\x1b[2A\x1b[1G") && after.starts_with("\x1b8"),
+                    "not written over its rows: {:?} {:.40?}",
+                    &before[before.len().saturating_sub(40)..],
+                    after
+                );
+                image.to_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_native_iterm2_or_sixel_diagram_is_written_into_the_scrollback_once() {
+        for protocol in WRITTEN_OVER {
+            let window = Window::new(40, 8);
+            let mut render = pictured_as(&window, protocol, Printed::new(3, 2, 300));
+            render.stream(DIAGRAM).unwrap();
+            render.settle().unwrap();
+            stands(&mut render);
+            // Standing in the live region it is held blank, and not written.
+            let live = window.take();
+            assert!(images(&live).is_empty(), "{protocol:?}: {live:?}");
+
+            for line in 0..12 {
+                render.commit(&format!("line {line}")).unwrap();
+            }
+            render.seal().unwrap();
+            stands(&mut render);
+            let written = window.take();
+            assert_eq!(
+                over_its_rows(&written),
+                [image(protocol, 0, 300)],
+                "{protocol:?}"
+            );
+            assert!(!written.contains('\u{10EEEE}'), "{protocol:?}");
+            assert!(!written.contains("\x1b_G"), "{protocol:?}");
+
+            render.commit("one more").unwrap();
+            stands(&mut render);
+            assert!(images(&window.take()).is_empty(), "{protocol:?}");
+        }
+    }
+
+    #[test]
+    fn a_native_iterm2_or_sixel_picture_is_written_again_in_the_settled_rewrite() {
+        // Sixel's quantising is put off until the rewrite that gives the
+        // scrollback back at the new width, and then done.
+        for protocol in WRITTEN_OVER {
+            let window = Window::new(40, 8);
+            let mut render = pictured_as(&window, protocol, Printed::new(3, 2, 300));
+            answered(&mut render);
+            window.take();
+
+            settles_at(&window, &mut render, 100, 8);
+            let after = window.take();
+            assert_eq!(
+                over_its_rows(&after),
+                [image(protocol, 1, 300)],
+                "{protocol:?}"
+            );
+            assert_eq!(render.record.picture_ids().collect::<Vec<_>>(), [2]);
+        }
+    }
+
+    #[test]
+    fn a_native_theme_change_writes_the_iterm2_or_sixel_image_anew_in_the_settled_rewrite() {
+        // What is already in the scrollback keeps the colours it was written
+        // in; the rewrite that gives it back writes the image encoded anew,
+        // over the new theme's ground.
+        let dark = Palette::resolve(true, Theme::Dark, None, &|name| {
+            (name == "COLORTERM").then(|| "truecolor".to_owned())
+        });
+        let light = Palette::resolve(true, Theme::Light, None, &|name| {
+            (name == "COLORTERM").then(|| "truecolor".to_owned())
+        });
+        let [was, _, _] = dark.identity().ground();
+        let [now, _, _] = light.identity().ground();
+        assert_ne!(was, now);
+        for protocol in WRITTEN_OVER {
+            let window = Window::new(40, 8);
+            let mut render = pictured_as(&window, protocol, Printed::worn(3, 2, 300));
+            render.wears(dark);
+            answered(&mut render);
+            assert_eq!(
+                over_its_rows(&window.take()),
+                [image(protocol, was, 300)],
+                "{protocol:?}"
+            );
+
+            render.wears(light);
+            settles_at(&window, &mut render, 100, 8);
+            assert_eq!(
+                over_its_rows(&window.take()),
+                [image(protocol, now, 300)],
+                "{protocol:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_native_repaint_sends_no_iterm2_or_sixel_picture_the_kitty_way() {
+        // Only a Kitty picture is held by the terminal under a number, and
+        // only it is sent again: an image written over its rows is no
+        // command a terminal that confirmed another protocol could read.
+        for protocol in WRITTEN_OVER {
+            let window = Window::new(40, 8);
+            let mut render = pictured_as(&window, protocol, Printed::new(3, 2, 300));
+            answered(&mut render);
+            window.take();
+
+            render.repaint().unwrap();
+            let again = window.take();
+            assert!(!again.contains("\x1b_G"), "{protocol:?}: {again:?}");
+            assert!(!again.contains('\u{10EEEE}'), "{protocol:?}: {again:?}");
+        }
+    }
+
+    #[test]
+    fn a_native_session_writes_no_iterm2_or_sixel_image_without_colour_or_redirected() {
+        for protocol in WRITTEN_OVER {
+            for palette in [
+                Palette::resolve(false, Theme::Dark, None, &|_| None),
+                Palette::plain(),
+            ] {
+                let window = Window::new(40, 8);
+                let mut render = pictured_as(&window, protocol, Printed::new(3, 2, 300));
+                render.wears(palette);
+                answered(&mut render);
+                let written = window.written();
+                assert!(images(&written).is_empty(), "{protocol:?}: {written:?}");
+                assert!(written.contains("graph"), "{protocol:?}");
+            }
+
+            let window = Window::redirected(40, 8);
+            let mut render = native(&window);
+            pictured_in(&mut render, protocol, Printed::new(3, 2, 300));
+            render.stream(DIAGRAM).unwrap();
+            render.settle().unwrap();
+            drop(render);
+            let written = window.written();
+            assert!(images(&written).is_empty(), "{protocol:?}: {written:?}");
+            assert!(written.contains("graph"), "{protocol:?}");
+        }
+    }
+
+    #[test]
+    fn a_redirected_native_session_draws_its_diagram_as_text() {
+        let window = Window::redirected(40, 8);
+        let mut render = native(&window);
+        pictured_by(&mut render, Printed::new(3, 2, 300));
+        render.stream(DIAGRAM).unwrap();
+        render.settle().unwrap();
+        drop(render);
+
+        let written = window.written();
+        assert!(!written.contains("\x1b_G"), "{written:?}");
+        assert!(!written.contains('\u{10EEEE}'), "{written:?}");
+        assert!(written.contains("graph"), "{written:?}");
+    }
+
+    /// Draws the frames a session's input waits draw while a picture is
+    /// still going out, at most `most` of them, and gives back what each
+    /// wrote.
+    fn sent_out(window: &Window, render: &mut Renderer<Window>, most: usize) -> Vec<String> {
+        let mut frames = Vec::new();
+        for _ in 0..most {
+            if render.rests_in().is_none() {
+                break;
+            }
+            render.repose().unwrap();
+            frames.push(window.take());
+        }
+        frames
+    }
+
+    #[test]
+    fn a_native_picture_larger_than_a_frame_may_send_goes_out_over_the_native_frames_after_it() {
+        // The diagram stands in the region, under the box, and nothing after
+        // it changes a row: the frames after it are drawn for the picture.
+        let bytes = 200 * 1024;
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, bytes));
+        render.stream(DIAGRAM).unwrap();
+        render.settle().unwrap();
+        stands(&mut render);
+        let mut written = window.take();
+        assert_eq!(
+            render.rests_in(),
+            Some(Duration::ZERO),
+            "a picture still being sent did not wake the next wait"
+        );
+
+        for frame in sent_out(&window, &mut render, 64) {
+            assert!(
+                !commands(&frame).is_empty(),
+                "a native frame owed part of a picture sent none of it: {frame:.80?}"
+            );
+            written.push_str(&frame);
+        }
+        assert_eq!(render.rests_in(), None, "the picture was never sent whole");
+
+        for frame in written.split(frame::BEGIN_SYNC).skip(1) {
+            assert!(
+                graphics_bytes(frame) <= 64 * 1024,
+                "a native frame sent {} bytes of pictures",
+                graphics_bytes(frame)
+            );
+        }
+        let commands = commands(&written);
+        for command in &commands {
+            let data = command.split_once(';').map_or("", |(_, data)| data);
+            assert!(data.len() <= 4096, "a chunk of {} bytes", data.len());
+        }
+        let [first, middle @ .., last, placement] = commands.as_slice() else {
+            panic!("{} commands", commands.len());
+        };
+        assert!(first.starts_with("a=t,f=100,i=1,q=2,m=1;"));
+        assert!(!middle.is_empty(), "the picture went out in one chunk");
+        for command in middle {
+            assert!(command.starts_with("m=1,q=2;"), "{command:.32}");
+        }
+        assert!(last.starts_with("m=0,q=2;"));
+        assert_eq!(*placement, "a=p,U=1,i=1,c=3,r=2,q=2");
+        assert_eq!(
+            transmitted(&commands),
+            [(1, printed_bytes(0, bytes))],
+            "the picture did not arrive whole"
+        );
+    }
+
+    #[test]
+    fn a_native_region_closed_part_way_through_sending_a_picture_ends_it() {
+        // The shell writes next, and the terminal would read it as more of
+        // the picture.
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, 200 * 1024));
+        render.stream(DIAGRAM).unwrap();
+        render.settle().unwrap();
+        stands(&mut render);
+        let mut written = window.take();
+        assert_eq!(render.rests_in(), Some(Duration::ZERO), "sent whole");
+
+        render.closes().unwrap();
+        written.push_str(&window.take());
+
+        let commands = commands(&written);
+        assert!(
+            commands
+                .first()
+                .is_some_and(|first| first.starts_with("a=t,f=100,i=1,q=2,m=1;"))
+        );
+        assert_eq!(
+            commands.last(),
+            Some(&"m=0,q=2;"),
+            "left open: {commands:.32?}"
+        );
+        assert!(!commands.iter().any(|command| command.starts_with("a=p")));
+        assert_eq!(render.rests_in(), None, "still owed after closing");
+    }
+
+    #[test]
+    fn a_native_picture_encoded_again_or_drawn_as_text_is_never_deleted() {
+        // The scrollback's cells still name the number the picture went out
+        // under, and the terminal draws them from what it holds.
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, 300));
+        render.stream(DIAGRAM).unwrap();
+        render.settle().unwrap();
+        stands(&mut render);
+        let mut written = window.take();
+        assert!(written.contains("\x1b_Ga=t,f=100,i=1,"), "{written:?}");
+
+        render.wears(Palette::resolve(true, Theme::Light, None, &|name| {
+            (name == "COLORTERM").then(|| "truecolor".to_owned())
+        }));
+        render.commit("after the theme").unwrap();
+        stands(&mut render);
+        written.push_str(&window.take());
+        render.diagrams(crate::drawing::Mode::Text);
+        render.commit("after the mode").unwrap();
+        stands(&mut render);
+        written.push_str(&window.take());
+
+        assert!(
+            commands(&written)
+                .iter()
+                .any(|command| command.starts_with("a=t,f=100,i=2,")),
+            "never encoded again: {:?}",
+            commands(&written)
+        );
+        assert!(!written.contains("a=d"), "{:?}", commands(&written));
+    }
+
+    #[test]
+    fn inside_tmux_every_native_command_is_wrapped_for_it() {
+        // Larger than a frame sends, so its first chunk, the chunks after
+        // it, its last and its placement all go out.
+        let bytes = 100 * 1024;
+        let window = Window::new(40, 8);
+        let mut render = native(&window);
+        render.passes_through(crate::graphics::Passthrough::On);
+        pictured_by(&mut render, Printed::new(3, 2, bytes));
+        stands(&mut render);
+        answered(&mut render);
+        sent_out(&window, &mut render, 64);
+        assert_eq!(render.rests_in(), None, "the picture was never sent whole");
+
+        let written = window.written();
+        let wrapped = written.matches("\x1bPtmux;\x1b\x1b_G").count();
+        assert!(wrapped > 3, "{wrapped} wrapped commands");
+        assert_eq!(
+            written.matches("\x1b_G").count(),
+            wrapped,
+            "a command went out unwrapped"
+        );
+        assert_eq!(
+            written.matches("\x1b\x1b\\\x1b\\").count(),
+            wrapped,
+            "a wrapped command was not closed for tmux and then for itself"
+        );
+        // Unwrapped, it is the picture whole and its placement.
+        let unwrapped = written
+            .replace("\x1bPtmux;\x1b\x1b_G", "\x1b_G")
+            .replace("\x1b\x1b\\\x1b\\", "\x1b\\");
+        let commands = commands(&unwrapped);
+        assert_eq!(transmitted(&commands), [(1, printed_bytes(0, bytes))]);
+        assert!(
+            commands.contains(&"a=p,U=1,i=1,c=3,r=2,q=2"),
+            "{commands:.40?}"
+        );
+        // The cells are text, which tmux draws itself.
+        assert!(written.contains(&placeholders(1, 0, 3)), "{written:.80?}");
+    }
+
+    #[test]
+    fn no_native_picture_is_drawn_where_colour_is_not_written() {
+        // `output.color never`, and `NO_COLOR`, on a terminal that confirmed
+        // Kitty: the diagram is its text, and nothing of a picture is sent,
+        // whether colour was off from the start or went off once the diagram
+        // stood in the region as a picture.
+        for palette in [
+            Palette::resolve(false, crate::Theme::Dark, None, &|_| None),
+            Palette::plain(),
+        ] {
+            let window = Window::new(40, 8);
+            let mut render = pictured(&window, Printed::new(3, 2, 300));
+            render.wears(palette);
+            answered(&mut render);
+            render.closes().unwrap();
+
+            let written = window.written();
+            assert!(!written.contains("\x1b_G"), "{written:?}");
+            assert!(!written.contains('\u{10EEEE}'), "{written:?}");
+            assert!(written.contains("graph"), "{written:?}");
+            assert!(
+                window.scrollback().iter().any(|row| row.contains("graph")),
+                "{:#?}",
+                window.scrollback()
+            );
+
+            let window = Window::new(40, 8);
+            let mut render = pictured(&window, Printed::new(3, 2, 300));
+            render.stream(DIAGRAM).unwrap();
+            render.settle().unwrap();
+            stands(&mut render);
+            assert!(
+                window.take().contains('\u{10EEEE}'),
+                "no picture to take off"
+            );
+            render.wears(palette);
+            for line in 0..12 {
+                render.commit(&format!("line {line}")).unwrap();
+            }
+            render.seal().unwrap();
+            stands(&mut render);
+            render.closes().unwrap();
+
+            let written = window.written();
+            assert!(!written.contains("\x1b_G"), "{written:?}");
+            assert!(!written.contains('\u{10EEEE}'), "{written:?}");
+            assert!(
+                window.scrollback().iter().any(|row| row.contains("graph")),
+                "{:#?}",
+                window.scrollback()
+            );
+        }
+    }
+
+    #[test]
+    fn a_native_picture_keeps_its_size_whatever_is_asked_of_it() {
+        // Native mode has no click to land on a picture and no Enter that
+        // resizes one: every picture is shown at Fit, and stays there.
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, 300));
+        answered(&mut render);
+        window.take();
+
+        let id = render.record.picture_ids().next().unwrap();
+        let cells = render.record.payload(id).unwrap().cells();
+        assert_eq!(cells, (3, 2));
+        let lines: Vec<usize> = render.record.sources().map(|source| source.line).collect();
+        assert!(!lines.is_empty());
+        for line in lines {
+            assert!(!render.resizable(line));
+            assert!(!render.resizes(line).unwrap());
+        }
+        for row in 0..8 {
+            for column in 0..40 {
+                assert_eq!(render.pictured(row, column), None);
+            }
+            assert_eq!(render.labelled(row), None);
+        }
+        stands(&mut render);
+        assert_eq!(render.record.picture_ids().collect::<Vec<_>>(), [id]);
+        assert_eq!(render.record.payload(id).unwrap().cells(), cells);
+        let after = window.take();
+        assert!(
+            commands(&after)
+                .iter()
+                .all(|command| !command.starts_with("a=")),
+            "{after:?}"
+        );
     }
 }

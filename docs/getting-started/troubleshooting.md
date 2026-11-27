@@ -568,6 +568,12 @@ not carrying long lines on; `reset`, or `printf '\e[?7h'`, turns it back on.
 Only the screen is cut: the session file keeps the whole row. A terminal or font
 that draws these symbols one column wide shows all of it.
 
+A terminal that draws box drawing such as `─` and `│`, or marks such as `›`,
+`•` and `●`, two columns wide, as some do where Unicode leaves the width to the
+terminal, pushes borders and rows past the edge the same way. Set
+`{"output":{"glyphs":"ascii"}}`, which draws them with ASCII characters. See
+[`output`](../configuration/configuration.md#output).
+
 ### `kitty · not available` on the `/settings` Images row
 
 The protocol the Images row names is not one the terminal support table draws

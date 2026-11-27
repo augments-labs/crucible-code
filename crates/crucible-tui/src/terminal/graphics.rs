@@ -49,12 +49,37 @@
 //! sent that much. What a user types while the exchange reads is consumed with
 //! the replies and never reaches the prompt.
 //!
+//! **What is sent is bounded and placed by the cells.** A picture goes to
+//! the terminal once, as a Kitty transmission and a virtual placement
+//! (`Sent`), and is shown where cells of `PLACEHOLDER` name it
+//! (`placed`): those cells are text, so they scroll, fold and clear with
+//! the rows around them, and a scrollback keeps them. A frame sends at most
+//! 64 KiB of commands, in chunks of at most 4096 encoded bytes, and a
+//! transmission it cut off goes on in the frames after it; one command is
+//! never written inside another. Inside tmux, where it passes sequences
+//! through, each command is wrapped for it. What the terminal holds is
+//! forgotten whenever it may have lost it, and a picture is sent again when
+//! its cells are next drawn. Nothing is sent where nothing is drawn: output
+//! redirected, no colour written.
+//!
+//! **An iTerm2 or Sixel image is written over cells left blank for it.**
+//! Neither protocol has cells that name a picture, so the renderer leaves the
+//! picture's cells blank, places the cursor on the first of them, and writes
+//! the image whole (`Sent::image`): iTerm2's as an inline file of the PNG in
+//! base64 sized to those cells, Sixel's as the encoded string itself, which is
+//! written only when it opens as Sixel and nothing between its opening and
+//! its terminator is anything but a printable character, so a picture can
+//! never close it early, carry a sequence of its own or ask the terminal for
+//! an answer. Inside tmux, where it passes sequences
+//! through, the image is wrapped for it as a Kitty command is.
+//!
 //! **The table is what was seen.** [`support`] holds the cells of the terminal
 //! support table that drew right in every step of their screen mode; every
 //! other cell is disabled, because a disabled cell is output that was seen to
 //! draw wrongly or was never seen at all. A terminal is identified only by what
 //! the table identified it by.
 
+use std::collections::VecDeque;
 use std::fmt;
 #[cfg(unix)]
 use std::io;
@@ -65,6 +90,10 @@ use std::time::Duration;
 use std::time::Instant;
 
 use crate::ScreenMode;
+use crate::chrome::Undrawn;
+use crate::color::PaletteIdentity;
+use crate::drawing::{Bucket, Svg};
+use crate::record::KeptPicture;
 
 /// How a picture is put on a terminal's screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -623,11 +652,18 @@ impl Deadline {
 }
 
 /// A picture's bytes, encoded for one protocol, and the cells it covers.
+///
+/// It covers the cells its pixels reach into, and fewer where it is shown in
+/// fewer rows where its size says so: Kitty and iTerm2 scale the one image
+/// into whatever cells it is placed in, so a new size is the same bytes.
 pub struct Payload {
     protocol: Protocol,
     bytes: Vec<u8>,
-    columns: u16,
-    rows: u16,
+    pixels: (u32, u32),
+    /// The cells its pixels reach into, across and down.
+    natural: (u16, u16),
+    /// The cells it is shown in, across and down.
+    shown: (u16, u16),
 }
 
 impl Payload {
@@ -644,11 +680,13 @@ impl Payload {
             let cells = pixels.div_ceil(u32::from(size.max(1)));
             u16::try_from(cells).unwrap_or(u16::MAX)
         };
+        let natural = (across(width, cell.width), across(height, cell.height));
         Self {
             protocol,
             bytes,
-            columns: across(width, cell.width),
-            rows: across(height, cell.height),
+            pixels: (width, height),
+            natural,
+            shown: natural,
         }
     }
 
@@ -664,10 +702,188 @@ impl Payload {
         &self.bytes
     }
 
-    /// The cells the picture covers, across and down.
+    /// The cells the picture is shown in, across and down.
     #[must_use]
     pub const fn cells(&self) -> (u16, u16) {
-        (self.columns, self.rows)
+        self.shown
+    }
+
+    /// The picture's size in pixels, across and down.
+    #[must_use]
+    pub const fn pixels(&self) -> (u32, u32) {
+        self.pixels
+    }
+
+    /// Shows the picture in at most `rows` rows, and never at least one, as
+    /// many columns fewer as keep its shape; never in more cells than its
+    /// pixels reach into. A Sixel bitmap is drawn cell for cell, so it keeps
+    /// the cells it was encoded for and a new size encodes it again.
+    pub(crate) fn shown_in(&mut self, rows: u16) {
+        self.shown = self.shown_at(rows);
+    }
+
+    /// The cells [`Payload::shown_in`] would show it in for `rows`.
+    pub(crate) fn shown_at(&self, rows: u16) -> (u16, u16) {
+        let (across, down) = self.natural;
+        if self.protocol == Protocol::Sixel || down <= rows {
+            return self.natural;
+        }
+        let rows = rows.max(1);
+        let narrowed = (u32::from(across) * u32::from(rows)).div_ceil(u32::from(down));
+        (u16::try_from(narrowed).unwrap_or(across).max(1), rows)
+    }
+}
+
+/// What a kept picture was drawn from, so it can be worn again without its
+/// drawer: a drawer's picture, or an encoded image a cache gave back.
+#[derive(Clone, PartialEq, Eq)]
+pub enum Form {
+    /// A drawer's picture, its inks still named by slot.
+    Svg(Svg),
+    /// A PNG, as the cache held it.
+    Png(Vec<u8>),
+}
+
+impl Form {
+    /// How many bytes it holds.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Svg(svg) => svg.len(),
+            Self::Png(bytes) => bytes.len(),
+        }
+    }
+
+    /// Whether it holds nothing.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+// A picture's text or bytes in a log are noise, and the text is model output.
+impl fmt::Debug for Form {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Svg(svg) => f.debug_tuple("Svg").field(&svg.len()).finish(),
+            Self::Png(bytes) => f.debug_tuple("Png").field(&bytes.len()).finish(),
+        }
+    }
+}
+
+/// A display formula that closed in a block shown as its text until a
+/// picture is made of it: the line it is on and the formula it holds.
+///
+/// The renderer hands one out for each formula it would show as a picture,
+/// and takes it back with the picture made of it; nothing outside this crate
+/// makes one, so a picture handed back names a block the renderer told of.
+/// The line is a block's pending picture key: it names that block for as
+/// long as the transcript holds it, and nothing once it has gone.
+///
+/// One a session put back on a full screen tells out carries the key its
+/// picture would have been kept under, and is only to be read from what an
+/// earlier session kept: putting a session back makes nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Formula {
+    /// The record line the block is, counted from the first of the session.
+    pub(crate) line: usize,
+    /// The formula, as the block's drawer was handed it.
+    pub(crate) source: Box<str>,
+    /// Where the block was put back, the key its kept picture is under.
+    pub(crate) kept: Option<PictureKey>,
+}
+
+impl Formula {
+    /// The formula, as the block's drawer was handed it.
+    #[must_use]
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    /// Where the block was put back, the key the picture an earlier session
+    /// kept of it is under: it is answered with that picture or stays its
+    /// text, and is never made.
+    #[must_use]
+    pub const fn kept(&self) -> Option<&PictureKey> {
+        self.kept.as_ref()
+    }
+}
+
+/// What makes the display formulas a renderer tells of into pictures, away
+/// from the drawing thread, and hands each picture back.
+///
+/// The renderer is its only caller, on the drawing thread: it tells each
+/// formula as its block closes, says when a new turn starts, and, while any
+/// formula told has no answer, looks for one each time an input wait rests,
+/// so a picture made while nothing else is drawn is still shown. Nothing here
+/// may wait: what makes a picture does it elsewhere.
+pub trait Formulas: fmt::Debug {
+    /// Takes `formula`, to be made into a picture and answered; or, where it
+    /// was [`Formula::kept`], read and answered, and never made.
+    fn told(&mut self, formula: Formula);
+
+    /// Says a new turn started: what an earlier turn told and has not begun
+    /// to make stays its text.
+    fn turns(&mut self);
+
+    /// The next formula answered, with its picture, or `None` where it stays
+    /// its text; nothing when no answer has come.
+    fn answered(&mut self) -> Option<(Formula, Option<Svg>)>;
+
+    /// Whether a formula told has not been answered yet.
+    fn pending(&self) -> bool;
+}
+
+/// Everything a picture's bytes depend on besides its source: what kind of
+/// block it is, the window's width bucket, the palette it is worn in, the
+/// protocol it is encoded for and the cell it is fitted to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PictureKey {
+    /// The kind of block.
+    pub kind: crate::markdown::Kind,
+    /// The width the picture is fitted to, to the nearest bucket.
+    pub bucket: Bucket,
+    /// The palette its inks are worn from.
+    pub palette: PaletteIdentity,
+    /// The protocol its payload is encoded for.
+    pub protocol: Protocol,
+    /// The cell its payload is placed in.
+    pub cell: Cell,
+    /// The most rows its payload is encoded to cover.
+    pub rows: u16,
+}
+
+/// What turns a block's picture into a payload: the composition's, over a
+/// rasteriser this crate does not name.
+///
+/// Asked on the drawing thread, when a block closes and when its key changes.
+/// [`Pictures::cached`] is asked first, and a drawer's picture is drawn only
+/// when it answers nothing; a kind with no picture of its own, an image, is
+/// never asked for.
+pub trait Pictures {
+    /// The form and payload kept for `source` under `key`, where there is one.
+    fn cached(&mut self, source: &str, key: &PictureKey) -> Option<(Form, Payload)>;
+
+    /// `form`, drawn for `source`, rasterised and encoded under `key`, in the
+    /// inks [`PaletteIdentity::inks`] gives by slot class.
+    ///
+    /// # Errors
+    ///
+    /// Why it is drawn as text instead.
+    fn make(&mut self, source: &str, key: &PictureKey, form: &Form) -> Result<Payload, Undrawn>;
+
+    /// A kept picture, encoded again under `key`, from the form it keeps and
+    /// without its drawer: what a new palette or a new width asks for.
+    ///
+    /// # Errors
+    ///
+    /// Why it is drawn as text instead.
+    fn reencode(&mut self, kept: &KeptPicture, key: &PictureKey) -> Result<Payload, Undrawn>;
+
+    /// Told when a session put back starts and stops being drawn, so what is
+    /// kept beyond this session is asked for only while it is.
+    fn resuming(&mut self, resuming: bool) {
+        let _ = resuming;
     }
 }
 
@@ -676,11 +892,460 @@ impl fmt::Debug for Payload {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Payload")
             .field("protocol", &self.protocol)
+            .field("pixels", &self.pixels)
             .field("bytes", &self.bytes.len())
-            .field("columns", &self.columns)
-            .field("rows", &self.rows)
+            .field("natural", &self.natural)
+            .field("shown", &self.shown)
             .finish()
     }
+}
+
+/// The character Kitty places a picture's cells with, which no text from a
+/// model may carry to the terminal.
+pub(crate) const PLACEHOLDER: char = '\u{10EEEE}';
+
+/// The marks that name a placeholder cell's row and column of its picture,
+/// the first naming 0: Kitty's own table, as its protocol gives it.
+pub(crate) const DIACRITICS: [char; 64] = [
+    '\u{0305}', '\u{030D}', '\u{030E}', '\u{0310}', '\u{0312}', '\u{033D}', '\u{033E}', '\u{033F}',
+    '\u{0346}', '\u{034A}', '\u{034B}', '\u{034C}', '\u{0350}', '\u{0351}', '\u{0352}', '\u{0357}',
+    '\u{035B}', '\u{0363}', '\u{0364}', '\u{0365}', '\u{0366}', '\u{0367}', '\u{0368}', '\u{0369}',
+    '\u{036A}', '\u{036B}', '\u{036C}', '\u{036D}', '\u{036E}', '\u{036F}', '\u{0483}', '\u{0484}',
+    '\u{0485}', '\u{0486}', '\u{0487}', '\u{0592}', '\u{0593}', '\u{0594}', '\u{0595}', '\u{0597}',
+    '\u{0598}', '\u{0599}', '\u{059C}', '\u{059D}', '\u{059E}', '\u{059F}', '\u{05A0}', '\u{05A1}',
+    '\u{05A8}', '\u{05A9}', '\u{05AB}', '\u{05AC}', '\u{05AF}', '\u{05C4}', '\u{0610}', '\u{0611}',
+    '\u{0612}', '\u{0613}', '\u{0614}', '\u{0615}', '\u{0616}', '\u{0617}', '\u{0657}', '\u{0658}',
+];
+
+/// The most bytes of graphics commands one frame writes, wrappers included:
+/// a picture larger than this goes out over the frames after it, so a frame
+/// that sends one still draws the text around it at once.
+const MOST_SENT_A_FRAME: usize = 64 * 1024;
+
+/// The most base64 one transmission command carries, as Kitty's protocol
+/// bounds a chunk.
+const MOST_CHUNK: usize = 4096;
+
+/// The most pictures the terminal is counted as holding. Twice what the
+/// record keeps, so every kept picture fits with room for those it replaced;
+/// one counted out is sent again if it is shown again.
+const MOST_HELD: usize = 2 * crate::record::MOST_KEPT_IMAGES;
+
+/// What has been sent to a Kitty terminal, and what it is still owed.
+///
+/// A frame says which pictures it shows with [`Sent::wants`], and
+/// [`Sent::write`] sends those the terminal does not hold: each transmitted
+/// once, in chunks, and then given the virtual placement its placeholder
+/// cells name. A transmission is never interleaved with another command, so
+/// one cut short by a frame's budget is carried on by the next frame before
+/// anything else is sent, and one whose picture the record has let go of is
+/// ended with an empty last chunk. A picture held that is shown in other
+/// cells now, as one whose size the reader changed, is not sent again: its
+/// placement is deleted and one for the new cells given, between
+/// transmissions. Which those are is looked for only after
+/// [`Sent::reshaped`] says some picture's cells changed, since looking a
+/// picture up is a walk over everything the record holds.
+///
+/// A full screen has the terminal delete the pictures it is counted as
+/// holding once the record lets them go, encoded again under a new number or
+/// drawn as text, since nothing on that screen names them again
+/// ([`Sent::keeps`]); one the terminal is told of while it reads another is
+/// deleted after it. Some are left to the terminal's own quota: one let go
+/// of after it was sent whole but before it was placed, which is never
+/// counted as held; the kept pictures a repaint does not show again, since
+/// [`Sent::forget`] counts none as held; and one let go of while
+/// [`MOST_HELD`] deletes are already owed. Nothing a native session sent is
+/// deleted, since the cells in the
+/// terminal's scrollback still name it. What the terminal holds of one grows
+/// by each diagram drawn and, each time the width's bucket, the palette or
+/// the cell changes, by the at most
+/// [`MOST_KEPT_IMAGES`](crate::record::MOST_KEPT_IMAGES) pictures the record
+/// keeps; it is bounded by the terminal's own quota, past which the terminal
+/// lets the oldest go and their cells show nothing.
+#[derive(Debug, Default)]
+pub(crate) struct Sent {
+    /// What the terminal holds, oldest first, at most [`MOST_HELD`], and
+    /// the cells each was last placed in.
+    held: VecDeque<(u32, (u16, u16))>,
+    /// What a frame showed and the terminal does not hold, oldest first.
+    waiting: VecDeque<u32>,
+    /// The picture going out, and how far.
+    sending: Option<Sending>,
+    /// What the terminal holds that nothing will show again, oldest first,
+    /// at most [`MOST_HELD`].
+    deleting: VecDeque<u32>,
+    /// Whether a transmission was cut off and its last chunk is still owed.
+    ending: bool,
+    /// Whether a picture held may be shown in other cells than it was
+    /// placed in, until every one that is has been placed again.
+    reshaped: bool,
+    /// Whether every command is wrapped for tmux to pass through.
+    passthrough: bool,
+}
+
+/// A picture part way out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Sending {
+    id: u32,
+    /// How many of its bytes are sent.
+    sent: usize,
+    /// Whether they all are, and only its placement is left.
+    whole: bool,
+}
+
+impl Sent {
+    /// Wraps every command for tmux to pass through, or stops.
+    pub(crate) fn passes_through(&mut self, passthrough: Passthrough) {
+        self.passthrough = passthrough == Passthrough::On;
+    }
+
+    /// Says a frame shows picture `id`: sent by the next [`Sent::write`]
+    /// unless the terminal holds it or it is already on its way.
+    pub(crate) fn wants(&mut self, id: u32) {
+        let going = self.sending.is_some_and(|sending| sending.id == id);
+        if going
+            || self.held.iter().any(|&(held, _)| held == id)
+            || self.waiting.contains(&id)
+            || self.waiting.len() >= MOST_HELD
+        {
+            return;
+        }
+        self.waiting.push_back(id);
+    }
+
+    /// Has the terminal delete every picture it holds that `kept` does not
+    /// name, by the next [`Sent::write`]: for a full screen, where nothing
+    /// shows a picture the record has let go of again.
+    pub(crate) fn keeps(&mut self, kept: impl IntoIterator<Item = u32>) {
+        let kept: Vec<u32> = kept.into_iter().collect();
+        let deleting = &mut self.deleting;
+        self.held.retain(|&(id, _)| {
+            if kept.contains(&id) {
+                return true;
+            }
+            if deleting.len() < MOST_HELD {
+                deleting.push_back(id);
+            }
+            false
+        });
+    }
+
+    /// Says a picture held may be shown in other cells than it was placed
+    /// in: the next [`Sent::write`] looks at every one held and places again
+    /// each that is.
+    pub(crate) fn reshaped(&mut self) {
+        self.reshaped = true;
+    }
+
+    /// Whether anything is still owed to the terminal.
+    pub(crate) fn pending(&self) -> bool {
+        self.ending
+            || self.sending.is_some()
+            || !self.waiting.is_empty()
+            || !self.deleting.is_empty()
+    }
+
+    /// Counts nothing as held: the terminal may have lost every picture, as
+    /// when a child had it or its alternate screen was given back and taken
+    /// again. A transmission the terminal is part way through reading is ended
+    /// first; one cut off before its first chunk was never begun.
+    pub(crate) fn forget(&mut self) {
+        self.held.clear();
+        self.waiting.clear();
+        if self
+            .sending
+            .take()
+            .is_some_and(|sending| sending.sent > 0 && !sending.whole)
+        {
+            self.ending = true;
+        }
+    }
+
+    /// Appends to `into` the end of a transmission the terminal is part way
+    /// through reading, and the deletes owed, and owes it nothing more: for a
+    /// renderer giving the terminal up, after which what is written is not
+    /// read as more of a picture. A picture not yet begun is not begun, and
+    /// one whose bytes are all out is not placed.
+    pub(crate) fn end(&mut self, into: &mut String) {
+        let open = self
+            .sending
+            .take()
+            .is_some_and(|sending| sending.sent > 0 && !sending.whole);
+        if self.ending || open {
+            self.command(into, "m=0,q=2", Some(&[]));
+        }
+        self.ending = false;
+        self.waiting.clear();
+        while let Some(id) = self.deleting.pop_front() {
+            self.command(into, &format!("a=d,d=I,i={id},q=2"), None);
+        }
+    }
+
+    /// Appends to `into` the commands owed, up to [`MOST_SENT_A_FRAME`] of
+    /// them, with `payload` giving each picture's bytes by number.
+    pub(crate) fn write<'a>(
+        &mut self,
+        payload: impl Fn(u32) -> Option<&'a Payload>,
+        into: &mut String,
+    ) {
+        let start = into.len();
+        if self.ending {
+            self.command(into, "m=0,q=2", Some(&[]));
+            self.ending = false;
+        }
+        loop {
+            let mut sending = if let Some(sending) = self.sending.take() {
+                sending
+            } else {
+                // Between transmissions, the one place another command goes.
+                while let Some(&id) = self.deleting.front() {
+                    let keys = format!("a=d,d=I,i={id},q=2");
+                    if self.cost(&keys, None) > room(into, start) {
+                        return;
+                    }
+                    self.command(into, &keys, None);
+                    self.deleting.pop_front();
+                }
+                if !self.placed_again(&payload, into, start) {
+                    return;
+                }
+                let Some(id) = self.waiting.pop_front() else {
+                    return;
+                };
+                Sending {
+                    id,
+                    sent: 0,
+                    whole: false,
+                }
+            };
+            let Some(payload) = payload(sending.id) else {
+                // Let go of mid-way: ended, so the next command is not read
+                // as more of it.
+                if sending.sent > 0 && !sending.whole {
+                    self.command(into, "m=0,q=2", Some(&[]));
+                }
+                continue;
+            };
+            let bytes = payload.bytes();
+            while !sending.whole {
+                let left = bytes.get(sending.sent..).unwrap_or_default();
+                let take = left.len().min(MOST_CHUNK / 4 * 3);
+                let more = u8::from(take < left.len());
+                let keys = if sending.sent == 0 {
+                    format!("a=t,f=100,i={},q=2,m={more}", sending.id)
+                } else {
+                    format!("m={more},q=2")
+                };
+                let chunk = left.get(..take).unwrap_or_default();
+                if self.cost(&keys, Some(take)) > room(into, start) {
+                    self.sending = Some(sending);
+                    return;
+                }
+                self.command(into, &keys, Some(chunk));
+                sending.sent += take;
+                sending.whole = more == 0;
+            }
+            let (columns, rows) = payload.cells();
+            let keys = format!("a=p,U=1,i={},c={columns},r={rows},q=2", sending.id);
+            if self.cost(&keys, None) > room(into, start) {
+                self.sending = Some(sending);
+                return;
+            }
+            self.command(into, &keys, None);
+            self.held.push_back((sending.id, (columns, rows)));
+            if self.held.len() > MOST_HELD {
+                self.held.pop_front();
+            }
+        }
+    }
+
+    /// Appends to `into` a placement in its new cells for each picture held
+    /// that is shown in other cells than it was placed in, its old one
+    /// deleted first and its bytes kept, so a new size sends no image again;
+    /// answers whether every one owed fitted in the frame begun at `start`.
+    fn placed_again<'a>(
+        &mut self,
+        payload: &impl Fn(u32) -> Option<&'a Payload>,
+        into: &mut String,
+        start: usize,
+    ) -> bool {
+        if !self.reshaped {
+            return true;
+        }
+        for at in 0..self.held.len() {
+            let Some(&(id, placed)) = self.held.get(at) else {
+                break;
+            };
+            let Some((columns, rows)) = payload(id).map(Payload::cells) else {
+                continue;
+            };
+            if (columns, rows) == placed {
+                continue;
+            }
+            let unplaced = format!("a=d,d=i,i={id},q=2");
+            let keys = format!("a=p,U=1,i={id},c={columns},r={rows},q=2");
+            if self.cost(&unplaced, None) + self.cost(&keys, None) > room(into, start) {
+                return false;
+            }
+            self.command(into, &unplaced, None);
+            self.command(into, &keys, None);
+            if let Some(held) = self.held.get_mut(at) {
+                held.1 = (columns, rows);
+            }
+        }
+        self.reshaped = false;
+        true
+    }
+
+    /// Appends to `into` the image `payload` is, written whole where the
+    /// cursor stands over cells held blank for it, and answers whether it
+    /// wrote one: an iTerm2 inline file sized to its cells, or a Sixel
+    /// string as it was encoded, wrapped for tmux where it passes them. A
+    /// Kitty payload is sent by [`Sent::write`] and placed by its cells
+    /// instead, and a Sixel payload that is not one string of Sixel's own
+    /// characters, opened as Sixel, is not written at all, since it would
+    /// end the string and go on as whatever follows, or ask the terminal
+    /// for an answer.
+    pub(crate) fn image(&self, payload: &Payload, into: &mut String) -> bool {
+        use base64::Engine as _;
+        use std::fmt::Write as _;
+
+        let start = into.len();
+        if self.passthrough {
+            into.push_str(TMUX_OPENS);
+        }
+        let escape = if self.passthrough { "\x1b\x1b" } else { "\x1b" };
+        match payload.protocol() {
+            Protocol::Kitty => {
+                into.truncate(start);
+                return false;
+            }
+            Protocol::Iterm2 => {
+                let (columns, rows) = payload.cells();
+                let _ = write!(
+                    into,
+                    "{escape}]1337;File=inline=1;width={columns};height={rows};preserveAspectRatio=1:"
+                );
+                base64::engine::general_purpose::STANDARD.encode_string(payload.bytes(), into);
+                into.push('\x07');
+            }
+            Protocol::Sixel => {
+                let Some(body) = sixel_body(payload.bytes()) else {
+                    into.truncate(start);
+                    return false;
+                };
+                into.push_str(escape);
+                into.push('P');
+                into.push_str(body);
+                into.push_str(escape);
+                into.push('\\');
+            }
+        }
+        if self.passthrough {
+            into.push_str(STRING_END);
+        }
+        true
+    }
+
+    /// The bytes [`Sent::command`] writes for `keys` and `data` raw bytes.
+    fn cost(&self, keys: &str, data: Option<usize>) -> usize {
+        let body = APC_GRAPHICS.len()
+            + keys.len()
+            + data.map_or(0, |data| 1 + data.div_ceil(3) * 4)
+            + STRING_END.len();
+        if self.passthrough {
+            // Each escape is doubled, and the wrapper opened and closed.
+            body + 2 + TMUX_OPENS.len() + STRING_END.len()
+        } else {
+            body
+        }
+    }
+
+    /// Appends one graphics command: `keys`, and `data` in base64 after a
+    /// `;` where it carries any, wrapped for tmux where it passes them.
+    fn command(&self, into: &mut String, keys: &str, data: Option<&[u8]>) {
+        use base64::Engine as _;
+
+        if self.passthrough {
+            into.push_str(TMUX_OPENS);
+            into.push('\x1b');
+        }
+        into.push_str(APC_GRAPHICS);
+        into.push_str(keys);
+        if let Some(data) = data {
+            into.push(';');
+            base64::engine::general_purpose::STANDARD.encode_string(data, into);
+        }
+        if self.passthrough {
+            into.push('\x1b');
+        }
+        into.push_str(STRING_END);
+        if self.passthrough {
+            into.push_str(STRING_END);
+        }
+    }
+}
+
+/// What is inside the one device control string a Sixel payload is, where
+/// it is one: opened by `ESC P`, ended by `ESC \`, and nothing between but
+/// printable characters, so no escape can end it early. It opens as Sixel,
+/// with its numeric parameters and then `q`: any other device control
+/// string, such as a request for a setting or a capability, has the
+/// terminal answer into the session's input.
+#[must_use]
+pub fn sixel_body(bytes: &[u8]) -> Option<&str> {
+    let body = bytes.strip_prefix(b"\x1bP")?.strip_suffix(b"\x1b\\")?;
+    if !body.iter().all(|byte| (0x20..0x7f).contains(byte)) {
+        return None;
+    }
+    let parameters = body
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit() || **byte == b';')
+        .count();
+    if body.get(parameters) != Some(&b'q') {
+        return None;
+    }
+    std::str::from_utf8(body).ok()
+}
+
+/// What is left of a frame's budget for graphics, which began at `start`.
+fn room(into: &str, start: usize) -> usize {
+    MOST_SENT_A_FRAME.saturating_sub(into.len().saturating_sub(start))
+}
+
+/// What opens a Kitty graphics command.
+const APC_GRAPHICS: &str = "\x1b_G";
+
+/// What ends a string sequence.
+const STRING_END: &str = "\x1b\\";
+
+/// What asks tmux to pass the sequence inside to the terminal outside it.
+const TMUX_OPENS: &str = "\x1bPtmux;";
+
+/// The cells of row `row` of a picture numbered `id`, from its column
+/// `column`, `across` cells, appended to `into`: the number written as the
+/// colour the cells are drawn in, the first cell marked with its row and
+/// column, and the rest following on from it.
+pub(crate) fn placed(into: &mut String, id: u32, row: u16, column: u16, across: usize) {
+    use std::fmt::Write as _;
+
+    let [_, red, green, blue] = id.to_be_bytes();
+    let mark = |at: u16| {
+        DIACRITICS
+            .get(usize::from(at))
+            .copied()
+            .unwrap_or(DIACRITICS[0])
+    };
+    let _ = write!(into, "\x1b[38;2;{red};{green};{blue}m");
+    if across > 0 {
+        into.push(PLACEHOLDER);
+        into.push(mark(row));
+        into.push(mark(column));
+        for _ in 1..across {
+            into.push(PLACEHOLDER);
+        }
+    }
+    into.push_str("\x1b[39m");
 }
 
 /// The longest sequence whose bytes are kept to be read. A longer one is still
@@ -1720,6 +2385,472 @@ mod tests {
         assert_eq!(huge.cells(), (u16::MAX, u16::MAX));
         // Its bytes stay out of a log.
         assert!(!format!("{payload:?}").contains("[1, 2, 3]"));
+    }
+
+    #[test]
+    fn only_a_device_control_string_that_opens_as_sixel_is_written() {
+        // Printable all through, a request for a setting or a capability
+        // would have the terminal type its answer into the session's input.
+        let sent = Sent::default();
+        for body in ["q#0~~", "9;1;0q#0~~", "0;1q"] {
+            let mut into = String::new();
+            let payload = Payload::new(
+                Protocol::Sixel,
+                format!("\x1bP{body}\x1b\\").into_bytes(),
+                (8, 16),
+                Cell::FALLBACK,
+            );
+            assert!(sent.image(&payload, &mut into), "{body:?}");
+            assert_eq!(into, format!("\x1bP{body}\x1b\\"));
+        }
+        for body in ["$q m", "+q544e", "1$r0m", "", "9;1;0", "#0~~q", " q"] {
+            let mut into = String::new();
+            let payload = Payload::new(
+                Protocol::Sixel,
+                format!("\x1bP{body}\x1b\\").into_bytes(),
+                (8, 16),
+                Cell::FALLBACK,
+            );
+            assert!(!sent.image(&payload, &mut into), "{body:?}");
+            assert!(into.is_empty(), "{body:?}: {into:?}");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // A transmission cut short: ended with an empty last chunk before any
+    // other command, so the terminal never reads that command as more of it.
+
+    /// What ends a transmission the terminal is part way through reading.
+    const ENDED: &str = "\x1b_Gm=0,q=2;\x1b\\";
+
+    /// [`ENDED`], wrapped for tmux to pass through.
+    const ENDED_THROUGH_TMUX: &str = "\x1bPtmux;\x1b\x1b_Gm=0,q=2;\x1b\x1b\\\x1b\\";
+
+    /// A Kitty picture of `bytes` bytes, each `byte`.
+    fn picture_of(bytes: usize, byte: u8) -> Payload {
+        Payload::new(Protocol::Kitty, vec![byte; bytes], (80, 32), Cell::FALLBACK)
+    }
+
+    #[test]
+    fn a_transmission_the_terminal_is_forgotten_during_is_ended_before_the_next_command() {
+        let larger_than_a_frame = picture_of(2 * MOST_SENT_A_FRAME, 7);
+        let small = picture_of(3, 1);
+        let by_number = |id| match id {
+            1 => Some(&larger_than_a_frame),
+            2 => Some(&small),
+            _ => None,
+        };
+        let mut sent = Sent::default();
+        sent.wants(1);
+        let mut cut = String::new();
+        sent.write(by_number, &mut cut);
+        assert!(
+            cut.starts_with("\x1b_Ga=t,f=100,i=1,q=2,m=1;"),
+            "{cut:.48?}"
+        );
+        assert!(!cut.contains("a=p"), "placed before it was sent whole");
+        assert!(sent.pending(), "the rest of the picture is not owed");
+
+        // The terminal may have lost everything: what it was reading is
+        // ended before the next picture's first chunk.
+        sent.forget();
+        sent.wants(2);
+        let mut next = String::new();
+        sent.write(by_number, &mut next);
+        let Some(after) = next.strip_prefix(ENDED) else {
+            panic!("not ended first: {next:.48?}");
+        };
+        assert!(
+            after.starts_with("\x1b_Ga=t,f=100,i=2,q=2,m=0;"),
+            "{after:.48?}"
+        );
+        assert!(!after.contains(ENDED), "ended twice: {after:?}");
+        assert!(!sent.pending());
+
+        // Ended once: the frame after owes nothing.
+        let mut then = String::new();
+        sent.write(by_number, &mut then);
+        assert_eq!(then, "");
+    }
+
+    #[test]
+    fn a_transmission_whose_picture_is_let_go_of_part_way_is_ended_and_wrapped_for_tmux() {
+        let larger_than_a_frame = picture_of(2 * MOST_SENT_A_FRAME, 7);
+        let small = picture_of(3, 1);
+        let mut sent = Sent::default();
+        sent.passes_through(Passthrough::On);
+        sent.wants(1);
+        let mut cut = String::new();
+        sent.write(|id| (id == 1).then_some(&larger_than_a_frame), &mut cut);
+        assert!(
+            cut.starts_with("\x1bPtmux;\x1b\x1b_Ga=t,f=100,i=1,q=2,m=1;"),
+            "{cut:.48?}"
+        );
+        assert!(sent.pending());
+
+        // The record let picture 1 go before it was sent whole, and the
+        // frame after shows picture 2.
+        sent.wants(2);
+        let mut next = String::new();
+        sent.write(|id| (id == 2).then_some(&small), &mut next);
+        let Some(after) = next.strip_prefix(ENDED_THROUGH_TMUX) else {
+            panic!("not ended first: {next:.64?}");
+        };
+        assert!(
+            after.starts_with("\x1bPtmux;\x1b\x1b_Ga=t,f=100,i=2,q=2,m=0;"),
+            "{after:.64?}"
+        );
+        assert!(!after.contains("m=0,q=2;\x1b"), "ended twice: {after:?}");
+        assert!(!sent.pending());
+    }
+
+    #[test]
+    fn a_transmission_that_never_began_is_not_ended_when_the_terminal_is_forgotten() {
+        // Fifteen chunks and a placement leave less of the frame than the
+        // next picture's first chunk takes, so that picture is owed with not
+        // a byte of it sent.
+        let fills_the_frame = picture_of(15 * (MOST_CHUNK / 4 * 3), 7);
+        let one_chunk = picture_of(MOST_CHUNK / 4 * 3, 1);
+        let small = picture_of(3, 2);
+        let by_number = |id| match id {
+            1 => Some(&fills_the_frame),
+            2 => Some(&one_chunk),
+            3 => Some(&small),
+            _ => None,
+        };
+        let mut sent = Sent::default();
+        sent.wants(1);
+        sent.wants(2);
+        let mut full = String::new();
+        sent.write(by_number, &mut full);
+        assert!(full.contains("\x1b_Ga=p,U=1,i=1,"), "picture 1 not placed");
+        assert!(!full.contains("i=2"), "picture 2 began");
+        assert!(sent.pending(), "picture 2 is not owed");
+
+        // Nothing of picture 2 was read, so nothing is ended: the next
+        // command is the next picture's.
+        sent.forget();
+        sent.wants(3);
+        let mut next = String::new();
+        sent.write(by_number, &mut next);
+        assert!(
+            next.starts_with("\x1b_Ga=t,f=100,i=3,q=2,m=0;"),
+            "{next:.48?}"
+        );
+        assert!(!next.contains(ENDED), "ended what never began: {next:.48?}");
+        assert!(!sent.pending());
+    }
+
+    #[test]
+    fn a_picture_let_go_of_is_deleted_between_transmissions_and_never_inside_one() {
+        let small = picture_of(3, 1);
+        let larger_than_a_frame = picture_of(2 * MOST_SENT_A_FRAME, 7);
+        let by_number = |id| match id {
+            1 => Some(&small),
+            2 => Some(&larger_than_a_frame),
+            _ => None,
+        };
+        let mut sent = Sent::default();
+        sent.wants(1);
+        sent.wants(2);
+        let mut first = String::new();
+        sent.write(by_number, &mut first);
+        assert!(first.contains("\x1b_Ga=p,U=1,i=1,"), "picture 1 not placed");
+        assert!(
+            !first.contains("\x1b_Ga=p,U=1,i=2,"),
+            "picture 2 sent whole"
+        );
+
+        // Picture 1 goes while picture 2 is part way out: deleted once
+        // picture 2 is over, and only then.
+        sent.keeps([2]);
+        assert!(sent.pending());
+        let mut frames = Vec::new();
+        while sent.pending() && frames.len() < 8 {
+            let mut frame = String::new();
+            sent.write(by_number, &mut frame);
+            frames.push(frame);
+        }
+        let written = frames.concat();
+        let deleted = "\x1b_Ga=d,d=I,i=1,q=2\x1b\\";
+        let placed = written.find("\x1b_Ga=p,U=1,i=2,");
+        let at = written.find(deleted);
+        assert!(
+            at.is_some(),
+            "never deleted: {:?}",
+            frames.iter().map(String::len).collect::<Vec<_>>()
+        );
+        assert!(
+            at > placed && placed.is_some(),
+            "deleted inside a transmission"
+        );
+        assert_eq!(written.matches(deleted).count(), 1, "deleted twice");
+        assert!(!written.contains("i=2,q=2\x1b"), "picture 2 deleted");
+        assert!(!sent.pending());
+
+        // Deleted once: the frame after owes nothing.
+        let mut then = String::new();
+        sent.write(by_number, &mut then);
+        assert_eq!(then, "");
+    }
+
+    #[test]
+    fn a_payload_shown_in_fewer_rows_keeps_its_shape_and_a_sixel_keeps_its_bitmaps() {
+        // Twenty cells across and ten down, at the fallback cell.
+        let mut shown = Payload::new(Protocol::Kitty, Vec::new(), (160, 160), Cell::FALLBACK);
+        assert_eq!(shown.cells(), (20, 10));
+        // Held to five rows, it is half as wide as well.
+        shown.shown_in(5);
+        assert_eq!(shown.cells(), (10, 5));
+        // Never larger than its own size, however many rows there are.
+        shown.shown_in(40);
+        assert_eq!(shown.cells(), (20, 10));
+        // And never less than a cell either way.
+        shown.shown_in(0);
+        assert_eq!(shown.cells(), (2, 1));
+        let mut iterm2 = Payload::new(Protocol::Iterm2, Vec::new(), (160, 160), Cell::FALLBACK);
+        iterm2.shown_in(5);
+        assert_eq!(iterm2.cells(), (10, 5));
+        // A Sixel bitmap covers the cells it was encoded for: what it is
+        // shown in changes only by encoding it again.
+        let mut sixel = Payload::new(Protocol::Sixel, Vec::new(), (160, 160), Cell::FALLBACK);
+        sixel.shown_in(5);
+        assert_eq!(sixel.cells(), (20, 10));
+    }
+
+    #[test]
+    fn a_held_picture_shown_in_other_cells_is_placed_again_and_never_sent_again() {
+        let mut resized = picture_of(3, 1);
+        let mut sent = Sent::default();
+        sent.wants(1);
+        let mut first = String::new();
+        sent.write(|id| (id == 1).then_some(&resized), &mut first);
+        assert!(
+            first.contains("\x1b_Ga=p,U=1,i=1,c=10,r=2,q=2\x1b\\"),
+            "{first:?}"
+        );
+
+        // Shown in one row now: its placement goes and one for the new
+        // cells takes its place, and the bytes the terminal holds stay.
+        resized.shown_in(1);
+        sent.reshaped();
+        sent.wants(1);
+        let mut next = String::new();
+        sent.write(|id| (id == 1).then_some(&resized), &mut next);
+        assert_eq!(
+            next,
+            "\x1b_Ga=d,d=i,i=1,q=2\x1b\\\x1b_Ga=p,U=1,i=1,c=5,r=1,q=2\x1b\\"
+        );
+        assert!(!next.contains("a=t"), "sent again: {next:?}");
+
+        // Placed once at those cells: the frame after owes nothing.
+        let mut then = String::new();
+        sent.write(|id| (id == 1).then_some(&resized), &mut then);
+        assert_eq!(then, "");
+    }
+
+    #[test]
+    fn a_frame_after_no_picture_changed_cells_looks_up_none_of_those_held() {
+        // Looking a picture up is a walk over the record, so a frame that
+        // walks it for every one held costs what the session has grown to.
+        let held = picture_of(3, 1);
+        let mut sent = Sent::default();
+        sent.wants(1);
+        sent.write(|id| (id == 1).then_some(&held), &mut String::new());
+        let looked = std::cell::Cell::new(0);
+        let mut next = String::new();
+        sent.write(
+            |id| {
+                looked.set(looked.get() + 1);
+                (id == 1).then_some(&held)
+            },
+            &mut next,
+        );
+        assert_eq!(next, "");
+        assert_eq!(looked.get(), 0, "held pictures looked up");
+    }
+
+    #[test]
+    fn a_write_after_every_held_picture_was_placed_again_looks_up_none_of_them() {
+        // Placed again in its new cells, a picture is where the terminal
+        // holds it: the writes after look nothing up until another changes.
+        let mut resized = picture_of(3, 1);
+        let mut sent = Sent::default();
+        sent.wants(1);
+        sent.write(|id| (id == 1).then_some(&resized), &mut String::new());
+        resized.shown_in(1);
+        sent.reshaped();
+        let mut placed = String::new();
+        sent.write(|id| (id == 1).then_some(&resized), &mut placed);
+        assert!(
+            placed.contains("\x1b_Ga=p,U=1,i=1,c=5,r=1,q=2\x1b\\"),
+            "{placed:?}"
+        );
+
+        let looked = std::cell::Cell::new(0);
+        let mut next = String::new();
+        sent.write(
+            |id| {
+                looked.set(looked.get() + 1);
+                (id == 1).then_some(&resized)
+            },
+            &mut next,
+        );
+        assert_eq!(next, "");
+        assert_eq!(looked.get(), 0, "held pictures looked up");
+    }
+
+    #[test]
+    fn a_held_picture_whose_new_cells_do_not_fit_the_frame_is_placed_by_the_next() {
+        // A transmission cut by the frame's budget is carried on by the
+        // next: fifteen whole chunks go in the first frame, and fifteen more
+        // and a last of 960 base64 groups end the second with less room
+        // than one delete and one placement take.
+        fn two<'a>(first: &'a Payload, second: &'a Payload) -> impl Fn(u32) -> Option<&'a Payload> {
+            move |id| match id {
+                1 => Some(first),
+                2 => Some(second),
+                _ => None,
+            }
+        }
+
+        let chunk = MOST_CHUNK / 4 * 3;
+        let carried = picture_of(30 * chunk + 960 * 3, 7);
+        let mut resized = picture_of(3, 1);
+        let mut sent = Sent::default();
+        sent.wants(1);
+        sent.wants(2);
+        let mut first = String::new();
+        sent.write(two(&resized, &carried), &mut first);
+        assert!(
+            first.contains("\x1b_Ga=p,U=1,i=1,c=10,r=2,q=2\x1b\\"),
+            "picture 1 not placed"
+        );
+        assert!(
+            !first.contains("\x1b_Ga=p,U=1,i=2,"),
+            "picture 2 sent whole"
+        );
+
+        resized.shown_in(1);
+        sent.reshaped();
+        let unplaced = "a=d,d=i,i=1,q=2";
+        let replaced = "a=p,U=1,i=1,c=5,r=1,q=2";
+        let mut cut = String::new();
+        sent.write(two(&resized, &carried), &mut cut);
+        assert!(cut.contains("\x1b_Ga=p,U=1,i=2,"), "picture 2 not placed");
+        assert!(
+            room(&cut, 0) < sent.cost(unplaced, None) + sent.cost(replaced, None),
+            "room left for picture 1: {}",
+            room(&cut, 0)
+        );
+        assert!(!cut.contains("i=1,"), "picture 1 placed past the budget");
+
+        // Owed still: the next frame places it at its new cells, and only it.
+        let mut next = String::new();
+        sent.write(two(&resized, &carried), &mut next);
+        assert_eq!(
+            next,
+            format!("\x1b_G{unplaced}\x1b\\\x1b_G{replaced}\x1b\\")
+        );
+    }
+
+    #[test]
+    fn a_key_differing_in_any_one_thing_a_picture_depends_on_is_another_key() {
+        // A picture kept under one key is never shown under another, so each
+        // thing its bytes depend on parts two keys on its own.
+        use crate::color::{Design, Palette, Theme};
+        use crate::markdown::Kind;
+
+        let truecolour = environment(&[("COLORTERM", "truecolor")]);
+        let indexed = environment(&[("TERM", "xterm-256color")]);
+        let worn = |theme, ground, from: &dyn Fn(&str) -> Option<String>| {
+            Palette::resolve(true, theme, ground, from)
+        };
+        let cell = Cell {
+            width: 8,
+            height: 16,
+        };
+        let key = PictureKey {
+            kind: Kind::Mermaid,
+            bucket: Bucket::of(80),
+            palette: worn(Theme::Dark, None, &truecolour).identity(),
+            protocol: Protocol::Kitty,
+            cell,
+            rows: 64,
+        };
+        let others = [
+            (
+                "kind",
+                PictureKey {
+                    kind: Kind::DisplayMath,
+                    ..key
+                },
+            ),
+            (
+                "bucket",
+                PictureKey {
+                    bucket: Bucket::of(80 + Bucket::CELLS),
+                    ..key
+                },
+            ),
+            (
+                "theme",
+                PictureKey {
+                    palette: worn(Theme::Light, None, &truecolour).identity(),
+                    ..key
+                },
+            ),
+            (
+                "design",
+                PictureKey {
+                    palette: worn(Theme::Dark, None, &truecolour)
+                        .designing(Design::Rich)
+                        .identity(),
+                    ..key
+                },
+            ),
+            (
+                "depth",
+                PictureKey {
+                    palette: worn(Theme::Dark, None, &indexed).identity(),
+                    ..key
+                },
+            ),
+            (
+                "ground",
+                PictureKey {
+                    palette: worn(Theme::Dark, Some((255, 255, 255)), &truecolour).identity(),
+                    ..key
+                },
+            ),
+            (
+                "protocol",
+                PictureKey {
+                    protocol: Protocol::Sixel,
+                    ..key
+                },
+            ),
+            (
+                "cell width",
+                PictureKey {
+                    cell: Cell { width: 9, ..cell },
+                    ..key
+                },
+            ),
+            (
+                "cell height",
+                PictureKey {
+                    cell: Cell { height: 17, ..cell },
+                    ..key
+                },
+            ),
+            ("rows", PictureKey { rows: 32, ..key }),
+        ];
+
+        assert_eq!(key, PictureKey { ..key }, "a key is itself");
+        for (differs, other) in others {
+            assert_ne!(other, key, "differing in its {differs} alone");
+        }
     }
 
     // -----------------------------------------------------------------------

@@ -81,7 +81,7 @@ mod working;
 pub use asked::{Asked, Choice, Given, Stop, Writing};
 pub use asking::Question;
 pub use bar::{Bar, Fill, Part};
-pub use color::{Design, Palette, Sequence, Slot, Theme, Worn};
+pub use color::{Design, Palette, PaletteIdentity, Sequence, Slot, Theme, Worn};
 pub use docked::{
     Action, Batched, Chosen, Dock, Docked, Drafted, Editing, Focus, Member, Offer, Phase, Scrolled,
     dock_keys,
@@ -103,7 +103,7 @@ pub use plan::{Plan, State, Task};
 pub use prompt::{CommandCount, Draft, Prompt, Recalled, Remaining, label, tokens};
 /// The most units of the transcript kept at once; a row put down whole costs one.
 pub const RECORDED: usize = record::MOST;
-pub use record::Source;
+pub use record::{KeptPicture, MOST_KEPT_IMAGES, MOST_PLACED, PictureSize, Source};
 pub use render::{Aimed, Caret, PromptRows, Recall, Renderer, ScreenMode};
 pub use row::Row;
 pub use running::{Command, Running};

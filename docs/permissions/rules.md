@@ -85,6 +85,19 @@ is the one way a read inside the workspace reaches you, since without a rule
 it is allowed in every mode. A read that leads outside the workspace asks on
 its own, the way a command does.
 
+## Images in the transcript
+
+An image a turn named is shown only where `read` would be allowed to read its
+file, so a read rule also hides an image from the transcript: under
+`deny read(secret/**)`, an answer's image link to `secret/plan.png` stays a
+link and its edge says `not shown`. Nothing is asked to show one. An `ask` rule
+that matches it hides it the way a `deny` rule does, and so does a path that
+leads outside the workspace, since an image cannot stand a question in front
+of the prompt. A file outside the workspace, one a rule hides and one that is
+not there all say `not shown`, so the screen says no more about a file than
+the session may read of it: see [An image a turn
+named](../sessions/transcript.md#an-image-a-turn-named).
+
 ## Searching
 
 A search is settled once, about the directory it walks. `grep` and `glob` name

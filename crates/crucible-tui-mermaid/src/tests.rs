@@ -5,7 +5,7 @@
 use crucible_tui::chrome::Undrawn;
 use crucible_tui::drawing::{Draws, Room};
 use crucible_tui::testing::dump;
-use crucible_tui::{Glyphs, Row};
+use crucible_tui::{Glyphs, Row, Slot};
 
 use crate::{Caps, Diagrams, Kind, MOST_BYTES};
 
@@ -57,11 +57,43 @@ const ENTITIES: &str = "erDiagram
     }
 ";
 
+const SEQUENCE: &str = "sequenceDiagram
+    participant U as User
+    participant S as Server
+    U->>S: request
+    S-->>U: answer
+    U->>U: think
+";
+
+const GANTT: &str = "gantt
+    title Release
+    dateFormat YYYY-MM-DD
+    section Build
+    Design :a1, 2026-01-05, 3d
+    Code :after a1, 5d
+    section Ship
+    Test :t1, 2026-01-12, 2d
+    Release :1d
+";
+
+const GIT_GRAPH: &str = "gitGraph
+    commit
+    commit id: \"base\"
+    branch feature
+    commit
+    checkout main
+    commit tag: \"v1\"
+    merge feature
+";
+
 /// One diagram of each kind drawn as text, and the kind it is.
-const KINDS: [(&str, &str, Kind); 3] = [
+const KINDS: [(&str, &str, Kind); 6] = [
     ("flowchart", FLOWCHART, Kind::Flowchart),
     ("state", STATE, Kind::State),
     ("entities", ENTITIES, Kind::EntityRelationship),
+    ("sequence", SEQUENCE, Kind::Sequence),
+    ("gantt", GANTT, Kind::Gantt),
+    ("gitgraph", GIT_GRAPH, Kind::GitGraph),
 ];
 
 #[test]
@@ -78,10 +110,13 @@ fn the_status_row_is_told_the_kind_its_first_line_opens() {
         ("stateDiagram-v2", "a mermaid state diagram"),
         ("classDiagram", "a mermaid class diagram"),
         ("erDiagram", "a mermaid er diagram"),
+        ("sequenceDiagram", "a mermaid sequence diagram"),
+        ("gantt", "a mermaid gantt"),
+        ("gitGraph", "a mermaid git graph"),
     ] {
         assert_eq!(Diagrams.label("mermaid", first), Some(told), "{first}");
     }
-    for first in ["pie", "sequenceDiagram", "nonsense", "", "%%{init: {}}%%"] {
+    for first in ["pie", "journey", "nonsense", "", "%%{init: {}}%%"] {
         assert_eq!(Diagrams.label("mermaid", first), None, "{first}");
     }
 }
@@ -115,12 +150,84 @@ fn a_flowchart_draws_its_labels_and_none_of_its_syntax() {
 }
 
 #[test]
+fn a_sequence_diagram_draws_its_participants_and_messages_and_none_of_its_syntax() {
+    let rows = texts(&block(SEQUENCE, 80, UNICODE).unwrap_or_default()).join("\n");
+    for label in ["User", "Server", "request", "answer", "think"] {
+        assert!(rows.contains(label), "{label} in\n{rows}");
+    }
+    for syntax in ["->>", "-->>", "participant", " as "] {
+        assert!(!rows.contains(syntax), "{syntax} in\n{rows}");
+    }
+}
+
+#[test]
+fn a_gantt_draws_its_title_sections_and_tasks_and_none_of_its_syntax() {
+    let rows = texts(&block(GANTT, 80, UNICODE).unwrap_or_default()).join("\n");
+    for label in ["Release", "Build", "Ship", "Design", "Code", "Test"] {
+        assert!(rows.contains(label), "{label} in\n{rows}");
+    }
+    for syntax in ["dateFormat", "after a1", "section", ":a1"] {
+        assert!(!rows.contains(syntax), "{syntax} in\n{rows}");
+    }
+}
+
+/// The cells of each task's bar in a gantt's rows, by the task's name.
+fn bars(rows: &str, full: char) -> Vec<(String, usize)> {
+    rows.lines()
+        .filter(|row| row.contains('['))
+        .map(|row| {
+            let name = row.trim_start_matches(['│', '|']).split_whitespace().next();
+            let cells = row.chars().filter(|character| *character == full).count();
+            (name.unwrap_or_default().to_owned(), cells)
+        })
+        .collect()
+}
+
+#[test]
+fn a_gantt_draws_each_day_of_a_task_as_a_cell_of_its_bar() {
+    for (glyphs, full) in [(UNICODE, '█'), (ASCII, '#')] {
+        for columns in [80, 160] {
+            let rows = texts(&block(GANTT, columns, glyphs).unwrap_or_default()).join("\n");
+            assert_eq!(
+                bars(&rows, full),
+                [("Design", 3), ("Code", 5), ("Test", 2), ("Release", 1)]
+                    .map(|(name, days)| (name.to_owned(), days)),
+                "{glyphs:?} {columns}\n{rows}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_gantt_too_long_to_draw_a_day_a_cell_draws_every_task_or_is_refused() {
+    let long = "gantt\nFirst : 2026-01-01, 30d\nSecond : 2026-03-01, 2d\nThird : 2026-03-10, 4d\n";
+    let rows = texts(&block(long, 160, UNICODE).unwrap_or_default()).join("\n");
+    let drawn = bars(&rows, '█');
+    assert_eq!(drawn.len(), 3, "{rows}");
+    assert!(drawn.iter().all(|(_, cells)| *cells > 0), "{rows}");
+    assert_eq!(
+        block(&long.replace("2d", "1d"), 160, UNICODE),
+        Err(Undrawn::NotText)
+    );
+    let short = "gantt\nFirst : 2026-01-01, 30d\nSecond : 2026-01-20, 1d\n";
+    assert!(block(short, 160, UNICODE).is_ok());
+}
+
+#[test]
+fn a_git_graph_draws_its_branches_commits_and_tags_and_none_of_its_syntax() {
+    let rows = texts(&block(GIT_GRAPH, 80, UNICODE).unwrap_or_default()).join("\n");
+    for label in ["main", "feature", "base", "v1"] {
+        assert!(rows.contains(label), "{label} in\n{rows}");
+    }
+    for syntax in ["checkout", "commit id", "tag:", "merge feature"] {
+        assert!(!rows.contains(syntax), "{syntax} in\n{rows}");
+    }
+}
+
+#[test]
 fn a_kind_not_drawn_as_text_is_refused_naming_it() {
     for (source, named) in [
         ("pie\n  \"a\" : 1\n", "pie"),
-        ("sequenceDiagram\n  A->>B: hi\n", "sequence diagram"),
-        ("gantt\n  title x\n", "gantt"),
-        ("gitGraph\n  commit\n", "git graph"),
         ("C4Context\n  title x\n", "c4 diagram"),
         ("xychart-beta\n  title x\n", "xy chart"),
         ("%% a comment first\nmindmap\n  root\n", "mindmap"),
@@ -204,6 +311,37 @@ fn a_statement_this_does_not_read_refuses_the_whole_diagram() {
         "erDiagram\nA ||--o{ B : \"cut short\n",
         "erDiagram\nA ||--o{ B : cut short\"\n",
         "erDiagram\nA ||--o{ B : \"one\" \"two\"\n",
+        "sequenceDiagram\nA->>B: hi\nNote right of A: a note\n",
+        "sequenceDiagram\nloop every minute\nA->>B: hi\nend\n",
+        "sequenceDiagram\nautonumber\nA->>B: hi\n",
+        "sequenceDiagram\nA->>B: hi\nactivate B\n",
+        "sequenceDiagram\nbox Aqua a group\nparticipant A\nend\n",
+        "sequenceDiagram\nA->>B: hi\nparticipant A as Declared late\n",
+        "sequenceDiagram\nparticipant A as One\nparticipant A as Two\n",
+        "sequenceDiagram\nparticipant A AS Shouted\n",
+        "sequenceDiagram\nA says hello to B\n",
+        "gantt\nA task : 1d\n",
+        "gantt\nA task : 2026-01-01, 3h\n",
+        "gantt\nA task : milestone, 2026-01-01, 0d\n",
+        "gantt\nexcludes weekends\nA task : 2026-01-01, 1d\n",
+        "gantt\nA task : 2026-01-01, 1d, done\n",
+        "gantt\ntitle one\ntitle two\n",
+        "gantt\ndateFormat DD-MM-YYYY\n",
+        "gantt\naxisFormat %H:%M\n",
+        "gantt\nA task : after nothing, 1d\n",
+        "gantt\nA task : a1, 2026-01-01, 1d\nB task : a1, 2026-01-02, 1d\n",
+        "gitGraph\ncommit\ncherry-pick id: \"x\"\n",
+        "gitGraph\ncommit type: HIGHLIGHT\n",
+        "gitGraph\nbranch early\n",
+        "gitGraph\ncommit\ncheckout nowhere\n",
+        "gitGraph\ncommit\nbranch b\nmerge b\n",
+        "gitGraph\ncommit\nbranch b\ncheckout main\nmerge b\n",
+        "gitGraph\ncommit id: \"a\"\ncommit id: \"a\"\n",
+        "gitGraph\ncommit\nbranch b\nbranch b\n",
+        "gitGraph\ncommit\nswitch main\n",
+        "gitGraph\ncommit\nbranch b order: 1\n",
+        "%%{init: {\"gitGraph\": {\"mainBranchName\": \"trunk\"}}}%%\ngitGraph\ncommit\n",
+        "gitgraph\ncommit\n",
     ] {
         assert_eq!(
             block(source, 80, UNICODE),
@@ -256,9 +394,11 @@ fn caps_of(kind: Kind) -> Caps {
     kind.caps().expect("a kind that is drawn has caps")
 }
 
-/// For each kind drawn: its opening, and a statement of it that names a box
-/// `{}` and a line, written `n` times with `{}` as 0 to `n - 1`.
-const SHAPES: [(Kind, &str, &str, &str); 3] = [
+/// For each kind drawn: its opening, a statement of it that adds a box and
+/// one that adds a line, each written `n` times with `{}` as 0 to `n - 1`. A
+/// git graph's box is a commit and its line a branch, made from a commit; a
+/// gantt's box is a task, and a gantt has no lines.
+const SHAPES: [(Kind, &str, &str, &str); 6] = [
     (Kind::Flowchart, "graph TD\n", "N{}\n", "A --> B\n"),
     (
         Kind::State,
@@ -272,12 +412,37 @@ const SHAPES: [(Kind, &str, &str, &str); 3] = [
         "E{}\n",
         "E0 ||--o{ E1 : has\n",
     ),
+    (
+        Kind::Sequence,
+        "sequenceDiagram\n",
+        "participant P{}\n",
+        "A->>B: hi\n",
+    ),
+    (
+        Kind::Gantt,
+        "gantt\n",
+        "T{} : 2026-01-01, 1d\n",
+        "T : 2026-01-01, 1d\n",
+    ),
+    (
+        Kind::GitGraph,
+        "gitGraph\n",
+        "commit\n",
+        "commit\nbranch b{}\n",
+    ),
 ];
+
+/// `statement` written `count` times, `{}` in it as 0 to `count - 1`.
+fn written(statement: &str, count: usize) -> String {
+    (0..count)
+        .map(|at| statement.replace("{}", &at.to_string()))
+        .collect()
+}
 
 #[test]
 fn a_source_past_its_kinds_byte_cap_is_refused() {
     for (kind, head, _, line) in SHAPES {
-        let head = format!("{head}{line}");
+        let head = format!("{head}{}", written(line, 1));
         let caps = caps_of(kind);
         let at_cap = format!("{head}%%{}", "x".repeat(caps.bytes - head.len() - 2));
         assert!(block(&at_cap, 160, UNICODE).is_ok(), "{kind:?}");
@@ -295,12 +460,7 @@ fn a_source_past_its_kinds_byte_cap_is_refused() {
 fn boxes_past_each_kinds_cap_are_refused() {
     for (kind, head, named, _) in SHAPES {
         let caps = caps_of(kind);
-        let boxes = |count: usize| -> String {
-            let named: String = (0..count)
-                .map(|at| named.replace("{}", &at.to_string()))
-                .collect();
-            format!("{head}{named}")
-        };
+        let boxes = |count: usize| format!("{head}{}", written(named, count));
         assert_ne!(
             block(&boxes(caps.nodes), 400, UNICODE),
             Err(Undrawn::PastCap),
@@ -324,9 +484,12 @@ fn boxes_past_each_kinds_cap_are_refused() {
 
 #[test]
 fn lines_past_each_kinds_cap_are_refused() {
-    for (kind, head, _, line) in SHAPES {
+    for (kind, head, _, line) in SHAPES
+        .into_iter()
+        .filter(|(kind, ..)| caps_of(*kind).edges > 0)
+    {
         let caps = caps_of(kind);
-        let lines = |count: usize| format!("{head}{}", line.repeat(count));
+        let lines = |count: usize| format!("{head}{}", written(line, count));
         assert_ne!(
             block(&lines(caps.edges), 400, UNICODE),
             Err(Undrawn::PastCap),
@@ -353,7 +516,7 @@ fn lines_past_each_kinds_cap_are_refused() {
 }
 
 /// Each place a label stands, by kind, with `{}` where it goes.
-const LABELLED: [(Kind, &str); 9] = [
+const LABELLED: [(Kind, &str); 13] = [
     (Kind::Flowchart, "graph TD\nA[\"{}\"] --> B\n"),
     (Kind::Flowchart, "graph TD\n{} --> B\n"),
     (Kind::Flowchart, "graph TD\nA -->|{}| B\n"),
@@ -372,6 +535,13 @@ const LABELLED: [(Kind, &str); 9] = [
         Kind::State,
         "stateDiagram-v2\n[*] --> A\nnote right of A\nshort\n{}\nend note\n",
     ),
+    (
+        Kind::Sequence,
+        "sequenceDiagram\nparticipant A as {}\nA->>B: hi\n",
+    ),
+    (Kind::Sequence, "sequenceDiagram\n{}->>B: hi\n"),
+    (Kind::Sequence, "sequenceDiagram\nA->>B: {}\n"),
+    (Kind::Gantt, "gantt\n{} : 2026-01-01, 1d\n"),
 ];
 
 #[test]
@@ -391,6 +561,35 @@ fn a_label_past_its_kinds_cap_is_refused_counting_columns() {
             );
         }
     }
+}
+
+#[test]
+fn a_gantt_has_no_lines_and_a_task_is_a_box() {
+    assert_eq!(Caps::GANTT.edges, 0);
+    let tasks = |count: usize| format!("gantt\n{}", written("T{} : 2026-01-01, 1d\n", count));
+    assert!(block(&tasks(Caps::GANTT.nodes), 400, UNICODE).is_ok());
+    let sections = written("section S{}\nT{} : 2026-01-01, 1d\n", Caps::GANTT.nodes / 2);
+    assert!(block(&format!("gantt\n{sections}"), 400, UNICODE).is_ok());
+    assert_eq!(
+        block(&format!("gantt\n{sections}section past\n"), 400, UNICODE),
+        Err(Undrawn::PastCap)
+    );
+}
+
+#[test]
+fn a_git_graph_label_is_held_by_the_byte_cap_alone() {
+    assert_eq!(Caps::GIT_GRAPH.label, None);
+    let source = format!(
+        "gitGraph\ncommit id: \"{}\" tag: \"{}\"\n",
+        "x".repeat(64),
+        "y".repeat(64)
+    );
+    let rows = block(&source, 400, UNICODE).map(|rows| texts(&rows).join("\n"));
+    assert!(
+        rows.as_ref()
+            .is_ok_and(|rows| rows.contains(&"x".repeat(64)) && rows.contains(&"y".repeat(64))),
+        "{rows:?}"
+    );
 }
 
 #[test]
@@ -467,13 +666,68 @@ fn a_diagram_wider_than_its_room_is_refused_and_not_laid_out_again() {
     assert_eq!(block(wide, 60, UNICODE), Err(Undrawn::TooWide));
 }
 
+/// A diagram of each kind the engine lays out at its own width whatever the
+/// room, each wider than 40 columns.
+const UNFITTED: [(Kind, &str); 3] = [
+    (
+        Kind::Sequence,
+        "sequenceDiagram\nparticipant A as The first participant\nparticipant B as The second participant\nparticipant C as The third participant\nA->>B: a request\nB->>C: passed on\n",
+    ),
+    (Kind::Gantt, GANTT),
+    (
+        Kind::GitGraph,
+        "gitGraph\ncommit id: \"the first commit\" tag: \"the first tag\"\nbranch one\ncommit id: \"the first commit on the first branch\" tag: \"a tag\"\nbranch two\ncommit id: \"on the second branch\"\ncheckout main\nmerge two\n",
+    ),
+];
+
+#[test]
+fn a_timeline_wider_than_its_room_is_refused_and_not_laid_out_again() {
+    for (kind, source) in UNFITTED {
+        let natural = block(source, 400, UNICODE).unwrap_or_default();
+        let widest = natural.iter().map(Row::columns).max().unwrap_or(0);
+        assert!(widest > 40, "{kind:?} {widest}");
+        for columns in widest..=widest + 40 {
+            assert_eq!(
+                block(source, columns, UNICODE).map(|rows| rows == natural),
+                Ok(true),
+                "{kind:?} {columns}"
+            );
+        }
+        for columns in [widest - 1, 40, 8] {
+            assert_eq!(
+                block(source, columns, UNICODE),
+                Err(Undrawn::TooWide),
+                "{kind:?} {columns}"
+            );
+        }
+    }
+}
+
 #[test]
 fn under_ascii_every_character_is_ascii_or_written_in_a_label() {
-    let labelled = "graph LR\nA[Ünïcödé 漢字] -->|→ ×| B((é)) -.-> C{ß}\n";
-    for (_, source, kind) in KINDS
-        .into_iter()
-        .chain([("labelled", labelled, Kind::Flowchart)])
-    {
+    let labelled = [
+        (
+            "flowchart",
+            "graph LR\nA[Ünïcödé 漢字] -->|→ ×| B((é)) -.-> C{ß}\n",
+            Kind::Flowchart,
+        ),
+        (
+            "sequence",
+            "sequenceDiagram\nparticipant A as Ünïcödé 漢字\nA->>B: → ×\nB-->>A: ß\n",
+            Kind::Sequence,
+        ),
+        (
+            "gantt",
+            "gantt\ntitle Ünïcödé\nsection 漢字\nØ task : 2026-01-01, 3d\n→ next : 2d\n",
+            Kind::Gantt,
+        ),
+        (
+            "gitgraph",
+            "gitGraph\ncommit id: \"Ünï\" tag: \"漢字\"\nbranch ß\ncommit\ncheckout main\nmerge ß\n",
+            Kind::GitGraph,
+        ),
+    ];
+    for (_, source, kind) in KINDS.into_iter().chain(labelled) {
         let rows = texts(&block(source, 80, ASCII).unwrap_or_default()).join("\n");
         assert!(!rows.is_empty(), "{kind:?}");
         let strays: String = rows
@@ -512,5 +766,578 @@ fn pictures_of_each_kind() {
             let rows = block(source, 80, glyphs).unwrap_or_default();
             insta::assert_snapshot!(format!("{name}_80_{set}"), dump(&rows, 80));
         }
+    }
+}
+
+/// What `block` draws inside its frame: each row after the frame's gutter.
+fn inner(source: &str, columns: usize, glyphs: Glyphs) -> Vec<String> {
+    let rows = texts(&block(source, columns, glyphs).unwrap_or_default());
+    let inside = rows.len().saturating_sub(1);
+    rows.get(1..inside)
+        .unwrap_or_default()
+        .iter()
+        .map(|row| row.chars().skip(2).collect())
+        .collect()
+}
+
+fn picture(source: &str, columns: usize, glyphs: Glyphs) -> Result<String, Undrawn> {
+    Diagrams
+        .picture(source, &Room { columns, glyphs })
+        .map(|svg| svg.as_str().to_owned())
+}
+
+/// Every value of `attribute` in `svg`, in order.
+fn values<'a>(svg: &'a str, attribute: &str) -> Vec<&'a str> {
+    let opening = format!(" {attribute}=\"");
+    svg.match_indices(&opening)
+        .filter_map(|(at, _)| {
+            let rest = svg.get(at + opening.len()..)?;
+            rest.get(..rest.find('"')?)
+        })
+        .collect()
+}
+
+/// The name of every element `svg` opens, in order.
+fn elements(svg: &str) -> Vec<&str> {
+    svg.match_indices('<')
+        .filter_map(|(at, _)| {
+            let rest = svg.get(at + 1..)?;
+            let end = rest.find(|character: char| {
+                character.is_whitespace() || character == '>' || character == '/'
+            })?;
+            rest.get(..end)
+        })
+        .filter(|name| !name.is_empty())
+        .collect()
+}
+
+/// The text `svg` writes, unescaped, at the cell each `<text>` starts in: a
+/// cell is eight units wide and sixteen high, with the baseline at twelve.
+fn lettered(svg: &str) -> Vec<String> {
+    let mut grid: Vec<Vec<char>> = Vec::new();
+    for (at, _) in svg.match_indices("<text ") {
+        let element = svg.get(at..).unwrap_or_default();
+        let element = element
+            .get(..element.find("</text>").unwrap_or(0))
+            .unwrap_or_default();
+        let number = |name: &str| -> usize {
+            values(element, name)
+                .first()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(usize::MAX)
+        };
+        let (column, row) = (number("x") / 8, (number("y").saturating_sub(12)) / 16);
+        let said = element
+            .get(element.find('>').unwrap_or(0) + 1..)
+            .unwrap_or_default();
+        let said = said
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+            .replace("&amp;", "&");
+        if grid.len() <= row {
+            grid.resize(row + 1, Vec::new());
+        }
+        if let Some(line) = grid.get_mut(row) {
+            for (offset, character) in said.chars().enumerate() {
+                if line.len() <= column + offset {
+                    line.resize(column + offset + 1, ' ');
+                }
+                if let Some(cell) = line.get_mut(column + offset) {
+                    *cell = character;
+                }
+            }
+        }
+    }
+    grid.into_iter()
+        .map(|line| line.into_iter().collect::<String>().trim_end().to_owned())
+        .collect()
+}
+
+/// Whether the picture draws `character` as a shape rather than writing it:
+/// the box drawing and block elements, the geometric shapes, and the
+/// chevron an arrow ends in.
+fn shaped(character: char) -> bool {
+    matches!(character, '\u{2500}'..='\u{25ff}' | '⟩')
+}
+
+#[test]
+fn a_picture_of_every_kind_writes_what_its_text_drawing_writes_where_it_writes_it() {
+    for (name, source, _) in KINDS {
+        let svg = picture(source, 80, UNICODE);
+        assert!(svg.is_ok(), "{name}: {svg:?}");
+        let svg = svg.unwrap_or_default();
+        let drawn: Vec<String> = inner(source, 80, UNICODE)
+            .iter()
+            .map(|row| {
+                row.chars()
+                    .map(|character| if shaped(character) { ' ' } else { character })
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect();
+        let mut said = lettered(&svg);
+        said.resize(drawn.len(), String::new());
+        assert_eq!(said, drawn, "{name}\n{svg}");
+    }
+}
+
+#[test]
+fn a_picture_is_its_layout_at_natural_size() {
+    for (name, source, _) in KINDS {
+        for glyphs in [UNICODE, ASCII] {
+            let svg = picture(source, 80, glyphs).unwrap_or_default();
+            let lines = inner(source, 80, glyphs);
+            let widest = lines.iter().map(|line| crucible_tui::columns(line)).max();
+            let rows = block(source, 80, glyphs).unwrap_or_default();
+            let natural = rows
+                .get(1..rows.len().saturating_sub(1))
+                .unwrap_or_default()
+                .iter()
+                .map(|row| row.columns().saturating_sub(2))
+                .max()
+                .unwrap_or(0);
+            assert!(widest <= Some(natural), "{name}");
+            let (width, height) = (natural * 8, lines.len() * 16);
+            assert!(
+                svg.starts_with(&format!(
+                    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\""
+                )),
+                "{name} {glyphs:?}: {}",
+                svg.get(..120).unwrap_or(&svg)
+            );
+            assert_eq!(
+                elements(&svg).iter().filter(|name| **name == "svg").count(),
+                1,
+                "{name}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_picture_inks_by_slot_class_and_never_by_colour() {
+    let classes = [Slot::Plain.class(), Slot::Quiet.class()];
+    for (name, source, _) in KINDS {
+        for glyphs in [UNICODE, ASCII] {
+            let svg = picture(source, 80, glyphs).unwrap_or_default();
+            assert!(!svg.is_empty(), "{name} {glyphs:?}");
+            for class in values(&svg, "class") {
+                assert!(classes.contains(&class), "{name} {glyphs:?}: class {class}");
+            }
+            for paint in values(&svg, "fill")
+                .into_iter()
+                .chain(values(&svg, "stroke"))
+            {
+                assert!(
+                    ["none", "currentColor"].contains(&paint),
+                    "{name} {glyphs:?}: paint {paint}"
+                );
+            }
+            let painted = elements(&svg)
+                .iter()
+                .filter(|name| ["path", "text"].contains(name))
+                .count();
+            assert_eq!(
+                values(&svg, "class").len(),
+                painted,
+                "{name} {glyphs:?}: an element painted with no class"
+            );
+            for colour in ["=\"#", "rgb(", "color=", "style", "opacity"] {
+                assert!(!svg.contains(colour), "{name} {glyphs:?}: {colour}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_picture_names_nothing_outside_itself() {
+    for (name, source, _) in KINDS {
+        for glyphs in [UNICODE, ASCII] {
+            let svg = picture(source, 80, glyphs).unwrap_or_default();
+            assert!(!svg.is_empty(), "{name} {glyphs:?}");
+            for element in elements(&svg) {
+                assert!(
+                    ["svg", "path", "text"].contains(&element),
+                    "{name} {glyphs:?}: <{element}>"
+                );
+            }
+            for reference in ["href", "url(", "<style", "<!", "<?"] {
+                assert!(!svg.contains(reference), "{name} {glyphs:?}: {reference}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_label_holding_markup_is_written_as_its_characters() {
+    let source = "sequenceDiagram\nA->>B: a < b & \"c\" > 'd'\n";
+    let svg = picture(source, 80, UNICODE);
+    assert!(svg.is_ok(), "{svg:?}");
+    let svg = svg.unwrap_or_default();
+    assert!(
+        svg.contains("a &lt; b &amp; &quot;c&quot; &gt; &apos;d&apos;"),
+        "{svg}"
+    );
+    assert!(!svg.contains("a < b"), "{svg}");
+    assert!(
+        lettered(&svg)
+            .iter()
+            .any(|row| row.contains("a < b & \"c\" > 'd'")),
+        "{svg}"
+    );
+}
+
+#[test]
+fn a_flowchart_picture_strokes_its_boxes_and_writes_its_labels() {
+    let svg = picture(FLOWCHART, 80, UNICODE).unwrap_or_default();
+    for label in ["Start", "Is it?", "OK", "Retry", "Yes", "No"] {
+        assert!(
+            svg.contains(&format!(">{label}</text>")),
+            "{label} in\n{svg}"
+        );
+    }
+    assert!(!svg.chars().any(shaped), "{svg}");
+    assert!(
+        values(&svg, "d").iter().any(|path| path.contains('H')),
+        "{svg}"
+    );
+    assert!(
+        values(&svg, "d").iter().any(|path| path.contains('V')),
+        "{svg}"
+    );
+    assert!(
+        values(&svg, "stroke-dasharray").len() == 1,
+        "the dotted line: {svg}"
+    );
+}
+
+#[test]
+fn a_sequence_picture_strokes_its_lifelines_dashed_and_writes_its_messages() {
+    let svg = picture(SEQUENCE, 80, UNICODE).unwrap_or_default();
+    for label in ["User", "Server", "request", "answer", "think"] {
+        assert!(
+            svg.contains(&format!(">{label}</text>")),
+            "{label} in\n{svg}"
+        );
+    }
+    assert!(!svg.chars().any(shaped), "{svg}");
+    assert_eq!(values(&svg, "stroke-dasharray").len(), 1, "{svg}");
+}
+
+#[test]
+fn a_picture_is_drawn_from_the_unicode_layout_whatever_the_glyph_set() {
+    for (name, source, _) in KINDS {
+        let unicode = picture(source, 80, UNICODE);
+        assert!(unicode.is_ok(), "{name}: {unicode:?}");
+        assert_eq!(picture(source, 80, ASCII), unicode, "{name}");
+    }
+}
+
+#[test]
+fn a_picture_is_refused_for_what_its_text_drawing_is_refused_for() {
+    let wide =
+        "graph LR\nA[first label] --> B[second label] --> C[third label] --> D[last label]\n";
+    let grouped = "flowchart TD\nsubgraph one\nA --> B\nend\n";
+    let past = format!("graph TD\n{}", "A --> B\n".repeat(MOST_BYTES));
+    for (source, columns) in [
+        (CLASS, 80),
+        (wide, 60),
+        (grouped, 80),
+        ("", 80),
+        ("graph TD\nA -->\n", 80),
+        (past.as_str(), 80),
+    ] {
+        let refused = block(source, columns, UNICODE).map(|_| ());
+        assert!(refused.is_err(), "{source}");
+        assert_eq!(
+            picture(source, columns, UNICODE).map(|_| ()),
+            refused,
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn a_label_holding_a_letter_the_picture_may_lack_keeps_the_diagram_text() {
+    let han = "graph LR\nA[漢字] --> B[ok]\n";
+    let latin = "graph LR\nA[Ĳ ÿ ž–“é”…] --> B[ok]\n";
+    for (source, glyphs) in [
+        (han, UNICODE),
+        (han, ASCII),
+        (latin, UNICODE),
+        (latin, ASCII),
+    ] {
+        assert!(block(source, 80, glyphs).is_ok(), "{source} {glyphs:?}");
+    }
+    for glyphs in [UNICODE, ASCII] {
+        assert_eq!(
+            picture(han, 80, glyphs).map(|_| ()),
+            Err(Undrawn::NotHere),
+            "{glyphs:?}"
+        );
+        let drawn = picture(latin, 80, glyphs);
+        assert!(drawn.is_ok(), "{glyphs:?}: {drawn:?}");
+        let drawn = drawn.unwrap_or_default();
+        assert!(drawn.contains("Ĳ ÿ ž–“é”…"), "{glyphs:?}: {drawn}");
+    }
+}
+
+/// An entity-relationship diagram whose relationships chain its entities in
+/// another order than it names them in: set in a row in the order it names
+/// them, the line between two entities not side by side runs through the
+/// boxes between them.
+const UNCHAINED: &str = "erDiagram
+    SESSION ||--o{ TURN : records
+    TURN ||--o{ ATTACHMENT : carries
+    SESSION ||--|| ROUTE : runs_on
+    ROUTE {
+        string driver
+        string instance
+        int generation
+    }
+    ATTACHMENT {
+        string path
+        string media_type
+        string hash
+    }
+";
+
+/// [`UNCHAINED`] naming its entities in the order its relationships chain
+/// them in.
+const CHAINED: &str = "erDiagram
+    ATTACHMENT {
+        string path
+        string media_type
+        string hash
+    }
+    TURN {
+    }
+    SESSION {
+    }
+    ROUTE {
+        string driver
+        string instance
+        int generation
+    }
+    SESSION ||--o{ TURN : records
+    TURN ||--o{ ATTACHMENT : carries
+    SESSION ||--|| ROUTE : runs_on
+";
+
+/// A state diagram the engine draws with two transitions' labels beside
+/// another transition's line, and none beside their own.
+const MISLABELLED: &str = "stateDiagram-v2
+    [*] --> Idle
+    Idle --> Composing: key pressed
+    Composing --> Composing: paste image
+    Composing --> Submitted: Enter
+    Submitted --> Running: turn starts
+    Running --> Idle: answer ends
+    Running --> Idle: Esc stops
+    Submitted --> Idle: refused
+";
+
+#[test]
+fn pictures_of_diagrams_the_engine_sets_out_wrong_as_written() {
+    for (name, source) in [
+        ("unchained_entities", UNCHAINED),
+        ("mislabelled_states", MISLABELLED),
+    ] {
+        for columns in [160, 80] {
+            let shown = match block(source, columns, UNICODE) {
+                Ok(rows) => dump(&rows, columns),
+                Err(undrawn) => format!("refused: {undrawn:?}"),
+            };
+            insta::assert_snapshot!(format!("{name}_{columns}"), shown);
+        }
+    }
+}
+
+/// Whether `name` stands in a box on a row of `rows`, with nothing but
+/// spaces between it and the box's sides.
+fn boxed(rows: &[String], name: &str) -> bool {
+    let side = ['│', '┤', '├'];
+    rows.iter().any(|row| {
+        row.match_indices(name).any(|(at, _)| {
+            let before = row.get(..at).unwrap_or_default().trim_end_matches(' ');
+            let after = row
+                .get(at + name.len()..)
+                .unwrap_or_default()
+                .trim_start_matches(' ');
+            before.ends_with(side) && after.starts_with(side)
+        })
+    })
+}
+
+/// The glyphs at each end of the line on `row` joining `left`'s box to
+/// `right`'s, standing side by side with that line alone between them:
+/// `left`'s end first.
+fn joined(row: &str, left: &str, right: &str) -> Option<(char, char)> {
+    let (_, rest) = row.split_once(left)?;
+    let mut rest = rest.trim_start_matches(' ').strip_prefix('┤')?.chars();
+    let near = rest.next()?;
+    let mut rest = rest.as_str().trim_start_matches('─').chars();
+    let far = rest.next()?;
+    let rest = rest.as_str().strip_prefix('├')?.trim_start_matches(' ');
+    rest.starts_with(right).then_some((near, far))
+}
+
+/// The glyphs at each end of the line in `rows` joining `from`'s box to
+/// `to`'s, whichever stands on the left: `from`'s end first.
+fn ends(rows: &[String], from: &str, to: &str) -> Option<(char, char)> {
+    rows.iter().find_map(|row| {
+        joined(row, from, to).or_else(|| joined(row, to, from).map(|(near, far)| (far, near)))
+    })
+}
+
+#[test]
+fn an_entity_relationship_diagram_is_set_out_so_each_line_joins_boxes_side_by_side() {
+    let rows = inner(UNCHAINED, 160, UNICODE);
+    let shown = rows.join("\n");
+    for name in ["SESSION", "TURN", "ROUTE", "ATTACHMENT"] {
+        assert!(boxed(&rows, name), "{name} in\n{shown}");
+    }
+    let words: Vec<&str> = rows.iter().flat_map(|row| row.split_whitespace()).collect();
+    for label in ["records", "carries", "runs_on"] {
+        assert!(words.contains(&label), "{label} in\n{shown}");
+    }
+    for (from, to, drawn) in [
+        ("SESSION", "TURN", ('1', '*')),
+        ("TURN", "ATTACHMENT", ('1', '*')),
+        ("SESSION", "ROUTE", ('1', '1')),
+    ] {
+        assert_eq!(
+            ends(&rows, from, to),
+            Some(drawn),
+            "{from} {to} in\n{shown}"
+        );
+    }
+    assert_eq!(block(UNCHAINED, 160, UNICODE), block(CHAINED, 160, UNICODE));
+    // Set in the one row that sets each line between boxes side by side, it
+    // is wider than 80 columns.
+    assert_eq!(
+        block(UNCHAINED, 80, UNICODE).map(|_| ()),
+        Err(Undrawn::TooWide)
+    );
+}
+
+#[test]
+fn an_entity_relationship_chain_turned_down_the_right_side_to_its_last_entity_is_set_in_rows() {
+    // Too narrow for its three boxes in one row, it is set two above one,
+    // the line from the second to the third run down the right side. The
+    // engine's room is the block's less its frame's two columns, from the
+    // narrowest that holds the drawing to the widest the engine still sets
+    // in rows.
+    for columns in 44..=54 {
+        let drawn = block(ENTITIES, columns, UNICODE).map(|_| ());
+        assert_eq!(drawn, Ok(()), "{columns}");
+        let rows = inner(ENTITIES, columns, UNICODE);
+        let shown = rows.join("\n");
+        // No line runs through a name, which stands alone between its
+        // box's sides.
+        for name in ["CUSTOMER", "ORDER", "LINE-ITEM"] {
+            assert!(boxed(&rows, name), "{columns}: {name} in\n{shown}");
+        }
+        let words: Vec<&str> = rows.iter().flat_map(|row| row.split_whitespace()).collect();
+        for label in ["places", "contains"] {
+            assert!(words.contains(&label), "{columns}: {label} in\n{shown}");
+        }
+        let row = |name| rows.iter().position(|row| row.contains(name));
+        let (Some(order), Some(item)) = (row("ORDER"), row("LINE-ITEM")) else {
+            panic!("{columns}: ORDER and LINE-ITEM in\n{shown}");
+        };
+        let glyphs = |row: usize| -> Vec<char> {
+            rows.get(row)
+                .map(|row| row.chars().collect())
+                .unwrap_or_default()
+        };
+        let side = glyphs(order).len() - 1;
+        assert!(item > order, "{columns}: LINE-ITEM below ORDER in\n{shown}");
+        assert_eq!(glyphs(order).last(), Some(&'┐'), "{columns}:\n{shown}");
+        assert_eq!(glyphs(item).get(side), Some(&'┘'), "{columns}:\n{shown}");
+        for between in order + 1..item {
+            assert_eq!(
+                glyphs(between).get(side),
+                Some(&'│'),
+                "{columns}: row {between} in\n{shown}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_entity_relationship_diagram_no_row_of_boxes_joins_side_by_side_is_refused_whole() {
+    for source in [
+        // An entity joined to three others.
+        "erDiagram\nA ||--o{ B : x\nA ||--o{ C : y\nA ||--o{ D : z\n",
+        // Entities joined round in a ring.
+        "erDiagram\nA ||--o{ B : x\nB ||--o{ C : y\nC ||--o{ A : z\n",
+        // An entity joined to itself.
+        "erDiagram\nA ||--o{ A : x\n",
+        // Two entities joined twice.
+        "erDiagram\nA ||--o{ B : x\nB ||--o{ A : y\n",
+    ] {
+        assert_eq!(
+            block(source, 160, UNICODE).map(|_| ()),
+            Err(Undrawn::Unsupported("tangled relationships")),
+            "{source}"
+        );
+    }
+    // An entity joined to two others, named before both, is set between them.
+    let rows = inner("erDiagram\nA ||--o{ B : x\nA ||--o{ C : y\n", 160, UNICODE);
+    let shown = rows.join("\n");
+    for name in ["A", "B", "C"] {
+        assert!(boxed(&rows, name), "{name} in\n{shown}");
+    }
+    for to in ["B", "C"] {
+        assert_eq!(ends(&rows, "A", to), Some(('1', '*')), "{to} in\n{shown}");
+    }
+}
+
+#[test]
+fn a_diagram_the_engine_labels_a_line_of_beside_another_or_not_at_all_is_refused_whole() {
+    let misplaced = Err(Undrawn::Unsupported("misplaced labels"));
+    for columns in [160, 80] {
+        assert_eq!(
+            block(MISLABELLED, columns, UNICODE).map(|_| ()),
+            misplaced,
+            "{columns}"
+        );
+    }
+    for source in [
+        // A label set nearer another line than its own.
+        r#"graph RL
+    N0("no") === N3{"選ぶ?"}
+    N3 --- N2{"yes"}
+    N0 -. check it .-> N2
+    N1[\"naïve"\]
+"#,
+        r"stateDiagram
+    [*] --> S0
+    S0 --> S3 : 選ぶ?
+    S0 --> S2 : start
+",
+        // Two labels the engine leaves out of its drawing.
+        r#"flowchart TD
+    N2 -.->|한국어| N1["done"]
+    N3[["naïve"]] -.->|done| N2
+    N3 --> N2
+    N2 ---|한국어| N0[/"yes"/]
+    N3 ---|x = 1| N0
+    N0 === N3
+"#,
+    ] {
+        assert_eq!(
+            block(source, 160, UNICODE).map(|_| ()),
+            misplaced,
+            "{source}"
+        );
+    }
+    for source in [FLOWCHART, STATE] {
+        let drawn = block(source, 160, UNICODE);
+        assert!(drawn.is_ok(), "{source}: {drawn:?}");
     }
 }

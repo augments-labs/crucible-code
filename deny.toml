@@ -32,6 +32,27 @@ ignore = [
     # "let people bring their own syntaxes" — that quietly turns a trusted
     # decoder into an untrusted one.
     "RUSTSEC-2025-0141",
+
+    # chrono is unmaintained, every version, with no release that is not. It
+    # arrives under `mermaid-text`, the engine `crucible-tui-mermaid` lays a
+    # gantt out with, and its newest release still depends on it. That engine
+    # uses it for a gantt alone: it parses each task's date in the one fixed
+    # form `%Y-%m-%d`, adds whole days to it, and prints the axis labels. A
+    # gantt whose first task gives no date starts today, which chrono's
+    # `clock` feature reads.
+    #
+    # Why it does not block us. Unmaintained is a notice about the project,
+    # not a vulnerability, and no advisory names chrono's date parsing or
+    # arithmetic. This does read hostile input, since a gantt's dates come from
+    # a model's answer. That input is bounded first: a source past the mermaid
+    # crate's `MOST_BYTES`, or past a gantt's caps, is refused before the
+    # engine reads it.
+    #
+    # What would change the answer: a vulnerability advisory against chrono,
+    # which fails this run on its own because this entry waives only this ID,
+    # or a `mermaid-text` release that drops chrono, which is when this entry
+    # comes out.
+    "RUSTSEC-2026-0543",
 ]
 
 [licenses]
@@ -142,6 +163,12 @@ skip = [
     # path crucible calls; they are the hash tables inside two libraries that
     # happen to disagree about a release.
     { crate = "hashbrown:0.15.5", reason = "petgraph pins the older line under arboard" },
+
+    # `foldhash` is the hash function inside that older hashbrown, so the 0.1
+    # copy comes in only through `petgraph` under Wayland clipboard support.
+    # `read-fonts`, which resvg's text shaping reads font tables with, has
+    # moved to 0.2. The older copy goes away with the hashbrown above it.
+    { crate = "foldhash:0.1.5", reason = "the older hashbrown under arboard pins it" },
 
     # `miniz_oxide` is the pure-Rust deflate under `flate2`. `flate2` 1.1.10,
     # which decompresses a release archive for the updater, moved to 0.9, while

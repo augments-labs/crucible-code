@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
-version = "0.51.0"
+version = "0.52.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT"
@@ -41,19 +41,19 @@ image = { version = "=0.25.10", default-features = false, features = ["png", "jp
 # raster image embedded in an SVG is skipped rather than drawn; the `image`
 # crate decodes image files, never an SVG's. Fonts and every `href` are the
 # caller's: nothing it names is read from the machine.
-resvg = { version = "=0.49.0", default-features = false, features = ["text"] }
+resvg = { version = "=0.50.0", default-features = false, features = ["text"] }
 # Encodes pixels as a Sixel payload for terminals that draw one, which `std`
 # cannot do: Sixel is a six-pixel-row text format over a palette, so the work is
 # choosing at most 256 colours and dithering to them, in a quantiser written for
 # it. The crate is pure Rust and takes pixels, never a file or a terminal.
 icy_sixel = { version = "=0.7.0" }
-# Draws a Mermaid flowchart, state, class or entity-relationship diagram as
-# box-drawing text, which `std` has no parser or graph layout for: each type
-# has its own grammar, and placing nodes in layers and routing edges between
-# them is a layout engine, not a few lines. It takes a string and returns one,
-# opening no file and no connection, and adds no colour unless asked. It has
-# no features of its own to turn off; `chrono` comes with it, without its
-# default features.
+# Draws a Mermaid flowchart, state, entity-relationship, sequence, gantt or
+# git graph diagram as box-drawing text, which `std` has no parser or graph
+# layout for: each type has its own grammar, and placing nodes in layers and
+# routing edges between them is a layout engine, not a few lines. It takes a
+# string and returns one, opening no file and no connection, and adds no colour
+# unless asked. It has no features of its own to turn off; `chrono` comes with
+# it, without its default features.
 mermaid-text = "=0.58.0"
 # Parses an SVG attribute's own grammar (path data, lengths with their units,
 # transforms, number lists, view boxes, the `font` shorthand), which `std`
@@ -119,14 +119,14 @@ tokio = { version = "=1.54.1", default-features = false }
 
 # Argument parsing. `derive` keeps the CLI surface declared next to the type it
 # produces rather than in a builder chain that drifts from it.
-clap = { version = "=4.6.7", features = ["derive"] }
+clap = { version = "=4.6.8", features = ["derive"] }
 
 # Shell completion scripts written from the command tree `clap` already holds.
 # `std` has no notion of a command tree, and a script written by hand for five
 # shells would drift from the flags the first time one is renamed. Default
 # features only: the dynamic-completion machinery, which would add `clap_lex`,
 # `shlex` and `is_executable`, is not used.
-clap_complete = "=4.6.11"
+clap_complete = "=4.6.12"
 
 # Error enums. Every module owns its error type; `thiserror` writes the
 # `Display` and `source` impls for it without erasing the type the way a
@@ -286,7 +286,7 @@ getrandom = "=0.4.3"
 # one process. The version and variant bit layout, the monotonic tie-break
 # counter, and the timestamp recovery are format machinery this crate owns;
 # `std` cannot mint one and hand-rolling it would be a second partial codec.
-uuid = { version = "=1.29.2", features = ["v7"] }
+uuid = { version = "=1.29.3", features = ["v7"] }
 
 # SHA-256, wherever a one-way digest is needed. Browser OAuth uses RFC 7636
 # S256. Prompt-cache scope identity needs a digest of credential-owned material
@@ -477,7 +477,7 @@ windows-sys = { version = "=0.61.2", features = [
 # its times in UTC, and says so. The provider crate takes it for the other
 # side of that hour: reading the RFC 3339 instant a vendor writes it as, which
 # `std` has no parser for.
-jiff = { version = "=0.2.42", default-features = false, features = [
+jiff = { version = "=1.0.1", default-features = false, features = [
     "std",
     "tz-system",
     "tzdb-zoneinfo",
@@ -653,6 +653,12 @@ crucible-tui-math.workspace = true
 # What draws a Mermaid diagram in an answer as text, in every renderer of a
 # session.
 crucible-tui-mermaid.workspace = true
+# What turns a drawer's picture into pixels and a PNG. A session draws a
+# diagram's picture through it for a terminal that confirmed Kitty, the drawing
+# probe times a diagram's picture rasterised and encoded through it, and the
+# command line's tests hold the font it draws with to the characters a drawer
+# lets into a picture.
+crucible-raster.workspace = true
 image.workspace = true
 # The hash an attachment is recorded under, taken here because this is where a
 # file is attached and the runner compares it on every request afterwards. Both
@@ -716,18 +722,26 @@ insta.workspace = true
 # standing where the application's own runtime stands for a conversation.
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 
+[features]
+# The colour-on memory probe's build: every display formula is answered with one
+# kept picture, made without TeX or the sandbox, so the probe measures sixteen
+# math pictures kept on any runner. In no `default` and turned on by nothing
+# else; `scripts/sh/bench.sh` alone asks for it, for a copy of `crucible` that
+# never ships, and `scripts/sh/repo-checks.sh` holds it there.
+bench-math-stand-in = []
+
 # The Linux benchmark probes run the shipped binary behind a controlling pseudo
 # terminal and render into a bounded kernel pipe, and the one test that runs
 # crucible the way a person does drives it through a pty the same way. `std`
 # can spawn the process and read the descriptors but cannot open the pty pair,
-# put its far side in raw mode, set its window size, bound a pipe or say how
-# long the clock tick is that `/proc` counts a process's CPU time in. `rustix`
-# and its version are already in the runtime graph, so this turns features on
-# rather than adding a crate; only the safe system-call wrappers the probes and
-# that test name become reachable, and no pty or pipe code is reached by
-# crucible itself.
+# put its far side in raw mode, set its window size, make it a probe's own
+# standard input, bound a pipe or say how long the clock tick is that `/proc`
+# counts a process's CPU time in. `rustix` and its version are already in the
+# runtime graph, so this turns features on rather than adding a crate; only the
+# safe system-call wrappers the probes and that test name become reachable, and
+# no pty or pipe code is reached by crucible itself.
 [target.'cfg(target_os = "linux")'.dependencies]
-rustix = { workspace = true, features = ["param", "pipe", "pty", "termios"] }
+rustix = { workspace = true, features = ["param", "pipe", "pty", "stdio", "termios"] }
 
 # What hears a hang-up or a termination while a turn is running, so the turn is
 # stopped and written down instead of lost, and a resize, so the next frame is

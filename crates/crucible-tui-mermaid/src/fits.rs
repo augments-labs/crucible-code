@@ -27,22 +27,47 @@ const HOSTILE: &str = "flowchart TD
     J(((double)))
 ";
 
-/// The other kinds, each as hostile as it gets in a few lines.
-const KINDS: [&str; 2] = [
+/// The other kinds, each as hostile as it gets in a few lines. The state
+/// diagram's label is on the line out of its composite state: on the line
+/// into it, the engine sets the label nearer another line than its own, and
+/// the diagram is refused in every room.
+const KINDS: [&str; 5] = [
     "stateDiagram-v2
     state \"很长的状态名\" as Long
     [*] --> Long
-    Long --> Busy : 一个转换
+    Long --> Busy
     state Busy {
         [*] --> Reading
         Reading --> [*]
     }
-    Busy --> [*]
+    Busy --> [*] : 一个转换
     note right of Long : 注意
 ",
     "erDiagram
     顧客 ||--o{ ORDER : places a long label
     ORDER ||--|{ LINE-ITEM : contains
+",
+    "sequenceDiagram
+    participant 客 as 很长的参与者名字
+    participant B as A participant at the cap
+    客->>B: 一个很长的消息标签
+    B-->>客: an answer back
+    B->>B: to itself
+",
+    "gantt
+    title 很长的标题 of a gantt
+    dateFormat YYYY-MM-DD
+    section 第一
+    漢字の仕事 :a1, 2026-01-01, 12d
+    At the cap name :after a1, 3w
+",
+    "gitGraph
+    commit id: \"漢字のコミット\"
+    branch 枝
+    commit tag: \"a long tag on a branch\"
+    checkout main
+    commit
+    merge 枝
 ",
 ];
 

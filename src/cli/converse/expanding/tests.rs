@@ -20,6 +20,7 @@ fn standing(from: usize, end: usize) -> View {
         back: Vec::new(),
         refused: None,
         counted: Box::default(),
+        pictures: Box::default(),
     }
 }
 
@@ -1993,4 +1994,120 @@ fn ctrl_o_opens_for_an_address_drawn_shorter_with_nothing_else_to_stand() {
             .any(|row| row == "https://example.com/docs/guide/intro"),
         "{rows:#?}"
     );
+}
+
+#[test]
+fn a_click_on_a_blocks_label_stands_that_blocks_source_alone() {
+    // As a click on a cut result stands that result: the results and the
+    // other blocks are not what was clicked.
+    let kept = cut(&["Read(one)"]);
+    let sources = blocks_of(
+        "| a | b |\n|---|---|\n| 1 | 2 |\n",
+        "$$\nx^2\n$$\n",
+        "```diff\n-old\n+new\n```\n",
+    );
+
+    let mut standing = Standing::default();
+    assert!(standing.asked(&Asked::Labelled(5), &kept, sources.len()));
+    let rows = frame_of(&kept, &sources, &mut standing, 80);
+
+    assert!(rows.iter().any(|row| row == "x^2"), "{rows:#?}");
+    for other in ["Read(one)", "-old", "| 1 | 2 |"] {
+        assert!(!rows.iter().any(|row| row == other), "{other}: {rows:#?}");
+    }
+    assert_eq!(
+        rows.last().map(String::as_str),
+        Some("esc to close"),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_label_clicked_whose_block_is_no_longer_held_stands_nothing() {
+    let kept = cut(&["Read(one)"]);
+    let sources = blocks_of("| a |\n|---|\n", "$$\nx\n$$\n", "```diff\n-a\n```\n");
+
+    let mut standing = Standing::default();
+    standing.asked(&Asked::Labelled(7), &kept, sources.len());
+    let rows = frame_of(&kept, &sources, &mut standing, 80);
+
+    assert!(
+        !rows.iter().any(|row| row == "Read(one)" || row == "x"),
+        "{rows:#?}"
+    );
+}
+
+/// [`frame_of`], with Enter resizing the picture of the block on record line
+/// `pictured`.
+fn frame_pictured(
+    sources: &[Source<'_>],
+    standing: &mut Standing,
+    rows: usize,
+    pictured: usize,
+) -> Vec<String> {
+    let view = opened(standing);
+    view.pictures.resizable = vec![pictured];
+    laying(
+        &Kept::default(),
+        sources,
+        view,
+        Glyphs::Unicode,
+        Size { columns: 80, rows },
+    )
+    .iter()
+    .map(|row| row.text().trim_end().to_owned())
+    .collect()
+}
+
+#[test]
+fn enter_resizes_the_picture_at_the_top_of_the_view_and_nothing_else() {
+    // The diagram is on line 5, the second source down; the diff on line 9
+    // is at the top when the view opens.
+    let math = "$$\nx^2\n$$\n".repeat(4);
+    let sources = blocks_of("| a |\n|---|\n| 1 |\n", &math, "```diff\n-a\n+b\n```\n");
+    let mut standing = Standing::default();
+    standing.open(&Kept::default(), 10);
+
+    let rows = frame_pictured(&sources, &mut standing, 10, 5);
+    assert!(
+        rows.last().is_some_and(|row| !row.contains("enter")),
+        "{rows:#?}"
+    );
+    assert!(!standing.against(Pressed::Key(Key::Enter), 3));
+    assert_eq!(standing.resizing(), None);
+
+    assert!(standing.against(Pressed::Key(Key::Right), 3));
+    let rows = frame_pictured(&sources, &mut standing, 10, 5);
+    assert_eq!(
+        rows.last().map(String::as_str),
+        Some("esc to close · enter to resize · ↑↓ pgup pgdn to see more · ←→ source 2 of 3"),
+        "{rows:#?}"
+    );
+    assert!(standing.against(Pressed::Key(Key::Enter), 3));
+    assert!(standing.is_open(), "Enter closed the view");
+    assert_eq!(standing.resizing(), Some(5));
+    // Resized once for one press.
+    assert_eq!(standing.resizing(), None);
+}
+
+#[test]
+fn enter_resizes_nothing_where_no_picture_resizes() {
+    // Native mode, or a block drawn as text: the renderer says no picture
+    // resizes, and Enter is the key it was.
+    let sources = blocks_of(
+        "| a |\n|---|\n| 1 |\n",
+        "$$\nx^2\n$$\n",
+        "```diff\n-a\n```\n",
+    );
+    let mut standing = Standing::default();
+    standing.open(&Kept::default(), 10);
+
+    let rows = frame_pictured(&sources, &mut standing, 80, usize::MAX);
+    assert_eq!(
+        rows.last().map(String::as_str),
+        Some("esc to close"),
+        "{rows:#?}"
+    );
+    assert!(!standing.against(Pressed::Key(Key::Enter), 3));
+    assert_eq!(standing.resizing(), None);
 }

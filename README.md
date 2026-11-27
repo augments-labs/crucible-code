@@ -52,7 +52,7 @@ A local release-profile run on September 8, 2026 produced:
 | First input rendered, p95 | 2.1 ms | ≤ 60 ms |
 | `--help` and `--version` exit, p95 | 0.7 ms | ≤ 12 ms |
 | Session picker with a deep history preview, p95 | 2.1 ms | ≤ 20 ms |
-| Peak RSS across the memory stress fixtures | 25.7 MiB | ≤ 35 MiB with colour off, ≤ 45 MiB with colour on |
+| Peak RSS across the memory stress fixtures | 25.7 MiB | ≤ 35 MiB with colour off, ≤ 50 MiB with colour on |
 
 Measured on Linux x86-64, Intel Core i9-10900K, with Rust 1.97.1 and a local
 fixture provider. The 20-turn conversation alone peaked at 12.7 MiB RSS; the
@@ -61,9 +61,13 @@ is the higher one because a session that reads code compiles each language's
 patterns and keeps them, about 5 MiB for one language, and drawing math and
 diagrams keeps about 2 MiB more: in a run of November 16, 2026 on the same
 processor and toolchain, a colour-on session whose answers carry Rust, math and
-a diagram reached 42.1 MiB once its record was full. These are local workload
-measurements, not a promise for every machine or session. Rendering probes also
-enforce sustained throughput and pacing budgets.
+a diagram reached 42.1 MiB once its record was full. A terminal that shows
+pictures keeps each diagram it is shown as one, up to 16 of them and 1.5 MiB
+together: in a run of November 26, 2026 on the same processor and toolchain,
+that session on a terminal confirmed to show pictures, keeping 16 diagrams as
+large as the record keeps 16 of, reached 48.4 MiB once its record was full.
+These are local workload measurements, not a promise for every machine or
+session. Rendering probes also enforce sustained throughput and pacing budgets.
 
 Tool output and retained terminal records have explicit limits. Resuming streams
 visible history from disk a message batch at a time; it does not build another

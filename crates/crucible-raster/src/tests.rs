@@ -403,6 +403,113 @@ fn the_height_follows_the_proportions_and_rounds_up_to_a_row() {
     );
 }
 
+/// An SVG whose outermost element says it is `width` by `height`, with nothing
+/// drawn on it.
+fn sized(width: &str, height: &str) -> String {
+    format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}"/>"#)
+}
+
+#[test]
+fn a_picture_narrower_than_the_ceiling_allows_is_rasterised_at_its_natural_width() {
+    // A gantt in one section is 776 across, where its proportions would let
+    // 840 in: a picture is never scaled up.
+    for (width, height) in [(776, 576), (8, 16), (3216, 16), (1, 1)] {
+        let svg = sized(&width.to_string(), &height.to_string());
+        assert_eq!(raster_width(svg.as_bytes()), Ok(width), "{width}x{height}");
+    }
+}
+
+#[test]
+fn a_picture_past_the_ceiling_is_rasterised_at_the_widest_the_ceiling_holds() {
+    let most = MOST_DECODED as u64 / 4;
+    for (width, height) in [(848, 624), (3216, 4000), (100_000, 16), (4, 1_000_000)] {
+        let svg = sized(&width.to_string(), &height.to_string());
+        let across = u64::from(raster_width(svg.as_bytes()).unwrap_or(0));
+        let pixels = |across: u64| across * (across * height).div_ceil(width);
+        assert!(across > 0, "{width}x{height}");
+        assert!(pixels(across) <= most, "{width}x{height} at {across}");
+        assert!(pixels(across + 1) > most, "{width}x{height} at {across}");
+    }
+    // What the rasteriser does at that width, and a column past it.
+    let _alone = alone();
+    let svg = sized("848", "624");
+    let across = raster_width(svg.as_bytes()).expect("a size");
+    assert!(
+        rasterise(svg.as_bytes(), across, &[]).is_ok(),
+        "at {across}"
+    );
+    assert_eq!(
+        rasterise(svg.as_bytes(), across + 1, &[]).map(|pixels| pixels.width()),
+        Err(Refused::TooLarge),
+        "one column past {across}"
+    );
+}
+
+#[test]
+fn a_size_in_an_absolute_unit_is_read_at_ninety_six_pixels_to_the_inch() {
+    // Each at its CSS value: an inch is 96 pixels, 72 points, 6 picas, 2.54
+    // centimetres and 25.4 millimetres. A width is rounded down to a pixel.
+    for (width, pixels) in [
+        ("5px", 5),
+        ("3pt", 4),
+        ("1pc", 16),
+        ("1in", 96),
+        ("10cm", 377),
+        ("10mm", 37),
+        ("88.065533pt", 117),
+    ] {
+        let svg = sized(width, "1in");
+        assert_eq!(raster_width(svg.as_bytes()), Ok(pixels), "{width}");
+        assert_eq!(
+            own_size(svg.as_bytes()).map(|(_, height)| height),
+            Ok(96.0),
+            "{width}"
+        );
+    }
+    // The height is read the same way, so the rows the ceiling is judged on
+    // are the rows the rasteriser draws.
+    let tall = sized("72pt", "2in");
+    let across = raster_width(tall.as_bytes()).expect("a size");
+    let _alone = alone();
+    assert_eq!(
+        rasterise(tall.as_bytes(), across, &[]).map(|pixels| (pixels.width(), pixels.height())),
+        Ok((96, 192))
+    );
+}
+
+#[test]
+fn a_picture_with_no_size_or_a_size_that_is_no_number_is_refused() {
+    let sizeless = [
+        r#"<svg xmlns="http://www.w3.org/2000/svg" height="10"/>"#.to_owned(),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="10"/>"#.to_owned(),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"/>"#.to_owned(),
+        sized("wide", "10"),
+        sized("10", "tall"),
+        sized("", "10"),
+        sized("10em", "10"),
+        sized("10", "10ex"),
+        sized("10%", "10"),
+        sized("10furlong", "10"),
+        sized("10 pt", "10"),
+        sized("pt", "10"),
+        sized("-10pt", "10"),
+        sized("0", "10"),
+        sized("10", "0"),
+        sized("-10", "10"),
+        sized("NaN", "10"),
+        sized("inf", "10"),
+        r#"<rect xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>"#.to_owned(),
+        "not a picture".to_owned(),
+    ];
+    for svg in sizeless {
+        assert_eq!(
+            raster_width(svg.as_bytes()),
+            Err(Refused::NotAnImage),
+            "{svg}"
+        );
+    }
+}
+
 #[test]
 fn a_drawing_is_refused_one_byte_past_its_ceiling() {
     let _alone = alone();
@@ -1030,22 +1137,23 @@ fn turbulent(count: u32, across: u32, down: u32) -> String {
 #[test]
 fn filter_work_is_refused_one_row_past_its_ceiling() {
     let _alone = alone();
-    // The rectangle is painted too, at 100 pixels to 6.25 steps: 139 rows of
-    // 10 octaves are 139 000 steps and 869 of paint, which is within the
-    // ceiling, and 140 rows are 140 000 and 875, which is not.
-    let at = turbulent(1, 100, 139);
+    // The rectangle is painted too, at 100 pixels to 6.25 steps: 318 rows of
+    // 10 octaves are 318 000 steps and 1 988 of paint, which is within the
+    // ceiling, and 319 rows are 319 000 and 1 994, which is not.
+    let at = turbulent(1, 100, 318);
     assert!(rasterise(at.as_bytes(), 100, &[]).is_ok());
-    let past = turbulent(1, 100, 140);
+    let past = turbulent(1, 100, 319);
     assert_eq!(rasterise(past.as_bytes(), 100, &[]), Err(Refused::TooLarge));
 }
 
 #[test]
 fn filter_work_is_added_up_over_the_whole_drawing() {
     let _alone = alone();
-    // Each rectangle is 80 000 steps and passes alone; two are past the ceiling.
-    let one = turbulent(1, 100, 80);
+    // Each rectangle is 170 000 steps and passes alone; two are past the
+    // ceiling.
+    let one = turbulent(1, 100, 170);
     assert!(rasterise(one.as_bytes(), 100, &[]).is_ok());
-    let two = turbulent(2, 100, 80);
+    let two = turbulent(2, 100, 170);
     assert_eq!(rasterise(two.as_bytes(), 200, &[]), Err(Refused::TooLarge));
 }
 
@@ -1075,14 +1183,14 @@ fn a_merge_is_counted_by_the_inputs_it_draws() {
     // The renderer draws the whole region once for every input of a merge, and
     // the inputs are limited only by the size of the file. A region of 100
     // pixels is 100 steps for each, and 20 more for the rectangle painted:
-    // 1 399 inputs are 139 920 steps, and one more is past the ceiling.
+    // 3 199 inputs are 319 920 steps, and one more is past the ceiling.
     let merged = |inputs: usize| {
         let nodes = r#"<feMergeNode in="SourceGraphic"/>"#.repeat(inputs);
         filtered(&format!("<feMerge>{nodes}</feMerge>"), 1, 10, 10)
     };
-    assert!(rasterise(merged(1_399).as_bytes(), 10, &[]).is_ok());
+    assert!(rasterise(merged(3_199).as_bytes(), 10, &[]).is_ok());
     assert_eq!(
-        rasterise(merged(1_400).as_bytes(), 10, &[]),
+        rasterise(merged(3_200).as_bytes(), 10, &[]),
         Err(Refused::TooLarge)
     );
     // A merge with no input at all is still one step, not none.
@@ -1102,21 +1210,21 @@ fn covered(count: usize, shape: &str) -> String {
 #[test]
 fn a_shape_is_counted_by_the_pixels_it_covers_inside_the_canvas() {
     let _alone = alone();
-    // One hundred and sixty shapes of 875 steps are 140 000 steps, and one
-    // more is past it.
+    // Three hundred and sixty-five shapes of 875 steps are 319 375 steps, and
+    // one more is past it.
     let page = r#"<rect width="100" height="140"/>"#;
-    assert!(rasterise(covered(160, page).as_bytes(), 100, &[]).is_ok());
+    assert!(rasterise(covered(365, page).as_bytes(), 100, &[]).is_ok());
     assert_eq!(
-        rasterise(covered(161, page).as_bytes(), 100, &[]),
+        rasterise(covered(366, page).as_bytes(), 100, &[]),
         Err(Refused::TooLarge)
     );
     // Only what is on the canvas counts: a shape far larger than the page
     // covers the same 14 000 pixels, and the ceiling is reached at the same
     // shape.
     let beyond = r#"<rect x="-5000" y="-5000" width="10000" height="10000"/>"#;
-    assert!(rasterise(covered(160, beyond).as_bytes(), 100, &[]).is_ok());
+    assert!(rasterise(covered(365, beyond).as_bytes(), 100, &[]).is_ok());
     assert_eq!(
-        rasterise(covered(161, beyond).as_bytes(), 100, &[]),
+        rasterise(covered(366, beyond).as_bytes(), 100, &[]),
         Err(Refused::TooLarge)
     );
     // A shape off the canvas covers nothing, and costs only what any shape
@@ -1137,17 +1245,17 @@ fn a_stroke_and_a_fill_are_counted_apart() {
     let _alone = alone();
     // A stroke with no fill covers the pixels the stroke reaches.
     let stroked = r#"<path d="M0 70H100" fill="none" stroke="black" stroke-width="140"/>"#;
-    assert!(rasterise(covered(160, stroked).as_bytes(), 100, &[]).is_ok());
+    assert!(rasterise(covered(365, stroked).as_bytes(), 100, &[]).is_ok());
     assert_eq!(
-        rasterise(covered(161, stroked).as_bytes(), 100, &[]),
+        rasterise(covered(366, stroked).as_bytes(), 100, &[]),
         Err(Refused::TooLarge)
     );
-    // A shape with both is counted twice: eighty are 140 000 steps, and one
-    // more is not.
+    // A shape with both is counted twice: 182 are 318 500 steps, and one more
+    // is not.
     let both = r#"<rect width="100" height="140" stroke="black"/>"#;
-    assert!(rasterise(covered(80, both).as_bytes(), 100, &[]).is_ok());
+    assert!(rasterise(covered(182, both).as_bytes(), 100, &[]).is_ok());
     assert_eq!(
-        rasterise(covered(81, both).as_bytes(), 100, &[]),
+        rasterise(covered(183, both).as_bytes(), 100, &[]),
         Err(Refused::TooLarge)
     );
 }
@@ -1179,12 +1287,12 @@ fn a_dashed_stroke_is_counted_by_the_dashes_it_makes() {
     assert_eq!(work_of(&dashed("100", 2, "5")), Ok(10 * 2 * 40));
     // A stroke no wider than a pixel is the 8 steps and no more.
     assert_eq!(work_of(&dashed("100", 1, "5 5")), Ok(10 * 2 * 8));
-    // The line is counted whole, though most of it is off the canvas: 1 750
-    // periods are 140 000 steps, and one more is past the ceiling.
-    let at = dashed("17500", 2, "5 5");
-    assert_eq!(work_of(&at), Ok(1_750 * 2 * 40));
+    // The line is counted whole, though most of it is off the canvas: 4 000
+    // periods are 320 000 steps, and one more is past the ceiling.
+    let at = dashed("40000", 2, "5 5");
+    assert_eq!(work_of(&at), Ok(4_000 * 2 * 40));
     assert!(rasterise(at.as_bytes(), 100, &[]).is_ok());
-    let past = dashed("17501", 2, "5 5");
+    let past = dashed("40001", 2, "5 5");
     assert_eq!(work_of(&past), Err(Refused::TooLarge));
     assert_eq!(rasterise(past.as_bytes(), 100, &[]), Err(Refused::TooLarge));
 }
@@ -1231,11 +1339,11 @@ fn a_path_in_a_clip_is_counted_by_the_pixels_it_fills() {
     let one = work_of(&clipped(1)).expect("one rectangle");
     let two = work_of(&clipped(2)).expect("two rectangles");
     assert_eq!(two - one, 625);
-    // So 223 rectangles in the clip and the one drawn are 140 000 steps, and
+    // So 511 rectangles in the clip and the one drawn are 320 000 steps, and
     // one more is past the ceiling.
-    assert!(rasterise(clipped(223).as_bytes(), 100, &[]).is_ok());
+    assert!(rasterise(clipped(511).as_bytes(), 100, &[]).is_ok());
     assert_eq!(
-        rasterise(clipped(224).as_bytes(), 100, &[]),
+        rasterise(clipped(512).as_bytes(), 100, &[]),
         Err(Refused::TooLarge)
     );
 }
@@ -1376,11 +1484,11 @@ fn a_path_is_counted_by_the_rows_each_segment_crosses() {
     // 140 ns, which is more than the 200 pixels it covers are worth.
     let one = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><path d="M0 0L1 100L2 0"/></svg>"#;
     assert_eq!(work_of(one), Ok(153));
-    // Ten thousand edges along one row are drawn, and two thousand that each
+    // Ten thousand edges along one row are drawn, and five thousand that each
     // cross a hundred rows are not, though they cover the same page.
     let flat = zigzag(10_000, 1);
     assert!(rasterise(flat.as_bytes(), 100, &[]).is_ok());
-    let tall = zigzag(2_000, 100);
+    let tall = zigzag(5_000, 100);
     assert_eq!(rasterise(tall.as_bytes(), 100, &[]), Err(Refused::TooLarge));
 }
 
@@ -1489,11 +1597,11 @@ fn a_gradient_costs_its_pixels_and_its_stops_together() {
     let _alone = alone();
     // Each paint of 32 stops over the 40 000 pixels of the page is 2 500
     // steps by its pixels and 2 500 by its stops; neither alone is past the
-    // ceiling for 52 of them, and together they are. Two stops are drawn.
-    let (drawn, reached) = refused_in_at(&painted(52, 32), 200);
+    // ceiling for 120 of them, and together they are. Two stops are drawn.
+    let (drawn, reached) = refused_in_at(&painted(120, 32), 200);
     assert_eq!(drawn, Err(Refused::TooLarge));
     assert_eq!(reached, Reached::Built, "drawn first");
-    assert!(rasterise(painted(52, 2).as_bytes(), 200, &[]).is_ok());
+    assert!(rasterise(painted(120, 2).as_bytes(), 200, &[]).is_ok());
 }
 
 /// What drawing `svg` `width` wide comes to, and how far it went to say so.
@@ -1547,15 +1655,15 @@ fn edges_of_a_stroke_crowded_along_a_row_are_counted_by_the_pixels_each_can_walk
     let _alone = alone();
     // The outline of a stroke has an edge each side of every segment, and
     // those of segments a fifth of a pixel apart walk the row over again as a
-    // fill's do: 7 000 across a row 1 414 wide are refused, before they are
-    // drawn, and 6 000 across one 1 212 wide are drawn.
-    let (wide, width) = crowded_stroke(7_000);
-    assert_eq!(width, 1_414);
+    // fill's do: 11 000 across a row 2 222 wide are refused, before they are
+    // drawn, and 10 000 across one 2 020 wide are drawn.
+    let (wide, width) = crowded_stroke(11_000);
+    assert_eq!(width, 2_222);
     let (drawn, reached) = refused_in_at(&wide, width);
     assert_eq!(drawn, Err(Refused::TooLarge));
     assert_eq!(reached, Reached::Built, "drawn first");
-    let (narrower, width) = crowded_stroke(6_000);
-    assert_eq!(width, 1_212);
+    let (narrower, width) = crowded_stroke(10_000);
+    assert_eq!(width, 2_020);
     assert!(rasterise(narrower.as_bytes(), width, &[]).is_ok());
 }
 
@@ -2254,13 +2362,13 @@ fn the_stops_of_a_gradient_in_its_shapes_units_are_counted_copied_for_each_shape
 fn every_stop_of_a_gradient_is_set_up_again_for_each_shape_it_paints() {
     let _alone = alone();
     // The renderer makes the stops of a gradient again for every shape it
-    // paints, however few pixels the shape reaches: two thousand shapes a pixel
-    // square of 400 stops are refused, and a thousand drawn.
-    let (drawn, reached) = refused_in_at(&used_graded_shapes(40, 50, 400, "userSpaceOnUse"), 100);
+    // paints, however few pixels the shape reaches: four thousand shapes a
+    // pixel square of 400 stops are refused, and three thousand drawn.
+    let (drawn, reached) = refused_in_at(&used_graded_shapes(40, 100, 400, "userSpaceOnUse"), 100);
     assert_eq!(drawn, Err(Refused::TooLarge), "stops set up");
     assert_eq!(reached, Reached::Built, "drawn first");
     let drawn = rasterise(
-        used_graded_shapes(40, 25, 400, "userSpaceOnUse").as_bytes(),
+        used_graded_shapes(40, 75, 400, "userSpaceOnUse").as_bytes(),
         100,
         &[],
     );
@@ -2817,5 +2925,62 @@ fn a_file_refused_for_its_work_is_refused_before_the_work_is_done() {
         let bytes = std::fs::read(std::path::Path::new(CORPUS).join(name)).expect("a corpus file");
         let (drawn, reached) = reached(|| rasterise(&bytes, 200, &[("ink", [20, 40, 60])]));
         assert_eq!((drawn, reached), (Err(*refused), *before), "{name}");
+    }
+}
+
+#[test]
+fn the_font_has_glyphs_for_latin_letters_and_box_drawing_and_none_for_han() {
+    for letter in [
+        ' ', 'A', 'z', '~', 'é', 'ÿ', 'Ĳ', 'ž', '—', '…', '→', '≤', '─', '╭', '█',
+    ] {
+        assert!(has_glyph(letter), "{letter:?}");
+    }
+    for letter in ['漢', '字', 'あ', '한', '\u{e000}'] {
+        assert!(!has_glyph(letter), "{letter:?}");
+    }
+}
+
+/// What `dvisvgm --no-fonts` writes for a TeX `x`: the glyph as a path in
+/// `<defs>`, drawn by a `<use>` that names it by `#id`, as every glyph of a
+/// formula is.
+const DVISVGM_X: &str = r"<?xml version='1.0' encoding='UTF-8'?>
+<!-- This file was generated by dvisvgm 3.6 -->
+<svg version='1.1' xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' width='5.693932pt' height='4.289468pt' viewBox='8029.033489 58.475165 5.693932 4.289468'>
+<defs>
+<path id='g0-120' d='M3.327522-3.008717C3.387298-3.267746 3.616438-4.184309 4.313823-4.184309C4.363636-4.184309 4.60274-4.184309 4.811955-4.054795C4.533001-4.004981 4.333748-3.755915 4.333748-3.516812C4.333748-3.35741 4.443337-3.16812 4.712329-3.16812C4.931507-3.16812 5.250311-3.347447 5.250311-3.745953C5.250311-4.26401 4.662516-4.403487 4.323786-4.403487C3.745953-4.403487 3.39726-3.875467 3.277709-3.646326C3.028643-4.303861 2.49066-4.403487 2.201743-4.403487C1.165629-4.403487 .597758-3.118306 .597758-2.86924C.597758-2.769614 .697385-2.769614 .71731-2.769614C.797011-2.769614 .826899-2.789539 .846824-2.879203C1.185554-3.935243 1.843088-4.184309 2.181818-4.184309C2.371108-4.184309 2.719801-4.094645 2.719801-3.516812C2.719801-3.20797 2.550436-2.540473 2.181818-1.145704C2.022416-.52802 1.673724-.109589 1.235367-.109589C1.175592-.109589 .946451-.109589 .737235-.239103C.986301-.288917 1.205479-.498132 1.205479-.777086C1.205479-1.046077 .986301-1.125778 .836862-1.125778C.537983-1.125778 .288917-.86675 .288917-.547945C.288917-.089664 .787049 .109589 1.225405 .109589C1.882939 .109589 2.241594-.587796 2.271482-.647572C2.391034-.278954 2.749689 .109589 3.347447 .109589C4.373599 .109589 4.941469-1.175592 4.941469-1.424658C4.941469-1.524284 4.851806-1.524284 4.821918-1.524284C4.732254-1.524284 4.712329-1.484433 4.692403-1.414695C4.363636-.348692 3.686177-.109589 3.367372-.109589C2.978829-.109589 2.819427-.428394 2.819427-.767123C2.819427-.986301 2.879203-1.205479 2.988792-1.643836L3.327522-3.008717Z'/>
+</defs>
+<g id='page1'>
+<use x='8029.033489' y='62.764633' xlink:href='#g0-120'/>
+</g>
+</svg>";
+
+#[test]
+fn a_glyph_drawn_by_a_use_naming_it_by_fragment_draws() {
+    let _alone = alone();
+    let pixels = rasterise(DVISVGM_X.as_bytes(), 32, &[]).expect("drawn");
+    let inked = pixels
+        .rgba()
+        .chunks_exact(4)
+        .filter(|pixel| pixel.get(3) == Some(&255))
+        .count();
+    assert!(inked > 20, "{inked} pixels inked");
+}
+
+#[test]
+fn a_use_naming_anything_but_an_element_of_the_picture_is_refused() {
+    let _alone = alone();
+    for reference in [
+        "file:///etc/passwd#g0-120",
+        "http://127.0.0.1:9/glyphs.svg#g0-120",
+        "glyphs.svg#g0-120",
+        "data:image/svg+xml,%3Csvg/%3E#g0-120",
+        " file:#g0-120",
+    ] {
+        let svg = DVISVGM_X.replace("xlink:href='#g0-120'", &format!("xlink:href='{reference}'"));
+        assert_eq!(
+            rasterise(svg.as_bytes(), 32, &[]).err(),
+            Some(Refused::NotAnImage),
+            "{reference}"
+        );
     }
 }

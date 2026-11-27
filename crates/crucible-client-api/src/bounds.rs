@@ -30,6 +30,18 @@ pub const PROMPT_BYTES: usize = crucible_types::CONTINUATION_BYTES;
 /// The most bytes a [`Name`] may be.
 pub const NAME_BYTES: usize = 256;
 
+/// The most bytes the path an image is asked for by may be: the longest path
+/// Linux and macOS will open, which is longer than Windows will.
+pub const PATH_BYTES: usize = 4096;
+
+/// The most bytes the PNG an image is shown as may be, before it is written
+/// as base64 to cross.
+///
+/// Written out it comes to four bytes for every three, which leaves room
+/// under [`FRAME_BYTES`] for the response around it; a reader refuses longer
+/// base64 by its length, before decoding any of it.
+pub const IMAGE_BYTES: usize = 1024 * 1024;
+
 /// The most bytes a [`Text`] may be.
 pub const TEXT_BYTES: usize = 16 * 1024;
 

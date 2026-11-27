@@ -1,0 +1,14 @@
+---
+source: crates/crucible-tui-mermaid/src/tests.rs
+expression: "dump(&rows, 80)"
+---
+<Quiet>┌─ mermaid · git graph</>                                                          
+<Quiet>│ </>*    c0                                                                       
+<Quiet>│ </>*    base                                                                     
+<Quiet>│ </>╭─╮                                                                           
+<Quiet>│ </>│ *  c2                                                                       
+<Quiet>│ </>* │  c3 [v1]                                                                  
+<Quiet>│ </>╰─╯                                                                           
+<Quiet>│ </>M │  c4                                                                       
+<Quiet>│ </>main feature                                                                  
+<Quiet>└─</>

@@ -145,6 +145,10 @@ pub(super) enum Asked {
     /// them to answer a click would put the transcript's half of the session
     /// inside the box's.
     Clicked(usize),
+    /// A click on the label of the block this line of the record is drawn
+    /// as, which stands that block's source as a click on a cut result
+    /// stands the result. Reported for the reason [`Asked::Clicked`] is.
+    Labelled(usize),
     /// There is nothing here to type into. The caller reads a line instead.
     Untyped,
     /// A command left running has ended, and this is the turn it asks for.
@@ -779,9 +783,17 @@ pub(crate) fn ask<T: Terminal>(
             // which is the loop above's to answer because what was cut is
             // there. Anywhere else — the border, a blank row, the shell's own
             // output — it moves nothing, the same as a key that moved nothing.
+            // A picture in the record is resized where it is, and draws its
+            // own frame, as the wheel does — once the button comes up on the
+            // cell it went down on, so a drag that starts on it selects.
             Pressed::Clicked { row, column } => {
                 match landed(renderer, editor, &says, Pointed { row, column }) {
                     Landed::Record(at) => return Ok(Asked::Clicked(at)),
+                    Landed::Label(at) => return Ok(Asked::Labelled(at)),
+                    Landed::Picture(at) => {
+                        renderer.resizes_when_let_go(at);
+                        offered.is_some()
+                    }
                     Landed::Line => true,
 
                     Landed::Counted => stood(renderer, style, &mut listing, left, &terms.ending)?,
@@ -1262,6 +1274,11 @@ pub(super) fn during<T: Terminal>(
 
             let walked = opened.against(arrived, renderer.scroll_rows());
             moved |= walked;
+            // Enter on a picture in the view: the renderer is this loop's, so
+            // the picture is resized here, and draws its own frame.
+            if let Some(line) = opened.resizing() {
+                renderer.resizes(line)?;
+            }
 
             // A wheel the view did nothing with is the transcript's, by the
             // rule the region loop between turns reads one under: at either end
@@ -1553,6 +1570,15 @@ pub(super) fn during<T: Terminal>(
                 Landed::Record(one) => {
                     opened.one(kept, one);
                     moved |= opened.is_open();
+                }
+                Landed::Label(line) => {
+                    opened.block(line);
+                    moved |= opened.is_open();
+                }
+                // Shown at its next size when the button comes up on the
+                // cell it went down on, as between turns.
+                Landed::Picture(line) => {
+                    renderer.resizes_when_let_go(line);
                 }
                 Landed::Line => moved = true,
                 // The count is the one door on that row, and it is the door it
@@ -2440,7 +2466,7 @@ fn sent<T: Terminal>(
     // parted afterwards would end on a blank row under the final answer, and the
     // shell's own prompt would come back one row lower than it left.
     renderer.apart()?;
-    renderer.landmark();
+    renderer.starts_turn();
     let responsive = said.line.clone();
     renderer.responsive(
         responsive.len(),

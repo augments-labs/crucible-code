@@ -12,7 +12,8 @@ use crucible_types::{QuestionId, SessionId};
 use serde_json::{Value, json};
 
 use crate::bounds::{
-    DEPTH, FRAME_BYTES, ITEMS, NAME_BYTES, PROMPT_BYTES, SAID_BYTES, TEXT_BYTES, VALUES,
+    DEPTH, FRAME_BYTES, IMAGE_BYTES, ITEMS, NAME_BYTES, PATH_BYTES, PROMPT_BYTES, SAID_BYTES,
+    TEXT_BYTES, VALUES,
 };
 use crate::*;
 
@@ -108,8 +109,14 @@ const KEYS: [&str; 82] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 63] = [
+const MORE_KEYS: [&str; 69] = [
     "era",
+    "image",
+    "path",
+    "hash",
+    "png",
+    "width",
+    "height",
     "stint",
     "answer",
     "added",
@@ -223,6 +230,10 @@ const SESSIONS_KEYS: [&str; 7] = [
     "unreadable",
 ];
 
+/// The commands a field called `path` may cross in: one, asking for the image
+/// a turn named by the path the turn wrote.
+const SHOWN_BY_PATH: [&str; 1] = ["show_image"];
+
 /// What a field name may not say, whatever else it says.
 ///
 /// A field called any of these is a field holding authority: a secret, a place
@@ -241,6 +252,18 @@ const FORBIDDEN: [&str; 12] = [
     "workspace",
     "argument",
 ];
+
+/// An image the host showed, as it crosses: the contract carries the bytes
+/// and leaves reading them to whoever draws them.
+fn shown() -> Shown {
+    Shown {
+        png: PIXEL.to_vec(),
+        pixels: (1, 1),
+    }
+}
+
+/// The eight bytes every PNG opens with.
+const PIXEL: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
 
 fn marked() -> Text {
     Text::cut(MARKER)
@@ -605,6 +628,13 @@ fn commands() -> Vec<Command> {
         },
         Command::Exit,
         answer(),
+        Command::ShowImage(ImageRef::Answer {
+            path: ImagePath::new(MARKER).unwrap(),
+        }),
+        Command::ShowImage(ImageRef::Tool {
+            path: ImagePath::new("/home/someone/work/docs/loop-dark.png").unwrap(),
+            hash: [0xa5; 32],
+        }),
     ];
     commands.extend(decisions().into_iter().map(Command::Decide));
     commands.extend(Rung::EVERY.into_iter().map(Command::SetEffort));
@@ -1051,6 +1081,12 @@ fn outcomes() -> Vec<Outcome> {
     outcomes.extend(turn_outcomes().into_iter().map(Outcome::Turn));
     outcomes.extend(Mode::EVERY.into_iter().map(Outcome::Mode));
     outcomes.extend(Missing::EVERY.into_iter().map(Outcome::Unasked));
+    outcomes.push(Outcome::Image(Ok(shown())));
+    outcomes.extend(
+        ImageRefused::EVERY
+            .into_iter()
+            .map(|why| Outcome::Image(Err(why))),
+    );
     outcomes.extend(
         ErrorCode::EVERY
             .into_iter()
@@ -1368,52 +1404,54 @@ const fn era_arm(one: &Era) -> (usize, usize) {
 const fn command_arm(one: &Command) -> (usize, usize) {
     match one {
         Command::Prompt(prompt) => match prompt.author() {
-            Author::Person => (0, 43),
-            Author::Application => (42, 43),
+            Author::Person => (0, 45),
+            Author::Application => (42, 45),
         },
-        Command::Compact => (1, 43),
-        Command::Cancel => (2, 43),
-        Command::Decide(_) => (3, 43),
-        Command::Clear => (4, 43),
-        Command::Resume(_) => (5, 43),
+        Command::Compact => (1, 45),
+        Command::Cancel => (2, 45),
+        Command::Decide(_) => (3, 45),
+        Command::Clear => (4, 45),
+        Command::Resume(_) => (5, 45),
         Command::SelectModel {
             effort: Some(_), ..
-        } => (6, 43),
-        Command::SelectModel { effort: None, .. } => (7, 43),
-        Command::SetEffort(_) => (8, 43),
-        Command::SetMode(_) => (9, 43),
-        Command::CycleMode => (10, 43),
-        Command::Login { .. } => (11, 43),
-        Command::Logout { .. } => (12, 43),
-        Command::InspectCache => (13, 43),
-        Command::CleanCache => (14, 43),
-        Command::Sandbox { enabled: true } => (15, 43),
-        Command::Sandbox { enabled: false } => (16, 43),
-        Command::Theme(Theme::Drawing(_)) => (17, 43),
-        Command::Theme(Theme::Syntax(_)) => (18, 43),
-        Command::Help => (19, 43),
-        Command::ReleaseNotes { version: None } => (20, 43),
-        Command::ReleaseNotes { version: Some(_) } => (21, 43),
-        Command::Exit => (22, 43),
-        Command::SetSpeed(_) => (23, 43),
-        Command::Context => (24, 43),
-        Command::Usage => (25, 43),
-        Command::Setting { .. } => (26, 43),
-        Command::AskLimits => (27, 43),
-        Command::Disconnect { .. } => (28, 43),
-        Command::RemoveIntegration { .. } => (29, 43),
-        Command::SignOut { .. } => (30, 43),
-        Command::Connect { instance: Some(_) } => (31, 43),
-        Command::Connect { instance: None } => (32, 43),
-        Command::AgentCatalog => (33, 43),
-        Command::InstallAgent { .. } => (34, 43),
-        Command::UpdateAgent { .. } => (35, 43),
-        Command::RollbackAgent { .. } => (36, 43),
-        Command::RemoveAgent { .. } => (37, 43),
-        Command::VerifyAgent { .. } => (38, 43),
-        Command::SignInAgent { .. } => (39, 43),
-        Command::AddAgent { .. } => (40, 43),
-        Command::Answer { .. } => (41, 43),
+        } => (6, 45),
+        Command::SelectModel { effort: None, .. } => (7, 45),
+        Command::SetEffort(_) => (8, 45),
+        Command::SetMode(_) => (9, 45),
+        Command::CycleMode => (10, 45),
+        Command::Login { .. } => (11, 45),
+        Command::Logout { .. } => (12, 45),
+        Command::InspectCache => (13, 45),
+        Command::CleanCache => (14, 45),
+        Command::Sandbox { enabled: true } => (15, 45),
+        Command::Sandbox { enabled: false } => (16, 45),
+        Command::Theme(Theme::Drawing(_)) => (17, 45),
+        Command::Theme(Theme::Syntax(_)) => (18, 45),
+        Command::Help => (19, 45),
+        Command::ReleaseNotes { version: None } => (20, 45),
+        Command::ReleaseNotes { version: Some(_) } => (21, 45),
+        Command::Exit => (22, 45),
+        Command::SetSpeed(_) => (23, 45),
+        Command::Context => (24, 45),
+        Command::Usage => (25, 45),
+        Command::Setting { .. } => (26, 45),
+        Command::AskLimits => (27, 45),
+        Command::Disconnect { .. } => (28, 45),
+        Command::RemoveIntegration { .. } => (29, 45),
+        Command::SignOut { .. } => (30, 45),
+        Command::Connect { instance: Some(_) } => (31, 45),
+        Command::Connect { instance: None } => (32, 45),
+        Command::AgentCatalog => (33, 45),
+        Command::InstallAgent { .. } => (34, 45),
+        Command::UpdateAgent { .. } => (35, 45),
+        Command::RollbackAgent { .. } => (36, 45),
+        Command::RemoveAgent { .. } => (37, 45),
+        Command::VerifyAgent { .. } => (38, 45),
+        Command::SignInAgent { .. } => (39, 45),
+        Command::AddAgent { .. } => (40, 45),
+        Command::Answer { .. } => (41, 45),
+        Command::ShowImage(ImageRef::Answer { .. }) => (43, 45),
+        Command::ShowImage(ImageRef::Tool { .. }) => (44, 45),
     }
 }
 
@@ -1589,6 +1627,14 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
         Outcome::Answer(answer) => match answer {
             AnswerOutcome::Settled => (0, 2),
             AnswerOutcome::Invalid { .. } => (1, 2),
+        },
+        Outcome::Image(image) => match image {
+            Ok(_) => (0, 6),
+            Err(ImageRefused::NotShown) => (1, 6),
+            Err(ImageRefused::TooLarge) => (2, 6),
+            Err(ImageRefused::NotAnImage) => (3, 6),
+            Err(ImageRefused::NotInTime) => (4, 6),
+            Err(ImageRefused::Changed) => (5, 6),
         },
     }
 }
@@ -1845,9 +1891,31 @@ fn no_value_that_crosses_names_a_field_for_a_secret_a_path_or_a_handle() {
         .collect();
     for word in &allowed {
         for stem in FORBIDDEN {
+            // The one exception, which the crate's documentation records: an
+            // image a turn named is asked for by the path the turn wrote.
+            if *word == "path" {
+                continue;
+            }
             assert!(!word.contains(stem), "the allowed field {word} says {stem}");
         }
     }
+    let mut by_path = BTreeSet::new();
+    for specimen in specimens() {
+        let value: Value = serde_json::from_slice(&specimen.frame).unwrap();
+        let mut keys = BTreeSet::new();
+        walk(&value, &mut keys, &mut Vec::new());
+        if keys.contains("path") {
+            by_path.insert(specimen.what.clone());
+        }
+    }
+    assert_eq!(
+        by_path,
+        SHOWN_BY_PATH
+            .iter()
+            .map(|kind| format!("request {kind}"))
+            .collect::<BTreeSet<_>>(),
+        "a path crosses only in the command that asks for an image by it"
+    );
 
     let mut used = BTreeSet::new();
     for specimen in specimens() {
@@ -1988,7 +2056,7 @@ fn refused(bytes: &[u8]) -> (Option<u64>, ErrorCode) {
 
 #[test]
 fn a_version_this_build_does_not_speak_is_refused_by_name() {
-    for version in [0, 1, 2, 3, 4, 5, 7, 65_535, 65_536, u64::MAX] {
+    for version in [0, 1, 2, 3, 4, 5, 6, 8, 65_535, 65_536, u64::MAX] {
         let frame = with(asking(&json!({"kind": "help"})), "version", json!(version));
         assert_eq!(
             refused(&framed(&frame)),
@@ -2049,9 +2117,9 @@ fn a_frame_that_is_not_one_whole_request_is_malformed() {
         (b"not json".to_vec(), None),
         (b"[1, 2]".to_vec(), None),
         (b"{\"version\": 2".to_vec(), None),
-        (framed(&json!({"version": 6})), None),
+        (framed(&json!({"version": 7})), None),
         (
-            framed(&json!({"version": 6, "capabilities": [], "correlation": -1, "command": {}})),
+            framed(&json!({"version": 7, "capabilities": [], "correlation": -1, "command": {}})),
             None,
         ),
         (
@@ -2074,7 +2142,7 @@ fn a_frame_that_is_not_one_whole_request_is_malformed() {
             Some(41),
         ),
         (
-            framed(&json!({"version": 6, "capabilities": [], "correlation": 41,
+            framed(&json!({"version": 7, "capabilities": [], "correlation": 41,
                 "command": {"kind": "help"}, "also": true})),
             Some(41),
         ),
@@ -2387,10 +2455,10 @@ fn a_field_nobody_asked_for_refuses_the_frame_wherever_it_is_nested() {
 #[test]
 fn a_key_said_twice_is_refused_rather_than_one_of_them_believed() {
     let twice = [
-        r#"{"version":6,"capabilities":[],"correlation":41,"correlation":42,"command":{"kind":"help"}}"#,
-        r#"{"version":6,"capabilities":[],"correlation":41,"command":{"kind":"interrupt","kind":"help"}}"#,
-        r#"{"version":6,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"id":8,"ruling":"allow","lasting":"once"}}}"#,
-        r#"{"version":6,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"ruling":"deny","ruling":"allow","lasting":"once"}}}"#,
+        r#"{"version":7,"capabilities":[],"correlation":41,"correlation":42,"command":{"kind":"help"}}"#,
+        r#"{"version":7,"capabilities":[],"correlation":41,"command":{"kind":"interrupt","kind":"help"}}"#,
+        r#"{"version":7,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"id":8,"ruling":"allow","lasting":"once"}}}"#,
+        r#"{"version":7,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"ruling":"deny","ruling":"allow","lasting":"once"}}}"#,
     ];
     for frame in twice {
         assert_eq!(
@@ -2400,7 +2468,7 @@ fn a_key_said_twice_is_refused_rather_than_one_of_them_believed() {
         );
     }
 
-    let once = r#"{"version":6,"capabilities":[],"correlation":41,"command":{"kind":"help"}}"#;
+    let once = r#"{"version":7,"capabilities":[],"correlation":41,"command":{"kind":"help"}}"#;
     assert!(Request::decode(once.as_bytes()).is_ok());
 }
 
@@ -2636,7 +2704,7 @@ fn progress_and_a_snapshot_say_their_version_and_another_is_refused_by_name() {
             "{frame}"
         );
 
-        for version in [0, 1, 2, 3, 4, 5, 7, 65_536, u64::MAX] {
+        for version in [0, 1, 2, 3, 4, 5, 6, 8, 65_536, u64::MAX] {
             let other = with(frame.clone(), "version", json!(version));
             assert_eq!(
                 read(&framed(&other)).unwrap_err().code(),
@@ -2840,7 +2908,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // alone moves that number and this digest, and leaves the revision.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (6, 10_123_205_418_745_546_033),
+        (7, 2_577_804_082_294_738_893),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );
@@ -3591,7 +3659,7 @@ fn an_install_report_says_how_much_is_done_of_how_much_and_never_more() {
 fn an_install_report_is_held_to_the_frame_rules_every_other_report_is() {
     let frame = installs().remove(0).written();
 
-    for version in [0, 1, 2, 3, 4, 5, 7, 65_536, u64::MAX] {
+    for version in [0, 1, 2, 3, 4, 5, 6, 8, 65_536, u64::MAX] {
         let other = with(frame.clone(), "version", json!(version));
         assert_eq!(
             InstallProgress::decode(&framed(&other)).unwrap_err().code(),
@@ -3929,6 +3997,189 @@ fn an_invalid_answer_carries_only_its_own_code() {
             Response::decode(&frame),
             Err(ErrorCode::Malformed.into()),
             "{code:?}"
+        );
+    }
+}
+
+/// A request asking for `image`, as a frame.
+fn showing(image: &Value) -> Vec<u8> {
+    framed(&asking(&json!({"kind": "show_image", "image": image})))
+}
+
+#[test]
+fn an_image_is_asked_for_by_the_path_the_turn_wrote_and_a_tool_image_by_its_kept_hash() {
+    let tool = Command::ShowImage(ImageRef::Tool {
+        path: ImagePath::new("docs/loop-dark.png").unwrap(),
+        hash: [0xa5; 32],
+    });
+    let frame = Request::new(Capabilities::none(), Correlation::new(41), tool.clone())
+        .encode()
+        .unwrap();
+    let value: Value = serde_json::from_slice(&frame).unwrap();
+    assert_eq!(
+        value.pointer("/command"),
+        Some(&json!({"kind": "show_image", "image": {"kind": "tool",
+            "path": "docs/loop-dark.png", "hash": "a5".repeat(32)}}))
+    );
+    assert_eq!(*Request::decode(&frame).unwrap().command(), tool);
+    assert_eq!(tool.needs(), None);
+    assert_eq!(
+        Request::decode(&showing(&json!({"kind": "answer", "path": "out/plot.png"})))
+            .unwrap()
+            .command(),
+        &Command::ShowImage(ImageRef::Answer {
+            path: ImagePath::new("out/plot.png").unwrap(),
+        })
+    );
+
+    // The hash is the 32 bytes as 64 lowercase hex characters, and nothing
+    // else spelling them is believed.
+    for hash in [
+        "A5".repeat(32),
+        "a5".repeat(31),
+        format!("{}a", "a5".repeat(31)),
+        "a5".repeat(33),
+        format!("{}zz", "a5".repeat(31)),
+        format!("{}+5", "a5".repeat(31)),
+        String::new(),
+    ] {
+        let image = json!({"kind": "tool", "path": "a.png", "hash": hash});
+        assert_eq!(
+            refused(&showing(&image)),
+            (Some(41), ErrorCode::Malformed),
+            "{hash}"
+        );
+    }
+    for image in [
+        json!({"kind": "tool", "path": "a.png", "hash": 7}),
+        json!({"kind": "tool", "path": "a.png"}),
+        json!({"kind": "answer", "path": "a.png", "hash": "a5".repeat(32)}),
+        json!({"kind": "answer"}),
+        json!({"kind": "file", "path": "a.png"}),
+        json!("a.png"),
+    ] {
+        assert_eq!(
+            refused(&showing(&image)),
+            (Some(41), ErrorCode::Malformed),
+            "{image}"
+        );
+    }
+}
+
+#[test]
+fn an_image_path_is_whole_text_of_its_own_ceiling_or_refused() {
+    let longest = "a".repeat(PATH_BYTES);
+    assert_eq!(ImagePath::new(&longest).unwrap().as_str(), longest);
+    assert_eq!(
+        ImagePath::new(&format!("{longest}a")).unwrap_err().code(),
+        ErrorCode::TooLarge
+    );
+    for spelled in ["", "out/\u{1b}[2Jplot.png", "a\nb.png", "a\u{9b}b.png"] {
+        assert_eq!(
+            ImagePath::new(spelled).unwrap_err().code(),
+            ErrorCode::InvalidArgument,
+            "{spelled:?}"
+        );
+    }
+    assert_eq!(
+        refused(&showing(
+            &json!({"kind": "answer", "path": format!("{longest}a")})
+        )),
+        (Some(41), ErrorCode::TooLarge)
+    );
+    assert_eq!(
+        refused(&showing(&json!({"kind": "answer", "path": "a\u{7}.png"}))),
+        (Some(41), ErrorCode::InvalidArgument)
+    );
+    // What a model wrote is no line of a log.
+    let path = ImagePath::new(MARKER).unwrap();
+    assert!(!format!("{path:?}").contains(MARKER));
+}
+
+/// The response showing an image `png` bytes long.
+fn showed(png: usize) -> Response {
+    Response {
+        correlation: Some(Correlation::new(41)),
+        outcome: Outcome::Image(Ok(Shown {
+            png: vec![0xff; png],
+            pixels: (640, 480),
+        })),
+    }
+}
+
+#[test]
+fn the_largest_image_crosses_in_one_frame_and_a_byte_more_is_refused() {
+    let largest = showed(IMAGE_BYTES);
+    let frame = largest.encode().unwrap();
+    assert!(frame.len() < FRAME_BYTES, "{}", frame.len());
+    assert_eq!(Response::decode(&frame).unwrap(), largest);
+
+    assert_eq!(
+        showed(IMAGE_BYTES + 1).encode().unwrap_err().code(),
+        ErrorCode::TooLarge
+    );
+
+    // Written by somebody else, it is refused by the length of its encoding,
+    // before a byte of it is decoded.
+    let mut over: Value = serde_json::from_slice(&frame).unwrap();
+    *over.pointer_mut("/outcome/image/png").unwrap() =
+        json!("A".repeat(IMAGE_BYTES.div_ceil(3) * 4 + 4));
+    assert_eq!(
+        Response::decode(&framed(&over)).unwrap_err().code(),
+        ErrorCode::TooLarge
+    );
+
+    let mut garbled: Value = serde_json::from_slice(&frame).unwrap();
+    *garbled.pointer_mut("/outcome/image/png").unwrap() = json!("not base64!");
+    assert_eq!(
+        Response::decode(&framed(&garbled)).unwrap_err().code(),
+        ErrorCode::Malformed
+    );
+    for (field, value) in [
+        ("width", json!(0)),
+        ("height", json!(0)),
+        ("width", json!(u64::from(u32::MAX) + 1)),
+        ("height", json!(-1)),
+    ] {
+        let mut sized = serde_json::from_slice::<Value>(&showed(8).encode().unwrap()).unwrap();
+        *sized
+            .pointer_mut(&format!("/outcome/image/{field}"))
+            .unwrap() = value;
+        assert_eq!(
+            Response::decode(&framed(&sized)).unwrap_err().code(),
+            ErrorCode::Malformed,
+            "{field}"
+        );
+    }
+    // The bytes are not printed where the response is.
+    assert!(format!("{:?}", showed(8)).len() < 200);
+}
+
+#[test]
+fn an_image_refused_says_why_by_a_word_of_its_own_and_nothing_else() {
+    let words: Vec<&str> = ImageRefused::EVERY.iter().map(|why| why.as_str()).collect();
+    assert_eq!(
+        words,
+        [
+            "not_shown",
+            "too_large",
+            "not_an_image",
+            "not_in_time",
+            "changed"
+        ]
+    );
+    for why in ImageRefused::EVERY {
+        let response = Response {
+            correlation: Some(Correlation::new(41)),
+            outcome: Outcome::Image(Err(why)),
+        };
+        let frame = response.encode().unwrap();
+        assert_eq!(Response::decode(&frame).unwrap(), response);
+        let value: Value = serde_json::from_slice(&frame).unwrap();
+        assert_eq!(
+            value,
+            json!({"version": Version::CURRENT.number(), "correlation": 41,
+                "outcome": {"kind": "image", "image": {"kind": why.as_str()}}})
         );
     }
 }

@@ -36,20 +36,23 @@ use resvg::usvg::{ClipPath, Group, Mask, Node, Paint, Path, Stroke, Tree};
 
 /// The time a step stands for, in nanoseconds: 140.
 ///
-/// [`MOST_WORK`] steps were about 20 ms for the slowest primitive measured.
+/// [`MOST_WORK`] steps were about 45 ms for the slowest primitive measured.
 const STEP_NS: u64 = 140;
 
-/// The most work a drawing may ask for: 140 000 pixel-steps.
+/// The most work a drawing may ask for: 320 000 pixel-steps.
 ///
 /// A step is one pass over one pixel by the cheapest primitive; a primitive
 /// that does more with each pixel (a turbulence per octave, a morphology per
 /// window cell, a convolution per matrix cell, a merge per input) counts that
 /// many, and a shape counts [`PIXELS_PER_STEP`] of the pixels it reaches as
-/// one. The number is the largest total at which the slowest primitive
-/// measured still drew within 20 ms in a release build: over 140 000 pixels a
-/// drop shadow took 17 ms, a Gaussian blur 14 ms and a one-octave turbulence
-/// 19 ms. A merge input is a copy of the region and took 2 ms at that total.
-const MOST_WORK: u64 = 140_000;
+/// one. The number holds a picture of every diagram kind at its caps, in every
+/// shape the drawing probe times, each rasterised at its own width or, where
+/// that would be more pixels than are decoded, narrower: the dearest, a git
+/// graph on few branches at 843 pixels across, asks for 301 488 steps. In a
+/// release build, over 320 000 pixels a drop shadow took 44 ms, a Gaussian
+/// blur 36 ms and a one-octave turbulence 36 ms. A merge input is a copy of
+/// the region and took 10 ms at that total.
+const MOST_WORK: u64 = 320_000;
 
 /// How many pixels of a shape count as one step: 16.
 ///
@@ -324,7 +327,10 @@ impl Walk {
             return Ok(());
         };
         let transform = inverse.pre_concat(transform);
-        let Some(bbox) = group.layer_bounding_box().transform(transform) else {
+        let Some(bbox) = group
+            .layer_bounding_box()
+            .and_then(|bbox| bbox.transform(transform))
+        else {
             return Ok(());
         };
         let grown = if group.filters().is_empty() {
@@ -592,7 +598,9 @@ fn shape(path: &Path, transform: Transform, pixmap: (u32, u32)) -> Result<u64, R
         }
     }
     if let Some(stroke) = path.stroke() {
-        let outline = path.stroke_bounding_box().transform(transform);
+        let outline = path
+            .stroke_bounding_box()
+            .and_then(|outline| outline.transform(transform));
         let near = outline.is_some_and(|outline| {
             [
                 outline.left(),
@@ -684,8 +692,13 @@ fn largest(pixels: u64, nanos: u64, stops: u64, runs: u64) -> u64 {
 }
 
 /// The part of a pixmap a shape with this bounding box reaches, as the
-/// renderer clips it: none where it is off the pixmap.
-fn reaches(bounds: Rect, transform: Transform, pixmap: Option<IntRect>) -> Option<IntRect> {
+/// renderer clips it: none where it is off the pixmap. A shape the parser
+/// gives no bounding box is still drawn, so it is counted as reaching the
+/// whole pixmap.
+fn reaches(bounds: Option<Rect>, transform: Transform, pixmap: Option<IntRect>) -> Option<IntRect> {
+    let Some(bounds) = bounds else {
+        return pixmap;
+    };
     bounds
         .transform(transform)
         .and_then(|rect| rect.round_out())

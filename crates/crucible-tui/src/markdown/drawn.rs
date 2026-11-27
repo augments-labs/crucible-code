@@ -72,13 +72,27 @@ pub(super) fn asked(block: &Block, room: Room, drawers: &Drawers, offers: Offers
             }
             Asked::Drawn(laid.rows)
         }
-        Err(Undrawn::NotHere) => Asked::Written(None),
         Err(
             refusal @ (Undrawn::PastCap
             | Undrawn::NotText
             | Undrawn::TooWide
+            | Undrawn::TooLargeToKeep
             | Undrawn::Unsupported(_)),
         ) => Asked::Written(Some(refusal)),
+        // An image's reasons are the application's about a file, and no
+        // drawer has one to give about a fence: one that did is drawing
+        // nothing, and the fence is shown as written with nothing said, as
+        // where it is not drawn here.
+        Err(
+            Undrawn::NotHere
+            | Undrawn::ImageNotShown
+            | Undrawn::ImageTooLarge
+            | Undrawn::NotAnImage
+            | Undrawn::NotReadInTime
+            | Undrawn::ChangedSinceRead
+            | Undrawn::PastTurnImages
+            | Undrawn::NotRedrawnOnResume,
+        ) => Asked::Written(None),
     }
 }
 
@@ -105,7 +119,10 @@ pub(crate) fn lay_unoffered(
 /// `None` for anything but a fence or display math the answer closed: the
 /// source of a fence is its opening line, its lines, and the line that closed
 /// it, each ended.
-fn taken<'a>(block: &'a Block, drawers: &'a Drawers) -> Option<(&'a dyn Draws, &'a str)> {
+pub(crate) fn taken<'a>(
+    block: &'a Block,
+    drawers: &'a Drawers,
+) -> Option<(&'a dyn Draws, &'a str)> {
     if !block.closed || drawers.is_empty() {
         return None;
     }

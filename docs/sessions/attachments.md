@@ -298,9 +298,12 @@ belong to.
 ## When the model asks for one itself
 
 `read` on a picture hands the file back attached rather than as text, under
-the same ceilings; [A picture is looked at rather than
+the same ceilings, and once the turn is over the transcript shows it, where the
+session draws pictures and the file still holds what was read: see [An image a
+turn named](transcript.md#an-image-a-turn-named). A read rule that refuses the
+file hides it there too. [A picture is looked at rather than
 read](../tools/files.md#a-picture-is-looked-at-rather-than-read) has the
-sentences it answers with. A PDF or a video is not handed back that way even
+sentences `read` answers with. A PDF or a video is not handed back that way even
 on a model that reads one: [A document is read by converting it
 first](../tools/files.md#a-document-is-read-by-converting-it-first) and [A
 video is read as the frames pulled out of

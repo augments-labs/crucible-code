@@ -208,7 +208,7 @@ pub fn decode(bytes: &[u8]) -> Result<Pixels, Refused> {
 ///
 /// What the drawing would hold and compute is counted before it is drawn: a
 /// drawing that would hold more than [`MOST_DECODED`] bytes of pixmaps at once,
-/// or ask for more work than the renderer does in 20 ms, is refused, and so is
+/// or ask for more work than the renderer does in 45 ms, is refused, and so is
 /// a stroke whose outline reaches more than a million pixels from the origin,
 /// which the renderer outlines at a quarter pixel however long it is.
 ///
@@ -270,6 +270,108 @@ pub fn rasterise(svg: &[u8], width_px: u32, inks: &[(&str, [u8; 3])]) -> Result<
             // has still reported it.
             .unwrap_or(Err(Refused::NotAnImage))
     })
+}
+
+/// The width and height of `svg`'s outermost element, in pixels: what a
+/// picture is when it is not scaled, as [`rasterise`] reads it.
+///
+/// Each is a plain number of pixels, or a number in one of the SVG's absolute
+/// units at its CSS value, 96 pixels to the inch: `px`, `pt` (72 to the inch),
+/// `pc` (6), `in`, `cm` (2.54) and `mm` (25.4). A relative unit has nothing
+/// here to be relative to, and is refused with any other.
+///
+/// # Errors
+/// [`Refused::TooLarge`] for an SVG past [`MOST_INPUT`];
+/// [`Refused::NotAnImage`] for bytes that are not an SVG, or one whose width
+/// or height is missing, not a number in one of those units, or not above
+/// nought.
+pub fn own_size(svg: &[u8]) -> Result<(f64, f64), Refused> {
+    if svg.len() > MOST_INPUT {
+        return Err(Refused::TooLarge);
+    }
+    let document = parse(svg).ok_or(Refused::NotAnImage)?;
+    let root = document.root_element();
+    if !root.has_tag_name((SVG_NAMESPACE, "svg")) {
+        return Err(Refused::NotAnImage);
+    }
+    let side = |name: &str| {
+        root.attribute(name)
+            .and_then(pixels)
+            // The tree keeps a size as an `f32`, and the rasteriser's height is
+            // worked out from that.
+            .map(|value| {
+                #[allow(clippy::cast_possible_truncation, reason = "as the tree keeps it")]
+                f64::from(value as f32)
+            })
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .ok_or(Refused::NotAnImage)
+    };
+    Ok((side("width")?, side("height")?))
+}
+
+/// The pixels a length on the outermost element stands for, at 96 to the inch,
+/// or `None` where it is not a number in an absolute unit.
+fn pixels(length: &str) -> Option<f64> {
+    const PER_INCH: f64 = 96.0;
+    let units = [
+        ("px", 1.0),
+        ("pt", PER_INCH / 72.0),
+        ("pc", PER_INCH / 6.0),
+        ("in", PER_INCH),
+        ("cm", PER_INCH / 2.54),
+        ("mm", PER_INCH / 25.4),
+    ];
+    let (number, scale) = units
+        .iter()
+        .find_map(|(unit, scale)| Some((length.strip_suffix(unit)?, *scale)))
+        .unwrap_or((length, 1.0));
+    number.parse::<f64>().ok().map(|number| number * scale)
+}
+
+/// The width `svg` is rasterised at, in pixels: its own, since a picture is
+/// never scaled up, unless that is more pixels than [`MOST_DECODED`] holds, and
+/// then the most it holds at its proportions, with the height rounded up as
+/// [`rasterise`] rounds it.
+///
+/// Its own is [`own_size`]'s width. A caller that places the picture in a
+/// room narrower than this rasterises it at the room's width instead.
+///
+/// # Errors
+/// As [`own_size`].
+pub fn raster_width(svg: &[u8]) -> Result<u32, Refused> {
+    let (width, height) = own_size(svg)?;
+    let most = u64::try_from(MOST_DECODED / 4).unwrap_or(u64::MAX);
+    #[allow(clippy::cast_precision_loss, reason = "a width under the ceiling")]
+    let held = |across: u64| across.saturating_mul(rows(height, across as f64, width)) <= most;
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "saturates, and is held to the ceiling"
+    )]
+    let own = (width.floor() as u64).max(1);
+    let (mut low, mut high) = (1, most.min(own));
+    while low < high {
+        let middle = high - (high - low) / 2;
+        if held(middle) {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+    u32::try_from(low).map_err(|_| Refused::TooLarge)
+}
+
+/// The rows a picture `width` by `height` is drawn in at `across` pixels wide,
+/// worked out as [`rasterise`] works them out: rounded up, never none, and
+/// saturating at what a `u64` holds.
+fn rows(height: f64, across: f64, width: f64) -> u64 {
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "saturates, and is held to the ceiling"
+    )]
+    let rows = (height * across / width).ceil().max(1.0) as u64;
+    rows
 }
 
 /// The stack the drawing thread is given: room for the deepest nesting the XML
@@ -456,7 +558,7 @@ enum Walk {
 
 /// The most time the copies [`copying`] counts may take the tree parser to
 /// make: 16 ms, so that with the rest of the tree a picture is built within
-/// the 20 ms the dearest drawing takes.
+/// the 45 ms the dearest drawing takes.
 const MOST_COPYING_NS: u64 = 16_000_000;
 
 /// The time the tree parser takes to make a copy of one element, without what
@@ -1382,6 +1484,44 @@ fn fonts() -> Arc<fontdb::Database> {
             Arc::new(database)
         })
         .clone()
+}
+
+/// Whether the one font any text is drawn in has a glyph for `letter`.
+///
+/// A letter it has none for is drawn as an empty box, so whatever lets text
+/// into a picture asks this, or holds what it lets in to agreeing with it.
+#[must_use]
+pub fn has_glyph(letter: char) -> bool {
+    // The letter is laid out as the tree parser lays out a picture's text, in
+    // the same font database; with no other font to fall back to, a letter
+    // the font lacks is laid out as its missing glyph, which is glyph zero.
+    // It stands between two letters the font has, because the parser lays out
+    // no text that draws nothing, and a space alone draws nothing.
+    let svg = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"><text xml:space=\"preserve\">A&#x{:x};A</text></svg>",
+        u32::from(letter)
+    );
+    let options = Options {
+        font_family: FONT_FAMILY.to_owned(),
+        fontdb: fonts(),
+        ..Options::default()
+    };
+    let Ok(tree) = Tree::from_str(&svg, &options) else {
+        return false;
+    };
+    let glyphs: Vec<u32> = tree
+        .root()
+        .children()
+        .iter()
+        .filter_map(|node| match node {
+            resvg::usvg::Node::Text(text) => Some(text),
+            _ => None,
+        })
+        .flat_map(|text| text.layouted())
+        .flat_map(|span| &span.positioned_glyphs)
+        .map(|glyph| glyph.id.0)
+        .collect();
+    glyphs.len() >= 3 && glyphs.iter().all(|id| *id != 0)
 }
 
 /// Encode pixels as a PNG file, which a terminal that draws PNG shows as it is.

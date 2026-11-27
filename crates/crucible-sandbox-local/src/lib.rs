@@ -42,7 +42,10 @@ mod windows;
 #[path = "windows/helper.rs"]
 mod windows_helper;
 
+#[cfg(target_os = "linux")]
+pub use linux::CANCEL_GRACE;
 pub use local::{LocalSandbox, ObservedVersion, SandboxObservation};
+pub use process::{CANCELLED, REAP};
 
 /// Settles, as the process starts, where its sandbox broker is looked for.
 ///

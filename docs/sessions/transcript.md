@@ -225,26 +225,121 @@ why where there is a reason to give, as in
 enough: see [Drawn again at every width](#drawn-again-at-every-width).
 
 [`output.math`](../configuration/configuration.md#output) says how math is
-drawn. `image`, the default, draws a formula as a picture where one can be
-shown and as text everywhere else, which is everywhere for now; `text` draws
-it as text; `written` shows every formula exactly as the model wrote it, its
-markers included. A change in `/settings` takes effect at once: every display
-formula already drawn is laid out again in the new form, while a span already
-drawn in a line keeps the form it was drawn in and the next span is drawn in
-the new one. In native mode a display formula already written to the
-terminal's scrollback changes only when the scrollback is written again, once
-the window has been resized; see
-[What native mode cannot do](../configuration/configuration.md#what-native-mode-cannot-do).
-Output with no colour, including output that is not a terminal, keeps every
-formula as written.
+drawn. `image`, the default, draws a display formula as a picture where the
+session can make one and show it, as [Math as a picture](#math-as-a-picture)
+says, and as text everywhere else; `text` draws it as text; `written` shows
+every formula exactly as the model wrote it, its markers included. A change in
+`/settings` takes effect at once: every display formula already drawn is laid
+out again in the new form, while a span already drawn in a line keeps the form
+it was drawn in and the next span is drawn in the new one. In native mode a
+display formula already written to the terminal's scrollback changes only when
+the scrollback is written again, once the window has been resized; see [What
+native mode cannot
+do](../configuration/configuration.md#what-native-mode-cannot-do). Output with
+no colour, including output that is not a terminal, keeps every formula as
+written.
+
+### Math as a picture
+
+Under `image`, a display formula is made into a picture by the TeX installed
+on your machine. This is done on Linux only, and needs:
+
+- **TeX.** `latex` and `dvisvgm` in `/usr/bin` or `/bin`, and TeX's settings
+  and formats in `/etc/texmf` and `/var/lib/texmf`, where the Debian-family
+  packages put them. On Debian or Ubuntu,
+  `sudo apt install texlive-latex-base dvisvgm` installs them.
+- **The sandbox's Linux backend.** Bubblewrap 0.11.0 or newer that lists
+  `--size`, a kernel of 5.14 or newer, and `crucible-sandbox-broker` beside
+  `crucible`, as [Turning it on](../security/sandboxing.md#turning-it-on) and
+  the [capability matrix](../security/sandboxing.md#capability-matrix) say.
+
+What TeX is given is the model's text, so it always runs in that sandbox,
+whether `sandbox.enabled` is on or off: the network closed, nothing of your
+machine writable, its own shell escape off, and for each formula at most 8
+seconds, 512 MiB of memory, 16 processes and 8 MiB of files. Where the sandbox
+cannot hold all of that, no formula is made into a picture; none is ever run
+unconfined. On macOS, Windows and every other system, display math is text.
+The formula is read inside a fixed preamble that loads `amsmath` and
+`amssymb`, so one that needs another package stays text.
+
+Nothing is checked at start. Before the first display formula that could be
+shown as a picture, crucible checks once that TeX and the sandbox are there,
+by running `latex --version` and `dvisvgm --version` in the sandbox for at
+most 8 seconds between them, so a session that never shows one never checks.
+A check that decides nothing, because the sandbox was busy, is made again
+before the next display formula. A check that finds no TeX, or a sandbox that
+cannot hold it, is not made again in that session.
+
+Formulas are made one at a time, away from what draws the screen, so the
+screen never waits for TeX. A display formula is drawn as text when it
+closes, and its picture replaces the text once it is made. In the full screen
+that happens wherever the formula is. In native mode it happens while the
+formula is still at the foot of the screen; one already written to your
+terminal's scrollback stays text there until the scrollback is written again,
+after a resize or a change of theme, which draws its picture. A turn's first
+16 display formulas are made, and the rest of that turn stays text; a line
+you steer into a running turn is part of that turn, and starts no count of its
+own. When a new turn starts, the formulas of an earlier turn not yet begun stay
+text, so a new question never waits behind an old answer's math.
+
+The picture is drawn in the theme's colour for plain text, and drawn again in
+the new colour when the theme changes. Its letters stand as tall as the text
+around it: TeX's 10 pt text is drawn one cell tall. A formula wider than the
+transcript has room for is drawn narrower to fit, down to half that size; one
+that would need narrowing further is drawn as text, as is one whose picture is
+taller than the window. It is shown by the protocols, and in the screen
+modes, that show a diagram's picture, as [Pictures and image
+files](#pictures-and-image-files) says, and counts towards the pictures a
+session keeps.
+
+Display math stays text everywhere else:
+
+- where pictures are not drawn, and with `output.math` at `text` or `written`;
+- math in a line, and display math in a table's cell or a quote;
+- a formula crucible would show as written;
+- a formula past a turn's first 16;
+- a formula TeX could not make, or did not make in its 8 seconds, which is
+  not run again while the session remembers it among the last 256 that
+  failed.
+
+The Math row of `/settings` says what the check found, after the value and a
+`·`, and says it again each time it is drawn:
+
+- `math pictures not checked yet`: no display formula has wanted a picture.
+- `checking for math pictures`: the check is running.
+- `math pictures by` and the TeX it found, named by the first line each
+  program's `--version` prints, as in
+  `math pictures by pdfTeX 3.141592653-2.6-1.40.28 (TeX Live 2025/Debian); dvisvgm 3.6`.
+- `no math pictures:` and why:
+  - `latex, dvisvgm, /etc/texmf or /var/lib/texmf is missing`;
+  - `no sandbox runs on this machine`, where no Bubblewrap the sandbox
+    accepts or no `crucible-sandbox-broker` beside `crucible` is found;
+  - `the sandbox cannot hold the disk limit a TeX run needs`, where Bubblewrap
+    does not list `--size`, and `the sandbox cannot hold the process limit a
+    TeX run needs`, where the kernel is older than 5.14; off Linux, what is
+    named is the first thing that system's sandbox cannot hold;
+  - `the sandbox refused the TeX run`;
+  - `the sandbox would run TeX unconfined`;
+  - `the TeX check did not finish in time`;
+  - `not checked yet: the sandbox was busy`, checked again before the next
+    display formula.
+
+A row a project file or the environment sets says so first, as in
+`image · set by project config, math pictures not checked yet`.
 
 ## Diagrams
 
 A mermaid diagram in an answer is drawn as text: its boxes, the lines between
-them and their labels, in a terminal's characters. Three kinds are drawn: a
+them and their labels, in a terminal's characters. On a terminal that shows
+pictures, that drawing is shown as a picture instead: see
+[Pictures and image files](#pictures-and-image-files). Six kinds are drawn: a
 flowchart (`graph` or `flowchart`), a state diagram (`stateDiagram` or
-`stateDiagram-v2`) and an entity-relationship diagram (`erDiagram`). A diagram
-is [held until it closes](#blocks-held-until-they-close) and drawn in a frame
+`stateDiagram-v2`), an entity-relationship diagram (`erDiagram`), a sequence
+diagram (`sequenceDiagram`), whose participants stand over lifelines with the
+messages between them; a gantt (`gantt`), whose tasks are bars along a line of
+dates, a day to a column up to 60 days; and a git graph (`gitGraph`), whose
+branches run beside `main` with their commits and merges. A diagram is
+[held until it closes](#blocks-held-until-they-close) and drawn in a frame
 that names its kind, here the state diagram `[*] --> Idle`,
 `Idle --> Running: start`, `Running --> [*]`:
 
@@ -265,23 +360,58 @@ would need any other character that is not ASCII is shown as written.
 A diagram is drawn whole or not at all, and is shown exactly as written in its
 frame, whose top edge says why, when:
 
-- it is another kind, such as a class diagram, a sequence diagram, a gantt
-  chart or a pie chart, which the frame names, as in
-  `┌─ mermaid · pie · not drawn as text · shown as written`;
+- it is another kind, such as a class diagram or a pie chart, which the frame
+  names, as in `┌─ mermaid · pie · not drawn as text · shown as written`;
 - it is a flowchart with a group (`subgraph`) in it:
   `┌─ mermaid · groups · not drawn as text · shown as written`;
-- it holds a statement crucible does not read, which is `not drawn as text`;
+- it is an entity-relationship diagram whose relationships do not chain its
+  entities one after another, which is
+  `┌─ mermaid · tangled relationships · not drawn as text · shown as written`:
+  an entity related to itself, two relationships between the same two
+  entities, an entity in three or more, or relationships that close a ring.
+  Each relationship is drawn as a line between two entities set side by
+  side, so any other would run through the boxes between them. No width
+  draws it; one whose relationships chain its entities, such as
+  `A ||--o{ B : has` and `B ||--o{ C : holds`, is drawn where it fits;
+- it is a flowchart or a state diagram with a labelled line whose label the
+  layout would leave out, set nearer another line than its own, or set across
+  another line, which is
+  `┌─ mermaid · misplaced labels · not drawn as text · shown as written`.
+  Crucible also refuses to draw it wherever it cannot tell which line a label
+  is on. This comes of many labelled lines running among a few boxes, out and
+  back between the same ones. The layout does not change with the window, so
+  no width draws it, and the source shown says which line each label is on;
+- it holds a statement crucible does not read, which is `not drawn as text`.
+  In a sequence diagram that is a note, an activation, numbering
+  (`autonumber`), a group (`box`) or a block such as `loop`, `alt` or `rect`;
+  in a gantt, a milestone, a length in hours, the days it leaves out
+  (`excludes`, `includes`), a first task in a section with no start written,
+  or a task one day long in a gantt longer than 60 days; in a git graph, a
+  commit's type, a cherry-pick, a branch's order, a merge's own id or tag, and
+  a setting written before it (`%%{init: …}%%`);
 - it is larger than crucible draws, which is `longer than this can hold`: a
   flowchart with more than 16 boxes, 6 lines or 1024 bytes, or a label wider
   than 16 columns; a state diagram with more than 16 states, 8 transitions or
   1024 bytes, or a label wider than 12 columns; an entity-relationship diagram
-  with more than 48 entities, 64 relationships or 4096 bytes. These keep the
-  costliest diagram crucible draws inside the time one frame may take, and a
-  diagram's cost grows with its lines and the width of its labels, so a
-  flowchart allows fewer lines in exchange for longer labels;
+  with more than 48 entities, 64 relationships or 4096 bytes; a sequence
+  diagram with more than 8 participants, 32 messages or 2048 bytes, or a label
+  wider than 24 columns; a gantt with more than 32 sections and tasks
+  together or 2048 bytes, or a task's name wider than 15 columns; a git graph
+  with more than 32 commits, each merge counted as one, 8 branches beside
+  `main` or 2048 bytes. These keep the costliest diagram crucible draws
+  inside the time one frame may take, and a diagram's cost grows with its
+  lines and the width of its labels, so a flowchart allows fewer lines in
+  exchange for longer labels. A sequence diagram, a gantt and a git graph
+  cost far less, so their caps are set by what a terminal shows;
 - drawn whole it is wider than the window, which is
-  `too wide to draw at this width`, and it is drawn again once the window is
-  wide enough: see [Drawn again at every width](#drawn-again-at-every-width).
+  `too wide to draw at this width`. A sequence diagram, a gantt and a git
+  graph are drawn at their own width, never cut or squeezed to fit, so one
+  wider than the window is shown as written rather than drawn. Each is drawn
+  again once the window is wide enough: see
+  [Drawn again at every width](#drawn-again-at-every-width). In native mode
+  one already written to the terminal's scrollback as too wide is drawn there
+  only when the scrollback is written again, once the window has kept its new
+  size.
 
 A statement that styles a diagram, links from it or acts on a click (`style`,
 `classDef`, `click`) is left out of the drawing, and no address in one is
@@ -289,12 +419,14 @@ drawn or opened. A control or invisible character in a label, and a character
 boxes are drawn with, is left out of the label.
 
 [`output.diagrams`](../configuration/configuration.md#output) says how a
-diagram is drawn. `image`, the default, draws a diagram as a picture where one
-can be shown and as text everywhere else, which is everywhere for now; `text`
-draws it as text; `written` shows every diagram exactly as the model wrote it,
-in its fence. It is set apart from `output.math`, so either can be written
-while the other is drawn. A change in `/settings` takes effect at once: every
-diagram already drawn is laid out again in the new form. In native mode a
+diagram of any of the six kinds is drawn. `image`, the default, draws a
+diagram as a picture where one can be shown, which is where the session draws
+pictures with Kitty's or iTerm2's protocol, and as text everywhere else; `text` draws it as
+text; `written` shows every diagram exactly as the model wrote it, in its
+fence. It is set apart from
+`output.math`, so either can be written while the other is drawn. A change in
+`/settings` takes effect at once: every diagram already drawn is laid out
+again in the new form. In native mode a
 diagram already written to the terminal's scrollback changes only when the
 scrollback is written again, once the window has been resized; see
 [What native mode cannot do](../configuration/configuration.md#what-native-mode-cannot-do).
@@ -439,7 +571,10 @@ An image, `![the build passing](https://example.com/build.png)`, is drawn as
 the link `[image: the build passing]`, or `[image]` with no words, followed by
 its quiet address; nothing is fetched. A `!` before any other bracket is drawn
 as itself, and so is one after a backslash, which stays in front of it:
-`\![x](https://example.com/y.png)` is drawn `\!x (example.com/y.png)`. An
+`\![x](https://example.com/y.png)` is drawn `\!x (example.com/y.png)`. One
+whose address is a path, written in the answer's prose, is also shown as a
+picture once the turn ends, where the session draws pictures: see [An image a
+turn named](#an-image-a-turn-named). An
 address written as its own words, bare or between angle brackets, has nothing
 after it. In a table's cell a link
 is drawn as it is in prose, an address as its reference included, but with
@@ -628,10 +763,138 @@ with each cell folded into the room its column has, however narrow.
 
 ## Pictures and image files
 
-The transcript does not yet put a picture on the screen as pixels, whatever
-`output.images` says; which protocol a session would draw one with, and on
-which terminals, is under [Where pictures are
-drawn](../configuration/configuration.md#where-pictures-are-drawn).
+Where a session draws pictures, as [Where pictures are
+drawn](../configuration/configuration.md#where-pictures-are-drawn) says, a
+[diagram](#diagrams) drawn as text is shown as a picture of that drawing. It
+is drawn in the theme's colours, never wider than the window and never larger
+than the diagram's own size, and at first at most half the window's height:
+see [Its size](#its-size). A change of theme draws it again in the new
+colours, and a resize draws it again to fit the new width; in native mode a
+picture already in the scrollback changes only when the scrollback is written
+again, once the window has been resized. A display formula TeX made is shown
+the same way, but at the size its text sets, as [Math as a
+picture](#math-as-a-picture) says.
+
+How it is drawn depends on the protocol and the
+[`output.screen`](../configuration/configuration.md#output) mode:
+
+- **Kitty's protocol** draws in both modes where the table draws it. The
+  picture stands in the transcript's cells, so it scrolls with the rows around
+  it, and in native mode it goes into your terminal's scrollback with them.
+- **iTerm2's protocol** draws in the full screen only, in WezTerm or iTerm2
+  where the table draws it; in native mode its place is text. The picture's
+  rows are left blank and the picture is written over them, and only while
+  every one of its rows is in the transcript: a picture partly scrolled out of
+  view, or partly under the prompt, keeps its rows blank until it is wholly in
+  view again.
+- **Sixel** is drawn by no terminal yet, so its place is always text.
+
+### Its size
+
+In the full screen a picture is shown at one of three sizes, and a click on
+its own cells, or <kbd>Enter</kbd> in the <kbd>Ctrl+O</kbd> view while its
+source is at the top, moves it to the next. The click moves it when you let
+go on the cell you pressed, so a drag that starts on a picture selects instead:
+
+- **Fit**, the size it is first shown at: at most the transcript's width and
+  at most half the window's height.
+- **Large**: the window's height.
+- **Full**: the picture's own size, at most 64 rows. After Full it goes back
+  to Fit.
+
+A display formula is first shown at Large, which shows it at the size it was
+drawn, since no picture is shown larger than that and a formula taller than
+the window is drawn as text. At Fit it is smaller only where it is taller than
+half the window.
+
+At every size the picture keeps its shape and is never wider than the
+transcript or larger than its own size. Each picture keeps the size it was
+given for the rest of the session, and a resize fits it again at that size. A
+picture Kitty's protocol draws is placed again in its new cells without being
+sent again. One iTerm2's protocol draws is written again from the same image,
+and at Large or Full it is at most the transcript's height when it is placed,
+since it is drawn only while every row of it is in view. In native mode every
+picture stays at the size it was first shown at, Fit for a diagram and Large
+for a formula, and no click or key changes it; it keeps the rows it was first
+shown in when the window's height changes, since your terminal's scrollback
+holds the cells it was placed in.
+
+A diagram with a letter the picture's one font has none for keeps its text
+drawing, and a formula stays text where [Math as a
+picture](#math-as-a-picture) says. Everywhere else, what the transcript shows
+in a picture's place is text. No picture is drawn, and nothing is sent to the
+terminal for one, with `output.diagrams` at `text` or `written` for a diagram
+or `output.math` at `text` or `written` for a formula, with no colour, or when
+the output is not a terminal. An image a turn named does not depend on
+`output.diagrams` or `output.math`, only on the last two.
+
+A session keeps at most 16 pictures, and at most 1.5 MiB of them, what each
+was drawn from and what the terminal was sent counted once each. Past either,
+the oldest is drawn as its text again, and in the full screen the transcript
+stays on the line you were reading. A diagram whose picture alone is more
+than 1.5 MiB, or would take more than 64 cells across or down, is drawn as text,
+and stays text when the window is resized or the theme changes. In the full
+screen the terminal is told to let go of each picture the session stops
+keeping or draws again. A few are left to the terminal's own limit instead:
+one let go of after it was sent but before it was shown, pictures still kept
+but not shown again after the screen is redrawn, and any let go of while 32
+are already waiting to be. In native mode it keeps every picture it was sent,
+since the scrollback still shows them, up to its own limit; past that it lets
+the oldest go, and their place in the scrollback is left blank.
+
+### Pictures kept between sessions
+
+Each diagram drawn as a picture is also kept on disk, so a session picked up
+again with `--continue`, `--resume` or `/resume` shows it as the picture it was,
+without drawing it again. Putting a session back draws nothing afresh: a diagram
+with no picture kept for it comes back as its text, as it would where no
+pictures are drawn, and nothing is said about it. In the full screen, only the
+16 newest diagrams and formulas are read from the cache, the most a session
+keeps pictures of, once the whole session is back; the older ones come back as
+their text, and stay text when the theme changes. In native mode each diagram is
+read from the cache as it goes back into the scrollback, so every one the cache
+kept comes back as its picture, as it did live. It is kept for the theme,
+`transcriptColours`, colour depth, background, protocol, cell size and window
+width it was drawn in, so a picture drawn in another of them is another entry,
+and one drawn in a terminal the session no longer runs in is simply not found.
+
+A display formula's picture is kept the same way, and also under the TeX that
+made it, named as the Math row of `/settings` names it. A session put back
+runs no TeX: its formulas stay text until the session's
+[check](#math-as-a-picture) has found TeX, and are then read under that TeX
+alone, on a full screen among the 16 newest pictures, and in native mode each
+as it goes into the scrollback, so one sent there before the check passed
+stays text. Where the check finds no TeX, or another version of it, as after
+TeX is upgraded, no picture an earlier TeX made is read and those formulas
+come back as their text. A formula is made again only when an answer streams
+it anew.
+
+A picture is kept in the form it was first drawn in. One drawn again after the
+window is resized or the theme changes is not kept, so a session picked up
+with the window or theme as it was then finds no picture for that diagram and
+shows its text.
+
+The cache is in a `pictures` directory in crucible's home, `~/.crucible/pictures/`,
+which [`CRUCIBLE_CODE_HOME`](sessions.md#where-they-are-kept) moves with the
+rest. It holds at most 32 MiB, and nothing older than 14 days: each write takes
+out the oldest entries until the new one fits, and each start takes it back
+within both bounds. An entry past 14 days, or dated more than a day ahead of
+the clock, is passed over and taken out. A write still reads every name in
+the directory, but holds on to the oldest 4 096 at most while it chooses
+which to take out, so a directory holding many more is brought back within
+32 MiB over the writes that follow rather than all at once. A picture larger
+than 0.5 MiB is not kept. Two crucibles writing at once may each leave it one
+entry past 32 MiB until the next write.
+It is [yours alone](sessions.md#who-can-read-them), as session logs are.
+
+Nothing in it is needed: deleting the directory, or any file in it, only means
+the next session put back draws those diagrams and formulas as text. An entry
+that is cut short, changed, or reachable by another account is passed over and
+written again the next time that picture is drawn, and a cache that cannot be
+written, on a full or read-only disk, leaves every picture drawn as before.
+Writing it never holds up the screen: entries are written one at a time by a
+thread of their own, and one that would wait behind more than 0.5 MiB of others
+is dropped.
 
 A picture the transcript turns into pixels, whether an SVG diagram or a PNG,
 JPEG, GIF or WebP file, is bounded before it is read, and a picture past any
@@ -660,11 +923,10 @@ bound is refused rather than shrunk or cut:
   fill whose edges crowd together along a row, how far along the row each
   can walk; and for a gradient, its pixels times its stops, with every stop
   set up again for each shape it paints. Added up over the picture, these
-  are at most 140 000 steps. That is about what a drawing can finish in a
-  fiftieth of a second. A picture past it is refused before it is drawn, and
-  so is one with a stroke reaching more than a million pixels from the
-  corner of the picture, which takes far longer to outline than its size
-  says.
+  are at most 320 000 steps. That is about what a drawing can finish in 45
+  milliseconds. A picture past it is refused before it is drawn, and so is
+  one with a stroke reaching more than a million pixels from the corner of
+  the picture, which takes far longer to outline than its size says.
 - **What the copies in an SVG take.** A `<use>` copies what it names, and a
   copy can hold uses of its own, so a few hundred bytes can ask for millions
   of copies. A marker's content is copied at every vertex it is drawn on, a
@@ -685,7 +947,9 @@ bound is refused rather than shrunk or cut:
   sent as Sixel it is at most 600 pixels wide.
 - **One at a time.** Only one picture is read or drawn at a time, wherever it
   was asked for. One that waits longer than ten seconds for its turn is
-  refused as late.
+  refused as late. A diagram's picture is drawn while the screen is, so it
+  waits at most 40 ms for its turn, and past that the diagram is drawn as
+  text.
 
 An SVG is drawn from its own bytes and nothing else, and only with the
 elements a picture is drawn with: `svg`, `g`, `defs`, `symbol` and `use`;
@@ -715,3 +979,82 @@ holding an SVG refuses the picture. A picture whose references lead round to
 themselves, such as three clips that each use the next, is refused, as is a
 marker drawn inside a marker, a clip or a filter inside a clip, and one the
 drawing cannot finish.
+
+### An image a turn named
+
+An image the answer wrote in its prose with a path, such as an image link to
+`out/plot.png`, is shown once the turn is over, under the answer
+and before the prompt comes back, where the session draws pictures. So is a
+picture a tool's call read, such as `read` on a PNG, after the images the
+answer named before that call. They are shown in the order the turn named
+them, each under an edge naming it by the path it was named by:
+
+```text
+┌─ image · out/plot.png
+┌─ image · docs/shot.png · read by read
+```
+
+Nothing is fetched: an image at an address on the web, or written `www.`,
+stays a link, as does one whose path opens with two slashes or backslashes:
+on Windows that is another computer's share, a device, or an extended-length
+path such as `\\?\C:\Users\you\project\plot.png`, which Windows opens
+exactly as written, without taking away a `.` or `..` or taking a `/` as a
+separator. So do one in a
+table's cell, one written as a reference, `![the plot][plot]`, and one inside
+a link's words. One in code or a fence is
+drawn as written.
+A path is read the way `read` reads it, inside the workspace, and only where
+the [permission rules](../permissions/rules.md#images-in-the-transcript) let
+`read` read it; nothing is ever asked about it. A path relative to the
+workspace is the safe way to name one. An absolute path is shown only when it
+is written under the workspace's directory as it resolves, with no link in
+it: one through a symbolic link, a short name or a drive letter in another
+case stays a link, though `read` would reach it. A path any of whose names
+lies outside the workspace, such as `/net/host/plot.png`, `../../plot.png` or
+`/net/host/../../home/you/project/plot.png`, is not looked up at all, even
+where a `..` after it comes back, so a directory that would reach another
+computer is never opened. That is how macOS and Linux follow a path, and an
+absolute path is judged the same way on Windows, so
+`C:\Users\you\x\..\project\plot.png` stays a link there too. On Windows a
+path relative to the workspace has each `.` and `..` taken away by its text
+when it is joined to the workspace, so there it is judged by where it lands,
+and no name before a `..` is looked up. Where
+the session draws no
+pictures nothing is read, and the answer's link is all there is.
+
+A turn shows at most eight images, and reads them for as long as two seconds
+last, so a slow disk never holds the prompt back for long: an image not yet
+read when they are spent is not read at all. Each one it names after the
+eighth, up to 64, is its edge alone, and so is an image that is not shown for
+any other reason, with the reason after its path:
+
+| The edge says | Because |
+| --- | --- |
+| `not shown` | The path leads outside the workspace, a rule refuses reading it, or there is no file there. The three are told apart nowhere, so the screen says no more about a file than the session may read of it. So is an image that could not be checked within its two seconds, and one asked for while an earlier image's read has still not returned: images are read one at a time, beside the tools, and a disk that stopped answering holds up at most that one. |
+| `too large` | The file is larger than 1 MiB, or its picture larger than a picture may be: see the bounds above. |
+| `not an image` | The file is not a PNG, JPEG, GIF or WebP picture. |
+| `not read in time` | Reading and decoding it took more than two seconds, or the turn's two seconds for its images were spent before it was asked for. Each image has its own two seconds, and it is not tried again. |
+| `changed since it was read` | A tool read the file, and it no longer holds what the tool read. |
+| `past the eighth image in this turn` | Eight were already shown for this turn. |
+| `not redrawn on resume` | The session was picked up again, and its two seconds for putting pictures back were spent. |
+
+A session picked up with `--continue`, `--resume` or `/resume` shows again
+the 16 most recent images its turns named, at the end of what it puts back
+rather than under their own turns, for as long as two seconds last for all of
+them. An image is read when it is shown, and its PNG is kept only as the
+picture's own, under the bounds every picture has: it is never put in the
+[picture cache](#pictures-kept-between-sessions), so a session picked up
+reads each file again and shows what it holds now. <kbd>Ctrl+O</kbd> lists each image under the
+word `image`, by the path it was named by, whether it was shown or not, so one
+that was refused can still be found and opened by hand.
+
+A front end with no terminal, driving crucible through its client protocol,
+can ask for the same image with the `show_image` command, naming it by the
+path the turn wrote, and for a picture a tool's call read, by the SHA-256 that
+call kept as well. The file is read under the same rules: inside the
+workspace, only where the permission rules let `read` read it, with nothing
+asked, and under the same bounds and two seconds. What comes back is the image
+as a PNG crucible wrote from what it read, or the reason it is not shown:
+`not_shown`, `too_large`, `not_an_image`, `not_in_time` or `changed`, the first
+five reasons in the table above. How many to ask for in a turn is the front
+end's to count.

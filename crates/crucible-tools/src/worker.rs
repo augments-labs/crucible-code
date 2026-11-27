@@ -47,11 +47,12 @@ use std::future::{Future, poll_fn};
 use std::pin::pin;
 use std::sync::Arc;
 use std::task::Poll;
+use std::time::Duration;
 
 use crucible_runtime::{Cancel, NOTICED};
 use tokio::runtime::Handle;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
-use tokio::time::Sleep;
+use tokio::time::{Sleep, Timeout};
 
 /// The bounded worker blocking tool work runs on.
 ///
@@ -130,6 +131,18 @@ impl ToolWorker {
                 Unrun::Stopped
             }
         })
+    }
+
+    /// `work`, given up once `deadline` has passed, by a timer on the worker's
+    /// own runtime, so that it fires whichever thread polls it, inside a
+    /// runtime or not.
+    ///
+    /// For a caller that waits on jobs it handed the worker and must answer by
+    /// a deadline: a job still running when it passes is left as a dropped
+    /// call leaves one, as the module documentation says.
+    pub fn within<F: Future>(&self, deadline: Duration, work: F) -> Timeout<F> {
+        let _entered = self.handle.enter();
+        tokio::time::timeout(deadline, work)
     }
 
     /// A place on the worker, or [`Unrun::Cancelled`] once `cancel` is raised

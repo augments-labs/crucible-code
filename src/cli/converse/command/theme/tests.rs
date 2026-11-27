@@ -79,8 +79,9 @@ fn standing() -> Standing {
     Standing {
         axis: Axis::Interface,
         interface: 0,
-        code: 0,
+        code: Some(0),
         themes: crucible_tui::syntax::every_theme(),
+        ground: None,
     }
 }
 
@@ -141,7 +142,7 @@ fn a_preview_is_the_table_the_mark_is_standing_on() {
     for (at, (choice, ..)) in EVERY.iter().enumerate() {
         let mut standing = standing();
         standing.interface = at;
-        let previewed = previewing(was, None, &standing);
+        let previewed = previewing(was, &standing);
 
         assert_eq!(
             previewed.palette().theme(),
@@ -201,4 +202,111 @@ fn the_keys_and_the_arrows_are_drawn_in_the_glyph_set_in_force() {
             assert_eq!(rows.last().map(String::as_str), Some(keys), "{columns}");
         }
     }
+}
+
+/// A style writing twenty-four bit colour, as a terminal saying so gets, with
+/// nothing configured and nothing said about its ground.
+fn coloured() -> Style {
+    Style::resolve(
+        crate::cli::style::Output::default(),
+        true,
+        None,
+        None,
+        &|name| (name == "COLORTERM").then(|| "truecolor".to_owned()),
+    )
+}
+
+/// What a style writes a string in fenced code with.
+fn string(style: Style) -> String {
+    style.palette().open(Slot::Str).as_str().to_owned()
+}
+
+/// What `named` writes a string in, over `style`.
+fn string_in(style: Style, named: &str) -> String {
+    string(style.reading(crucible_tui::syntax::colours(named).expect("a theme offered")))
+}
+
+#[test]
+fn taking_a_table_for_the_other_ground_reads_code_in_the_theme_made_for_it() {
+    // Code has no ground of its own, so with nothing named it follows the
+    // table: a light one takes the light default, and back again.
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let sample = Sample::new("theme-code-follows");
+    let terms = keeping(&sample);
+    terms.style.set(coloured());
+
+    let light = crucible_tui::syntax::theme_unless_said(crucible_tui::Theme::Light, None);
+    let dark = crucible_tui::syntax::theme_unless_said(crucible_tui::Theme::Dark, None);
+    assert_ne!(light, dark);
+
+    taken(ThemeChoice::Light, "light", &mut renderer, &terms).expect("light to be taken");
+    assert_eq!(string(terms.style()), string_in(coloured(), light));
+
+    taken(ThemeChoice::Dark, "dark", &mut renderer, &terms).expect("dark to be taken");
+    assert_eq!(string(terms.style()), string_in(coloured(), dark));
+
+    // Following the table is not naming one: nothing is held for the session
+    // and nothing is written down, so the next table is followed as well.
+    assert_eq!(*terms.reading.borrow(), None);
+    let written = std::fs::read_to_string(sample.user_file()).expect("the theme was written");
+    assert!(written.contains("\"theme\""), "{written}");
+    assert!(!written.contains("syntaxTheme"), "{written}");
+}
+
+#[test]
+fn taking_a_table_reads_code_for_its_ground_where_the_name_given_reads_nothing() {
+    // A name this build has no theme of, as a hand-edited file might hold:
+    // the start drew code in the default, and that default follows the table.
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let sample = Sample::new("theme-code-unknown");
+    let terms = keeping(&sample);
+    terms.style.set(coloured());
+    *terms.reading.borrow_mut() = Some("monokai extended".to_owned());
+    let light = crucible_tui::syntax::theme_unless_said(crucible_tui::Theme::Light, None);
+
+    taken(ThemeChoice::Light, "light", &mut renderer, &terms).expect("light to be taken");
+
+    assert_eq!(string(terms.style()), string_in(coloured(), light));
+}
+
+#[test]
+fn taking_a_table_leaves_a_syntax_theme_somebody_named_alone() {
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let sample = Sample::new("theme-code-named");
+    let terms = keeping(&sample);
+    terms.style.set(coloured());
+    assert!(read_in("Dracula", &mut renderer, &terms));
+
+    taken(ThemeChoice::Light, "light", &mut renderer, &terms).expect("light to be taken");
+
+    assert_eq!(string(terms.style()), string_in(coloured(), "Dracula"));
+}
+
+#[test]
+fn with_nothing_named_the_preview_draws_code_as_taking_the_row_would() {
+    // The mark on `light` shows the code `light` would give, and the code list
+    // opens with its mark on that theme rather than on the first in the list.
+    let light = EVERY
+        .iter()
+        .position(|(choice, ..)| *choice == ThemeChoice::Light)
+        .expect("light is offered");
+    let mut standing = Standing {
+        interface: light,
+        code: None,
+        ..standing()
+    };
+    let unless_said = crucible_tui::syntax::theme_unless_said(crucible_tui::Theme::Light, None);
+
+    assert_eq!(standing.syntax(), unless_said);
+    assert_eq!(
+        string(previewing(coloured(), &standing)),
+        string_in(coloured(), unless_said)
+    );
+
+    standing.axis = Axis::Code;
+    let at = *standing.at();
+    assert_eq!(
+        standing.themes.get(at).map(String::as_str),
+        Some(unless_said)
+    );
 }

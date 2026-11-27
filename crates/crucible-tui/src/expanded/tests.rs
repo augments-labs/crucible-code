@@ -520,6 +520,7 @@ fn a_window_laid_from_measured_lengths_is_the_window_laid_from_everything() {
                         at: begun,
                         of: shown.len(),
                         sources: 0,
+                        resizes: false,
                     },
                     columns,
                     Glyphs::Unicode,
@@ -668,4 +669,123 @@ fn a_lone_source_names_no_step_it_has_nowhere_to_take() {
         rows.last().map(Row::text).as_deref(),
         Some("esc to close · ↑↓ pgup pgdn to see more")
     );
+}
+
+/// The footer of [`two_results_and_three_sources`]' window opened `from` rows
+/// down, `rows` tall, with Enter resizing the items `resizing` holds, and the
+/// item it was asked of.
+fn resizing_from(from: usize, rows: usize, resizing: &[usize]) -> (Option<String>, Option<usize>) {
+    let texts: Vec<String> = (0..5).map(|_| counted(10)).collect();
+    let words = ["Read(one)", "Read(two)", "table", "math", "diff"];
+    let shown: Vec<Shown<'_>> = texts
+        .iter()
+        .zip(words)
+        .map(|(text, called)| Shown { called, text })
+        .collect();
+    let expanded = Expanded {
+        shown: &shown,
+        from,
+    };
+    let lengths = expanded.lengths(80);
+    let mut asked = None;
+    let footer = expanded
+        .within_resizing(
+            &lengths,
+            Size { columns: 80, rows },
+            Glyphs::Unicode,
+            3,
+            |at| {
+                asked = Some(at);
+                resizing.contains(&at)
+            },
+        )
+        .last()
+        .map(Row::text);
+    (footer, asked)
+}
+
+#[test]
+fn enter_to_resize_is_named_only_over_an_item_enter_resizes_and_asked_of_the_top_one() {
+    // Thirteen rows to an item past the first, which has twelve: row 25 is the
+    // top of the third item, the first source.
+    assert_eq!(
+        resizing_from(25, 10, &[2]),
+        (
+            Some(
+                "esc to close · enter to resize · ↑↓ pgup pgdn to see more · ←→ source 1 of 3"
+                    .to_owned()
+            ),
+            Some(2)
+        )
+    );
+    assert_eq!(
+        resizing_from(38, 10, &[2]),
+        (
+            Some("esc to close · ↑↓ pgup pgdn to see more · ←→ source 2 of 3".to_owned()),
+            Some(3)
+        )
+    );
+}
+
+#[test]
+fn enter_to_resize_is_named_where_the_whole_of_it_fits_and_nothing_scrolls() {
+    let text = counted(3);
+    let shown = [Shown {
+        called: "mermaid diagram",
+        text: &text,
+    }];
+    let expanded = Expanded {
+        shown: &shown,
+        from: 0,
+    };
+    let lengths = expanded.lengths(80);
+    let size = Size {
+        columns: 80,
+        rows: 40,
+    };
+
+    let footer = |resizes: bool| {
+        expanded
+            .within_resizing(&lengths, size, Glyphs::Unicode, 1, |_| resizes)
+            .last()
+            .map(Row::text)
+    };
+    assert_eq!(
+        footer(true).as_deref(),
+        Some("esc to close · enter to resize")
+    );
+    assert_eq!(footer(false).as_deref(), Some("esc to close"));
+    assert_eq!(
+        expanded
+            .within_measured(&lengths, size, Glyphs::Unicode, 1)
+            .last()
+            .map(Row::text)
+            .as_deref(),
+        Some("esc to close")
+    );
+}
+
+#[test]
+fn enter_to_resize_gives_way_before_the_way_out_in_a_narrow_window() {
+    let text = counted(3);
+    let shown = [Shown {
+        called: "mermaid diagram",
+        text: &text,
+    }];
+    let expanded = Expanded {
+        shown: &shown,
+        from: 0,
+    };
+    let lengths = expanded.lengths(20);
+    let rows = expanded.within_resizing(
+        &lengths,
+        Size {
+            columns: 20,
+            rows: 40,
+        },
+        Glyphs::Unicode,
+        1,
+        |_| true,
+    );
+    assert_eq!(rows.last().map(Row::text).as_deref(), Some("esc to close"));
 }

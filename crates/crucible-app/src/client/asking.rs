@@ -208,6 +208,7 @@ pub fn asking(
         | Command::ReleaseNotes { .. }
         | Command::Context
         | Command::Usage
+        | Command::ShowImage(_)
         | Command::Exit => Err(ErrorCode::Busy.into()),
     }
 }
