@@ -1385,26 +1385,32 @@ impl Record {
     ///
     /// Only a block the walk put off: one wanting a picture, with none, not
     /// fallen back to text, and refused as not drawn here. A line already
-    /// gone out keeps the text it went out as.
+    /// gone out keeps the text it went out as. One put off that is older
+    /// than those has fallen back to text, as a block a live session drew
+    /// past the cap has, so a new palette, protocol or cell asks nothing for
+    /// it.
     fn restore(&mut self) {
         let from = self.first().saturating_sub(self.gone);
         let mut put_off: Vec<usize> = Vec::new();
         for at in (from..self.lines.len()).rev() {
-            if put_off.len() == MOST_KEPT_IMAGES {
-                break;
+            let Some(Line::Drawn(drawn)) = self.lines.get_mut(at) else {
+                continue;
+            };
+            let waits = drawn.picture.is_none()
+                && drawn.image.is_none()
+                && !drawn.fallen
+                && drawn
+                    .refused
+                    .as_ref()
+                    .is_some_and(|refused| refused.1 == Undrawn::NotHere);
+            if !waits {
+                continue;
             }
-            let waits = matches!(
-                self.lines.get(at),
-                Some(Line::Drawn(drawn)) if drawn.picture.is_none()
-                    && drawn.image.is_none()
-                    && !drawn.fallen
-                    && drawn
-                        .refused
-                        .as_ref()
-                        .is_some_and(|refused| refused.1 == Undrawn::NotHere)
-            );
-            if waits {
+            if put_off.len() < MOST_KEPT_IMAGES {
                 put_off.push(at);
+            } else {
+                // Already its text, so laid out as it is.
+                drawn.fallen = true;
             }
         }
         if put_off.is_empty() {
@@ -4291,6 +4297,49 @@ mod tests {
         // The newest are the ones shown, and the oldest are their text.
         assert!((0..4).all(|line| !picturing::shown(&record, line)));
         assert!((4..MOST_KEPT_IMAGES + 4).all(|line| picturing::shown(&record, line)));
+    }
+
+    #[test]
+    fn a_new_palette_after_a_session_put_back_asks_nothing_for_the_diagrams_it_did_not_keep() {
+        // The older diagrams the put back did not reach are text for as long
+        // as they are held, as those a live session drew past the cap are: a
+        // new palette encodes the kept pictures again and asks for no other.
+        let older = 10;
+        let names: Vec<String> = (0..MOST_KEPT_IMAGES + older)
+            .map(|at| format!("d{at}"))
+            .collect();
+        let cached: Vec<&'static str> = names
+            .iter()
+            .map(|name| &*Box::leak(name.clone().into_boxed_str()))
+            .collect();
+        let (fake, asked) = fake(100, 3, cached);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+        record.resuming(true);
+        for name in &names {
+            record.drawn(picturing::diagram(name), Glyphs::Unicode, Theme::Dark);
+        }
+        record.resuming(false);
+        let before = picturing::asked(&asked).len();
+
+        let light = picturing::coloured(Theme::Light);
+        record.pictured_as(
+            Capability::Graphics {
+                protocol: Protocol::Kitty,
+                cell: picturing::CELL,
+            },
+            light.identity(),
+        );
+        record.relay(40, Glyphs::Unicode, Theme::Light);
+
+        let after = picturing::asked(&asked);
+        let since = after.get(before..).unwrap_or_default();
+        assert!(
+            since.iter().all(|said| said == "reencode"),
+            "asked for a diagram not kept: {since:?}"
+        );
+        assert_eq!(since.len(), MOST_KEPT_IMAGES, "{since:?}");
+        assert!((0..older).all(|line| !picturing::shown(&record, line)));
+        assert!((older..MOST_KEPT_IMAGES + older).all(|line| picturing::shown(&record, line)));
     }
 
     #[test]
