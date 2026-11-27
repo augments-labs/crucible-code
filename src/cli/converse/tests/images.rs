@@ -86,6 +86,25 @@ fn ruled(
         settings,
         ..plain()
     };
+    seated(
+        &sample,
+        &terms,
+        Box::new(crate::cli::pictures::Raster),
+        typed,
+        build,
+    )
+}
+
+/// The loop over `terms` in `sample`, drawing pictures with `pictures` on a
+/// terminal that confirmed Kitty, once `typed` is read: what it was left
+/// holding, and the rows it shows.
+fn seated(
+    sample: &Sample,
+    terms: &Terms,
+    pictures: Box<dyn graphics::Pictures>,
+    typed: &[u8],
+    build: impl FnOnce(Arc<Session>, crucible_workspace::Workspace) -> crucible_runner::Runner,
+) -> (String, Vec<String>) {
     let workspace = sample.workspace();
     let conversation = paired(Arc::new(Session::nowhere()), |session| {
         build(session, workspace)
@@ -93,7 +112,7 @@ fn ruled(
     let mut renderer = crate::cli::furnished(
         Recording::new(80, 60),
         &crucible_config::Settings::default(),
-        Box::new(crate::cli::pictures::Raster),
+        pictures,
     );
     renderer.wears(Style::coloured().palette());
     renderer.images(Capability::Graphics {
@@ -107,7 +126,7 @@ fn ruled(
     converse(
         conversation,
         &mut renderer,
-        &terms,
+        terms,
         First {
             card: &opening(),
             arming: None,
@@ -483,5 +502,54 @@ fn an_image_under_a_rule_refusing_its_read_is_not_shown_and_one_beside_it_is() {
         written.matches("\x1b_Ga=t,f=100,i=").count(),
         1,
         "{written:?}"
+    );
+}
+
+/// A session recorded in `sample` before the loop starts, its turns asking
+/// for a plot and answering with it: the id `/resume` picks it up by.
+fn recorded_plot(sample: &Sample) -> String {
+    let earlier = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+    let id = earlier.id().unwrap().as_str().to_owned();
+    earlier.append(&crucible_types::Message::said("plot it"));
+    earlier.append(&crucible_types::Message::Agent {
+        continuation: None,
+        text: "![plot](plot.png)".into(),
+        calls: Vec::new(),
+        stop: Some(crucible_types::StopReason::Yielded),
+    });
+    drop(earlier);
+    id
+}
+
+#[test]
+fn a_session_picked_up_by_resume_draws_the_images_its_turns_named() {
+    let _turn = crate::cli::pictures::tests::ONE_AT_A_TIME
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    let sample = Sample::new("images-resume-command");
+    std::fs::write(sample.root().join("plot.png"), png(40, 20)).unwrap();
+    let id = recorded_plot(&sample);
+    let terms = Terms {
+        sessions: sample.logs(),
+        workspace: sample.workspace(),
+        style: Cell::new(Style::coloured()),
+        ..plain()
+    };
+
+    let (written, rows) = seated(
+        &sample,
+        &terms,
+        Box::new(crate::cli::pictures::Raster),
+        format!("/resume {id}\n").as_bytes(),
+        |session, _| scripted(Script::new(Vec::new()), Tools::new(), session),
+    );
+
+    assert!(
+        rows.iter().any(|row| row == "┌─ image · plot.png"),
+        "{rows:#?}"
+    );
+    assert!(
+        written.contains("\x1b_Ga=t,f=100,i="),
+        "no picture was sent: {written:?}"
     );
 }

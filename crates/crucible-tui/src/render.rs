@@ -1576,6 +1576,16 @@ impl<T: Terminal> Renderer<T> {
         self.relaid(self.glyphs);
     }
 
+    /// Draws what follows as a session put back, `resuming`, or live again.
+    ///
+    /// While it is put back a block's picture is only what the pictures kept
+    /// from an earlier run; any other block is drawn as its text, as one not
+    /// drawn here is, and nothing is drawn afresh. Said around the walk that
+    /// puts a session back, so the walk runs no drawer.
+    pub fn resuming(&mut self, resuming: bool) {
+        self.record.resuming(resuming);
+    }
+
     /// Forgets what is on screen, rows and the images written over them
     /// together, so the next frame writes every row and every image again:
     /// a row written again erases an image over it, and an image believed

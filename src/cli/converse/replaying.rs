@@ -10,10 +10,18 @@
 //! file contents. Display history is streamed a message batch at a time so it
 //! does not create a second session-sized transcript in memory.
 //!
+//! A diagram or an equation the walk meets is drawn as the picture an earlier
+//! run kept of it, and as its text where none was kept: the walk draws nothing
+//! afresh, so a long session comes back as fast as its text does.
+//!
 //! The images the session's turns named are gathered as the walk meets them,
 //! the most recent of them only, and handed back to be read and drawn once the
 //! walk is over: reading one asks the application, which this walk does not
-//! hold, so they stand under the last turn rather than under their own.
+//! hold, so they stand under the last turn rather than under their own. They
+//! are read again in order, through the request a live turn's images take,
+//! while two seconds last for all of them, and each the time does not reach
+//! is named as not drawn again. Both ways a session is put back (the command
+//! line and `/resume`) draw them here.
 //!
 //! An installed agent's turn comes back with the steps the log kept beside its
 //! answer, and is drawn as the live turn drew it: its words up to each step,
@@ -23,8 +31,9 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
-use crucible_app::Settled;
+use crucible_app::{Conversation, Settled};
 use crucible_session::{
     AgentDid, AgentStep, DisplayHistory, DisplayItem, Place, Pruned, Session, SessionError,
 };
@@ -58,6 +67,37 @@ const NOTES: &str = "notes on everything before this";
 /// A session storage error if history cannot be read, or [`Fatal::Terminal`]
 /// if the terminal could not be written to.
 pub(super) fn replayed<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    against: &Replay<'_>,
+    session: &Arc<Session>,
+    kept: &mut Kept,
+) -> Result<Vec<Named>, Fatal> {
+    renderer.resuming(true);
+    let named = restored(renderer, against, session, kept);
+    renderer.resuming(false);
+    named
+}
+
+/// Reads again, in order, the images `named` that a session put back named,
+/// while two seconds last for all of them, and draws each under its edge; each
+/// after them is named as not drawn again.
+///
+/// # Errors
+///
+/// [`Fatal::Terminal`] if the terminal could not be written to.
+pub(super) fn redrawn<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    terms: &Terms,
+    conversation: &mut Conversation,
+    named: &[Named],
+) -> Result<(), Fatal> {
+    let started = Instant::now();
+    let budget = super::put_back(|| started.elapsed());
+    super::imaged(renderer, terms, conversation, named, budget)
+}
+
+/// The walk [`replayed`] makes, with every block drawn from what was kept.
+fn restored<T: Terminal>(
     renderer: &mut Renderer<T>,
     against: &Replay<'_>,
     session: &Arc<Session>,

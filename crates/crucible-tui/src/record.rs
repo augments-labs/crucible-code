@@ -320,6 +320,9 @@ struct Picturing {
     keeps: bool,
     /// How many rows the transcript band was at the last frame.
     band: usize,
+    /// Whether a session put back is being drawn, when only a kept picture
+    /// is shown.
+    resuming: bool,
 }
 
 impl fmt::Debug for Picturing {
@@ -336,6 +339,7 @@ impl fmt::Debug for Picturing {
             .field("window", &self.window)
             .field("keeps", &self.keeps)
             .field("band", &self.band)
+            .field("resuming", &self.resuming)
             .finish()
     }
 }
@@ -354,6 +358,7 @@ impl Default for Picturing {
             window: 0,
             keeps: false,
             band: 0,
+            resuming: false,
         }
     }
 }
@@ -1339,6 +1344,18 @@ impl Record {
         self.picturing.pictures = Some(pictures);
     }
 
+    /// Draws what follows as a session put back, `resuming`, or live again.
+    ///
+    /// While it is put back, a block's picture is only what its pictures kept
+    /// from an earlier session; one they did not keep is drawn as its text,
+    /// as one not drawn here is, so putting a session back runs no drawer.
+    pub(crate) fn resuming(&mut self, resuming: bool) {
+        self.picturing.resuming = resuming;
+        if let Some(pictures) = self.picturing.pictures.as_mut() {
+            pictures.resuming(resuming);
+        }
+    }
+
     /// Whether an image a turn named would be shown as a picture now.
     pub(crate) fn shows_pictures(&self) -> bool {
         self.picturing.pictures.is_some() && self.picture_key(Kind::Image, self.columns).is_some()
@@ -1579,6 +1596,8 @@ impl Record {
                 payload,
                 size: PictureSize::Fit,
             }
+        } else if self.picturing.resuming {
+            return Err(Undrawn::NotHere);
         } else {
             let form = Form::Svg(drawer.picture(source, &Room { columns, glyphs })?);
             let payload = pictures.make(source, key, &form)?;
@@ -3987,6 +4006,10 @@ mod tests {
                 self.note("reencode".to_owned());
                 Ok(self.payload(key))
             }
+
+            fn resuming(&mut self, resuming: bool) {
+                self.note(format!("resuming {resuming}"));
+            }
         }
 
         /// The cell every test's terminal draws in.
@@ -4103,6 +4126,39 @@ mod tests {
             ["cached new", "picture new", "make new", "cached kept"]
         );
         assert!(picturing::shown(&record, 1));
+    }
+
+    #[test]
+    fn a_session_put_back_draws_what_the_cache_kept_and_the_rest_as_text_with_no_drawer() {
+        let (fake, asked) = fake(100, 3, vec!["kept"]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+
+        record.resuming(true);
+        record.drawn(picturing::diagram("kept"), Glyphs::Unicode, Theme::Dark);
+        record.drawn(picturing::diagram("missed"), Glyphs::Unicode, Theme::Dark);
+        record.resuming(false);
+
+        assert!(picturing::shown(&record, 0), "the cache's picture");
+        assert!(!picturing::shown(&record, 1), "a miss was drawn");
+        // As a picture not drawn here: its text, with nothing said of it.
+        assert_eq!(picturing::refused(&record, 1), Some(Undrawn::NotHere));
+        assert_eq!(
+            picturing::asked(&asked),
+            [
+                "resuming true",
+                "cached kept",
+                "cached missed",
+                "resuming false"
+            ]
+        );
+
+        // Once it is put back, a new block is drawn as live ones are.
+        record.drawn(picturing::diagram("live"), Glyphs::Unicode, Theme::Dark);
+        assert!(picturing::shown(&record, 2));
+        assert_eq!(
+            picturing::asked(&asked).get(4..),
+            Some(&["cached live", "picture live", "make live"].map(str::to_owned)[..])
+        );
     }
 
     #[test]

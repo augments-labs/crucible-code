@@ -707,9 +707,7 @@ fn conversing<T: Terminal>(
     // What its turns named, read again in order while two seconds last, so a
     // long session is not held up putting pictures back; each after that is
     // named as not drawn again.
-    let started = Instant::now();
-    let budget = put_back(|| started.elapsed());
-    imaged(renderer, terms, &mut conversation, &named, budget)?;
+    replaying::redrawn(renderer, terms, &mut conversation, &named)?;
 
     // Answered rather than acted on. Making room is a request, and a request is
     // run the one way this file runs one — on a worker, with the box live under
