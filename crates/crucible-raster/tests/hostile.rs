@@ -826,9 +826,14 @@ impl Pipe {
         let stop = Arc::new(AtomicBool::new(false));
         let (heard, told, at) = (Arc::clone(&seen), Arc::clone(&stop), path.clone());
         // Opening a FIFO for writing waits for a reader: it returns only when
-        // something opens the FIFO to read it.
+        // something opens the FIFO to read it. It opens again after each, so a
+        // second template naming the FIFO meets a writer too rather than
+        // waiting for ever in `open`.
         let thread = thread::spawn(move || {
-            if fs::OpenOptions::new().write(true).open(at).is_ok() && !told.load(Ordering::SeqCst) {
+            while fs::OpenOptions::new().write(true).open(&at).is_ok() {
+                if told.load(Ordering::SeqCst) {
+                    break;
+                }
                 heard.store(true, Ordering::SeqCst);
             }
         });
@@ -843,7 +848,8 @@ impl Pipe {
     }
 
     /// The writer waits in `open` for a reader, and a reader of our own lets it
-    /// go. It is told to stop first, so it records nothing for ours.
+    /// go. It is told to stop first, so it records nothing for ours and opens
+    /// no more.
     fn end(&mut self) {
         self.watch.end();
         let at = self.path.clone();
@@ -1062,29 +1068,37 @@ fn this_crate(_: &Sentinels, svg: &str) -> Result<Pixels, Refused> {
 
 /// Every reference drawn as though it were not there, and what it was
 /// pointing at, touched or not. What went wrong, in words.
+///
+/// A `<use>` may name only an element of its own file, so a `use-*.svg`
+/// template, whose `<use>` names a file, a FIFO or a URL, is refused whole as
+/// no picture, and drawn once the reference is taken out. Either way what it
+/// names is a sentinel, and must record nothing.
 fn what_a_drawer_does_with_the_references(sentinels: &Sentinels, drawer: &Drawer) -> Vec<String> {
     let mut wrong = Vec::new();
-    let mut drawn = 0;
+    let mut judged = 0;
     for (name, template) in templates() {
         let Some(filled) = sentinels.fill(&template) else {
             continue;
         };
         let (with, without) = with_and_without(&filled);
         let (with, without) = (drawer(sentinels, &with), drawer(sentinels, &without));
+        let outside_use = name.starts_with("use-");
         match (with, without) {
             // A template that holds an element outside those drawn is refused
             // with its reference and without it alike, and nothing is drawn.
-            (Err(with), Err(without)) if with == without => continue,
-            (Ok(with), Ok(without)) if with == without => {}
+            (Err(with), Err(without)) if with == without && !outside_use => continue,
+            (Ok(with), Ok(without)) if with == without && !outside_use => {}
+            (Err(Refused::NotAnImage), Ok(_)) if outside_use => {}
             (with, without) => wrong.push(format!(
                 "{name}: drew {with:?} where the reference removed draws {without:?}"
             )),
         }
-        drawn += 1;
+        judged += 1;
     }
-    // The four `href-*.svg` templates each platform fills; the two that hold a
-    // style sheet are refused.
-    assert!(drawn >= 4, "only {drawn} templates drawn");
+    // The four `href-*.svg` and the two or three `use-*.svg` templates each
+    // platform fills (`use-fifo.svg` has no sentinel on Windows); the two that
+    // hold a style sheet are refused.
+    assert!(judged >= 6, "only {judged} templates judged");
     wrong
 }
 
