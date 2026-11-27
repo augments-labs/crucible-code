@@ -49,26 +49,30 @@ spans the bounded reread through the commit, so simultaneous crucible processes
 cannot silently lose one another's settings.
 
 `/settings` lists, on its Config tab, every setting that is a switch, a short
-list of choices or a number of seconds or rows, and changes one in the user file.
-The theme, syntax theme, transcript colours, glyphs, tool detail, scroll rail,
-scroll speed and the key that sends change at once, and the delay before a
-running call is pinned changes from the next turn. Colour, tone, compaction and the four prompt
-caching rows say `applies at next start`, and the update check is read at the
-next start anyway, so it says nothing. The Images row changes at once when it
-names a protocol or `off`, and says `applies at next start` at `auto`, since
-only a start asks the terminal; a protocol not drawn where the session runs
-says `not available`, as [Where pictures are drawn](#where-pictures-are-drawn)
-has it. The Math row changes at once at every answer: math already drawn as a
-block is laid out again in the new form, which in native mode reaches the
-terminal's scrollback only when a resize writes it again. The Diagrams row does
-the same: every diagram already drawn is laid out again in the new form, in
-native mode once a resize writes the scrollback again. A row a project file or the environment sets is shown with who set it
-and cannot be changed there, since the user file would not win. A project file
-that says anything about `promptCaching` sets all four of its rows, because
-that block is checked as a whole. Providers,
-credentials, MCP servers, extensions, the system prompt, permission rules and
-the sandbox's policy are not rows; the sandbox and the permission mode are
-shown on the Status tab and changed with `/sandbox` and `/mode`.
+list of choices or a number of seconds or rows, and changes one in the user
+file. The theme, syntax theme, transcript colours, glyphs, tool detail, scroll
+rail, scroll speed and the key that sends change at once, and the delay before a
+running call is pinned changes from the next turn. Colour, tone, compaction and
+the four prompt caching rows say `applies at next start`, and the update check
+is read at the next start anyway, so it says nothing. The Images row changes at
+once when it names a protocol or `off`, and says `applies at next start` at
+`auto`, since only a start asks the terminal; a protocol not drawn where the
+session runs says `not available`, as [Where pictures are
+drawn](#where-pictures-are-drawn) has it. The Math row changes at once at every
+answer: math already drawn as a block is laid out again in the new form, which
+in native mode reaches the terminal's scrollback only when a resize writes it
+again. After its value it says what the session found of math pictures, such as
+`math pictures not checked yet` or `no math pictures:` and why, as [Math as a
+picture](../sessions/transcript.md#math-as-a-picture) lists. The Diagrams row
+does the same: every diagram already drawn is laid out again in the new form, in
+native mode once a resize writes the scrollback again. A row a project file or
+the environment sets is shown with who set it and cannot be changed there, since
+the user file would not win. A project file that says anything about
+`promptCaching` sets all four of its rows, because that block is checked as a
+whole. Providers, credentials, MCP servers, extensions, the system prompt,
+permission rules and the sandbox's policy are not rows; the sandbox and the
+permission mode are shown on the Status tab and changed with `/sandbox` and
+`/mode`.
 
 A file that is not there is not an error. A file that *is* there and will not
 open is, and says so. Silently skipping it would turn a permissions mistake
@@ -738,7 +742,7 @@ you with no way to send at all.
 | `screen` | `fullscreen`, `native` | Where crucible draws; `fullscreen` by default, and read only at start. `fullscreen` takes a screen of its own, with its own scrollback, scroll rail and selection. `native` draws in your terminal's own buffer: what is finished is written once into the terminal's scrollback, only the part still changing at the foot is drawn again, and scrolling, selection, search and copy are your terminal's. The scroll rail, the mouse scroll speed and crucible's own selection are off there. The rest of what it changes, and what you do instead, is under [What native mode cannot do](#what-native-mode-cannot-do). |
 | `pinAfterSeconds` | `0` to `60` | How many seconds a running tool call waits before it is drawn above the row that says a turn is running, with the end of its output and `(ctrl+b to background)`; `3` by default. A call that finishes sooner is only written to the transcript, so the rows over the box do not appear and vanish on every quick command, and Ctrl+B still leaves a running command in the background before its row is shown. `0` draws every call the moment it is asked for. |
 | `images` | `auto`, `kitty`, `iterm2`, `sixel`, `off` | What pictures are drawn with; `auto` by default. `auto` asks the terminal at start, and only where its environment names a terminal pictures were seen to draw right on, in the screen mode in force, with no multiplexer in between. A protocol named here is used without asking the terminal where it was seen to draw right, and is text everywhere else; `sixel` was seen to draw right nowhere. `off` draws every picture as text. Under [Where pictures are drawn](#where-pictures-are-drawn). |
-| `math` | `written`, `text`, `image` | How math in an answer is drawn; `image` by default. `image` draws a formula as a picture where one can be shown and as text everywhere else, which is everywhere for now; `text` draws it as text; `written` shows every formula exactly as the model wrote it. Each takes effect at once; in native mode, a block already in the terminal's scrollback changes when a resize writes it again. Under [Math](../sessions/transcript.md#math). |
+| `math` | `written`, `text`, `image` | How math in an answer is drawn; `image` by default. `image` draws a display formula as a picture made by the TeX installed on this machine, on Linux in the sandbox, where the session shows pictures, and as text everywhere else; `text` draws it as text; `written` shows every formula exactly as the model wrote it. Each takes effect at once; in native mode, a block already in the terminal's scrollback changes when a resize writes it again. Under [Math](../sessions/transcript.md#math). |
 | `diagrams` | `written`, `text`, `image` | How a mermaid diagram in an answer is drawn; `image` by default. `image` draws a diagram as a picture where one can be shown, which is where the session draws pictures with Kitty's or iTerm2's protocol, and as text everywhere else; `text` draws it as text; `written` shows every diagram exactly as the model wrote it. Each takes effect at once; in native mode, a diagram already in the terminal's scrollback changes when a resize writes it again. Under [Diagrams](../sessions/transcript.md#diagrams). |
 
 `theme` is a table of what each colour on screen means, tuned to one background.
@@ -891,10 +895,10 @@ rows it stood in are left blank between the transcript and the box.
 The setting settles the protocol a session draws pictures with, which is what
 *drawn* means below, whether crucible asks anything at start to find out, and
 what `/settings` says of a protocol. Where it is `kitty` or `iterm2`, the
-transcript shows a diagram as a picture, as [Pictures and image
-files](../sessions/transcript.md#pictures-and-image-files) says. `sixel` is
-drawn by no terminal yet, so where the table below draws neither, what the
-transcript shows in a picture's place is text.
+transcript shows a diagram, and a display formula TeX made, as a picture, as
+[Pictures and image files](../sessions/transcript.md#pictures-and-image-files)
+says. `sixel` is drawn by no terminal yet, so where the table below draws
+neither, what the transcript shows in a picture's place is text.
 
 A protocol is drawn only on a terminal it was seen to draw right on, in every
 step of the screen mode in force. Every judgement in this table was made on
