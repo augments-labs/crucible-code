@@ -1,4 +1,5 @@
-//! A diagram's picture, drawn to pixels and encoded for the terminal.
+//! A diagram's picture, drawn to pixels and encoded for the terminal, and an
+//! image a turn named, encoded for it from the PNG the application read.
 //!
 //! The renderer asks for a picture on the drawing thread when a block closes,
 //! and for the same picture again in a new palette or at a new width from what
@@ -22,16 +23,25 @@
 //!
 //! Nothing is kept here and nothing is written to disk: the renderer keeps
 //! what it shows, bounded, and asks again from that, so [`Raster::cached`]
-//! holds nothing. Only a drawer's picture is encoded: an image file's form is
-//! refused.
+//! holds nothing.
+//!
+//! An image arrives as the PNG the application read it into, already within
+//! its ceilings and made by this process, and is decoded again here in the
+//! slot only to learn its size and, for Sixel, its pixels. Kitty and iTerm2
+//! are sent that PNG, said to be no wider than its room so the terminal
+//! scales it into the cells it is placed in. Sixel cannot be scaled, so an
+//! image wider than its room or than Sixel is encoded at, or taller than the
+//! rows its key gives it, is refused as too wide rather than drawn larger
+//! than the window or cut.
 //!
 //! Kitty and iTerm2 are sent the same PNG. Sixel is sent the pixels laid over
 //! the palette's ground, since it has no transparency, so a new ground is a
 //! new payload; a picture wider than Sixel is encoded at is drawn as text, as
 //! too wide, rather than narrowed.
 
+use crucible_client_api::ImageRefused;
 use crucible_raster::{
-    MOST_SIXEL_WIDTH, Refused, SixelPalette, Slot, png, raster_width, rasterise, sixel,
+    MOST_SIXEL_WIDTH, Refused, SixelPalette, Slot, decode, png, raster_width, rasterise, sixel,
 };
 use crucible_tui::KeptPicture;
 use crucible_tui::chrome::Undrawn;
@@ -67,13 +77,11 @@ impl Pictures for Raster {
 /// `form` drawn in `key`'s palette at the width its room allows, and encoded
 /// for `key`'s protocol; or why it is drawn as text.
 fn encoded(form: &Form, key: &PictureKey) -> Result<Payload, Undrawn> {
-    let Form::Svg(svg) = form else {
-        return Err(Undrawn::NotHere);
+    let svg = match form {
+        Form::Svg(svg) => svg.as_str().as_bytes(),
+        Form::Png(png) => return pictured(png, key),
     };
-    let svg = svg.as_str().as_bytes();
-    let room = u32::try_from(key.bucket.columns())
-        .unwrap_or(u32::MAX)
-        .saturating_mul(u32::from(key.cell.width));
+    let room = room(key);
     // Taken here, before the size is read, since reading it parses the whole
     // picture; and so not waited for again inside: the raster's own entry
     // points let the thread that holds the slot straight through.
@@ -108,6 +116,61 @@ fn encoded(form: &Form, key: &PictureKey) -> Result<Payload, Undrawn> {
         (pixels.width(), pixels.height()),
         key.cell,
     ))
+}
+
+/// How many pixels wide a picture under `key` has room for: the narrow edge
+/// of the window's width bucket, in cells of the window's pixels.
+fn room(key: &PictureKey) -> u32 {
+    u32::try_from(key.bucket.columns())
+        .unwrap_or(u32::MAX)
+        .saturating_mul(u32::from(key.cell.width))
+}
+
+/// The image `png` encoded for `key`'s protocol at no more than its room.
+fn pictured(png: &[u8], key: &PictureKey) -> Result<Payload, Undrawn> {
+    let room = room(key);
+    let _slot = Slot::take(WAIT).map_err(refusal)?;
+    let pixels = decode(png).map_err(refusal)?;
+    let (width, height) = (pixels.width(), pixels.height());
+    match key.protocol {
+        Protocol::Kitty | Protocol::Iterm2 => {
+            let shown = if width > room {
+                let fitted = u64::from(height) * u64::from(room) / u64::from(width);
+                (room, u32::try_from(fitted).unwrap_or(height).max(1))
+            } else {
+                (width, height)
+            };
+            Ok(Payload::new(key.protocol, png.to_vec(), shown, key.cell))
+        }
+        Protocol::Sixel => {
+            let tall = u32::from(key.rows.max(1)).saturating_mul(u32::from(key.cell.height));
+            if width > room.min(MOST_SIXEL_WIDTH) || height > tall {
+                return Err(Undrawn::TooWide);
+            }
+            let bytes = sixel(
+                &pixels,
+                &SixelPalette {
+                    ground: key.palette.ground(),
+                    colours: SIXEL_COLOURS,
+                },
+            )
+            .map_err(refusal)?;
+            Ok(Payload::new(key.protocol, bytes, (width, height), key.cell))
+        }
+    }
+}
+
+/// The words an image's edge gives for why the application did not show it.
+///
+/// Written out case by case so a new reason is a decision here.
+pub(crate) const fn refused(refused: ImageRefused) -> Undrawn {
+    match refused {
+        ImageRefused::NotShown => Undrawn::ImageNotShown,
+        ImageRefused::TooLarge => Undrawn::ImageTooLarge,
+        ImageRefused::NotAnImage => Undrawn::NotAnImage,
+        ImageRefused::NotInTime => Undrawn::NotReadInTime,
+        ImageRefused::Changed => Undrawn::ChangedSinceRead,
+    }
 }
 
 /// Why a picture the raster refused is drawn as text.
@@ -678,5 +741,105 @@ mod tests {
                 "{screen:?}: a new palette did not encode every kept picture again"
             );
         }
+    }
+
+    /// A PNG `width` by `height`, as the application hands one over.
+    fn png_of(width: u32, height: u32) -> Vec<u8> {
+        let Form::Svg(svg) = halves(width, height) else {
+            return Vec::new();
+        };
+        let pixels = rasterise(svg.as_str().as_bytes(), width, &[]).unwrap();
+        png(&pixels).unwrap()
+    }
+
+    #[test]
+    fn an_image_is_sent_as_the_png_the_application_read_said_to_be_no_wider_than_its_room() {
+        let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
+        for protocol in [Protocol::Kitty, Protocol::Iterm2] {
+            let key = PictureKey {
+                kind: Kind::Image,
+                ..key_for(protocol, Theme::Dark, None, 80)
+            };
+            let small = png_of(40, 20);
+            let payload = Raster
+                .make("a.png", &key, &Form::Png(small.clone()))
+                .unwrap();
+            assert_eq!(payload.bytes(), small.as_slice(), "{protocol:?}");
+            assert_eq!(payload.pixels(), (40, 20), "{protocol:?}");
+
+            let room = room(&key);
+            let wide = png_of(room * 2, 100);
+            let payload = Raster
+                .make("a.png", &key, &Form::Png(wide.clone()))
+                .unwrap();
+            assert_eq!(payload.bytes(), wide.as_slice(), "{protocol:?}");
+            assert_eq!(payload.pixels(), (room, 50), "{protocol:?}");
+            assert!(
+                usize::from(payload.cells().0) <= key.bucket.columns(),
+                "{protocol:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_sixel_image_it_would_have_to_scale_is_too_wide_and_one_it_need_not_is_drawn() {
+        let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
+        let key = PictureKey {
+            kind: Kind::Image,
+            rows: 5,
+            ..key_for(Protocol::Sixel, Theme::Dark, None, 120)
+        };
+        let widest = MOST_SIXEL_WIDTH.min(room(&key));
+        for (width, height) in [(widest + 1, 20), (40, 5 * 16 + 1)] {
+            assert_eq!(
+                Raster
+                    .make("a.png", &key, &Form::Png(png_of(width, height)))
+                    .err(),
+                Some(Undrawn::TooWide),
+                "{width} by {height}"
+            );
+        }
+        let drawn = Raster
+            .make("a.png", &key, &Form::Png(png_of(widest, 5 * 16)))
+            .unwrap();
+        assert!(drawn.bytes().starts_with(b"\x1bP"), "not a Sixel string");
+        assert_eq!(drawn.pixels(), (widest, 80));
+    }
+
+    #[test]
+    fn bytes_that_are_not_an_image_are_never_sent() {
+        let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
+        for protocol in [Protocol::Kitty, Protocol::Iterm2, Protocol::Sixel] {
+            let key = key_for(protocol, Theme::Dark, None, 80);
+            assert_eq!(
+                Raster
+                    .make("a.png", &key, &Form::Png(b"\x1b]52;c;aGk=\x07".to_vec()))
+                    .err(),
+                Some(Undrawn::NotHere),
+                "{protocol:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_reason_an_image_is_not_shown_has_words_of_its_own_and_none_says_shown_as_written() {
+        let words: Vec<&str> = ImageRefused::EVERY
+            .into_iter()
+            .map(|reason| {
+                let undrawn = refused(reason);
+                assert!(!undrawn.written(), "{reason:?}");
+                undrawn.words()
+            })
+            .collect();
+        assert_eq!(
+            words,
+            [
+                "not shown",
+                "too large",
+                "not an image",
+                "not read in time",
+                "changed since it was read"
+            ]
+        );
     }
 }
