@@ -220,9 +220,12 @@ TeX and a sandbox that holds TeX's policy, the picture is made and every bound
 holds; without either, the check names the first thing missing and the formula
 stays text. Neither half is a skip. To run the TeX half on Linux you need:
 
-- TeX where crucible looks for it: `latex` and `dvisvgm` on the `PATH`, and
-  `/etc/texmf` and `/var/lib/texmf`, as the Debian-family packages install
-  them. On Debian or Ubuntu, `sudo apt install texlive-latex-base dvisvgm`.
+- TeX where crucible looks for it: `latex` and `dvisvgm` in `/usr/bin` or
+  `/bin`, the only `PATH` TeX's run is given, with that directory on your own
+  `PATH` too, which is where the tests look; and `/etc/texmf` and
+  `/var/lib/texmf`, as the Debian-family packages install them. TeX installed
+  only elsewhere, such as under `/usr/local/texlive`, is not found. On Debian
+  or Ubuntu, `sudo apt install texlive-latex-base dvisvgm`.
 - Bubblewrap 0.11.0 or newer that lists `--size` (`bwrap --help` shows it),
   and a kernel of 5.14 or newer.
 - Unprivileged user namespaces. Ubuntu restricts them with AppArmor; relax
@@ -382,9 +385,11 @@ scripts/sh/bench.sh
 ```
 
 The probes and thresholds are owned by that script. Use its `startup`,
-`tools`, `mem`, `grep`, `stream`, `live`, `picture-wait` or `tex-slab`
-argument to run one family:
+`tools`, `mem`, `grep`, `stream`, `live`, `drawing`, `picture-wait` or
+`tex-slab` argument to run one family:
 
+- `drawing` times a diff, formula or diagram drawer laying out the largest
+  block it accepts at its caps, and a diagram made into a picture.
 - `picture-wait` times the drawing thread while a display formula's picture is
   being made, and needs nothing but the default build.
 - `tex-slab` weighs the host's kernel memory while TeX writes files in the
