@@ -17751,7 +17751,7 @@
     {
       "id": "CASE-MATH-PICTURES-SANDBOXED-ESCAPES",
       "family": "transcript-math-pictures",
-      "obligation": "Every escape input through the real engine leaves its sentinels and the host unchanged; each input comes to its recorded answer, every read escape stays text, and no picture holds a sentinel or a line of /etc/passwd.",
+      "obligation": "Every escape input through the real engine leaves its sentinels and the host unchanged; each read and write escape comes to its one recorded answer and every other input to one its row records as safe, none of them a limit or never reached; every read escape stays text, and no picture holds a sentinel or a line of /etc/passwd.",
       "package": "crucible-app",
       "target": {
         "kind": "test",
@@ -17759,7 +17759,7 @@
       },
       "case": "every_escape_input_leaves_its_sentinels_and_the_host_unchanged",
       "source": "crates/crucible-app/tests/math_sandboxed.rs",
-      "body_sha256": "70c2167ffe415017474cd9785a80164ce870227390b26583994291c5fb776c7a",
+      "body_sha256": "203a5b710b8e2bbefddfa15729b39a62f1af9fc303085e68c0e206f45f1f477e",
       "platforms": [
         "linux"
       ]
@@ -18620,7 +18620,7 @@
       },
       "case": "tex_reads_nothing_of_the_host_and_writes_nothing_above_its_directory",
       "source": "crates/crucible-app/tests/math_sandboxed.rs",
-      "body_sha256": "d3a9b8c39c88b38954fd4f3468d207cbb109c39c43841ab3f1013f4270c8d40e",
+      "body_sha256": "8e72e9ca8e414422a21ddefce5fa00631fb10e6da6cebf4ea5fdd5e542a46ea6",
       "platforms": [
         "linux"
       ]
