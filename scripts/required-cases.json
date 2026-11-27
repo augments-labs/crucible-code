@@ -17751,7 +17751,7 @@
     {
       "id": "CASE-MATH-PICTURES-SANDBOXED-ESCAPES",
       "family": "transcript-math-pictures",
-      "obligation": "Every escape input through the real engine leaves its sentinels and the host unchanged.",
+      "obligation": "Every escape input through the real engine leaves its sentinels and the host unchanged; each input comes to its recorded answer, every read escape stays text, and no picture holds a sentinel or a line of /etc/passwd.",
       "package": "crucible-app",
       "target": {
         "kind": "test",
@@ -17759,7 +17759,7 @@
       },
       "case": "every_escape_input_leaves_its_sentinels_and_the_host_unchanged",
       "source": "crates/crucible-app/tests/math_sandboxed.rs",
-      "body_sha256": "342c5038b2ad0fc2cc292aa56b80f81423f035e02364942cdd3b86be60bb6af4",
+      "body_sha256": "70c2167ffe415017474cd9785a80164ce870227390b26583994291c5fb776c7a",
       "platforms": [
         "linux"
       ]
@@ -17783,7 +17783,7 @@
     {
       "id": "CASE-MATH-PICTURES-SANDBOXED-DISK-BOUND",
       "family": "transcript-math-pictures",
-      "obligation": "Many files under the file bound stop at the disk bound, and writes to /dev are refused.",
+      "obligation": "Many files under the file bound stop at the disk bound, and writes to /dev are refused; the host's /written-root.txt is never written.",
       "package": "crucible-app",
       "target": {
         "kind": "test",
@@ -17791,7 +17791,7 @@
       },
       "case": "many_files_under_the_file_bound_stop_at_the_disk_bound_and_dev_is_refused",
       "source": "crates/crucible-app/tests/math_sandboxed.rs",
-      "body_sha256": "ee595b8f6c6aaef1aa03a1fe20a350deb4bf2426add46a5bbd105eb3d979a5be",
+      "body_sha256": "68ef9b87895de93ae920dd45f3d39a3df50dd6057d6b4e91c0f455b3e5e510bb",
       "platforms": [
         "linux"
       ]
@@ -18392,6 +18392,73 @@
       "case": "tests::a_picture_other_than_the_stand_ins_refuses_the_reading",
       "source": "src/bin/bench-session-rss-colour.rs",
       "body_sha256": "3e4359773fc869f286cd74e5da66612e2ea987e3d777314b48ec90cf64c20c96",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RUN-REFUSAL-NOT-REACHED",
+      "family": "transcript-math-pictures",
+      "obligation": "A refusal at release (lifecycle, launch or audit), or a wait or read error with no violation beside it, leaves the formula NotReached, never a timeout.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::made::a_refusal_or_an_error_with_no_violation_is_not_reached",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "7d4dbbecc26ae49bf8ff0b43e1b772343f56606a2573adc86714f7bb602d35d1",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RUN-STAGE-HOLDS-SERVICE",
+      "family": "transcript-math-pictures",
+      "obligation": "A stage held past the first deadline is NotReached at that deadline, holds the service so the next formula prepares nothing, and the service is free again once the stage returns.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::made::a_stage_held_past_the_first_deadline_holds_the_service_until_it_returns",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "95c7b66f75731235f17659af491476180d89d3f6525fd703155cb2e36497fcef",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-CHECK-FEATURE-WORDS",
+      "family": "transcript-math-pictures",
+      "obligation": "/settings names a sandbox feature a TeX run needs and the backend refused in words, never by the enum name.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::reached::a_refused_feature_is_named_in_words_not_by_its_enum_name",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "6f767d42793b6588681ff58d34423af0bea3de7b1d36d62abd744095ffdd27ef",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-SANDBOXED-TEX-GUARDS",
+      "family": "transcript-math-pictures",
+      "obligation": "In the real sandbox TeX cannot \\openin /etc/passwd or /proc/self/status, writes beside itself but not above its directory, and dvisvgm draws no raw special.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "test",
+        "name": "math_sandboxed"
+      },
+      "case": "tex_reads_nothing_of_the_host_and_writes_nothing_above_its_directory",
+      "source": "crates/crucible-app/tests/math_sandboxed.rs",
+      "body_sha256": "d3a9b8c39c88b38954fd4f3468d207cbb109c39c43841ab3f1013f4270c8d40e",
       "platforms": [
         "linux"
       ]
