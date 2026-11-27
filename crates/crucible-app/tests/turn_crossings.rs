@@ -218,7 +218,11 @@ fn nothing_shipped_glob_imports_what_a_turn_could_wait_through() {
 /// too; the runner's test
 /// helper that drives a turn to its end on a runtime of the test's own; the two
 /// performance probes waiting, on their own main thread, for each call they
-/// time on a runtime of the probe's own; and the lines inside the `#[cfg(test)]
+/// time on a runtime of the probe's own, and the TeX probe waiting there for
+/// the math check and each formula it times; the math engine's run thread,
+/// one of the engine's own that no turn and no runtime worker runs on, driving
+/// a run's sandbox futures, with the module documentation that says so; and
+/// the lines inside the `#[cfg(test)]
 /// mod tests` of the sandbox's redaction and of the worker-task check, which
 /// only a test build compiles. The count makes the same line written once more
 /// in that file, wherever, one too many.
@@ -333,6 +337,29 @@ const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
     // does: a probe is a program of its own, not a part of crucible.
     ("src/bin/bench-grep.rs", "self.runtime.block_on(future)", 1),
     ("src/bin/bench-tools.rs", "self.runtime.block_on(future)", 1),
+    // The TeX probe's `main`, the same: it waits for the math check and for
+    // each formula it times, on a runtime of the probe's own.
+    (
+        "src/bin/bench-tex-slab.rs",
+        ".block_on(available(service, COMMAND_TIME))",
+        1,
+    ),
+    ("src/bin/bench-tex-slab.rs", ".block_on(task)", 1),
+    // The math engine's run thread, which `math::spawned` starts with
+    // `std::thread::Builder` for each run and joins or leaves late: it is
+    // never a runtime worker or blocking thread and no turn runs on it, so
+    // `Handle::block_on` there parks only that thread. The documentation line
+    // is the module's own account of it.
+    (
+        "crates/crucible-app/src/math.rs",
+        "//! runtime handle's `block_on`; neither a runtime worker nor a blocking thread",
+        1,
+    ),
+    (
+        "crates/crucible-app/src/math.rs",
+        "handle.block_on(async move {",
+        1,
+    ),
     // Inside `crates/crucible-sandbox-local/src/redaction.rs`'s
     // `#[cfg(test)] mod tests`: the test helper that reads a protected output
     // to its end on a runtime of its own.
