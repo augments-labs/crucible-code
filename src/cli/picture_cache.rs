@@ -4,9 +4,9 @@
 use std::collections::BinaryHeap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime};
 
 use crucible_raster::{Slot, decode};
@@ -60,22 +60,24 @@ struct Bounds {
 /// The pictures kept under one home.
 #[derive(Debug, Clone)]
 pub(crate) struct Cache {
-    home: PathBuf,
     directory: PathBuf,
     bounds: Bounds,
+    /// Whether the directory was made its owner's alone before it was first
+    /// read, settled once for every copy of this cache.
+    narrowed: Arc<OnceLock<bool>>,
 }
 
 impl Cache {
     /// The cache kept under `home`. Nothing is read or made until it is used.
     pub(crate) fn open(home: &Path) -> Self {
         Self {
-            home: home.to_path_buf(),
             directory: home.join(DIRECTORY),
             bounds: Bounds {
                 held: MOST_HELD,
                 age: MOST_AGE,
                 names: MOST_LISTED,
             },
+            narrowed: Arc::new(OnceLock::new()),
         }
     }
 
@@ -148,6 +150,17 @@ impl Cache {
     /// The entry `name`, where the directory and the entry are this
     /// account's alone and the entry is no larger than one is written.
     fn read(&self, name: &str) -> Option<Vec<u8>> {
+        if !self.is_directory() {
+            return None;
+        }
+        // A directory an earlier build or a hand left open is narrowed
+        // before anything in it is read; one that cannot be is passed over.
+        if !*self
+            .narrowed
+            .get_or_init(|| crucible_privacy::directory(&self.directory).is_ok())
+        {
+            return None;
+        }
         let directory = fs::symlink_metadata(&self.directory).ok()?;
         if !directory.is_dir() {
             return None;
@@ -155,7 +168,8 @@ impl Cache {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt as _;
-            let home = fs::metadata(&self.home).ok()?;
+            // The home the directory is in, whose owner this account is.
+            let home = fs::metadata(self.directory.parent()?).ok()?;
             if !kept_alone(directory.mode(), directory.uid(), home.uid()) {
                 return None;
             }

@@ -832,6 +832,25 @@ fn an_entry_or_a_directory_others_may_reach_is_a_miss() {
 
 #[cfg(unix)]
 #[test]
+fn a_directory_an_earlier_build_left_open_is_narrowed_before_it_is_first_read() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let _turn = turn();
+    let (_sample, home) = home("left-open");
+    let kept = entry(SOURCE, &key(), &form(40, 20));
+    Cache::open(&home).put(&kept);
+    let directory = home.join(DIRECTORY);
+    // Opened up as a build before this one, or a hand, might have left it.
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o755)).unwrap();
+
+    // A process's first read narrows it, then takes what it holds.
+    let cache = Cache::open(&home);
+    assert!(cache.get(SOURCE, &key()).is_some(), "not narrowed first");
+    let mode = fs::metadata(&directory).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o700);
+}
+
+#[cfg(unix)]
+#[test]
 fn only_what_its_owner_alone_may_reach_is_taken() {
     assert!(kept_alone(0o100_600, 501, 501));
     assert!(kept_alone(0o040_700, 501, 501));
