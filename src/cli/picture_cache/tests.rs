@@ -127,6 +127,17 @@ fn aged(cache: &Cache, name: &str, ago: Duration) {
         .unwrap();
 }
 
+/// Says `name` in `cache` was written `by` from now, as a clock set wrong,
+/// or a file planted, would.
+fn ahead(cache: &Cache, name: &str, by: Duration) {
+    fs::File::options()
+        .write(true)
+        .open(cache.directory.join(name))
+        .unwrap()
+        .set_modified(SystemTime::now() + by)
+        .unwrap();
+}
+
 /// Holds the one decode slot for a test, which drawing and reading take.
 fn turn() -> std::sync::MutexGuard<'static, ()> {
     crate::cli::pictures::tests::ONE_AT_A_TIME
@@ -297,6 +308,70 @@ fn a_write_takes_out_every_entry_past_its_age() {
     let mut kept = vec![fresh.name.clone(), new.name.clone()];
     kept.sort();
     assert_eq!(entries(&cache), kept);
+}
+
+#[test]
+fn a_write_takes_out_every_entry_dated_more_than_a_day_ahead() {
+    let _turn = turn();
+    let (_sample, home) = home("ahead");
+    let cache = Cache::open(&home);
+    let (planted, skewed, new) = (
+        entry("planted", &key(), &form(40, 20)),
+        entry("skewed", &key(), &form(40, 20)),
+        entry("new", &key(), &form(40, 20)),
+    );
+    cache.put(&planted);
+    cache.put(&skewed);
+    // Dated a month ahead it would never age out; an hour ahead is a clock
+    // a little out, and is kept.
+    ahead(&cache, &planted.name, Duration::from_hours(30 * 24));
+    ahead(&cache, &skewed.name, Duration::from_hours(1));
+    cache.put(&new);
+
+    let mut kept = vec![skewed.name.clone(), new.name.clone()];
+    kept.sort();
+    assert_eq!(entries(&cache), kept);
+}
+
+#[test]
+fn an_entry_past_its_age_or_dated_more_than_a_day_ahead_is_a_miss() {
+    let _turn = turn();
+    let (_sample, home) = home("stale");
+    let cache = Cache::open(&home);
+    let form = form(40, 20);
+    let case = |source: &str, date: &dyn Fn(&Cache, &str), hit: bool| {
+        let written = entry(source, &key(), &form);
+        cache.put(&written);
+        date(&cache, &written.name);
+        // No write between, so only the read can tell it is stale.
+        assert_eq!(cache.get(source, &key()).is_some(), hit, "{source}");
+    };
+    case(
+        "old",
+        &|cache, name| aged(cache, name, MOST_AGE + Duration::from_mins(1)),
+        false,
+    );
+    case(
+        "ahead",
+        &|cache, name| ahead(cache, name, Duration::from_hours(30 * 24)),
+        false,
+    );
+    case(
+        "aging",
+        &|cache, name| {
+            aged(
+                cache,
+                name,
+                MOST_AGE.saturating_sub(Duration::from_hours(1)),
+            );
+        },
+        true,
+    );
+    case(
+        "skewed",
+        &|cache, name| ahead(cache, name, Duration::from_hours(1)),
+        true,
+    );
 }
 
 #[test]

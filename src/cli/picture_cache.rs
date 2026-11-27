@@ -19,6 +19,10 @@ pub(crate) const MOST_HELD: u64 = 32 << 20;
 /// The longest an entry is kept after it was written.
 pub(crate) const MOST_AGE: Duration = Duration::from_hours(14 * 24);
 
+/// How far ahead of now an entry may say it was written and still be kept: a
+/// clock a little out, and not a date set so it never ages.
+const SKEW: Duration = Duration::from_hours(24);
+
 /// The most bytes of entries waiting for the writer, and so the largest one
 /// entry may be.
 pub(crate) const MOST_QUEUED: usize = 512 << 10;
@@ -157,6 +161,14 @@ impl Cache {
                 return None;
             }
         }
+        // Past its age, or dated so it never ages, whether or not a write
+        // has come by to take it out since.
+        if !found
+            .modified()
+            .is_ok_and(|written| fresh(written, SystemTime::now(), self.bounds.age))
+        {
+            return None;
+        }
         let most = u64::try_from(MOST_QUEUED).ok()?;
         if found.len() > most {
             return None;
@@ -171,7 +183,8 @@ impl Cache {
         fs::symlink_metadata(&self.directory).is_ok_and(|found| found.is_dir())
     }
 
-    /// Removes every entry past its age, then the oldest until those left
+    /// Removes every entry past its age or dated more than [`SKEW`] ahead,
+    /// then the oldest until those left
     /// and `incoming` more bytes are within the bound. The entry `replacing`
     /// names is not counted, since the write replaces it.
     fn prune(&self, replacing: Option<&str>, incoming: u64) {
@@ -201,7 +214,7 @@ impl Cache {
                 continue;
             }
             let written = metadata.modified().unwrap_or(now);
-            if now.duration_since(written).unwrap_or_default() > self.bounds.age {
+            if !fresh(written, now, self.bounds.age) {
                 let _ = fs::remove_file(&path);
                 continue;
             }
@@ -220,6 +233,15 @@ impl Cache {
                 held = held.saturating_sub(length);
             }
         }
+    }
+}
+
+/// Whether an entry written at `written` is still kept at `now`: no older
+/// than `age`, and dated no more than [`SKEW`] ahead.
+fn fresh(written: SystemTime, now: SystemTime, age: Duration) -> bool {
+    match now.duration_since(written) {
+        Ok(since) => since <= age,
+        Err(ahead) => ahead.duration() <= SKEW,
     }
 }
 
