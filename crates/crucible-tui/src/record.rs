@@ -321,7 +321,7 @@ struct Picturing {
     /// How many rows the transcript band was at the last frame.
     band: usize,
     /// What is being drawn: a live session, or one put back, when only a
-    /// kept picture is shown.
+    /// kept picture is shown, and only once the walk is over.
     drawing: Drawing,
 }
 
@@ -330,8 +330,13 @@ struct Picturing {
 enum Drawing {
     /// A live session: a block not kept is drawn afresh.
     Live,
-    /// A session put back: a block not kept is its text.
+    /// A session put back, while it is walked: every block is its text,
+    /// and nothing is read for it yet.
     PutBack,
+    /// A session put back, once it is walked: the newest blocks the record
+    /// keeps pictures for are read from what was kept, and one not kept is
+    /// its text.
+    Restoring,
 }
 
 impl fmt::Debug for Picturing {
@@ -1355,18 +1360,88 @@ impl Record {
 
     /// Draws what follows as a session put back, `resuming`, or live again.
     ///
-    /// While it is put back, a block's picture is only what its pictures kept
-    /// from an earlier session; one they did not keep is drawn as its text,
-    /// as one not drawn here is, so putting a session back runs no drawer.
+    /// While it is put back, every block is drawn as its text and nothing is
+    /// read for it. Once it is, the newest blocks not yet gone out, as many
+    /// as [`MOST_KEPT_IMAGES`], are given the pictures their pictures kept
+    /// from an earlier session, and one they did not keep stays its text, as
+    /// one not drawn here is: putting a session back runs no drawer, and
+    /// reads no more pictures than the record keeps.
     pub(crate) fn resuming(&mut self, resuming: bool) {
-        self.picturing.drawing = if resuming {
-            Drawing::PutBack
+        if resuming {
+            self.picturing.drawing = Drawing::PutBack;
         } else {
-            Drawing::Live
-        };
+            self.picturing.drawing = Drawing::Restoring;
+            self.restore();
+            self.picturing.drawing = Drawing::Live;
+        }
         if let Some(pictures) = self.picturing.pictures.as_mut() {
             pictures.resuming(resuming);
         }
+    }
+
+    /// Gives the newest blocks put back that are still to go out, as many as
+    /// [`MOST_KEPT_IMAGES`], the pictures kept of them, oldest first so the
+    /// newest is the last to make room.
+    ///
+    /// Only a block the walk put off: one wanting a picture, with none, not
+    /// fallen back to text, and refused as not drawn here. A line already
+    /// gone out keeps the text it went out as.
+    fn restore(&mut self) {
+        let from = self.first().saturating_sub(self.gone);
+        let mut put_off: Vec<usize> = Vec::new();
+        for at in (from..self.lines.len()).rev() {
+            if put_off.len() == MOST_KEPT_IMAGES {
+                break;
+            }
+            let waits = matches!(
+                self.lines.get(at),
+                Some(Line::Drawn(drawn)) if drawn.picture.is_none()
+                    && drawn.image.is_none()
+                    && !drawn.fallen
+                    && drawn
+                        .refused
+                        .as_ref()
+                        .is_some_and(|refused| refused.1 == Undrawn::NotHere)
+            );
+            if waits {
+                put_off.push(at);
+            }
+        }
+        if put_off.is_empty() {
+            return;
+        }
+        let columns = self.columns;
+        for at in put_off.into_iter().rev() {
+            // Out of the lines while its picture is settled, since keeping
+            // one may draw an older picture as text.
+            let Some(Line::Drawn(mut drawn)) = self
+                .lines
+                .get_mut(at)
+                .map(|line| std::mem::replace(line, Line::Set(Row::new())))
+            else {
+                continue;
+            };
+            drawn.refused = None;
+            // In the glyphs it was laid in, which a put back does not change.
+            let glyphs = drawn.laid.1;
+            if self.settle(&mut drawn, columns, glyphs) {
+                let by = By {
+                    links: &self.links,
+                    drawers: &self.drawers,
+                    modes: self.modes,
+                    offers: self.offers,
+                    window: self.picturing.window,
+                };
+                let was = drawn.weight;
+                self.picturing.saw(drawn.lay(columns, glyphs, by));
+                self.weight = self.weight.saturating_sub(was).saturating_add(drawn.weight);
+            }
+            if let Some(line) = self.lines.get_mut(at) {
+                *line = Line::Drawn(drawn);
+            }
+        }
+        self.remeasure_all();
+        self.spill();
     }
 
     /// Whether an image a turn named would be shown as a picture now.
@@ -1602,6 +1677,9 @@ impl Record {
                 payload,
                 size: picture.kept.size,
             }
+        } else if self.picturing.drawing == Drawing::PutBack {
+            // Read once the walk is over, and only if the record keeps it.
+            return Err(Undrawn::NotHere);
         } else if let Some((form, payload)) = pictures.cached(source, key) {
             KeptPicture {
                 pixels: payload.pixels(),
@@ -1609,7 +1687,7 @@ impl Record {
                 payload,
                 size: PictureSize::Fit,
             }
-        } else if self.picturing.drawing == Drawing::PutBack {
+        } else if self.picturing.drawing == Drawing::Restoring {
             return Err(Undrawn::NotHere);
         } else {
             let form = Form::Svg(drawer.picture(source, &Room { columns, glyphs })?);
@@ -4172,6 +4250,47 @@ mod tests {
             picturing::asked(&asked).get(4..),
             Some(&["cached live", "picture live", "make live"].map(str::to_owned)[..])
         );
+    }
+
+    #[test]
+    fn a_session_put_back_reads_the_cache_only_for_the_pictures_it_keeps() {
+        let names: Vec<String> = (0..MOST_KEPT_IMAGES + 4)
+            .map(|at| format!("d{at}"))
+            .collect();
+        let cached: Vec<&'static str> = names
+            .iter()
+            .map(|name| &*Box::leak(name.clone().into_boxed_str()))
+            .collect();
+        let (fake, asked) = fake(100, 3, cached);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+
+        record.resuming(true);
+        for name in &names {
+            record.drawn(picturing::diagram(name), Glyphs::Unicode, Theme::Dark);
+        }
+        assert_eq!(
+            picturing::asked(&asked),
+            ["resuming true"],
+            "the walk read the cache"
+        );
+        record.resuming(false);
+
+        let asked = picturing::asked(&asked);
+        let read = asked
+            .iter()
+            .filter(|said| said.starts_with("cached "))
+            .count();
+        assert_eq!(read, MOST_KEPT_IMAGES, "{asked:?}");
+        assert!(
+            !asked
+                .iter()
+                .any(|said| said.starts_with("picture ") || said.starts_with("make ")),
+            "{asked:?}"
+        );
+        assert_eq!(asked.last().map(String::as_str), Some("resuming false"));
+        // The newest are the ones shown, and the oldest are their text.
+        assert!((0..4).all(|line| !picturing::shown(&record, line)));
+        assert!((4..MOST_KEPT_IMAGES + 4).all(|line| picturing::shown(&record, line)));
     }
 
     #[test]

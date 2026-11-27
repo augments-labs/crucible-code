@@ -1578,10 +1578,12 @@ impl<T: Terminal> Renderer<T> {
 
     /// Draws what follows as a session put back, `resuming`, or live again.
     ///
-    /// While it is put back a block's picture is only what the pictures kept
-    /// from an earlier run; any other block is drawn as its text, as one not
-    /// drawn here is, and nothing is drawn afresh. Said around the walk that
-    /// puts a session back, so the walk runs no drawer.
+    /// While it is put back every block is drawn as its text and nothing is
+    /// read or drawn for it. Once it is, the newest diagrams not yet gone
+    /// out, no more than the record keeps pictures for, are shown as what
+    /// the pictures kept from an earlier run, and any other stays its text,
+    /// as one not drawn here is. Said around the walk that puts a session
+    /// back, so the walk runs no drawer and reads only what it will show.
     pub fn resuming(&mut self, resuming: bool) {
         self.record.resuming(resuming);
     }

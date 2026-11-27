@@ -23,10 +23,10 @@
 //!
 //! Nothing is kept here: the renderer keeps what it shows, bounded, and asks
 //! again from that, so [`Raster::cached`] holds nothing. A session's own
-//! pictures are [`Caching`], which hands each diagram or equation it draws to
-//! the one thread that writes the picture cache, without waiting, and asks
-//! that cache first only while a session put back is drawn; live, a frame
-//! never reads the disk. An image is never handed to it, since it is read
+//! pictures are [`Caching`], which hands each diagram it draws to the one
+//! thread that writes the picture cache, without waiting, and asks that cache
+//! first only while a session put back is drawn, for the newest diagrams the
+//! renderer keeps once the walk is over; live, a frame never reads the disk. An image is never handed to it, since it is read
 //! again from its file.
 //!
 //! An image arrives as the PNG the application read it into, already within

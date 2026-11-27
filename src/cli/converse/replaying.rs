@@ -10,9 +10,12 @@
 //! file contents. Display history is streamed a message batch at a time so it
 //! does not create a second session-sized transcript in memory.
 //!
-//! A diagram or an equation the walk meets is drawn as the picture an earlier
-//! run kept of it, and as its text where none was kept: the walk draws nothing
-//! afresh, so a long session comes back as fast as its text does.
+//! A diagram the walk meets is drawn as its text, and nothing is read or drawn
+//! for it while the walk lasts. Once it is over, the newest diagrams still to
+//! go out, no more than the renderer keeps pictures for, are shown as the
+//! pictures an earlier run kept of them, and one with none stays its text:
+//! nothing is drawn afresh, so a long session comes back as fast as its text
+//! does.
 //!
 //! The images the session's turns named are gathered as the walk meets them,
 //! the most recent of them only, and handed back to be read and drawn once the
