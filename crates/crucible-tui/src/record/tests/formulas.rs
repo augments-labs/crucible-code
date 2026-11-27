@@ -66,13 +66,33 @@ fn a_display_formula_that_does_not_convert_is_never_told_out_nor_asked_for() {
 fn a_display_formula_too_wide_as_text_is_told_out_and_replaced_by_its_picture() {
     let (fake, _) = fake(100, 3, vec![]);
     let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+    let refusal = "┌─ math · too wide to draw at this width";
+    let heading = |record: &Record, line: usize| record.folded(line).first().map(Row::text);
 
     record.drawn(picturing::formula("wide"), Glyphs::Unicode, Theme::Dark);
+    record.drawn(
+        picturing::formula("also wide"),
+        Glyphs::Unicode,
+        Theme::Dark,
+    );
 
     let told = record.formulas();
-    assert_eq!(told.len(), 1);
-    let formula = told.first().expect("one formula");
+    assert_eq!(told.len(), 2);
+    // While each waits, it is its source under the refusal.
+    for line in [0, 1] {
+        assert!(!picturing::shown(&record, line), "{line}");
+        assert_eq!(heading(&record, line).as_deref(), Some(refusal), "{line}");
+    }
+
+    let formula = told.first().expect("two formulas");
     assert!(record.formula_made(formula, picturing::svg("wide")));
+    assert!(picturing::shown(&record, 0));
+
+    // An answer with no picture hands the record nothing, and the frames
+    // after it leave the formula as it was while it waited.
+    record.relay(40, Glyphs::Unicode, Theme::Dark);
+    assert!(!picturing::shown(&record, 1));
+    assert_eq!(heading(&record, 1).as_deref(), Some(refusal));
     assert!(picturing::shown(&record, 0));
 }
 
