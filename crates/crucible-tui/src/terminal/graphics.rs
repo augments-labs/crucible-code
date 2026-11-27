@@ -873,7 +873,9 @@ const MOST_HELD: usize = 2 * crate::record::MOST_KEPT_IMAGES;
 /// ended with an empty last chunk. A picture held that is shown in other
 /// cells now, as one whose size the reader changed, is not sent again: its
 /// placement is deleted and one for the new cells given, between
-/// transmissions.
+/// transmissions. Which those are is looked for only after
+/// [`Sent::reshaped`] says some picture's cells changed, since looking a
+/// picture up is a walk over everything the record holds.
 ///
 /// A full screen has the terminal delete the pictures it is counted as
 /// holding once the record lets them go, encoded again under a new number or
@@ -905,6 +907,9 @@ pub(crate) struct Sent {
     deleting: VecDeque<u32>,
     /// Whether a transmission was cut off and its last chunk is still owed.
     ending: bool,
+    /// Whether a picture held may be shown in other cells than it was
+    /// placed in, until every one that is has been placed again.
+    reshaped: bool,
     /// Whether every command is wrapped for tmux to pass through.
     passthrough: bool,
 }
@@ -954,6 +959,13 @@ impl Sent {
             }
             false
         });
+    }
+
+    /// Says a picture held may be shown in other cells than it was placed
+    /// in: the next [`Sent::write`] looks at every one held and places again
+    /// each that is.
+    pub(crate) fn reshaped(&mut self) {
+        self.reshaped = true;
     }
 
     /// Whether anything is still owed to the terminal.
@@ -1088,6 +1100,9 @@ impl Sent {
         into: &mut String,
         start: usize,
     ) -> bool {
+        if !self.reshaped {
+            return true;
+        }
         for at in 0..self.held.len() {
             let Some(&(id, placed)) = self.held.get(at) else {
                 break;
@@ -1109,6 +1124,7 @@ impl Sent {
                 held.1 = (columns, rows);
             }
         }
+        self.reshaped = false;
         true
     }
 
@@ -2547,6 +2563,7 @@ mod tests {
         // Shown in one row now: its placement goes and one for the new
         // cells takes its place, and the bytes the terminal holds stay.
         resized.shown_in(1);
+        sent.reshaped();
         sent.wants(1);
         let mut next = String::new();
         sent.write(|id| (id == 1).then_some(&resized), &mut next);
@@ -2560,6 +2577,27 @@ mod tests {
         let mut then = String::new();
         sent.write(|id| (id == 1).then_some(&resized), &mut then);
         assert_eq!(then, "");
+    }
+
+    #[test]
+    fn a_frame_after_no_picture_changed_cells_looks_up_none_of_those_held() {
+        // Looking a picture up is a walk over the record, so a frame that
+        // walks it for every one held costs what the session has grown to.
+        let held = picture_of(3, 1);
+        let mut sent = Sent::default();
+        sent.wants(1);
+        sent.write(|id| (id == 1).then_some(&held), &mut String::new());
+        let looked = std::cell::Cell::new(0);
+        let mut next = String::new();
+        sent.write(
+            |id| {
+                looked.set(looked.get() + 1);
+                (id == 1).then_some(&held)
+            },
+            &mut next,
+        );
+        assert_eq!(next, "");
+        assert_eq!(looked.get(), 0, "held pictures looked up");
     }
 
     #[test]

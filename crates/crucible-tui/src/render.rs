@@ -3085,9 +3085,8 @@ impl<T: Terminal> Renderer<T> {
         if self.record.let_pictures_go() {
             self.sent.keeps(self.record.picture_ids());
         }
-        self.commands.clear();
+        self.owed();
         let record = &self.record;
-        self.sent.write(|id| record.payload(id), &mut self.commands);
         // After every row, so each image is written over rows already blank
         // for it, and only where they or it changed.
         for image in &mut over {
@@ -3120,6 +3119,21 @@ impl<T: Terminal> Renderer<T> {
 
         self.terminal.write(self.painted.sealed())?;
         self.terminal.flush()
+    }
+
+    /// Sets the commands to what the terminal is owed of the pictures the
+    /// frame shows. Every picture held is looked up again, to be placed in
+    /// the cells it is shown in now, only after the record says one of them
+    /// changed: a look-up walks every line the record holds, and a frame
+    /// that did that for each picture held would cost what the session has
+    /// grown to.
+    fn owed(&mut self) {
+        if self.record.pictures_reshaped() {
+            self.sent.reshaped();
+        }
+        self.commands.clear();
+        let record = &self.record;
+        self.sent.write(|id| record.payload(id), &mut self.commands);
     }
 
     /// Every iTerm2 or Sixel image `showing` stands wholly in, its first

@@ -274,6 +274,15 @@ impl Pictured {
 }
 
 /// What a block of an answer is shown as a picture by, and in.
+/// Whether a picture is shown in the cells it was before a layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum Shown {
+    #[default]
+    AsBefore,
+    /// In other cells, which the terminal holding it has to be told.
+    Reshaped,
+}
+
 struct Picturing {
     /// What makes the payload; none until the composition gives one.
     pictures: Option<Box<dyn Pictures>>,
@@ -287,6 +296,10 @@ struct Picturing {
     left: u32,
     /// Whether a picture kept was let go of since the drawing last asked.
     let_go: bool,
+    /// Whether a picture kept was shown in other cells since the drawing
+    /// last asked, which is what has every picture held looked up again to
+    /// be placed there.
+    shown: Shown,
     /// Whether a Sixel picture kept for another width is encoded for this
     /// one now, as it is where it is in view, rather than left until it is.
     now: bool,
@@ -309,6 +322,7 @@ impl fmt::Debug for Picturing {
             .field("next", &self.next)
             .field("left", &self.left)
             .field("let_go", &self.let_go)
+            .field("shown", &self.shown)
             .field("now", &self.now)
             .field("window", &self.window)
             .field("keeps", &self.keeps)
@@ -326,6 +340,7 @@ impl Default for Picturing {
             next: Self::first_number(),
             left: MOST_PICTURE_ID,
             let_go: false,
+            shown: Shown::AsBefore,
             now: false,
             window: 0,
             keeps: false,
@@ -335,6 +350,14 @@ impl Default for Picturing {
 }
 
 impl Picturing {
+    /// Remembers a picture kept shown in other cells, where `shown` says one
+    /// was, until the drawing asks.
+    fn saw(&mut self, shown: Shown) {
+        if shown == Shown::Reshaped {
+            self.shown = shown;
+        }
+    }
+
     /// A number at random from 1 to [`MOST_PICTURE_ID`], the first a record
     /// gives out.
     fn first_number() -> u32 {
@@ -501,8 +524,9 @@ impl Drawn {
     }
 
     /// Lays the block out again for `columns` in `glyphs`, by what `by`
-    /// holds, with every edit and the prefix it was given since.
-    fn lay(&mut self, columns: usize, glyphs: Glyphs, by: By<'_>) {
+    /// holds, with every edit and the prefix it was given since, and answers
+    /// whether its picture is shown in other cells than it was.
+    fn lay(&mut self, columns: usize, glyphs: Glyphs, by: By<'_>) -> Shown {
         let lay = match by.offers {
             Offers::Stand => markdown::lay,
             Offers::Withdrawn => markdown::lay_unoffered,
@@ -515,9 +539,14 @@ impl Drawn {
         } else {
             &none
         };
+        let mut shown = Shown::AsBefore;
         if let Some(picture) = self.picture.as_mut() {
             let rows = picture.rows(by.window);
+            let was = picture.kept.payload.cells();
             picture.kept.payload.shown_in(rows);
+            if picture.kept.payload.cells() != was {
+                shown = Shown::Reshaped;
+            }
         }
         let mut rows = self.pictured(columns).unwrap_or_else(|| {
             let laid = lay(&self.block, columns, glyphs, by.links, drawers);
@@ -541,6 +570,7 @@ impl Drawn {
         self.laid.0 = columns;
         self.laid.1 = glyphs;
         self.modes = by.modes;
+        shown
     }
 
     /// Whether its first row is the label of a block drawn as text with a
@@ -1083,7 +1113,7 @@ impl Record {
                 offers: self.offers,
                 window: self.picturing.window,
             };
-            drawn.lay(self.columns, glyphs, by);
+            self.picturing.saw(drawn.lay(self.columns, glyphs, by));
             self.remeasure_all();
         }
         if !drawn.rows.is_empty() {
@@ -1358,7 +1388,7 @@ impl Record {
             oldest.fallen = true;
             self.picturing.let_go = true;
             let was = oldest.weight;
-            oldest.lay(columns, glyphs, by);
+            self.picturing.saw(oldest.lay(columns, glyphs, by));
             self.weight = self
                 .weight
                 .saturating_sub(was)
@@ -1465,7 +1495,7 @@ impl Record {
                 window: self.picturing.window,
             };
             let was = drawn.weight;
-            drawn.lay(columns, glyphs, by);
+            self.picturing.saw(drawn.lay(columns, glyphs, by));
             self.weight = self.weight.saturating_sub(was).saturating_add(drawn.weight);
         }
         if let Some(line) = self.lines.get_mut(at) {
@@ -1536,7 +1566,7 @@ impl Record {
         picture.band = self.picturing.band;
         let was = drawn.weight;
         let (columns, glyphs) = (drawn.laid.0, drawn.laid.1);
-        drawn.lay(columns, glyphs, by);
+        self.picturing.saw(drawn.lay(columns, glyphs, by));
         self.weight = self.weight.saturating_sub(was).saturating_add(drawn.weight);
         self.remeasure_at(at);
         true
@@ -1562,6 +1592,13 @@ impl Record {
     /// asked: answered once.
     pub(crate) fn let_pictures_go(&mut self) -> bool {
         std::mem::take(&mut self.picturing.let_go)
+    }
+
+    /// Whether a picture the record keeps has been shown in other cells
+    /// since this was last asked, as one whose size the reader or the
+    /// window's height changed: answered once.
+    pub(crate) fn pictures_reshaped(&mut self) -> bool {
+        std::mem::take(&mut self.picturing.shown) == Shown::Reshaped
     }
 
     /// What the terminal is sent for picture `id`, while the record keeps it.
@@ -1674,7 +1711,7 @@ impl Record {
                     window: self.picturing.window,
                 };
                 let was = drawn.weight;
-                drawn.lay(columns, glyphs, by);
+                self.picturing.saw(drawn.lay(columns, glyphs, by));
                 self.weight = self.weight.saturating_sub(was).saturating_add(drawn.weight);
                 any = true;
             }
