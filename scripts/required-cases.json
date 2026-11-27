@@ -17631,6 +17631,24 @@
       ]
     },
     {
+      "id": "CASE-MATH-PICTURES-ENVIRONMENT-PARANOID",
+      "family": "transcript-math-pictures",
+      "obligation": "A formula's run is sent exactly openin_any=p and openout_any=p, so TeX opens and writes files only beneath its working directory whatever the host's texmf.cnf says.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::a_run_tells_tex_to_open_and_write_files_only_beneath_its_directory",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "2135f4d9eb96e5c5e1ed4bad9b8f6d57caa9265a487f1817b7f44a254a53fc21",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
       "id": "CASE-MATH-PICTURES-RUN-ENDS-AS-FORMULA",
       "family": "transcript-math-pictures",
       "obligation": "Each way a formula run ends gives that formula's outcome, and only what TeX could not make is remembered.",
@@ -18561,7 +18579,7 @@
     {
       "id": "CASE-MATH-PICTURES-RUN-REFUSAL-NOT-REACHED",
       "family": "transcript-math-pictures",
-      "obligation": "A refusal at release (lifecycle, launch or audit), or a wait or read error with no violation beside it, leaves the formula NotReached, never a timeout.",
+      "obligation": "A Spawn at prepare, a refusal at release (lifecycle, launch or audit), or a wait or read error with no violation beside it, leaves the formula NotReached, never a timeout.",
       "package": "crucible-app",
       "target": {
         "kind": "lib",
