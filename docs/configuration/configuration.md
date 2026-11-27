@@ -49,29 +49,30 @@ spans the bounded reread through the commit, so simultaneous crucible processes
 cannot silently lose one another's settings.
 
 `/settings` lists, on its Config tab, every setting that is a switch, a short
-list of choices or a number of seconds or rows, and changes one in the user file.
-The theme, syntax theme, transcript colours, glyphs, tool detail, scroll rail,
-scroll speed and the key that sends change at once, and the delay before a
-running call is pinned changes from the next turn. Colour, tone, compaction and the four prompt
-caching rows say `applies at next start`, and the update check is read at the
-next start anyway, so it says nothing. The Images row changes at once when it
-names a protocol or `off`, and says `applies at next start` at `auto`, since
-only a start asks the terminal; a protocol not drawn where the session runs
-says `not available`, as [Where pictures are drawn](#where-pictures-are-drawn)
-has it. The Math row changes at once at every answer: math already drawn as a
-block is laid out again in the new form, which in native mode reaches the
-terminal's scrollback only when a resize writes it again. After its value it
-says what the session found of math pictures, such as `math pictures not
-checked yet` or `no math pictures:` and why, as
-[Math as a picture](../sessions/transcript.md#math-as-a-picture) lists. The
-Diagrams row does the same: every diagram already drawn is laid out again in the new form, in
-native mode once a resize writes the scrollback again. A row a project file or the environment sets is shown with who set it
-and cannot be changed there, since the user file would not win. A project file
-that says anything about `promptCaching` sets all four of its rows, because
-that block is checked as a whole. Providers,
-credentials, MCP servers, extensions, the system prompt, permission rules and
-the sandbox's policy are not rows; the sandbox and the permission mode are
-shown on the Status tab and changed with `/sandbox` and `/mode`.
+list of choices or a number of seconds or rows, and changes one in the user
+file. The theme, syntax theme, transcript colours, glyphs, tool detail, scroll
+rail, scroll speed and the key that sends change at once, and the delay before a
+running call is pinned changes from the next turn. Colour, tone, compaction and
+the four prompt caching rows say `applies at next start`, and the update check
+is read at the next start anyway, so it says nothing. The Images row changes at
+once when it names a protocol or `off`, and says `applies at next start` at
+`auto`, since only a start asks the terminal; a protocol not drawn where the
+session runs says `not available`, as [Where pictures are
+drawn](#where-pictures-are-drawn) has it. The Math row changes at once at every
+answer: math already drawn as a block is laid out again in the new form, which
+in native mode reaches the terminal's scrollback only when a resize writes it
+again. After its value it says what the session found of math pictures, such as
+`math pictures not checked yet` or `no math pictures:` and why, as [Math as a
+picture](../sessions/transcript.md#math-as-a-picture) lists. The Diagrams row
+does the same: every diagram already drawn is laid out again in the new form, in
+native mode once a resize writes the scrollback again. A row a project file or
+the environment sets is shown with who set it and cannot be changed there, since
+the user file would not win. A project file that says anything about
+`promptCaching` sets all four of its rows, because that block is checked as a
+whole. Providers, credentials, MCP servers, extensions, the system prompt,
+permission rules and the sandbox's policy are not rows; the sandbox and the
+permission mode are shown on the Status tab and changed with `/sandbox` and
+`/mode`.
 
 A file that is not there is not an error. A file that *is* there and will not
 open is, and says so. Silently skipping it would turn a permissions mistake

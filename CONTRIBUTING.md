@@ -402,8 +402,8 @@ argument to run one family:
   one root-package compile and link. No other build names the feature, and a
   build that ships must not.
 
-Shared CI runners provide a trend; release measurements are taken on a quiet machine
-as described in [`RELEASING.md`](RELEASING.md).
+Shared CI runners provide a trend; release measurements are taken on a quiet
+machine as described in [`RELEASING.md`](RELEASING.md).
 
 Compile-time changes can also be compared without an absolute gate:
 

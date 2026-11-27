@@ -229,14 +229,15 @@ drawn. `image`, the default, draws a display formula as a picture where the
 session can make one and show it, as [Math as a picture](#math-as-a-picture)
 says, and as text everywhere else; `text` draws it as text; `written` shows
 every formula exactly as the model wrote it, its markers included. A change in
-`/settings` takes effect at once: every display formula already drawn is laid out again in the new form, while a span already
-drawn in a line keeps the form it was drawn in and the next span is drawn in
-the new one. In native mode a display formula already written to the
-terminal's scrollback changes only when the scrollback is written again, once
-the window has been resized; see
-[What native mode cannot do](../configuration/configuration.md#what-native-mode-cannot-do).
-Output with no colour, including output that is not a terminal, keeps every
-formula as written.
+`/settings` takes effect at once: every display formula already drawn is laid
+out again in the new form, while a span already drawn in a line keeps the form
+it was drawn in and the next span is drawn in the new one. In native mode a
+display formula already written to the terminal's scrollback changes only when
+the scrollback is written again, once the window has been resized; see [What
+native mode cannot
+do](../configuration/configuration.md#what-native-mode-cannot-do). Output with
+no colour, including output that is not a terminal, keeps every formula as
+written.
 
 ### Math as a picture
 
@@ -843,19 +844,18 @@ the oldest go, and their place in the scrollback is left blank.
 ### Pictures kept between sessions
 
 Each diagram drawn as a picture is also kept on disk, so a session picked up
-again with `--continue`, `--resume` or `/resume` shows it as the picture it
-was, without drawing it again. Putting a session back draws nothing afresh:
-a diagram with no picture kept for it comes back as its text, as it would
-where no pictures are drawn, and nothing is said about it. In the full
-screen, only the 16 newest diagrams and formulas are read from the cache, the
-most a session keeps pictures of, once the whole session is back; the older
-ones come back as their text, and stay text when the theme changes. In native
-mode each diagram is read from the cache as it goes back into the scrollback, so every one the
-cache kept comes back as its picture, as it did live. It is kept for the
-theme, `transcriptColours`, colour depth, background, protocol, cell size and
-window width it was drawn in, so a picture drawn in another of them is another
-entry, and one drawn in a terminal the session no longer runs in is simply not
-found.
+again with `--continue`, `--resume` or `/resume` shows it as the picture it was,
+without drawing it again. Putting a session back draws nothing afresh: a diagram
+with no picture kept for it comes back as its text, as it would where no
+pictures are drawn, and nothing is said about it. In the full screen, only the
+16 newest diagrams and formulas are read from the cache, the most a session
+keeps pictures of, once the whole session is back; the older ones come back as
+their text, and stay text when the theme changes. In native mode each diagram is
+read from the cache as it goes back into the scrollback, so every one the cache
+kept comes back as its picture, as it did live. It is kept for the theme,
+`transcriptColours`, colour depth, background, protocol, cell size and window
+width it was drawn in, so a picture drawn in another of them is another entry,
+and one drawn in a terminal the session no longer runs in is simply not found.
 
 A display formula's picture is kept the same way, and also under the TeX that
 made it, named as the Math row of `/settings` names it. A session put back
@@ -888,12 +888,12 @@ It is [yours alone](sessions.md#who-can-read-them), as session logs are.
 
 Nothing in it is needed: deleting the directory, or any file in it, only means
 the next session put back draws those diagrams and formulas as text. An entry
-that is cut short, changed, or reachable by another account is passed over and written
-again the next time that picture is drawn, and a cache that cannot be written,
-on a full or read-only disk, leaves every picture drawn as before. Writing it
-never holds up the screen: entries are written one at a time by a thread of
-their own, and one that would wait behind more than 0.5 MiB of others is
-dropped.
+that is cut short, changed, or reachable by another account is passed over and
+written again the next time that picture is drawn, and a cache that cannot be
+written, on a full or read-only disk, leaves every picture drawn as before.
+Writing it never holds up the screen: entries are written one at a time by a
+thread of their own, and one that would wait behind more than 0.5 MiB of others
+is dropped.
 
 A picture the transcript turns into pixels, whether an SVG diagram or a PNG,
 JPEG, GIF or WebP file, is bounded before it is read, and a picture past any
