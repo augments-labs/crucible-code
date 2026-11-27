@@ -162,7 +162,14 @@ fn a_workspace_picture_is_shown_by_every_spelling_that_reaches_it() {
     let root = sample.root();
     #[cfg(unix)]
     std::os::unix::fs::symlink(root.join("a.png"), root.join("linked.png")).expect("a link");
-    let absolute = root.join("a.png").to_string_lossy().into_owned();
+    // An absolute path is matched against the root as the workspace spells
+    // it, the directory it resolved to, which a temporary directory reached
+    // through a link is not.
+    let absolute = workspace
+        .root()
+        .join("a.png")
+        .to_string_lossy()
+        .into_owned();
     let mut spellings = vec!["a.png", "./a.png", absolute.as_str()];
     if cfg!(unix) {
         spellings.push("linked.png");
@@ -787,6 +794,36 @@ fn a_path_whose_words_leave_every_root_is_refused_before_anything_resolves_it() 
         *last = ("sub/../a.png".to_owned(), Ok((3, 2)), 1);
     }
     assert_eq!(answered, expected);
+}
+
+#[cfg(unix)]
+#[test]
+fn an_absolute_path_through_a_link_to_the_root_s_parent_is_not_shown_and_nothing_resolves_it() {
+    // The link would lead into the workspace, but only a lookup could tell,
+    // and the path's own words name a directory that is neither a root nor
+    // on the way to one: no spelling but the workspace's own is trusted.
+    let (_sample, workspace) = tree("images-linked-parent");
+    let parent = workspace.root().parent().expect("the root's parent");
+    let name = workspace.root().file_name().expect("the root's name");
+    std::os::unix::fs::symlink(parent, parent.join("aside")).expect("a link");
+    let through = parent
+        .join("aside")
+        .join(name)
+        .join("a.png")
+        .to_string_lossy()
+        .into_owned();
+    let _shared = SLOT.read().unwrap_or_else(PoisonError::into_inner);
+    RESOLVED.set(0);
+    let (lane, mut permission) = (Lane::default(), engine(&[]));
+    let steps: Steps<_> = (counting, read, crucible_raster::decode);
+    let image = answer(&through);
+    let showing = showing(&image, &workspace, &mut permission, (None, &lane), steps);
+    let answered = crucible_runtime::answered!(showing).map(|shown| shown.pixels);
+    assert_eq!(
+        (answered, RESOLVED.get()),
+        (Err(ImageRefused::NotShown), 0),
+        "{through}"
+    );
 }
 
 #[test]
