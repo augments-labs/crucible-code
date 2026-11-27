@@ -846,8 +846,10 @@ them, each under an edge naming it by the path it was named by:
 ```
 
 Nothing is fetched: an image at an address on the web, or written `www.`,
-stays a link, and so do one in a table's cell, one written as a reference,
-`![the plot][plot]`, and one inside a link's words. One in code or a fence is
+stays a link, as does one whose path opens with two slashes or backslashes,
+which on Windows names another computer's share or a device. So do one in a
+table's cell, one written as a reference, `![the plot][plot]`, and one inside
+a link's words. One in code or a fence is
 drawn as written.
 A path is read the way `read` reads it, inside the workspace, and only where
 the [permission rules](../permissions/rules.md#images-in-the-transcript) let
