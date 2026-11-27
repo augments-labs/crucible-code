@@ -17769,7 +17769,7 @@
     {
       "id": "CASE-MATH-PICTURES-SANDBOXED-ESCAPES",
       "family": "transcript-math-pictures",
-      "obligation": "Every escape input through the real engine leaves its sentinels and the host unchanged; each read and write escape comes to its one recorded answer and every other input to one its row records as safe, none of them a limit or never reached; every read escape stays text, and no picture holds a sentinel or a line of /etc/passwd.",
+      "obligation": "Every escape input through the real engine leaves its sentinels and the host unchanged; each read escape and each write above TeX's directory comes to its one recorded answer and every other input to one its row records as safe, none of them a limit or never reached; every read escape stays text, and no picture holds a sentinel or a line of /etc/passwd.",
       "package": "crucible-app",
       "target": {
         "kind": "test",

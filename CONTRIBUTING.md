@@ -397,12 +397,13 @@ argument to run one family:
   `bench-math-stand-in` feature, which answers every display formula with one
   kept picture without TeX or the sandbox. The script builds that probe and
   `crucible` with the feature, copies them into
-  `target/bench-math-stand-in/release/` and runs the probe from there, then
-  builds the default straight away, before any probe runs, which costs one
-  more build and link of the root package. A run that completes leaves the
-  default build at `target/release/crucible`; one killed between the two
-  builds leaves the stand-in there until the next run replaces it. No other
-  build names the feature, and a build that ships must not.
+  `target/bench-math-stand-in/release/`, builds the default straight away,
+  which costs one more build and link of the root package, then runs the
+  colour probe from the copy. A run that completes leaves the default build at
+  `target/release/crucible`; one stopped between the two builds, killed or
+  failed (a failed default build also leaves it), leaves the stand-in there
+  until the next run replaces it. No other build names the feature, and a
+  build that ships must not.
 
 Shared CI runners provide a trend; release measurements are taken on a quiet
 machine as described in [`RELEASING.md`](RELEASING.md).

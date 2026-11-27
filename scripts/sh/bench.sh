@@ -31,7 +31,8 @@
 # completes leaves `target/release/crucible`, which every other probe and a
 # release use, as the default build, and no probe runs it as the stand-in.
 # Both builds share every dependency, so the second costs one build and link
-# of the root package. A run killed between the two leaves the stand-in at
+# of the root package. A run stopped between the two, killed or failed (under
+# `set -e` a failed default build also leaves it), leaves the stand-in at
 # `target/release/crucible` until the next run, whose default build replaces
 # it.
 #
