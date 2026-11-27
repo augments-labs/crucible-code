@@ -273,7 +273,6 @@ impl Pictured {
     }
 }
 
-/// What a block of an answer is shown as a picture by, and in.
 /// Whether a picture is shown in the cells it was before a layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum Shown {
@@ -283,6 +282,7 @@ enum Shown {
     Reshaped,
 }
 
+/// What a block of an answer is shown as a picture by, and in.
 struct Picturing {
     /// What makes the payload; none until the composition gives one.
     pictures: Option<Box<dyn Pictures>>,
