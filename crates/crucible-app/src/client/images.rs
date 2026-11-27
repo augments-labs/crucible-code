@@ -30,7 +30,11 @@
 //! the tool worker the host lends, where it lends one, and the deadline is
 //! kept outside that work: what has started there cannot be stopped, so a step
 //! still running at the deadline is left to end on its own and the answer is
-//! [`ImageRefused::NotInTime`] without it.
+//! given without it. Before the engine has approved the read, that answer is
+//! [`ImageRefused::NotShown`], as it is for a job the worker had no room for or
+//! would not start: a path it would refuse is answered so, and a slow or busy
+//! worker must not tell such a path from the others. After approval it is
+//! [`ImageRefused::NotInTime`].
 //!
 //! Invariants:
 //!
@@ -97,8 +101,9 @@ const CHUNK: usize = 64 * 1024;
 ///
 /// [`ImageRefused::NotShown`] for a path that opens with two separators, one
 /// outside the workspace, one a rule refuses or puts a question about, a file
-/// that is not there or cannot be read, and a worker that would not start the
-/// work; for a file the engine allowed, [`ImageRefused::TooLarge`] past
+/// that is not there or cannot be read, a worker that would not start the
+/// work, and [`DEADLINE`] passing before the engine allowed the read; for a
+/// file the engine allowed, [`ImageRefused::TooLarge`] past
 /// [`MOST_INPUT`] bytes or past what the decoder or encoder hold,
 /// [`ImageRefused::NotAnImage`] for bytes no decoder reads,
 /// [`ImageRefused::NotInTime`] past [`DEADLINE`], and
@@ -151,7 +156,10 @@ where
         ImageRef::Tool { hash, .. } => Some(*hash),
         ImageRef::Answer { .. } => None,
     };
-    within(started, worker, async {
+    // Until the engine has approved the read, every answer is the one a path
+    // it would refuse gets, so running out of time or of room says nothing
+    // about the file either.
+    let (path, approved) = within(started, worker, ImageRefused::NotShown, async {
         let (owned, asked) = (workspace.clone(), requested.to_owned());
         let (path, sensitivity) = blocking(worker, move || {
             let path = resolve(&owned, &asked).map_err(|_| ImageRefused::NotShown)?;
@@ -169,7 +177,11 @@ where
         else {
             return Err(ImageRefused::NotShown);
         };
-        let owned = workspace.clone();
+        Ok((path, approved))
+    })
+    .await?;
+    let owned = workspace.clone();
+    within(started, worker, ImageRefused::NotInTime, async {
         blocking(worker, move || {
             let taken = reader(&approved, &owned, &path, started)?;
             if hash.is_some_and(|hash| taken.hash() != hash) {
@@ -182,8 +194,8 @@ where
     .await
 }
 
-/// What `work` answers, or [`ImageRefused::NotInTime`] once [`DEADLINE`] has
-/// passed since `started`, whether or not the work has ended.
+/// What `work` answers, or `late` once [`DEADLINE`] has passed since
+/// `started`, whether or not the work has ended.
 ///
 /// The deadline is kept here, outside the work, by the timer of the worker
 /// the work runs on: what has started there cannot be stopped, so a read stuck
@@ -194,16 +206,14 @@ where
 async fn within<T>(
     started: Instant,
     worker: Option<&ToolWorker>,
+    late: ImageRefused,
     work: impl Future<Output = Result<T, ImageRefused>>,
 ) -> Result<T, ImageRefused> {
     let Some(worker) = worker else {
         return work.await;
     };
     let left = DEADLINE.saturating_sub(started.elapsed());
-    worker
-        .within(left, work)
-        .await
-        .unwrap_or(Err(ImageRefused::NotInTime))
+    worker.within(left, work).await.unwrap_or(Err(late))
 }
 
 /// What `job` answers, run on `worker` where one was lent, as the read tool's

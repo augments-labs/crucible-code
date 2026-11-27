@@ -484,3 +484,73 @@ fn an_image_waits_for_the_decode_slot_no_longer_than_its_own_deadline() {
         "{waited:?}"
     );
 }
+
+/// A runtime with a timer, like the application's, for a test that lends the
+/// route a worker of its own.
+fn timed() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .expect("a runtime")
+}
+
+/// Takes every place on `worker` with a job that holds it until the sender
+/// handed back is dropped, and waits until each of them has started.
+fn occupied(runtime: &tokio::runtime::Runtime, worker: &ToolWorker) -> std::sync::mpsc::Sender<()> {
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let held = Arc::new(std::sync::Mutex::new(held));
+    let started = Arc::new(AtomicUsize::new(0));
+    for _ in 0..ToolWorker::CAPACITY {
+        let (worker, held, started) = (worker.clone(), Arc::clone(&held), Arc::clone(&started));
+        runtime.spawn(async move {
+            worker
+                .run(&crucible_runtime::Cancel::new(), move |_| {
+                    started.fetch_add(1, Ordering::SeqCst);
+                    let held = held.lock().unwrap_or_else(PoisonError::into_inner);
+                    let _ = held.recv_timeout(Duration::from_secs(10));
+                })
+                .await
+        });
+    }
+    let began = Instant::now();
+    while started.load(Ordering::SeqCst) < ToolWorker::CAPACITY {
+        assert!(
+            began.elapsed() < Duration::from_secs(5),
+            "the places were never taken"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+    release
+}
+
+#[test]
+fn a_path_never_approved_is_not_shown_while_the_worker_has_no_room() {
+    let (_sample, workspace) = tree("images-no-room");
+    let runtime = timed();
+    let worker = ToolWorker::new(runtime.handle().clone());
+    let release = occupied(&runtime, &worker);
+    let rules = [(Disposition::Deny, "read(secret/**)")];
+    let asked = |spelled: &'static str| {
+        let (workspace, worker) = (workspace.clone(), worker.clone());
+        async move {
+            let mut permission = engine(&rules);
+            let answered = show(&answer(spelled), &workspace, &mut permission, Some(&worker)).await;
+            (spelled, answered.err())
+        }
+    };
+    let answered = runtime.block_on(async {
+        let (outside, ruled, missing) = tokio::join!(
+            asked("../outside.png"),
+            asked("secret/b.png"),
+            asked("missing.png"),
+        );
+        vec![outside, ruled, missing]
+    });
+    drop(release);
+    let refused: Vec<_> = ["../outside.png", "secret/b.png", "missing.png"]
+        .into_iter()
+        .map(|spelled| (spelled, Some(ImageRefused::NotShown)))
+        .collect();
+    assert_eq!(answered, refused);
+}
