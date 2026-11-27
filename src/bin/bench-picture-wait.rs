@@ -472,7 +472,7 @@ fn run(engine: &Engine, done: impl Fn(&Engine, Duration) -> bool) -> Result<Run,
     let raster = Raster::default();
     render.pictures(Box::new(raster.clone()));
     render.makes_formulas(Box::new(engine.clone()));
-    render.landmark();
+    render.starts_turn();
 
     let mut timed = Timed::default();
     let began = Instant::now();
