@@ -786,7 +786,7 @@ fn a_sixel_payload_the_terminal_would_not_be_sent_or_that_paints_past_its_pixels
     let form = form(40, 20);
     // A band of 2000 columns, a hundred times over: 2000 by 600 pixels.
     let wide = format!(
-        "\x1bP0;1;0q\"1;1;1;1#0;2;0;0;0{}\x1b\\",
+        "\x1bP9;1;0q\"1;1;1;1#0;2;0;0;0{}\x1b\\",
         "#0!2000~-".repeat(100)
     );
     for (pixels, payload, what) in [
@@ -812,17 +812,17 @@ fn a_sixel_payload_the_terminal_would_not_be_sent_or_that_paints_past_its_pixels
         ),
         (
             (1, 1),
-            "\x1bP0;1;0q\"1;1;2;1#0~~-\x1b\\".to_owned(),
+            "\x1bP9;1;0q\"1;1;2;1#0~~-\x1b\\".to_owned(),
             "raster wider than kept",
         ),
         (
             (1, 1),
-            "\x1bP0;1;0q\"1;1;1;1#0~-#0~-\x1b\\".to_owned(),
+            "\x1bP9;1;0q\"1;1;1;1#0~-#0~-\x1b\\".to_owned(),
             "a band past its height",
         ),
         (
             (4, 1),
-            "\x1bP0;1;0q\"1;1;4;1#0!5~-\x1b\\".to_owned(),
+            "\x1bP9;1;0q\"1;1;4;1#0!5~-\x1b\\".to_owned(),
             "a repeat past its width",
         ),
     ] {
@@ -842,6 +842,101 @@ fn a_sixel_payload_the_terminal_would_not_be_sent_or_that_paints_past_its_pixels
             .get(SOURCE, &key)
             .expect("the live encoder's own payload");
         assert_eq!(again.bytes(), payload.bytes());
+    }
+}
+
+#[test]
+fn a_sixel_payload_that_opens_other_than_the_live_encoder_opens_is_a_miss() {
+    let _turn = turn();
+    let (_sample, home) = home("sixel-opening");
+    let cache = Cache::open(&home);
+    let form = form(40, 20);
+    let painted = "#0;2;0;0;0#0~~~~-\x1b\\";
+    for (opening, what) in [
+        ("\x1bP9;1;0q\"10;1;4;6", "pixels ten times as tall as wide"),
+        ("\x1bP9;1;0q\"1;10;4;6", "pixels ten times as wide as tall"),
+        (
+            "\x1bP0;1;0q\"1;1;4;6",
+            "a P1 asking for pixels twice as tall",
+        ),
+        (
+            "\x1bP2;1;0q\"1;1;4;6",
+            "a P1 asking for pixels five times as tall",
+        ),
+        (
+            "\x1bP9;0;0q\"1;1;4;6",
+            "a background the encoder does not ask for",
+        ),
+        (
+            "\x1bP9;1;5q\"1;1;4;6",
+            "a grid the encoder does not ask for",
+        ),
+        ("\x1bPq\"1;1;4;6", "no parameters at all"),
+    ] {
+        let payload = format!("{opening}{painted}");
+        let key = sixel_sealed(&cache, &form, (4, 6), payload.as_bytes());
+        assert!(cache.get(SOURCE, &key).is_none(), "{what} was taken");
+    }
+    // The live encoder's opening, with or without its P1.
+    for opening in ["\x1bP9;1;0q\"1;1;4;6", "\x1bP;1;0q\"1;1;4;6"] {
+        let payload = format!("{opening}{painted}");
+        let key = sixel_sealed(&cache, &form, (4, 6), payload.as_bytes());
+        assert!(cache.get(SOURCE, &key).is_some(), "{opening:?} was refused");
+    }
+    let key = PictureKey {
+        protocol: Protocol::Sixel,
+        ..key()
+    };
+    let payload = drawn(&key, &form);
+    assert!(payload.bytes().starts_with(b"\x1bP9;1;0q\"1;1;40;20"));
+    sixel_sealed(&cache, &form, payload.pixels(), payload.bytes());
+    assert!(
+        cache.get(SOURCE, &key).is_some(),
+        "the live encoder's own payload"
+    );
+}
+
+#[test]
+fn a_sixel_payload_that_paints_below_its_last_row_is_a_miss() {
+    let _turn = turn();
+    let (_sample, home) = home("sixel-last-band");
+    let cache = Cache::open(&home);
+    let form = form(40, 20);
+    for (pixels, painted, taken, what) in [
+        ((4, 1), "#0~~~~", false, "six rows painted on one"),
+        ((4, 1), "#0!4~", false, "six rows repeated on one"),
+        ((4, 1), "#0@@@A", false, "a second row on one"),
+        (
+            (4, 7),
+            "#0~~~~-#0AAAA",
+            false,
+            "a second row in a last band of one",
+        ),
+        ((4, 1), "#0@@@@", true, "the one row painted"),
+        ((4, 1), "#0!4@", true, "the one row repeated"),
+        ((4, 7), "#0~~~~-#0@@@@", true, "seven rows painted"),
+    ] {
+        let payload = format!(
+            "\x1bP9;1;0q\"1;1;{};{}#0;2;0;0;0{painted}-\x1b\\",
+            pixels.0, pixels.1
+        );
+        let key = sixel_sealed(&cache, &form, pixels, payload.as_bytes());
+        assert_eq!(cache.get(SOURCE, &key).is_some(), taken, "{what}");
+    }
+    // The live encoder paints only rows it has, at heights a band does not
+    // divide.
+    let key = PictureKey {
+        protocol: Protocol::Sixel,
+        ..key()
+    };
+    for (width, height) in [(40, 7), (40, 20), (300, 7), (3, 1)] {
+        let form = self::form(width, height);
+        let payload = drawn(&key, &form);
+        sixel_sealed(&cache, &form, payload.pixels(), payload.bytes());
+        assert!(
+            cache.get(SOURCE, &key).is_some(),
+            "the live encoder's own {width} by {height}"
+        );
     }
 }
 

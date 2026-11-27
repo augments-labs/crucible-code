@@ -305,14 +305,20 @@ fn shown(protocol: Protocol, payload: &[u8], pixels: (u32, u32)) -> bool {
 /// Whether the Sixel `body`, inside its device control string, says it is
 /// `pixels` in its raster attributes and paints nothing outside them: a
 /// payload that paints more than it says would draw past the cells it was
-/// given. Anything but colours, sixels, repeats, returns and new bands is
-/// refused, as is a body that does not say its size.
+/// given. It must open as the session's encoder opens one, with square
+/// pixels and a transparent ground, since pixels of any other shape are
+/// drawn taller or wider than the cells. In the last band, a sixel may set
+/// only the rows the picture has. Anything but colours, sixels, repeats,
+/// returns and new bands is refused, as is a body that does not say its size.
 fn sixel_within(body: &[u8], (width, height): (u32, u32)) -> bool {
-    let opened = body
-        .iter()
-        .position(|byte| *byte == b'q')
-        .and_then(|at| body.get(at + 1..));
-    let Some(rest) = opened.and_then(|rest| rest.strip_prefix(b"\"")) else {
+    let Some(at) = body.iter().position(|byte| *byte == b'q') else {
+        return false;
+    };
+    let (parameters, opened) = body.split_at(at);
+    if !SIXEL_OPENINGS.contains(&parameters) {
+        return false;
+    }
+    let Some(rest) = opened.strip_prefix(b"q\"") else {
         return false;
     };
     let mut said = [0_u64; 4];
@@ -330,45 +336,45 @@ fn sixel_within(body: &[u8], (width, height): (u32, u32)) -> bool {
             rest = after;
         }
     }
-    let [_, _, across, down] = said;
-    if (across, down) != (u64::from(width), u64::from(height)) {
+    if said != [1, 1, u64::from(width), u64::from(height)] {
         return false;
     }
+    let [_, _, across, down] = said;
     let bands = down.div_ceil(6);
     let (mut band, mut column) = (0_u64, 0_u64);
     while let Some((&byte, after)) = rest.split_first() {
         rest = after;
-        let painted = match byte {
+        let (painted, sixel) = match byte {
             b'#' => {
                 let taken = rest
                     .iter()
                     .take_while(|byte| byte.is_ascii_digit() || **byte == b';')
                     .count();
                 rest = rest.get(taken..).unwrap_or_default();
-                0
+                (0, 0)
             }
             b'!' => {
                 let Some((count, after)) = number(rest) else {
                     return false;
                 };
-                let Some((sixel, after)) = after.split_first() else {
+                let Some((&sixel, after)) = after.split_first() else {
                     return false;
                 };
-                if !(0x3f..=0x7e).contains(sixel) {
+                if !(0x3f..=0x7e).contains(&sixel) {
                     return false;
                 }
                 rest = after;
-                count.max(1)
+                (count.max(1), sixel)
             }
-            0x3f..=0x7e => 1,
+            0x3f..=0x7e => (1, byte),
             b'$' => {
                 column = 0;
-                0
+                (0, 0)
             }
             b'-' => {
                 band += 1;
                 column = 0;
-                0
+                (0, 0)
             }
             _ => return false,
         };
@@ -377,10 +383,21 @@ fn sixel_within(body: &[u8], (width, height): (u32, u32)) -> bool {
             if band >= bands || column > across {
                 return false;
             }
+            // The rows of the last band below the picture's last row.
+            let rows = down.saturating_sub(band.saturating_mul(6));
+            if rows < 6 && u64::from(sixel.saturating_sub(0x3f)) >> rows != 0 {
+                return false;
+            }
         }
     }
     true
 }
+
+/// The parameters the session's encoder opens a Sixel payload with, `P1;P2;P3`:
+/// square pixels, a transparent ground and the default grid; and the same
+/// with `P1` left out, since the raster attributes, which must say square
+/// pixels, set the shape over it.
+const SIXEL_OPENINGS: [&[u8]; 2] = [b"9;1;0", b";1;0"];
 
 /// The decimal number `bytes` opens with, and what follows it; nothing where
 /// it opens with no digit or the number is past any picture's size.
