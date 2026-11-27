@@ -16,9 +16,9 @@ use crucible_tools::{
     Approved, Disposition, Mode, Permission, Rules, Settled, Tool as _, ToolWorker,
 };
 use crucible_types::{ToolArgs, ToolCall, ToolId};
-use crucible_workspace::{Workspace, WorkspacePath};
+use crucible_workspace::{PathError, Workspace, WorkspacePath};
 
-use super::{CHUNK, DEADLINE, Lane, Steps, Unasked, pictured, read, show, showing};
+use super::{CHUNK, DEADLINE, Lane, Steps, Unasked, pictured, read, show, showing, under};
 use crate::sample::Sample;
 
 /// A picture three pixels wide and two high, as a file a model could name.
@@ -626,4 +626,133 @@ fn a_read_still_stuck_holds_the_route_s_one_job_and_the_next_image_is_not_shown_
         &lane,
     ));
     assert!(third.is_ok(), "{third:?}");
+}
+
+thread_local! {
+    /// How many paths [`counting`] has resolved on this thread.
+    static RESOLVED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// [`Workspace::existing`], counting each path it is asked to resolve: the
+/// filesystem is touched by nothing before it.
+fn counting(workspace: &Workspace, requested: &str) -> Result<WorkspacePath, PathError> {
+    RESOLVED.set(RESOLVED.get().saturating_add(1));
+    workspace.existing(requested)
+}
+
+#[test]
+fn a_path_whose_words_leave_every_root_is_refused_before_anything_resolves_it() {
+    // A path under an automounter's directory is a host it would contact on
+    // resolving it, before any refusal, so a path is told from its words
+    // first: joined to the root, its dots folded, and kept only where that
+    // lies under a root. Each refused here is resolved by nothing at all.
+    let (sample, workspace) = tree("images-words");
+    let root = sample.root();
+    fs::create_dir_all(root.join("sub")).expect("a directory");
+    let absolute = outside(&root).to_string_lossy().into_owned();
+    let unchecked = [0_u8; 32];
+    let asked: Vec<ImageRef> = vec![
+        answer("/net/host/x.png"),
+        answer("../../net/host/x.png"),
+        answer(&absolute),
+        ImageRef::Tool {
+            path: path("/net/host/x.png"),
+            hash: unchecked,
+        },
+        ImageRef::Tool {
+            path: path("../../net/host/x.png"),
+            hash: unchecked,
+        },
+        answer("sub/../a.png"),
+    ];
+    let _shared = SLOT.read().unwrap_or_else(PoisonError::into_inner);
+    let answered: Vec<_> = asked
+        .iter()
+        .map(|image| {
+            RESOLVED.set(0);
+            let (lane, mut permission) = (Lane::default(), engine(&[]));
+            let steps: Steps<_> = (counting, read, crucible_raster::decode);
+            let showing = showing(image, &workspace, &mut permission, (None, &lane), steps);
+            let answered = crucible_runtime::answered!(showing).map(|shown| shown.pixels);
+            (image.path().as_str().to_owned(), answered, RESOLVED.get())
+        })
+        .collect();
+    let refused = |spelled: &str| (spelled.to_owned(), Err(ImageRefused::NotShown), 0);
+    assert_eq!(
+        answered,
+        vec![
+            refused("/net/host/x.png"),
+            refused("../../net/host/x.png"),
+            refused(&absolute),
+            refused("/net/host/x.png"),
+            refused("../../net/host/x.png"),
+            ("sub/../a.png".to_owned(), Ok((3, 2)), 1),
+        ]
+    );
+}
+
+#[test]
+fn a_path_is_under_a_root_by_its_folded_words_and_a_share_s_path_under_a_share() {
+    let local = ["/tmp/w".to_owned()];
+    let share = ["//?/UNC/server/share".to_owned()];
+    let everything = ["/".to_owned()];
+    let judged = [
+        ("/tmp/w/a.png", "a.png", &local[..], true),
+        ("/tmp/w/sub/../a.png", "sub/../a.png", &local, true),
+        ("/tmp/w/./sub//a.png", "./sub//a.png", &local, true),
+        ("/tmp/w", "", &local, true),
+        ("/tmp/w/../w2/a.png", "../w2/a.png", &local, false),
+        ("/tmp/wx/a.png", "/tmp/wx/a.png", &local, false),
+        ("/tmp/w/../../../a.png", "../../../a.png", &local, false),
+        ("/net/host/x.png", "/net/host/x.png", &local, false),
+        ("//tmp/w/a.png", "//tmp/w/a.png", &local, false),
+        // A file of that name under the root, which a path opening so still
+        // may not reach.
+        (
+            "/tmp/w/\\\\host\\share\\a.png",
+            "\\\\host\\share\\a.png",
+            &local,
+            false,
+        ),
+        ("/tmp/w/a.png", "/tmp/w/a.png", &everything, true),
+        // A workspace on a share, whose own files cross in the spelling a
+        // resolved path is written in.
+        (
+            "//?/UNC/server/share/a.png",
+            "//?/UNC/server/share/a.png",
+            &share,
+            true,
+        ),
+        (
+            "//?/UNC/server/share/sub/../a.png",
+            "//?/UNC/server/share/sub/../a.png",
+            &share,
+            true,
+        ),
+        (
+            "//?/UNC/server/other/a.png",
+            "//?/UNC/server/other/a.png",
+            &share,
+            false,
+        ),
+        (
+            "//?/UNC/server/share/../other/a.png",
+            "//?/UNC/server/share/../other/a.png",
+            &share,
+            false,
+        ),
+        (
+            "//?/UNC/server/share/a.png",
+            "//?/UNC/server/share/a.png",
+            &local,
+            false,
+        ),
+    ];
+    for (spelled, requested, roots, reaches) in judged {
+        assert_eq!(
+            under(spelled, roots, requested),
+            reaches,
+            "{requested} as {spelled} under {roots:?}"
+        );
+    }
 }

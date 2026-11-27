@@ -6,12 +6,18 @@
 //! Everything about the file is hostile, the path first of all, so the order is
 //! fixed and each step refuses before the next one runs:
 //!
-//! 1. A path that opens with two separators, `\\` or `//` in any mix, is
-//!    refused from its words alone: on Windows it names another host's share
-//!    or a device, and resolving it would reach the host first. Every other
-//!    path is resolved by [`Workspace::existing`], which is what the read tool
-//!    resolves it by. A path that leaves the workspace, a link that leads out
-//!    of it, and a file that is not there all stop here.
+//! 1. The path is judged by its words before anything resolves it, since
+//!    resolving it may reach another host before any refusal: a directory an
+//!    automounter serves contacts the host a name under it names, and on
+//!    Windows a path that opens with two separators, `\\` or `//` in any mix,
+//!    names a share or a device. Joined to the root as the read tool joins it,
+//!    and its `.` and `..` folded without asking the filesystem, it has to lie
+//!    under the written spelling of a root the workspace grants; one that
+//!    opens with two separators only under a root whose spelling does too, a
+//!    workspace on a share. Only then is it resolved, by
+//!    [`Workspace::existing`], which is what the read tool resolves it by. A
+//!    link that leads out of the workspace and a file that is not there stop
+//!    there.
 //! 2. The permission engine decides the call the read tool would make for that
 //!    path, with the sensitivity the read tool would give it. Whoever asks is
 //!    never put a question: an `ask` rule is answered `deny`, so a picture
@@ -60,6 +66,7 @@
 
 use std::cell::Cell;
 use std::future::Future;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -71,7 +78,7 @@ use crucible_tools::{
     Approved, Ask, Permission, Remember, Sensitivity, Settled, Target, ToolWorker, Unrun, Verdict,
 };
 use crucible_types::{ToolArgs, ToolCall, ToolId};
-use crucible_workspace::{PathError, Workspace, WorkspacePath};
+use crucible_workspace::{PathError, Workspace, WorkspacePath, written};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 #[cfg(test)]
@@ -111,8 +118,9 @@ const CHUNK: usize = 64 * 1024;
 ///
 /// # Errors
 ///
-/// [`ImageRefused::NotShown`] for a path that opens with two separators, one
-/// outside the workspace, one a rule refuses or puts a question about, a file
+/// [`ImageRefused::NotShown`] for a path whose words lie outside every root
+/// the workspace grants, one that opens with two separators outside a root on
+/// a share, one that resolves outside the workspace, one a rule refuses or puts a question about, a file
 /// that is not there or cannot be read, a worker that would not start the
 /// work, a `lane` another image's job still holds, and [`DEADLINE`] passing before the engine allowed the read; for a
 /// file the engine allowed, [`ImageRefused::TooLarge`] past
@@ -186,7 +194,7 @@ where
 {
     let started = Instant::now();
     let requested = image.path().as_str();
-    if elsewhere(requested) {
+    if !reaches(workspace, requested) {
         return Err(ImageRefused::NotShown);
     }
     let hash = match image {
@@ -282,6 +290,57 @@ where
         Err(Unrun::Panicked) => std::panic::resume_unwind(Box::new(Unrun::Panicked.to_string())),
         Err(Unrun::Cancelled | Unrun::Stopped) => Err(ImageRefused::NotShown),
     }
+}
+
+/// Whether `requested`, by its words alone, lies under a root `workspace`
+/// grants: joined to the root as [`Workspace::existing`] joins it, spelled as
+/// [`written`] spells a path, and folded by [`folded`]. Nothing here asks the
+/// filesystem.
+fn reaches(workspace: &Workspace, requested: &str) -> bool {
+    let asked = Path::new(requested);
+    let joined = if asked.is_absolute() {
+        asked.to_path_buf()
+    } else {
+        workspace.root().join(asked)
+    };
+    let roots: Vec<String> = workspace.roots().map(written).collect();
+    under(&written(&joined), &roots, requested)
+}
+
+/// Whether `spelled`, the written spelling of the path `requested` names,
+/// lies under one of `roots`' once both are folded: a path whose words open
+/// with two separators only under a root whose spelling opens with them too.
+fn under(spelled: &str, roots: &[String], requested: &str) -> bool {
+    let Some(spelled) = folded(spelled) else {
+        return false;
+    };
+    roots.iter().any(|root| {
+        folded(root).is_some_and(|root| {
+            let beneath = spelled.strip_prefix(root.as_str()).is_some_and(|rest| {
+                rest.is_empty() || rest.starts_with('/') || root.ends_with('/')
+            });
+            beneath && (!elsewhere(requested) || elsewhere(&root))
+        })
+    })
+}
+
+/// `spelled` with its `.` and empty names dropped and each `..` taking the
+/// name before it away, the separators it opens with kept as they are; nothing
+/// where a `..` has no name before it to take.
+fn folded(spelled: &str) -> Option<String> {
+    let names = spelled.trim_start_matches('/');
+    let opening = spelled.strip_suffix(names).unwrap_or_default();
+    let mut kept: Vec<&str> = Vec::new();
+    for name in names.split('/') {
+        match name {
+            "" | "." => {}
+            ".." => {
+                kept.pop()?;
+            }
+            name => kept.push(name),
+        }
+    }
+    Some(format!("{opening}{}", kept.join("/")))
 }
 
 /// Whether `requested` opens with two separators, in any mix of `\` and `/`:
