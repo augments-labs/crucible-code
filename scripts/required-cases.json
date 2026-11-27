@@ -15509,7 +15509,7 @@
       },
       "case": "terminal::graphics::tests::a_held_picture_shown_in_other_cells_is_placed_again_and_never_sent_again",
       "source": "crates/crucible-tui/src/terminal/graphics.rs",
-      "body_sha256": "d1795cee1ad8dafce0248fb6bc251d53bf189888f108ecf7778d59e5502ed753",
+      "body_sha256": "aa0e90af95d520effd7033f9d8ee481344d904e04f3a80900f1b11775c797ede",
       "platforms": [
         "linux",
         "macos",
@@ -15958,6 +15958,24 @@
       "case": "record::tests::a_kept_picture_first_shown_before_the_window_said_its_height_keeps_those_rows",
       "source": "crates/crucible-tui/src/record.rs",
       "body_sha256": "ddaaf0aa5d5ca20ec85762e7800ce911f69126e79d33fb29e1c3ad589c7a654f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-HELD-UNLOOKED",
+      "family": "transcript-picture-sizes",
+      "obligation": "A frame after which no picture changed cells looks up none of the pictures the terminal holds, so what a frame costs does not grow with the session.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::a_frame_after_no_picture_changed_cells_looks_up_none_of_those_held",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "c9296af44815cb7e9762ad8079a7b5035a6b61ced9aea17aac3b638aa98177c3",
       "platforms": [
         "linux",
         "macos",
