@@ -19,7 +19,10 @@
 //! - An image, `![alt](target)`, is the words `[image: alt]`, or `[image]`
 //!   with no alt, followed by its quiet address; nothing is fetched. Only the
 //!   written-out form is one: a bang in front of any other bracket is the
-//!   character it was, as is a bang a backslash stood in front of.
+//!   character it was, as is a bang a backslash stood in front of. One whose
+//!   target is a path, written in prose, is also named, in order and up to
+//!   [`NAMED_CAP`], for the front end to ask the application for once the
+//!   turn ends; one at an address is a link alone.
 //! - A link in a table's cell is drawn as the paragraph around the table
 //!   would draw it, against the same forge, but with no quiet address after
 //!   it: a column has no room to spare, and the whole address stays in the
@@ -42,7 +45,9 @@
 //!   [`UNLINKED`], which no link ever has, and [`said`] is the one place that
 //!   turns them back into what they are.
 
-use super::{Inside, Link, Markdown, Part, Retract, SCHEMES, Said, Spelled, WWW, escapes, spelled};
+use super::{
+    Inside, Link, Markdown, NAMED_CAP, Part, Retract, SCHEMES, Said, Spelled, WWW, escapes, spelled,
+};
 use crate::color::Slot;
 use crate::forge::Reference;
 use crate::glyphs::Glyphs;
@@ -195,6 +200,10 @@ impl Markdown {
         } else {
             &label
         };
+
+        if link.image && !self.unheld && self.named.len() < NAMED_CAP && local(target) {
+            self.named.push(target.into());
+        }
 
         let file = self.files.as_ref().and_then(|files| files.address(target));
         let address = file.as_deref().unwrap_or(target);
@@ -434,4 +443,17 @@ pub(super) fn target(between: &str) -> &str {
         .next()
         .unwrap_or_default()
         .trim_matches(|character| character == '<' || character == '>')
+}
+
+/// Whether `target` is written as a path rather than an address: not empty,
+/// and neither opening with a scheme -- letters, then a colon -- nor with
+/// `www.`. An image at an address is a link and is never fetched.
+fn local(target: &str) -> bool {
+    let scheme = target.split_once(':').is_some_and(|(scheme, _)| {
+        scheme.len() > 1
+            && scheme
+                .chars()
+                .all(|at| at.is_ascii_alphanumeric() || matches!(at, '+' | '-' | '.'))
+    });
+    !target.is_empty() && !scheme && !target.starts_with(WWW)
 }

@@ -295,6 +295,12 @@ pub(crate) const DEFINITION_CAP: usize = 64;
 /// written and links nothing.
 pub(crate) const DEFINITION_BYTES: usize = 16 * 1024;
 
+/// The most images in the workspace one reader keeps the paths of until they
+/// are taken, the first ones named: as many as an answer defines links, and
+/// many more than the eight a turn shows, so each one past those is still
+/// named with the reason it is not shown. One past this is a link and no more.
+pub(crate) const NAMED_CAP: usize = 64;
+
 /// The most characters of a tag held while the ones that say whether it is one
 /// of the six read here arrive, `<` and `>` included.
 ///
@@ -1964,6 +1970,10 @@ pub struct Markdown {
     /// The span of code held, from the run of backticks that opened it. See
     /// [`ticks`].
     ticked: Option<ticks::Span>,
+    /// The paths of the images in the workspace this reader has drawn as
+    /// links, in the order they were written, until they are taken. At most
+    /// [`NAMED_CAP`]; an address on the web is a link and is never here.
+    named: Vec<Box<str>>,
 }
 
 /// The most of one line of code that is held back to be read.
@@ -1985,6 +1995,18 @@ impl Markdown {
             glyphs,
             ..Self::default()
         }
+    }
+
+    /// The paths of the images this reader drew as links since it was last
+    /// asked, in the order they were written, as they were written: what a
+    /// path reaches is the application's to decide when the image is asked
+    /// for, and nothing here resolves one.
+    ///
+    /// Only an image written in prose by a reader that holds blocks, which is
+    /// the one reading an answer as it arrives; an address with a scheme or
+    /// one written `www.` stays a link and is not named.
+    pub(crate) fn named(&mut self) -> Vec<Box<str>> {
+        std::mem::take(&mut self.named)
     }
 
     /// Draws what comes next with `glyphs`, leaving whatever the scan has
@@ -4799,6 +4821,8 @@ impl Markdown {
             strikes: self.strikes.take(),
             // Nor what math is drawn with, and how.
             math: std::mem::take(&mut self.math),
+            // Nor the images the answer has named.
+            named: std::mem::take(&mut self.named),
             ..Self::default()
         };
 

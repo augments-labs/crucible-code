@@ -72,7 +72,6 @@ pub(super) fn asked(block: &Block, room: Room, drawers: &Drawers, offers: Offers
             }
             Asked::Drawn(laid.rows)
         }
-        Err(Undrawn::NotHere) => Asked::Written(None),
         Err(
             refusal @ (Undrawn::PastCap
             | Undrawn::NotText
@@ -82,14 +81,17 @@ pub(super) fn asked(block: &Block, room: Room, drawers: &Drawers, offers: Offers
         ) => Asked::Written(Some(refusal)),
         // An image's reasons are the application's about a file, and no
         // drawer has one to give about a fence: one that did is drawing
-        // nothing, and the fence is shown as written with nothing said.
+        // nothing, and the fence is shown as written with nothing said, as
+        // where it is not drawn here.
         Err(
-            Undrawn::ImageNotShown
+            Undrawn::NotHere
+            | Undrawn::ImageNotShown
             | Undrawn::ImageTooLarge
             | Undrawn::NotAnImage
             | Undrawn::NotReadInTime
             | Undrawn::ChangedSinceRead
-            | Undrawn::PastTurnImages,
+            | Undrawn::PastTurnImages
+            | Undrawn::NotRedrawnOnResume,
         ) => Asked::Written(None),
     }
 }

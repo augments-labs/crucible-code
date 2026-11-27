@@ -37,6 +37,7 @@
 //! goes near one.
 
 use crate::bands::{Bands, Wants};
+use crate::chrome::Undrawn;
 use crate::clipboard;
 use crate::color::{Palette, Slot, Theme};
 use crate::drawing::{Drawers, Mode};
@@ -44,8 +45,8 @@ use crate::escape::Escapes;
 use crate::files::Files;
 use crate::forge::Forge;
 use crate::glyphs::Glyphs;
-use crate::markdown::{self, Block, Markdown, Offers, Said};
-use crate::record::{Modes, Record, Source};
+use crate::markdown::{self, Block, Markdown, NAMED_CAP, Offers, Said};
+use crate::record::{Modes, Named, Record, Source};
 use crate::row::Row;
 use crate::scroll_rail::{self, ScrollRail};
 use crate::select::{self, Place, Taken, View};
@@ -421,6 +422,10 @@ pub struct Renderer<T: Terminal> {
     /// Held here rather than made fresh per delta, for the reason the escapes
     /// above are: a fence arrives split across two deltas as often as not.
     markdown: Markdown,
+    /// The images the answers since they were last asked for named, in the
+    /// order they were named, at most [`NAMED_CAP`]: kept here as each reader
+    /// is let go, so a tool call in the middle of a turn loses none.
+    named: Vec<Box<str>>,
     /// Whether an answer is still arriving.
     ///
     /// Set by the first piece of one and put down by [`Renderer::settle`],
@@ -601,6 +606,7 @@ impl<T: Terminal> Renderer<T> {
             unwritten: String::new(),
             escapes: Escapes::default(),
             markdown: Markdown::default(),
+            named: Vec::new(),
             arriving: Arriving::Nothing,
             palette: Palette::plain(),
             glyphs: Glyphs::default(),
@@ -1370,7 +1376,7 @@ impl<T: Terminal> Renderer<T> {
     /// has always been.
     pub fn counts(&mut self, forge: Option<Forge>) {
         self.record.links_mut().forge = forge;
-        self.markdown = self.reader();
+        self.renew();
     }
 
     /// Tells this renderer which checkout a link to a path in the answer is
@@ -1380,7 +1386,7 @@ impl<T: Terminal> Renderer<T> {
     /// hands a path on as it was written.
     pub fn reads_paths(&mut self, files: Option<Files>) {
         self.record.links_mut().files = files;
-        self.markdown = self.reader();
+        self.renew();
     }
 
     /// Hands this renderer the drawers a closed fence of an answer is drawn
@@ -1397,7 +1403,61 @@ impl<T: Terminal> Renderer<T> {
             Offers::Withdrawn
         };
         self.record.draws_with(drawers, offers);
+        self.renew();
+    }
+
+    /// Lets the reader go for a new one, keeping the images it named.
+    fn renew(&mut self) {
+        self.keep_named();
         self.markdown = self.reader();
+    }
+
+    /// Moves what the reader named into what is kept, up to [`NAMED_CAP`].
+    fn keep_named(&mut self) {
+        let room = NAMED_CAP.saturating_sub(self.named.len());
+        let named = self.markdown.named();
+        self.named.extend(named.into_iter().take(room));
+    }
+
+    /// The paths of the images the answers named since this was last asked,
+    /// in the order they were named, at most [`NAMED_CAP`] of them: an image
+    /// written in the answer's own markdown with a path, not an address.
+    ///
+    /// Asked when a turn ends, and before a tool's image is counted, so what
+    /// the answer named first is shown first.
+    pub fn named_images(&mut self) -> Vec<Box<str>> {
+        self.keep_named();
+        std::mem::take(&mut self.named)
+    }
+
+    /// Whether an image a turn named would be shown as a picture here: the
+    /// terminal confirmed a protocol, something makes pictures, and colour is
+    /// written. Where not, none is asked for.
+    #[must_use]
+    pub fn shows_pictures(&self) -> bool {
+        self.record.shows_pictures()
+    }
+
+    /// Puts down an image a turn named by `path`, read by the tool `by` where
+    /// one read it: a top edge naming it and the picture of `png` under it,
+    /// or the edge alone with why there is none.
+    ///
+    /// Drawn at once, in the next row of the transcript, as a block of its
+    /// own, after anything an answer still held back is put down.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn image(
+        &mut self,
+        path: &str,
+        by: Option<&str>,
+        png: Result<Vec<u8>, Undrawn>,
+    ) -> Result<(), TerminalError> {
+        let theme = self.palette.theme();
+        self.record
+            .image(Named { path, by }, png, self.glyphs, theme);
+        self.draw()
     }
 
     /// A reader for the next message, drawing, counting and opening the way
@@ -2177,7 +2237,7 @@ impl<T: Terminal> Renderer<T> {
         // The markers belong to the message that is ending. A fence the model
         // opened and never closed would otherwise read the tool result under it
         // as code, and the whole of the next answer after that.
-        self.markdown = self.reader();
+        self.renew();
 
         // And the answer they belonged to is over, whatever ended it: the next
         // block down is a block of its own and is owed the row that says so.

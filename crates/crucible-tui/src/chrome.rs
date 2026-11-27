@@ -51,6 +51,17 @@ impl Label {
         };
         Self { name, glyphs }
     }
+
+    /// A label of `name` whole, for an edge whose name is what it is about,
+    /// such as an image's path: the row it stands in is cut to the width,
+    /// and never the name alone.
+    #[must_use]
+    pub fn whole(name: &str, glyphs: Glyphs) -> Self {
+        Self {
+            name: name.to_owned(),
+            glyphs,
+        }
+    }
 }
 
 /// Why a block was not drawn as what it is, and is shown as it was written;
@@ -95,6 +106,9 @@ pub enum Undrawn {
     ChangedSinceRead,
     /// An image named after the most a turn shows.
     PastTurnImages,
+    /// An image a resumed session named once the time it had to read them
+    /// again was spent.
+    NotRedrawnOnResume,
 }
 
 impl Undrawn {
@@ -113,6 +127,7 @@ impl Undrawn {
             Self::NotReadInTime => "not read in time",
             Self::ChangedSinceRead => "changed since it was read",
             Self::PastTurnImages => "past the eighth image in this turn",
+            Self::NotRedrawnOnResume => "not redrawn on resume",
         }
     }
 
@@ -132,7 +147,8 @@ impl Undrawn {
             | Self::NotAnImage
             | Self::NotReadInTime
             | Self::ChangedSinceRead
-            | Self::PastTurnImages => false,
+            | Self::PastTurnImages
+            | Self::NotRedrawnOnResume => false,
         }
     }
 }
@@ -325,7 +341,11 @@ mod tests {
             (Undrawn::NotAnImage, "not an image"),
             (Undrawn::NotReadInTime, "not read in time"),
             (Undrawn::ChangedSinceRead, "changed since it was read"),
-            (Undrawn::PastTurnImages, "past the eighth image in this turn"),
+            (
+                Undrawn::PastTurnImages,
+                "past the eighth image in this turn",
+            ),
+            (Undrawn::NotRedrawnOnResume, "not redrawn on resume"),
         ];
         for (refusal, words) in every {
             assert!(!refusal.written(), "{refusal:?}");

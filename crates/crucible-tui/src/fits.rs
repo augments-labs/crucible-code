@@ -99,6 +99,7 @@ fn a_framed_block_fits_the_window_it_stands_in() {
         Some(Undrawn::NotReadInTime),
         Some(Undrawn::ChangedSinceRead),
         Some(Undrawn::PastTurnImages),
+        Some(Undrawn::NotRedrawnOnResume),
     ] {
         across("a frame", |columns, glyphs| {
             let frame = Frame {
