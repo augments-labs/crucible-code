@@ -10,12 +10,14 @@
 //! file contents. Display history is streamed a message batch at a time so it
 //! does not create a second session-sized transcript in memory.
 //!
-//! A diagram the walk meets is drawn as its text, and nothing is read or drawn
-//! for it while the walk lasts. Once it is over, the newest diagrams still to
-//! go out, no more than the renderer keeps pictures for, are shown as the
-//! pictures an earlier run kept of them, and one with none stays its text:
-//! nothing is drawn afresh, so a long session comes back as fast as its text
-//! does.
+//! On a full screen, a diagram the walk meets is drawn as its text, and
+//! nothing is read or drawn for it while the walk lasts. Once it is over, the
+//! newest diagrams, no more than the renderer keeps pictures for, are shown as
+//! the pictures an earlier run kept of them, and one with none stays its
+//! text, so a long session reads no picture it will not show. In native mode
+//! what the walk draws goes into the scrollback as it is then, so each
+//! diagram is shown as the picture kept of it as the walk meets it. Either
+//! way nothing is drawn afresh.
 //!
 //! The images the session's turns named are gathered as the walk meets them,
 //! the most recent of them only, and handed back to be read and drawn once the

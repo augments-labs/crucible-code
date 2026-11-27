@@ -105,6 +105,7 @@ use crate::color::{PaletteIdentity, Slot, Theme};
 use crate::drawing::{Bucket, Drawers, Mode, Room};
 use crate::glyphs::Glyphs;
 use crate::markdown::{self, Block, Kind, Links, Offers};
+use crate::render::ScreenMode;
 use crate::row::Row;
 use crate::scroll_rail::Place;
 use crate::terminal::graphics::{Capability, Form, Payload, PictureKey, Pictures, Protocol};
@@ -330,12 +331,14 @@ struct Picturing {
 enum Drawing {
     /// A live session: a block not kept is drawn afresh.
     Live,
-    /// A session put back, while it is walked: every block is its text,
-    /// and nothing is read for it yet.
+    /// A session put back on a full screen, while it is walked: every block
+    /// is its text, and nothing is read for it yet.
     PutBack,
-    /// A session put back, once it is walked: the newest blocks the record
-    /// keeps pictures for are read from what was kept, and one not kept is
-    /// its text.
+    /// A session put back, where a block is read from what was kept and one
+    /// not kept is its text: on a full screen once it is walked, for the
+    /// newest blocks the record keeps pictures for; in a native session
+    /// while it is walked, for each block as it is drawn, since what goes
+    /// into the scrollback stays as it went.
     Restoring,
 }
 
@@ -1358,20 +1361,31 @@ impl Record {
         self.picturing.pictures = Some(pictures);
     }
 
-    /// Draws what follows as a session put back, `resuming`, or live again.
+    /// Draws what follows as a session put back, `resuming`, or live again,
+    /// on `screen`.
     ///
-    /// While it is put back, every block is drawn as its text and nothing is
-    /// read for it. Once it is, the newest blocks not yet gone out, as many
-    /// as [`MOST_KEPT_IMAGES`], are given the pictures their pictures kept
-    /// from an earlier session, and one they did not keep stays its text, as
-    /// one not drawn here is: putting a session back runs no drawer, and
-    /// reads no more pictures than the record keeps.
-    pub(crate) fn resuming(&mut self, resuming: bool) {
+    /// On a full screen, while it is put back, every block is drawn as its
+    /// text and nothing is read for it. Once it is, the newest blocks, as
+    /// many as [`MOST_KEPT_IMAGES`], are given the pictures their pictures
+    /// kept from an earlier session, and one they did not keep stays its
+    /// text, as one not drawn here is: putting a session back runs no
+    /// drawer, and reads no more pictures than the record keeps.
+    ///
+    /// In a native session each block is given its kept picture as it is
+    /// drawn, since one that goes into the scrollback goes once and stays as
+    /// it went, and the scrollback shows every picture it was sent; one not
+    /// kept is its text, and no drawer runs either.
+    pub(crate) fn resuming(&mut self, resuming: bool, screen: ScreenMode) {
         if resuming {
-            self.picturing.drawing = Drawing::PutBack;
+            self.picturing.drawing = match screen {
+                ScreenMode::Fullscreen => Drawing::PutBack,
+                ScreenMode::Native => Drawing::Restoring,
+            };
         } else {
-            self.picturing.drawing = Drawing::Restoring;
-            self.restore();
+            if self.picturing.drawing == Drawing::PutBack {
+                self.picturing.drawing = Drawing::Restoring;
+                self.restore();
+            }
             self.picturing.drawing = Drawing::Live;
         }
         if let Some(pictures) = self.picturing.pictures.as_mut() {
@@ -4230,10 +4244,10 @@ mod tests {
         let (fake, asked) = fake(100, 3, vec!["kept"]);
         let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
 
-        record.resuming(true);
+        record.resuming(true, ScreenMode::Fullscreen);
         record.drawn(picturing::diagram("kept"), Glyphs::Unicode, Theme::Dark);
         record.drawn(picturing::diagram("missed"), Glyphs::Unicode, Theme::Dark);
-        record.resuming(false);
+        record.resuming(false, ScreenMode::Fullscreen);
 
         assert!(picturing::shown(&record, 0), "the cache's picture");
         assert!(!picturing::shown(&record, 1), "a miss was drawn");
@@ -4270,7 +4284,7 @@ mod tests {
         let (fake, asked) = fake(100, 3, cached);
         let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
 
-        record.resuming(true);
+        record.resuming(true, ScreenMode::Fullscreen);
         for name in &names {
             record.drawn(picturing::diagram(name), Glyphs::Unicode, Theme::Dark);
         }
@@ -4279,7 +4293,7 @@ mod tests {
             ["resuming true"],
             "the walk read the cache"
         );
-        record.resuming(false);
+        record.resuming(false, ScreenMode::Fullscreen);
 
         let asked = picturing::asked(&asked);
         let read = asked
@@ -4314,11 +4328,11 @@ mod tests {
             .collect();
         let (fake, asked) = fake(100, 3, cached);
         let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
-        record.resuming(true);
+        record.resuming(true, ScreenMode::Fullscreen);
         for name in &names {
             record.drawn(picturing::diagram(name), Glyphs::Unicode, Theme::Dark);
         }
-        record.resuming(false);
+        record.resuming(false, ScreenMode::Fullscreen);
         let before = picturing::asked(&asked).len();
 
         let light = picturing::coloured(Theme::Light);

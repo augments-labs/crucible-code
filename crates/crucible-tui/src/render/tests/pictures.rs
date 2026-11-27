@@ -55,6 +55,9 @@ pub(in crate::render) struct Printed {
     worn: bool,
     /// What a picture's `bytes` are for.
     grows: Grows,
+    /// How many times its cache was read, where it holds every picture;
+    /// none where it holds none.
+    kept: Option<std::rc::Rc<std::cell::Cell<usize>>>,
 }
 
 /// What each `bytes` of a [`Printed`] picture is for.
@@ -79,7 +82,23 @@ impl Printed {
             hostile: false,
             worn: false,
             grows: Grows::Not,
+            kept: None,
         }
+    }
+
+    /// Pictures whose cache holds every one asked of it, and how many times
+    /// it was read.
+    pub(in crate::render) fn kept(
+        across: u16,
+        down: u16,
+        bytes: usize,
+    ) -> (Self, std::rc::Rc<std::cell::Cell<usize>>) {
+        let read = std::rc::Rc::default();
+        let printed = Self {
+            kept: Some(std::rc::Rc::clone(&read)),
+            ..Self::new(across, down, bytes)
+        };
+        (printed, read)
     }
 
     /// Pictures whose bytes grow with the rows they cover, `bytes` a row.
@@ -164,9 +183,11 @@ impl graphics::Pictures for Printed {
     fn cached(
         &mut self,
         _: &str,
-        _: &graphics::PictureKey,
+        key: &graphics::PictureKey,
     ) -> Option<(graphics::Form, graphics::Payload)> {
-        None
+        let read = self.kept.as_ref()?;
+        read.set(read.get() + 1);
+        Some((graphics::Form::Png(Vec::new()), self.payload(key)))
     }
 
     fn make(

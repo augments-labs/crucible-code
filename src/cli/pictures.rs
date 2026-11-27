@@ -25,9 +25,11 @@
 //! again from that, so [`Raster::cached`] holds nothing. A session's own
 //! pictures are [`Caching`], which hands each diagram it draws to the one
 //! thread that writes the picture cache, without waiting, and asks that cache
-//! first only while a session put back is drawn, for the newest diagrams the
-//! renderer keeps once the walk is over; live, a frame never reads the disk. An image is never handed to it, since it is read
-//! again from its file.
+//! first only while a session put back is drawn: on a full screen for the
+//! newest diagrams the renderer keeps once the walk is over, and in native
+//! mode for each diagram as the walk sends it into the scrollback. Live, a
+//! frame never reads the disk. An image is never handed to it, since it is
+//! read again from its file.
 //!
 //! An image arrives as the PNG the application read it into, already within
 //! its ceilings and made by this process, and is decoded again here in the
