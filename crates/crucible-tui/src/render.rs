@@ -1482,9 +1482,18 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// Called after the blank parting it from the previous block and before the
     /// prompt rows themselves, so the rail's mark for it stands for the words it
-    /// names.
+    /// names. A line steered into a running turn is marked here too, and starts
+    /// no turn: the formulas that turn told are still its own.
     pub fn landmark(&mut self) {
         self.record.landmark();
+    }
+
+    /// Marks the next record line as the start of a prompt that starts a
+    /// turn, as [`Renderer::landmark`] does, and says so to what makes
+    /// display formulas into pictures, so an earlier turn's formulas it has
+    /// not begun stay their text.
+    pub fn starts_turn(&mut self) {
+        self.landmark();
         if let Some(formulas) = &mut self.formulas {
             formulas.turns();
         }
@@ -1602,9 +1611,10 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// From then on the renderer tells it each such formula as its block
     /// closes, which [`Renderer::formulas`] then no longer returns, says a
-    /// turn has started when a prompt is marked, and shows each picture it
-    /// answers with as [`Renderer::formula_made`] would, looking for one
-    /// every time an input wait rests while any formula told is unanswered.
+    /// turn has started when [`Renderer::starts_turn`] marks a prompt, and
+    /// shows each picture it answers with as [`Renderer::formula_made`]
+    /// would, looking for one every time an input wait rests while any
+    /// formula told is unanswered.
     pub fn makes_formulas(&mut self, formulas: Box<dyn Formulas>) {
         self.formulas = Some(formulas);
     }

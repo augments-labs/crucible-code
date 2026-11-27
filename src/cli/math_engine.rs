@@ -10,7 +10,9 @@
 //! The queue holds a turn's first [`MOST_PER_TURN`] formulas, in the order
 //! they closed. One told past them stays its text. When a turn starts, what
 //! an earlier turn told and the task has not begun stays its text too, so a
-//! new question is never kept waiting behind an old answer's formulas.
+//! new question is never kept waiting behind an old answer's formulas. A line
+//! steered into a running turn starts none: the renderer says a turn started
+//! only for a prompt that starts one.
 //!
 //! The task finds the engine before its first formula with the session's
 //! check. A check that decides nothing (the sandbox was busy, say) is made

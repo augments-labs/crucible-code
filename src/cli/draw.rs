@@ -501,7 +501,7 @@ pub(crate) fn queued<T: Terminal>(
     // a turn lands under the answer that turn produced, which is exactly where
     // the blank belongs.
     renderer.apart()?;
-    renderer.landmark();
+    renderer.starts_turn();
     prompt(renderer, said.to_owned(), style)
 }
 

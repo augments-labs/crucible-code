@@ -3198,6 +3198,8 @@ mod fast;
 
 mod recommended;
 
+mod steered;
+
 /// A turn with every kind of row a transcript holds, drawn in `style`: the
 /// prompt that asked for it, model prose with code and a link in it, a call
 /// whose result was cut, a call that changed a file, and a run of calls folded

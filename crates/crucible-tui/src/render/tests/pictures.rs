@@ -1208,7 +1208,7 @@ fn told_cut_at(cuts: &[usize], at_once: bool) -> Vec<String> {
     let making = Making::default();
     making.held().at_once = at_once;
     drawn.render.makes_formulas(Box::new(making.clone()));
-    drawn.render.landmark();
+    drawn.render.starts_turn();
     drawn.answer_in_pieces(TWO_FORMULAS, cuts);
     drawn
         .render
@@ -1249,7 +1249,7 @@ fn a_formula_told_to_what_makes_pictures_is_shown_as_its_answer_once_a_wait_rest
     let mut drawn = pictured(40, 12, Printed::new(3, 2, 300));
     let making = Making::default();
     drawn.render.makes_formulas(Box::new(making.clone()));
-    drawn.render.landmark();
+    drawn.render.starts_turn();
     drawn.answer(FORMULA);
     drawn.take();
 

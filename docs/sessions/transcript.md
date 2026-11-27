@@ -277,9 +277,10 @@ that happens wherever the formula is. In native mode it happens while the
 formula is still at the foot of the screen; one already written to your
 terminal's scrollback stays text there until the scrollback is written again,
 after a resize or a change of theme, which draws its picture. A turn's first
-16 display formulas are made, and the rest of that turn stays text. When a
-new turn starts, the formulas of an earlier turn not yet begun stay text, so a
-new question never waits behind an old answer's math.
+16 display formulas are made, and the rest of that turn stays text; a line
+you steer into a running turn is part of that turn, and starts no count of its
+own. When a new turn starts, the formulas of an earlier turn not yet begun stay
+text, so a new question never waits behind an old answer's math.
 
 The picture is drawn in the theme's colour for plain text, and drawn again in
 the new colour when the theme changes. Its letters stand as tall as the text
