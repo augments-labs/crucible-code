@@ -480,6 +480,97 @@ fn two_processes_writing_at_once_each_land_at_most_one_entry_past_the_bound() {
     assert!(entries(&one).contains(&fifth.name));
 }
 
+#[test]
+fn two_writers_replacing_one_entry_leave_it_whole_for_each_read_and_a_prune_beside_them() {
+    use std::sync::atomic::AtomicBool;
+    let _turn = turn();
+    let (_sample, home) = home("same");
+    let one = Cache::open(&home);
+    let other = one.clone();
+    let reader = one.clone();
+    let (wide, narrow) = (form(40, 20), form(30, 10));
+    let (first, second) = (entry(SOURCE, &key(), &wide), entry(SOURCE, &key(), &narrow));
+    assert_eq!(first.name, second.name, "one key, one name");
+    let whole = [
+        drawn(&key(), &wide).bytes().to_vec(),
+        drawn(&key(), &narrow).bytes().to_vec(),
+    ];
+    one.put(&first);
+
+    // Each write lands whole under the name, so a read while both replace it
+    // finds one of the two whole, and never a mixture.
+    let writing = AtomicBool::new(true);
+    let mut read = (0_usize, 0_usize);
+    std::thread::scope(|scope| {
+        let writers = [(&one, &first), (&other, &second)].map(|(cache, entry)| {
+            scope.spawn(move || {
+                for _ in 0..200 {
+                    cache.put(entry);
+                }
+            })
+        });
+        let watching = scope.spawn(|| {
+            let (mut reads, mut hits) = (0_usize, 0_usize);
+            loop {
+                // A read that opened the entry a rename then replaced is a
+                // miss, as anything not one whole entry is.
+                if let Some((_, payload)) = reader.get(SOURCE, &key()) {
+                    assert!(whole.iter().any(|bytes| bytes == payload.bytes()));
+                    hits += 1;
+                }
+                reads += 1;
+                if !writing.load(Ordering::Acquire) {
+                    break (reads, hits);
+                }
+            }
+        });
+        for writer in writers {
+            writer.join().unwrap();
+        }
+        writing.store(false, Ordering::Release);
+        read = watching.join().unwrap();
+    });
+    assert!(
+        read.1 > 0,
+        "of {} reads while they wrote, none found it",
+        read.0
+    );
+    assert_eq!(entries(&one), std::slice::from_ref(&first.name));
+    let (_, payload) = one.get(SOURCE, &key()).unwrap();
+    assert!(whole.iter().any(|bytes| bytes == payload.bytes()));
+
+    // A write of another picture that takes it out to make room, racing the
+    // rename that replaces it, leaves no draft and nothing past the bound
+    // but the one entry a race may, and the entry is written whole again.
+    let mut tight = one.clone();
+    let crowding: [Entry; 4] = several();
+    tight.bounds.held = largest(&crowding);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            for _ in 0..50 {
+                for entry in &crowding {
+                    tight.put(entry);
+                }
+            }
+        });
+        scope.spawn(|| {
+            for _ in 0..200 {
+                one.put(&first);
+            }
+        });
+    });
+    assert!(
+        fs::read_dir(&one.directory)
+            .unwrap()
+            .all(|found| !is_draft(&found.unwrap().file_name())),
+        "a draft was left"
+    );
+    assert!(held(&one) <= tight.bounds.held + first.length().max(second.length()));
+    one.put(&first);
+    let (_, payload) = one.get(SOURCE, &key()).unwrap();
+    assert_eq!(payload.bytes(), whole.first().unwrap().as_slice());
+}
+
 #[cfg(unix)]
 #[test]
 fn the_directory_is_its_owners_alone_and_so_is_each_entry() {
