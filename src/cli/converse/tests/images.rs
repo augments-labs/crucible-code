@@ -33,7 +33,7 @@ fn png(width: u32, height: u32) -> Vec<u8> {
 /// it shows.
 fn after_a_turn(name: &str, answer: &str, files: &[(&str, &[u8])]) -> (String, Vec<String>) {
     let script = Script::new(vec![saying(answer)]);
-    opened(name, files, b"show me\n", |session| {
+    opened(name, files, b"show me\n", |session, _| {
         scripted(script, Tools::new(), session)
     })
 }
@@ -44,21 +44,51 @@ fn opened(
     name: &str,
     files: &[(&str, &[u8])],
     typed: &[u8],
-    build: impl FnOnce(Arc<Session>) -> crucible_runner::Runner,
+    build: impl FnOnce(Arc<Session>, crucible_workspace::Workspace) -> crucible_runner::Runner,
+) -> (String, Vec<String>) {
+    ruled(name, files, None, typed, build)
+}
+
+/// The same, under the configuration `config` where one is written: the
+/// file the person keeps, read as a start reads it.
+fn ruled(
+    name: &str,
+    files: &[(&str, &[u8])],
+    config: Option<&str>,
+    typed: &[u8],
+    build: impl FnOnce(Arc<Session>, crucible_workspace::Workspace) -> crucible_runner::Runner,
 ) -> (String, Vec<String>) {
     let _turn = crate::cli::pictures::tests::ONE_AT_A_TIME
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
     let sample = Sample::new(name);
     for (file, bytes) in files {
-        std::fs::write(sample.root().join(file), bytes).unwrap();
+        let file = sample.root().join(file);
+        if let Some(parent) = file.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(file, bytes).unwrap();
     }
+    let settings = config.map_or_else(crucible_config::Settings::default, |config| {
+        let home = sample.root().join(".home");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(home.join("config.json"), config).unwrap();
+        let home = crucible_config::Home::find(&|name: &str| {
+            (name == crucible_config::HOME).then(|| home.clone().into_os_string())
+        })
+        .unwrap();
+        crucible_config::Settings::read(&home, &sample.root()).unwrap()
+    });
     let terms = Terms {
         workspace: sample.workspace(),
         style: Cell::new(Style::coloured()),
+        settings,
         ..plain()
     };
-    let conversation = paired(Arc::new(Session::nowhere()), build);
+    let workspace = sample.workspace();
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        build(session, workspace)
+    });
     let mut renderer = crate::cli::furnished(
         Recording::new(80, 60),
         &crucible_config::Settings::default(),
@@ -335,7 +365,7 @@ fn a_session_put_back_draws_the_images_its_turns_named_once_it_is_on_the_screen(
         "images-resumed",
         &[("plot.png", &png(40, 20))],
         b"",
-        |session| scripted(Script::new(Vec::new()), Tools::new(), session).resuming(transcript),
+        |session, _| scripted(Script::new(Vec::new()), Tools::new(), session).resuming(transcript),
     );
     assert!(
         rows.iter().any(|row| row == "┌─ image · plot.png"),
@@ -344,5 +374,75 @@ fn a_session_put_back_draws_the_images_its_turns_named_once_it_is_on_the_screen(
     assert!(
         written.contains("\x1b_Ga=t,f=100,i="),
         "no picture was sent: {written:?}"
+    );
+}
+
+#[test]
+fn an_image_the_read_tool_took_is_drawn_after_the_turn_named_by_the_tool() {
+    let read = |workspace: crucible_workspace::Workspace| {
+        let mut offered = Tools::new();
+        offered
+            .add_builtin(crucible_builtins::Read::new(
+                workspace,
+                crucible_builtins::Ledger::default(),
+            ))
+            .unwrap();
+        offered
+    };
+    let calls = vec![
+        crucible_models::Delta::ToolStarted {
+            id: ToolId::new("r-1"),
+            name: "read".into(),
+        },
+        crucible_models::Delta::ToolArgs(r#"{"path":"plot.png"}"#.into()),
+        crucible_models::Delta::Stopped(crucible_types::StopReason::WantsTools),
+    ];
+    let (written, rows) = opened(
+        "images-read",
+        &[("plot.png", &png(40, 20))],
+        b"look\n",
+        |session, workspace| {
+            scripted(
+                Script::new(vec![calls, saying("It is a blue square.")]),
+                read(workspace),
+                session,
+            )
+        },
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row == "┌─ image · plot.png · read by read"),
+        "{rows:#?}"
+    );
+    assert!(
+        written.contains("\x1b_Ga=t,f=100,i="),
+        "no picture was sent: {written:?}"
+    );
+}
+
+#[test]
+fn an_image_under_a_rule_refusing_its_read_is_not_shown_and_one_beside_it_is() {
+    let picture = png(8, 8);
+    let script = Script::new(vec![saying("![a](secret/a.png) and ![b](open.png)\n")]);
+    let (written, rows) = ruled(
+        "images-ruled",
+        &[("secret/a.png", &picture), ("open.png", &picture)],
+        Some(r#"{"permissions": {"deny": ["read(secret/**)"]}}"#),
+        b"show me\n",
+        |session, _| scripted(script, Tools::new(), session),
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row == "┌─ image · secret/a.png · not shown"),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| row == "┌─ image · open.png"),
+        "{rows:#?}"
+    );
+    assert_eq!(
+        written.matches("\x1b_Ga=t,f=100,i=").count(),
+        1,
+        "{written:?}"
     );
 }
