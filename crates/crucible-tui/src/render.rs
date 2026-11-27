@@ -50,7 +50,7 @@ use crate::record::{Modes, Named, Record, Source};
 use crate::row::Row;
 use crate::scroll_rail::{self, ScrollRail};
 use crate::select::{self, Place, Taken, View};
-use crate::terminal::graphics::{Capability, Passthrough, Pictures, Protocol, Sent};
+use crate::terminal::graphics::{Capability, Formula, Passthrough, Pictures, Protocol, Sent};
 use crate::terminal::keys::{Pressed, pressed, waiting};
 use crate::terminal::system::ResizeFlag;
 use crate::terminal::{Size, Terminal, TerminalError};
@@ -1574,6 +1574,37 @@ impl<T: Terminal> Renderer<T> {
     pub fn pictures(&mut self, pictures: Box<dyn Pictures>) {
         self.record.pictures(pictures);
         self.relaid(self.glyphs);
+    }
+
+    /// The display formulas closed since last asked that are shown as their
+    /// text until a picture made of each is handed to
+    /// [`Renderer::formula_made`].
+    pub fn formulas(&mut self) -> Vec<Formula> {
+        self.record.formulas()
+    }
+
+    /// Shows the block `formula` names as `svg`, a picture made of it, under
+    /// the caps every picture kept is.
+    ///
+    /// On a full screen the picture takes the text's place. In native mode
+    /// it does while the block is in the live region; one already in the
+    /// terminal's scrollback stays its text there, and the picture is kept
+    /// with its block for the next rewrite of what is kept: a settled
+    /// resize, or a new theme or glyph set. A block no longer held, and one
+    /// shown as a picture already, is left as it is.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be redrawn.
+    pub fn formula_made(
+        &mut self,
+        formula: &Formula,
+        svg: crate::drawing::Svg,
+    ) -> Result<(), TerminalError> {
+        if self.record.formula_made(formula, svg) {
+            self.draw()?;
+        }
+        Ok(())
     }
 
     /// Draws what follows as a session put back, `resuming`, or live again.

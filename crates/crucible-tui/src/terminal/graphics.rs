@@ -771,6 +771,30 @@ impl fmt::Debug for Form {
     }
 }
 
+/// A display formula that closed in a block shown as its text until a
+/// picture is made of it: the line it is on and the formula it holds.
+///
+/// The renderer hands one out for each formula it would show as a picture,
+/// and takes it back with the picture made of it; nothing outside this crate
+/// makes one, so a picture handed back names a block the renderer told of.
+/// The line is a block's pending picture key: it names that block for as
+/// long as the transcript holds it, and nothing once it has gone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Formula {
+    /// The record line the block is, counted from the first of the session.
+    pub(crate) line: usize,
+    /// The formula, as the block's drawer was handed it.
+    pub(crate) source: Box<str>,
+}
+
+impl Formula {
+    /// The formula, as the block's drawer was handed it.
+    #[must_use]
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+}
+
 /// Everything a picture's bytes depend on besides its source: what kind of
 /// block it is, the window's width bucket, the palette it is worn in, the
 /// protocol it is encoded for and the cell it is fitted to.

@@ -38,6 +38,38 @@ impl crate::drawing::Draws for Sketched {
     }
 }
 
+/// A display-math drawer that lays a formula as its lines and draws no
+/// picture of its own: a formula's picture is made elsewhere and handed
+/// back.
+pub(in crate::render) struct Lettered;
+
+impl crate::drawing::Draws for Lettered {
+    fn names(&self) -> &'static [&'static str] {
+        &["math"]
+    }
+
+    fn block(
+        &self,
+        source: &str,
+        _: &crate::drawing::Room,
+    ) -> Result<crate::drawing::Laid, crate::chrome::Undrawn> {
+        let rows: Vec<Row> = source.trim().lines().map(Row::plain).collect();
+        Ok(crate::drawing::Laid {
+            natural: (8, rows.len()),
+            rows,
+            narrow: None,
+        })
+    }
+}
+
+/// A display formula, in an answer.
+pub(in crate::render) const FORMULA: &str = "$$\nx^2\n$$\n";
+
+/// The picture an engine hands back for [`FORMULA`].
+pub(in crate::render) fn formula_picture() -> crate::drawing::Svg {
+    crate::drawing::Svg::new("<svg>x^2</svg>".to_owned()).expect("a picture")
+}
+
 /// Pictures `across` by `down` cells, each `bytes` bytes that count up from
 /// how many were made before it, so two pictures never carry the same bytes.
 ///
@@ -225,7 +257,11 @@ pub(in crate::render) fn pictured_by<T: Terminal>(render: &mut Renderer<T>, prin
 fn numbered_as_shipped<T: Terminal>(render: &mut Renderer<T>, printed: Printed) {
     render.wears(colourful());
     render.images(kitty_in(PICTURE_CELL.0, PICTURE_CELL.1));
-    render.drawers(crate::drawing::Drawers::default().with(std::sync::Arc::new(Sketched)));
+    render.drawers(
+        crate::drawing::Drawers::default()
+            .with(std::sync::Arc::new(Sketched))
+            .with(std::sync::Arc::new(Lettered)),
+    );
     render.pictures(Box::new(printed));
 }
 
@@ -1077,6 +1113,42 @@ fn a_picture_drawn_as_text_again_has_the_terminal_delete_it_through_tmux() {
     );
     assert_eq!(after.matches("\x1b_G").count(), 1, "{after:?}");
     assert!(!after.contains('\u{10EEEE}'), "{after:?}");
+}
+
+#[test]
+fn a_formula_is_its_text_until_its_picture_comes_and_then_its_picture_on_a_full_screen() {
+    let mut drawn = pictured(40, 12, Printed::new(3, 2, 300));
+    drawn.answer(FORMULA);
+    let before = drawn.take();
+    assert!(commands(&before).is_empty(), "{before:?}");
+    assert!(before.contains("x^2"), "{before:?}");
+
+    let told = drawn.render.formulas();
+    assert_eq!(
+        told.iter().map(|formula| formula.source().trim()).collect::<Vec<_>>(),
+        ["x^2"]
+    );
+    let formula = told.first().expect("one formula");
+    drawn.render.formula_made(formula, formula_picture()).unwrap();
+    let after = drawn.take();
+
+    assert_eq!(transmitted(&commands(&after)), [(1, printed_bytes(0, 300))]);
+    assert!(after.contains(&placeholders(1, 0, 3)), "{after:?}");
+    assert!(after.contains(&placeholders(1, 1, 3)), "{after:?}");
+}
+
+#[test]
+fn a_formula_picture_handed_back_after_its_block_went_changes_nothing_on_screen() {
+    let mut drawn = pictured(40, 12, Printed::new(3, 2, 300));
+    drawn.answer(FORMULA);
+    let told = drawn.render.formulas();
+    let formula = told.first().expect("one formula");
+    drawn.render.empties().unwrap();
+    drawn.take();
+
+    drawn.render.formula_made(formula, formula_picture()).unwrap();
+    let after = drawn.take();
+    assert!(commands(&after).is_empty(), "{after:?}");
 }
 
 #[test]
