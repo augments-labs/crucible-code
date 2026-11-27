@@ -11,7 +11,10 @@
 //! A picture is rasterised at the narrowest of its own width, the widest the
 //! raster's ceiling on decoded pixels holds, and the room it is placed in: the
 //! narrow edge of the window's width bucket, in cells of the window's pixels.
-//! It is never scaled up, so a small diagram stays its own size. A Sixel
+//! It is never scaled up, so a small diagram stays its own size. A display
+//! formula's picture is instead drawn at the scale at which TeX's ten-point
+//! text is one cell tall, or as much smaller as brings it into its room, and
+//! is text where that would be under half that scale. A Sixel
 //! picture is also drawn no taller than the rows its key gives it, since the
 //! terminal shows its pixels as they are; a PNG is scaled into its cells by
 //! the terminal and is drawn once for any of them.
@@ -57,7 +60,8 @@ use super::math_engine::{Outcome, Read};
 use super::picture_cache::{Cache, Entry, Queue};
 use crucible_client_api::ImageRefused;
 use crucible_raster::{
-    MOST_SIXEL_WIDTH, Refused, SixelPalette, Slot, decode, png, raster_width, rasterise, sixel,
+    MOST_SIXEL_WIDTH, Refused, SixelPalette, Slot, decode, own_size, png, raster_width, rasterise,
+    sixel,
 };
 use crucible_tui::KeptPicture;
 use crucible_tui::chrome::Undrawn;
@@ -186,7 +190,11 @@ fn encoded(form: &Form, key: &PictureKey) -> Result<Payload, Undrawn> {
     // picture; and so not waited for again inside: the raster's own entry
     // points let the thread that holds the slot straight through.
     let _slot = Slot::take(WAIT).map_err(refusal)?;
-    let width = raster_width(svg).map_err(refusal)?.min(room);
+    let width = if key.kind == Kind::DisplayMath {
+        formula_width(svg, key, room)?
+    } else {
+        raster_width(svg).map_err(refusal)?.min(room)
+    };
     let mut pixels = rasterise(svg, width, &key.palette.inks()).map_err(refusal)?;
     // A Sixel bitmap is shown pixel for pixel, so one taller than the rows
     // it is shown in is drawn again as much narrower as brings it into them.
@@ -216,6 +224,36 @@ fn encoded(form: &Form, key: &PictureKey) -> Result<Payload, Undrawn> {
         (pixels.width(), pixels.height()),
         key.cell,
     ))
+}
+
+/// The points of TeX's text drawn one cell tall: the size `latex` sets a
+/// formula's text in, so a formula's letters stand as tall as the
+/// transcript's around it.
+const TEXT_POINTS: f64 = 10.0;
+
+/// How many pixels wide a formula's picture `svg` is drawn under `key`: at the
+/// scale at which [`TEXT_POINTS`] of TeX's text is one cell tall, or the
+/// largest smaller one at which it fits its `room`.
+///
+/// One that would be drawn at less than half that scale is refused as too
+/// wide, since its text would stand under half the height of the
+/// transcript's. Its height follows at its proportions, and a picture with
+/// more pixels than the raster draws is refused there.
+fn formula_width(svg: &[u8], key: &PictureKey, room: u32) -> Result<u32, Undrawn> {
+    // `dvisvgm` sizes a picture in points, which the raster reads at 96
+    // pixels to the inch, and so 72 points to 96 of its pixels.
+    let (width, _) = own_size(svg).map_err(refusal)?;
+    let scaled = width * 72.0 / 96.0 * f64::from(key.cell.height) / TEXT_POINTS;
+    let fitted = scaled.min(f64::from(room));
+    if fitted * 2.0 < scaled {
+        return Err(Undrawn::TooWide);
+    }
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "no wider than the room, which is a u32"
+    )]
+    Ok(fitted.round() as u32)
 }
 
 /// How many pixels wide a picture under `key` has room for: the narrow edge
@@ -443,6 +481,53 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(wide.pixels(), (64, 32));
         assert_eq!(wide.cells(), (8, 2));
+    }
+
+    /// A display formula's key, `columns` wide, on the same terminal as
+    /// [`key`]'s, whose cells are sixteen pixels tall.
+    fn formula_key(columns: usize) -> PictureKey {
+        PictureKey {
+            kind: Kind::DisplayMath,
+            ..key(Theme::Dark, None, columns)
+        }
+    }
+
+    /// The picture `dvisvgm` made of a formula, as committed beside the math
+    /// engine and worn as the engine's answer is: sized in points, 88.065533pt
+    /// by 29.888224pt.
+    fn display_cases() -> Form {
+        let made =
+            crucible_app::math::Svg::new(&include_bytes!("math_engine/display-cases.svg")[..]);
+        Form::Svg(inked(&made).unwrap())
+    }
+
+    #[test]
+    fn a_formula_tex_made_is_drawn_with_its_ten_point_text_one_cell_tall() {
+        let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
+        // Ten points to a cell sixteen pixels tall: 88.07pt is 141 pixels,
+        // and its height follows at its proportions.
+        let payload = Raster
+            .make("cases", &formula_key(80), &display_cases())
+            .unwrap();
+        assert_eq!(payload.pixels(), (141, 48));
+    }
+
+    #[test]
+    fn a_formula_wider_than_its_room_is_drawn_at_the_rooms_width_down_to_half_its_scale() {
+        let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
+        // Twelve cells of eight leave 96 pixels, more than half of 141.
+        let narrowed = Raster
+            .make("cases", &formula_key(12), &display_cases())
+            .unwrap();
+        assert_eq!(narrowed.pixels().0, 96);
+        // Eight leave 64, under half: it would be drawn smaller than half the
+        // size of the text around it, so it is text.
+        assert_eq!(
+            Raster
+                .make("cases", &formula_key(8), &display_cases())
+                .err(),
+            Some(Undrawn::TooWide)
+        );
     }
 
     /// A picture `width` by `height` with nothing on it, so every pixel is

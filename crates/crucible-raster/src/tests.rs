@@ -446,6 +446,38 @@ fn a_picture_past_the_ceiling_is_rasterised_at_the_widest_the_ceiling_holds() {
 }
 
 #[test]
+fn a_size_in_an_absolute_unit_is_read_at_ninety_six_pixels_to_the_inch() {
+    // Each at its CSS value: an inch is 96 pixels, 72 points, 6 picas, 2.54
+    // centimetres and 25.4 millimetres. A width is rounded down to a pixel.
+    for (width, pixels) in [
+        ("5px", 5),
+        ("3pt", 4),
+        ("1pc", 16),
+        ("1in", 96),
+        ("10cm", 377),
+        ("10mm", 37),
+        ("88.065533pt", 117),
+    ] {
+        let svg = sized(width, "1in");
+        assert_eq!(raster_width(svg.as_bytes()), Ok(pixels), "{width}");
+        assert_eq!(
+            own_size(svg.as_bytes()).map(|(_, height)| height),
+            Ok(96.0),
+            "{width}"
+        );
+    }
+    // The height is read the same way, so the rows the ceiling is judged on
+    // are the rows the rasteriser draws.
+    let tall = sized("72pt", "2in");
+    let across = raster_width(tall.as_bytes()).expect("a size");
+    let _alone = alone();
+    assert_eq!(
+        rasterise(tall.as_bytes(), across, &[]).map(|pixels| (pixels.width(), pixels.height())),
+        Ok((96, 192))
+    );
+}
+
+#[test]
 fn a_picture_with_no_size_or_a_size_that_is_no_number_is_refused() {
     let sizeless = [
         r#"<svg xmlns="http://www.w3.org/2000/svg" height="10"/>"#.to_owned(),
@@ -454,7 +486,13 @@ fn a_picture_with_no_size_or_a_size_that_is_no_number_is_refused() {
         sized("wide", "10"),
         sized("10", "tall"),
         sized("", "10"),
-        sized("10px", "10"),
+        sized("10em", "10"),
+        sized("10", "10ex"),
+        sized("10%", "10"),
+        sized("10furlong", "10"),
+        sized("10 pt", "10"),
+        sized("pt", "10"),
+        sized("-10pt", "10"),
         sized("0", "10"),
         sized("10", "0"),
         sized("-10", "10"),
