@@ -1420,7 +1420,7 @@ impl<T: Terminal> Renderer<T> {
     }
 
     /// The paths of the images the answers named since this was last asked,
-    /// in the order they were named, at most [`NAMED_CAP`] of them: an image
+    /// in the order they were named, at most 64 of them: an image
     /// written in the answer's own markdown with a path, not an address.
     ///
     /// Asked when a turn ends, and before a tool's image is counted, so what
