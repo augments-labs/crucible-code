@@ -438,6 +438,9 @@ fn a_formula_put_back_where_no_engine_is_found_stays_text_and_nothing_is_read() 
 
         engine.kept(1);
         assert_eq!(answers(&mut engine, 1), [(1, None)], "{unavailable:?}");
+        // And one put back after the check said so.
+        engine.kept(3);
+        assert_eq!(answers(&mut engine, 1), [(3, None)], "{unavailable:?}");
         assert!(asked.lock().unwrap().is_empty(), "{unavailable:?}");
         assert!(stand_in.made().is_empty(), "{unavailable:?}");
     }
