@@ -5,7 +5,9 @@
 //! whole later wear the same frame and a change to the look is made once. The
 //! top edge carries the label -- what the block is -- and, where the block was
 //! not drawn as what it is, the reason, so a reader is never left to wonder why
-//! a diagram is showing as its source.
+//! a diagram is showing as its source. An image a turn named has no source to
+//! show, so the reason its picture is not there stands on the edge alone,
+//! without the words that say a block is shown as written.
 //!
 //! Everything here is quiet and none of it knows what is inside the frame:
 //! how a block's own rows are laid out, and how they wrap, is the block's.
@@ -51,7 +53,8 @@ impl Label {
     }
 }
 
-/// Why a block was not drawn as what it is, and is shown as it was written.
+/// Why a block was not drawn as what it is, and is shown as it was written;
+/// or, for an image a turn named, why its picture is not shown.
 ///
 /// Closed, so that whoever draws a block for a reason of its own has to add the
 /// reason here, and everything that tells a reader about one decides what to do
@@ -77,6 +80,21 @@ pub enum Undrawn {
     /// Its picture alone is more than every picture kept together may be, so
     /// it is drawn as text instead.
     TooLargeToKeep,
+    /// An image whose file is outside the workspace, under a rule that
+    /// refuses reading it, or not there: one reason for all three, so the
+    /// screen says no more about a file than the session may read of it.
+    ImageNotShown,
+    /// An image whose file, or its picture once decoded, is larger than an
+    /// image is read or drawn at.
+    ImageTooLarge,
+    /// An image whose bytes no decoder reads as a picture.
+    NotAnImage,
+    /// An image that was not read and decoded within its deadline.
+    NotReadInTime,
+    /// An image a tool read whose file no longer holds the bytes it read.
+    ChangedSinceRead,
+    /// An image named after the most a turn shows.
+    PastTurnImages,
 }
 
 impl Undrawn {
@@ -89,6 +107,32 @@ impl Undrawn {
             Self::NotText | Self::Unsupported(_) => "not drawn as text",
             Self::TooWide => "too wide to draw at this width",
             Self::TooLargeToKeep => "too large to keep as a picture",
+            Self::ImageNotShown => "not shown",
+            Self::ImageTooLarge => "too large",
+            Self::NotAnImage => "not an image",
+            Self::NotReadInTime => "not read in time",
+            Self::ChangedSinceRead => "changed since it was read",
+            Self::PastTurnImages => "past the eighth image in this turn",
+        }
+    }
+
+    /// Whether the block it is said of is shown as it was written: every
+    /// reason a block gives but an image's, which has nothing written to show.
+    #[must_use]
+    pub const fn written(self) -> bool {
+        match self {
+            Self::PastCap
+            | Self::NotHere
+            | Self::NotText
+            | Self::TooWide
+            | Self::Unsupported(_)
+            | Self::TooLargeToKeep => true,
+            Self::ImageNotShown
+            | Self::ImageTooLarge
+            | Self::NotAnImage
+            | Self::NotReadInTime
+            | Self::ChangedSinceRead
+            | Self::PastTurnImages => false,
         }
     }
 }
@@ -121,7 +165,9 @@ impl Frame {
                 parts.push(kind);
             }
             parts.push(refusal.words());
-            parts.push("shown as written");
+            if refusal.written() {
+                parts.push("shown as written");
+            }
         }
 
         let mut top = format!("{}{}", glyphs.square().0, glyphs.horizontal());
@@ -269,6 +315,35 @@ mod tests {
             frame("mermaid", refused, Glyphs::Ascii).top(),
             "+- mermaid - longer than this can hold - shown as written"
         );
+    }
+
+    #[test]
+    fn an_image_refused_is_named_on_its_edge_and_never_said_to_be_shown_as_written() {
+        let every = [
+            (Undrawn::ImageNotShown, "not shown"),
+            (Undrawn::ImageTooLarge, "too large"),
+            (Undrawn::NotAnImage, "not an image"),
+            (Undrawn::NotReadInTime, "not read in time"),
+            (Undrawn::ChangedSinceRead, "changed since it was read"),
+            (Undrawn::PastTurnImages, "past the eighth image in this turn"),
+        ];
+        for (refusal, words) in every {
+            assert!(!refusal.written(), "{refusal:?}");
+            assert_eq!(
+                frame("image · out/plot.png", Some(refusal), Glyphs::Unicode).top(),
+                format!("┌─ image · out/plot.png · {words}")
+            );
+        }
+        for kept in [
+            Undrawn::PastCap,
+            Undrawn::NotHere,
+            Undrawn::NotText,
+            Undrawn::TooWide,
+            Undrawn::Unsupported("pie"),
+            Undrawn::TooLargeToKeep,
+        ] {
+            assert!(kept.written(), "{kept:?}");
+        }
     }
 
     #[test]

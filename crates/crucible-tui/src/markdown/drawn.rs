@@ -80,6 +80,17 @@ pub(super) fn asked(block: &Block, room: Room, drawers: &Drawers, offers: Offers
             | Undrawn::TooLargeToKeep
             | Undrawn::Unsupported(_)),
         ) => Asked::Written(Some(refusal)),
+        // An image's reasons are the application's about a file, and no
+        // drawer has one to give about a fence: one that did is drawing
+        // nothing, and the fence is shown as written with nothing said.
+        Err(
+            Undrawn::ImageNotShown
+            | Undrawn::ImageTooLarge
+            | Undrawn::NotAnImage
+            | Undrawn::NotReadInTime
+            | Undrawn::ChangedSinceRead
+            | Undrawn::PastTurnImages,
+        ) => Asked::Written(None),
     }
 }
 

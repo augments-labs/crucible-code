@@ -93,6 +93,12 @@ fn a_framed_block_fits_the_window_it_stands_in() {
         Some(Undrawn::NotText),
         Some(Undrawn::TooWide),
         Some(Undrawn::Unsupported("pie")),
+        Some(Undrawn::ImageNotShown),
+        Some(Undrawn::ImageTooLarge),
+        Some(Undrawn::NotAnImage),
+        Some(Undrawn::NotReadInTime),
+        Some(Undrawn::ChangedSinceRead),
+        Some(Undrawn::PastTurnImages),
     ] {
         across("a frame", |columns, glyphs| {
             let frame = Frame {

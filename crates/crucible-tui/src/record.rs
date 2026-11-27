@@ -1228,7 +1228,13 @@ impl Record {
                     | Undrawn::NotText
                     | Undrawn::TooWide
                     | Undrawn::Unsupported(_)
-                    | Undrawn::TooLargeToKeep => key.palette,
+                    | Undrawn::TooLargeToKeep
+                    | Undrawn::ImageNotShown
+                    | Undrawn::ImageTooLarge
+                    | Undrawn::NotAnImage
+                    | Undrawn::NotReadInTime
+                    | Undrawn::ChangedSinceRead
+                    | Undrawn::PastTurnImages => key.palette,
                 };
                 PictureKey {
                     bucket: key.bucket,
