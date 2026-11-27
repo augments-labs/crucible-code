@@ -30,6 +30,7 @@ mod fake;
 mod freed;
 mod gathering;
 mod kept;
+mod math_engine;
 mod opening;
 pub(super) mod panicked;
 mod picture_cache;
@@ -55,7 +56,7 @@ use crucible_app::providers::{
     Providers, Served, available, chosen, providers, re_serving, re_sourcing, unasked,
 };
 use crucible_app::services::{Services, Unfinished};
-use crucible_app::startup::{self, Startup, assemble, served};
+use crucible_app::startup::{self, Startup, assemble_sharing, served};
 use crucible_app::subscription::Subscriptions;
 use crucible_auth::Store;
 use crucible_builtins::{Background, Ledger, Plan};
@@ -1421,7 +1422,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // Settled by the same rule that decides whether keys are read as they are
     // pressed: a screen with its input from a pipe has nobody to answer on it.
     let keyed = crucible_tui::keyed();
-    let conversation = assemble(&Startup {
+    let (conversation, sandbox) = assemble_sharing(&Startup {
         questions: dock_questions(keyed),
         services,
         leaving,
@@ -1445,8 +1446,15 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         from: &from,
         stored: &keys,
         subscriptions: &subscriptions,
-    })?
-    .remembering_caches_in(home.path());
+    })?;
+    let conversation = conversation.remembering_caches_in(home.path());
+    // Display formulas are made into pictures on the sandbox service the
+    // conversation's commands run on, by a task on its runtime, and handed
+    // back to the renderer as it rests.
+    renderer.makes_formulas(Box::new(math_engine::MathEngine::start(
+        &terms.runtime,
+        math_engine::checking(sandbox),
+    )));
     let outcome = converse::converse(
         conversation,
         &mut renderer,

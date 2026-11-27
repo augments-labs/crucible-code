@@ -1137,6 +1137,144 @@ fn a_formula_is_its_text_until_its_picture_comes_and_then_its_picture_on_a_full_
     assert!(after.contains(&placeholders(1, 1, 3)), "{after:?}");
 }
 
+/// A maker of formula pictures that answers what the test hands it.
+#[derive(Debug, Default, Clone)]
+struct Making(std::sync::Arc<std::sync::Mutex<Made>>);
+
+#[derive(Debug, Default)]
+struct Made {
+    told: Vec<crate::terminal::graphics::Formula>,
+    /// Every formula's source ever told, in order.
+    every: Vec<String>,
+    /// Whether each is answered with a picture as it is told.
+    at_once: bool,
+    turns: usize,
+    answers: std::collections::VecDeque<(
+        crate::terminal::graphics::Formula,
+        Option<crate::drawing::Svg>,
+    )>,
+}
+
+impl Making {
+    fn held(&self) -> std::sync::MutexGuard<'_, Made> {
+        self.0.lock().unwrap()
+    }
+}
+
+impl crate::terminal::graphics::Formulas for Making {
+    fn told(&mut self, formula: crate::terminal::graphics::Formula) {
+        let mut made = self.held();
+        made.every.push(formula.source().trim().to_owned());
+        if made.at_once {
+            made.answers.push_back((formula.clone(), Some(formula_picture())));
+        }
+        made.told.push(formula);
+    }
+
+    fn turns(&mut self) {
+        self.held().turns += 1;
+    }
+
+    fn answered(
+        &mut self,
+    ) -> Option<(crate::terminal::graphics::Formula, Option<crate::drawing::Svg>)> {
+        let mut made = self.held();
+        let answer = made.answers.pop_front()?;
+        made.told.retain(|told| *told != answer.0);
+        Some(answer)
+    }
+
+    fn pending(&self) -> bool {
+        !self.held().told.is_empty()
+    }
+}
+
+/// Two display formulas among prose, for cutting.
+const TWO_FORMULAS: &str = "Before.\n\n$$\nx^2\n$$\n\nBetween.\n\n$$\ny_1\n$$\n\nAfter.\n";
+
+/// Every formula told while [`TWO_FORMULAS`] streams in pieces cut at
+/// `cuts`, to a maker that answers each `at_once` or never.
+fn told_cut_at(cuts: &[usize], at_once: bool) -> Vec<String> {
+    let mut drawn = pictured(40, 12, Printed::new(3, 2, 300));
+    let making = Making::default();
+    making.held().at_once = at_once;
+    drawn.render.makes_formulas(Box::new(making.clone()));
+    drawn.render.landmark();
+    drawn.answer_in_pieces(TWO_FORMULAS, cuts);
+    drawn.render.waiting_from(Duration::from_millis(1), |_| Ok(false)).unwrap();
+    drawn.take();
+    let every = std::mem::take(&mut making.held().every);
+    drop(drawn);
+    every
+}
+
+/// The same formulas are told however the answer is cut: at each byte, at
+/// every byte, or not at all.
+fn told_the_same_however_cut(at_once: bool) {
+    let whole = told_cut_at(&[], at_once);
+    assert_eq!(whole, ["x^2", "y_1"]);
+    for cut in 1..TWO_FORMULAS.len() {
+        assert_eq!(told_cut_at(&[cut], at_once), whole, "cut at {cut}");
+    }
+    let every: Vec<usize> = (1..TWO_FORMULAS.len()).collect();
+    assert_eq!(told_cut_at(&every, at_once), whole, "cut at every byte");
+}
+
+#[test]
+fn formulas_are_told_the_same_however_the_answer_is_cut_to_a_maker_that_never_answers() {
+    told_the_same_however_cut(false);
+}
+
+#[test]
+fn formulas_are_told_the_same_however_the_answer_is_cut_to_a_maker_that_answers_at_once() {
+    told_the_same_however_cut(true);
+}
+
+#[test]
+fn a_formula_told_to_what_makes_pictures_is_shown_as_its_answer_once_a_wait_rests() {
+    // Nobody draws for the renderer: the picture made while the reader sits
+    // at the prompt is shown by the input wait, which rests while one is owed.
+    let mut drawn = pictured(40, 12, Printed::new(3, 2, 300));
+    let making = Making::default();
+    drawn.render.makes_formulas(Box::new(making.clone()));
+    drawn.render.landmark();
+    drawn.answer(FORMULA);
+    drawn.take();
+
+    assert!(drawn.render.formulas().is_empty(), "told to the maker instead");
+    let told = making.held().told.clone();
+    assert_eq!(
+        told.iter().map(|formula| formula.source().trim()).collect::<Vec<_>>(),
+        ["x^2"]
+    );
+    assert_eq!(making.held().turns, 1);
+    assert!(drawn.render.rests_in().is_some(), "a wait rests while it is owed");
+
+    let formula = told.first().expect("one formula").clone();
+    making.held().answers.push_back((formula, Some(formula_picture())));
+    assert!(!drawn.render.waiting_from(Duration::from_millis(1), |_| Ok(false)).unwrap());
+    let after = drawn.take();
+    assert_eq!(transmitted(&commands(&after)), [(1, printed_bytes(0, 300))]);
+    assert!(after.contains(&placeholders(1, 0, 3)), "{after:?}");
+    assert!(drawn.render.rests_in().is_none(), "nothing is owed any more");
+}
+
+#[test]
+fn a_formula_answered_with_no_picture_stays_its_text_and_is_owed_no_more() {
+    let mut drawn = pictured(40, 12, Printed::new(3, 2, 300));
+    let making = Making::default();
+    drawn.render.makes_formulas(Box::new(making.clone()));
+    drawn.answer(FORMULA);
+    drawn.take();
+    let formula = making.held().told.first().expect("one formula").clone();
+
+    making.held().answers.push_back((formula, None));
+    drawn.render.waiting_from(Duration::from_millis(1), |_| Ok(false)).unwrap();
+    let after = drawn.take();
+    assert!(commands(&after).is_empty(), "{after:?}");
+    assert!(drawn.render.rests_in().is_none());
+}
+
 #[test]
 fn a_formula_picture_handed_back_after_its_block_went_changes_nothing_on_screen() {
     let mut drawn = pictured(40, 12, Printed::new(3, 2, 300));

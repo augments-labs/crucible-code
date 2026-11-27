@@ -795,6 +795,30 @@ impl Formula {
     }
 }
 
+/// What makes the display formulas a renderer tells of into pictures, away
+/// from the drawing thread, and hands each picture back.
+///
+/// The renderer is its only caller, on the drawing thread: it tells each
+/// formula as its block closes, says when a new turn starts, and, while any
+/// formula told has no answer, looks for one each time an input wait rests,
+/// so a picture made while nothing else is drawn is still shown. Nothing here
+/// may wait: what makes a picture does it elsewhere.
+pub trait Formulas: fmt::Debug {
+    /// Takes `formula`, to be made into a picture and answered.
+    fn told(&mut self, formula: Formula);
+
+    /// Says a new turn started: what an earlier turn told and has not begun
+    /// to make stays its text.
+    fn turns(&mut self);
+
+    /// The next formula answered, with its picture, or `None` where it stays
+    /// its text; nothing when no answer has come.
+    fn answered(&mut self) -> Option<(Formula, Option<Svg>)>;
+
+    /// Whether a formula told has not been answered yet.
+    fn pending(&self) -> bool;
+}
+
 /// Everything a picture's bytes depend on besides its source: what kind of
 /// block it is, the window's width bucket, the palette it is worn in, the
 /// protocol it is encoded for and the cell it is fitted to.

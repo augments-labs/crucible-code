@@ -50,7 +50,9 @@ use crate::record::{Modes, Named, Record, Source};
 use crate::row::Row;
 use crate::scroll_rail::{self, ScrollRail};
 use crate::select::{self, Place, Taken, View};
-use crate::terminal::graphics::{Capability, Formula, Passthrough, Pictures, Protocol, Sent};
+use crate::terminal::graphics::{
+    Capability, Formula, Formulas, Passthrough, Pictures, Protocol, Sent,
+};
 use crate::terminal::keys::{Pressed, pressed, waiting};
 use crate::terminal::system::ResizeFlag;
 use crate::terminal::{Size, Terminal, TerminalError};
@@ -85,6 +87,11 @@ const NOTCH: i32 = 3;
 /// pointer back before more than a line or two has gone, quick enough that a
 /// reader who wants the paragraph above gets there without letting go.
 const CREEP: Duration = Duration::from_millis(60);
+
+/// How long an input wait rests before it looks again for a formula's
+/// picture while one is owed: soon enough that a picture made while the
+/// reader sits at the prompt is shown as it comes.
+const FORMULA_LOOK: Duration = Duration::from_millis(50);
 
 /// The most of a native window [`Renderer::room`] gives a panel standing over
 /// or in place of the box: half, rounded down.
@@ -518,6 +525,8 @@ pub struct Renderer<T: Terminal> {
     pointing: Option<(usize, usize)>,
     /// What may call off a wait on the keyboard, where anything may.
     recall: Option<Arc<dyn Recall>>,
+    /// What makes display formulas into pictures, where anything does.
+    formulas: Option<Box<dyn Formulas>>,
     /// What says the window changed size, where anything does.
     resizes: Option<ResizeFlag>,
     /// What the session draws pictures with.
@@ -621,6 +630,7 @@ impl<T: Terminal> Renderer<T> {
             creeps: None,
             pointing: None,
             recall: None,
+            formulas: None,
             resizes: None,
             images: Capability::Text,
             sent: Sent::default(),
@@ -1475,12 +1485,16 @@ impl<T: Terminal> Renderer<T> {
     /// names.
     pub fn landmark(&mut self) {
         self.record.landmark();
+        if let Some(formulas) = &mut self.formulas {
+            formulas.turns();
+        }
     }
 
     /// How long an input wait may sleep before a drag resting at an edge of
-    /// the transcript carries it another row, or a native window that changed
-    /// size has settled; not at all while a picture is part way out to the
-    /// terminal. `None` where none of them is pending.
+    /// the transcript carries it another row, a native window that changed
+    /// size has settled, or it looks for a formula's picture still owed; not
+    /// at all while a picture is part way out to the terminal. `None` where
+    /// none of them is pending.
     #[must_use]
     fn rests_in(&self) -> Option<Duration> {
         if self.sent.pending() && self.terminal.is_terminal() {
@@ -1488,13 +1502,16 @@ impl<T: Terminal> Renderer<T> {
         }
         let now = Instant::now();
         let creeps = self.creeps.map(|due| due.saturating_duration_since(now));
-        match (creeps, self.settles_in(now)) {
-            (Some(creeps), Some(settles)) => Some(creeps.min(settles)),
-            (creeps, settles) => creeps.or(settles),
-        }
+        let looks = self
+            .formulas
+            .as_ref()
+            .is_some_and(|formulas| formulas.pending())
+            .then_some(FORMULA_LOOK);
+        [creeps, self.settles_in(now), looks].into_iter().flatten().min()
     }
 
-    /// Does whatever fell due while an input wait slept: carries the
+    /// Does whatever fell due while an input wait slept: shows each formula's
+    /// picture made since, carries the
     /// transcript a row towards a drag resting at its edge, gives a native
     /// window that has settled at a new size what was kept, and sends the
     /// terminal the next part of a picture still going out.
@@ -1503,6 +1520,7 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the frame could not be drawn.
     fn repose(&mut self) -> Result<bool, TerminalError> {
+        self.answers()?;
         let crept = self.crept()?;
         self.settled(Instant::now())?;
         if self.sent.pending() {
@@ -1574,6 +1592,41 @@ impl<T: Terminal> Renderer<T> {
     pub fn pictures(&mut self, pictures: Box<dyn Pictures>) {
         self.record.pictures(pictures);
         self.relaid(self.glyphs);
+    }
+
+    /// Hands this renderer what makes each display formula it would show as
+    /// a picture into one, away from the drawing thread.
+    ///
+    /// From then on the renderer tells it each such formula as its block
+    /// closes, which [`Renderer::formulas`] then no longer returns, says a
+    /// turn has started when a prompt is marked, and shows each picture it
+    /// answers with as [`Renderer::formula_made`] would, looking for one
+    /// every time an input wait rests while any formula told is unanswered.
+    pub fn makes_formulas(&mut self, formulas: Box<dyn Formulas>) {
+        self.formulas = Some(formulas);
+    }
+
+    /// Tells what makes pictures each formula the record told of since.
+    fn tells(&mut self) {
+        if let Some(formulas) = &mut self.formulas {
+            for formula in self.record.formulas() {
+                formulas.told(formula);
+            }
+        }
+    }
+
+    /// Shows every picture answered since last looked.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be redrawn.
+    fn answers(&mut self) -> Result<(), TerminalError> {
+        while let Some((formula, svg)) = self.formulas.as_mut().and_then(|f| f.answered()) {
+            if let Some(svg) = svg {
+                self.formula_made(&formula, svg)?;
+            }
+        }
+        Ok(())
     }
 
     /// The display formulas closed since last asked that are shown as their
@@ -3044,6 +3097,7 @@ impl<T: Terminal> Renderer<T> {
 
     /// One frame.
     fn draw(&mut self) -> Result<(), TerminalError> {
+        self.tells();
         // A redirected run has already been given every byte, at the moment
         // each arrived. What is left is to make sure it has them.
         if !self.terminal.is_terminal() {
