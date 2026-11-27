@@ -747,6 +747,34 @@ are already waiting to be. In native mode it keeps every picture it was sent,
 since the scrollback still shows them, up to its own limit; past that it lets
 the oldest go, and their place in the scrollback is left blank.
 
+### Pictures kept between sessions
+
+Each diagram and formula drawn as a picture is also kept on disk, so a session
+picked up again with `--continue`, `--resume` or `/resume` shows it as the
+picture it was, without drawing it again. Putting a session back draws
+nothing afresh: a diagram with no picture kept for it comes back as its text,
+as it would where no pictures are drawn, and nothing is said about it. It is
+kept for the theme, colour depth, background, protocol and cell size it was
+drawn in, so a picture drawn in another of them is another entry, and one
+drawn in a terminal the session no longer runs in is simply not found.
+
+The cache is in a `pictures` directory in crucible's home, `~/.crucible/pictures/`,
+which [`CRUCIBLE_CODE_HOME`](sessions.md#where-they-are-kept) moves with the
+rest. It holds at most 32 MiB, and nothing older than 14 days: each write takes
+out the oldest entries until the new one fits, and each start takes it back
+within both bounds. A picture larger than 0.5 MiB is not kept. Two crucibles
+writing at once may each leave it one entry past 32 MiB until the next write.
+It is [yours alone](sessions.md#who-can-read-them), as session logs are.
+
+Nothing in it is needed: deleting the directory, or any file in it, only means
+the next session put back draws those diagrams as text. An entry that is cut
+short, changed, or reachable by another account is passed over and written
+again the next time that picture is drawn, and a cache that cannot be written,
+on a full or read-only disk, leaves every picture drawn as before. Writing it
+never holds up the screen: entries are written one at a time by a thread of
+their own, and one that would wait behind more than 0.5 MiB of others is
+dropped.
+
 A picture the transcript turns into pixels, whether an SVG diagram or a PNG,
 JPEG, GIF or WebP file, is bounded before it is read, and a picture past any
 bound is refused rather than shrunk or cut:
@@ -889,10 +917,12 @@ any other reason, with the reason after its path:
 | `past the eighth image in this turn` | Eight were already shown for this turn. |
 | `not redrawn on resume` | The session was picked up again, and its two seconds for putting pictures back were spent. |
 
-A session picked up with `--continue` or `--resume` shows again the 16 most
-recent images its turns named, at the end of what it puts back rather than
-under their own turns, for as long as two seconds last. An image is read when
-it is shown, and its PNG is kept only as the picture's own, under the bounds
-every picture has. <kbd>Ctrl+O</kbd> lists each image under the
+A session picked up with `--continue`, `--resume` or `/resume` shows again
+the 16 most recent images its turns named, at the end of what it puts back
+rather than under their own turns, for as long as two seconds last for all of
+them. An image is read when it is shown, and its PNG is kept only as the
+picture's own, under the bounds every picture has: it is never put in the
+[picture cache](#pictures-kept-between-sessions), so a session picked up
+reads each file again and shows what it holds now. <kbd>Ctrl+O</kbd> lists each image under the
 word `image`, by the path it was named by, whether it was shown or not, so one
 that was refused can still be found and opened by hand.

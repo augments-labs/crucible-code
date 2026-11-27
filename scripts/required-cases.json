@@ -16592,6 +16592,522 @@
         "linux",
         "macos"
       ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-DESIGN",
+      "family": "transcript-pictures",
+      "obligation": "Two pictures of one block differing only in design are two cache entries.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::two_blocks_differing_only_in_design_are_two_entries",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "ea7c867fcedd12723b78f2705eebd61d6659028fb25b966a15cc66b00938c67b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-DEPTH",
+      "family": "transcript-pictures",
+      "obligation": "Two pictures of one block differing only in colour depth are two cache entries.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::two_blocks_differing_only_in_colour_depth_are_two_entries",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "637f8987083110bca66d3ee0f009d4edb67e4d98e11b4453e1456cc0ac884420",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-GROUND",
+      "family": "transcript-pictures",
+      "obligation": "Two pictures of one block differing only in ground are two cache entries.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::two_blocks_differing_only_in_ground_are_two_entries",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "0d20577c298fbb5b17251913e8f69461dc77b91ffbc225f0610d9da4a7d5b000",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-CELL",
+      "family": "transcript-pictures",
+      "obligation": "Two pictures of one block differing only in cell pixel size are two cache entries.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::two_blocks_differing_only_in_cell_pixel_size_are_two_entries",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "6a4e6dae8bbf622400429fc936811b13ee2ee60f2ac872edca129c860cca91dc",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-BOUND-EVERY-WRITE",
+      "family": "transcript-pictures",
+      "obligation": "Every cache write holds it to its bound, oldest out first.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::every_write_holds_the_cache_to_its_bound_oldest_out_first",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "11da14ad4f734b51e9fb77e73168958c48bbbf81a5329bcc7c4904676e87e8a3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-AGE",
+      "family": "transcript-pictures",
+      "obligation": "A cache write takes out every entry past its age.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::a_write_takes_out_every_entry_past_its_age",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "9fbb20417dccd9a4ca0dcea34e3f2cd0baf4316a84348f8a4804a0a8a75f0078",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-TRIM-AT-START",
+      "family": "transcript-pictures",
+      "obligation": "The cache is taken back within its bounds at start.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::trim_at_start_takes_the_cache_back_within_its_bounds",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "b6262c6e1c0e8473c67982026b208a22ef61b1848dea149b43cb39d991b248c9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-DRAFTS",
+      "family": "transcript-pictures",
+      "obligation": "Drafts a write left half done are removed at start.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::trim_at_start_removes_the_drafts_a_write_left_half_done",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "73d54b6dbc137ac74e2498ad11115e7cfb9d845981098cad6087c21bf6366a3e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-TWO-PROCESSES",
+      "family": "transcript-pictures",
+      "obligation": "Two writers at once each land at most one entry past the bound.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::two_processes_writing_at_once_each_land_at_most_one_entry_past_the_bound",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "60ee9a92a8bca77d7bec3cca9d2ebd1f3172f26000735e1b8dab6b684caa0ddf",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-OWNER-MODES",
+      "family": "transcript-pictures",
+      "obligation": "The cache directory is 0700 and each entry 0600.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::the_directory_is_its_owners_alone_and_so_is_each_entry",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "ea9043401e06e33ce13f762a89df45fa98477586bbda6b11f00c1ac9ba9cb3dc",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-OWNER-ACL",
+      "family": "transcript-pictures",
+      "obligation": "A cache entry is written under the owner-only list and read back by its account.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::an_entry_stays_readable_by_the_account_that_wrote_it",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "6e3afaa06ccbd8f179ab262f8fc4a77e3637badf4b27d919d11625d2beaa25fb",
+      "platforms": [
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-TRUNCATED",
+      "family": "transcript-pictures",
+      "obligation": "A truncated cache entry is a miss and the next write replaces it.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::a_truncated_entry_is_a_miss_until_the_next_write_replaces_it",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "15386e9fe88bde5fc9922e30f73e95ee9c4075cd7990255af757e37ca0fa7e91",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-TAMPERED",
+      "family": "transcript-pictures",
+      "obligation": "A tampered cache entry is a miss and the next write replaces it.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::a_tampered_entry_is_a_miss_until_the_next_write_replaces_it",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "7033ee217a984a304b42097f017916c63a0a001f1df0a862ee9272f5648202ba",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-OTHER-KEY",
+      "family": "transcript-pictures",
+      "obligation": "An entry under another key's name is a miss.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::an_entry_under_another_keys_name_is_a_miss",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "47c3a55f5eec7618872d297f7b7e206ecab696bf173cb78b71b5e3fcea34c8e9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-OVERSIZE",
+      "family": "transcript-pictures",
+      "obligation": "An entry larger than the queue takes is refused before it is read.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::an_entry_larger_than_the_queue_takes_is_refused_before_it_is_read",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "2e036dc82dec5477f5452cee8d74a575e31ee9906c73c6175efec27bb4321681",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-WRONG-FORM",
+      "family": "transcript-pictures",
+      "obligation": "A payload that is not what its protocol says is a miss.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::a_payload_that_is_not_what_its_protocol_says_is_a_miss",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "e367ddd1411369d1ee500004759e3963fadc3a7d7d6c161d7a86007c1e55acd3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-LINKED-DIRECTORY",
+      "family": "transcript-pictures",
+      "obligation": "A linked cache directory is neither read nor written through.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::a_linked_directory_is_neither_read_nor_written_through",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "9bb6cc606be3c47573e7009ebe53ce5f766cedf9ed48812c6b85d5c7043b2d24",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-LINKED-ENTRY",
+      "family": "transcript-pictures",
+      "obligation": "A linked cache entry is a miss and the next write replaces the link.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::a_linked_entry_is_a_miss_and_the_next_write_replaces_the_link",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "0d3fd77b7b55aafa1f2669541ef8a8758827f10ccb66011c20634fc1ce4d3fd7",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-OPEN-TO-OTHERS",
+      "family": "transcript-pictures",
+      "obligation": "A cache entry or directory others may reach is a miss.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::an_entry_or_a_directory_others_may_reach_is_a_miss",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "29d9bc0f63e06fcfd47395337d9d06dd5e52d4d269bfd6743b9c9693a2a85506",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-UNWRITABLE",
+      "family": "transcript-pictures",
+      "obligation": "A cache that cannot be written draws as before and frees its queue.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::a_cache_that_cannot_be_written_draws_as_before_and_frees_its_queue",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "6d2beefd3513a4a59cdfa364148fcaf1f5272b7d61cd6890a6b912966b4b4840",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-FULL-QUEUE",
+      "family": "transcript-pictures",
+      "obligation": "A full queue drops the write and takes more once the writer has written.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::a_full_queue_drops_the_write_and_takes_more_once_the_writer_has_written",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "0a90a4bc7d61b2a9f0de12b1abf318a9f0ce45cf74367c0f62d360c5044fb03e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-NO-DISK-ON-QUEUE",
+      "family": "transcript-pictures",
+      "obligation": "Queueing a picture touches no disk until the writer runs.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::queueing_a_picture_touches_no_disk_until_the_writer_runs",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "4d1d289293384f629213c22ebfa9353a4e50d03080e060369093b0eb4d4874c5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-NO-IMAGE-FILES",
+      "family": "transcript-pictures",
+      "obligation": "An image file is never queued or kept in the picture cache.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::an_image_file_is_never_queued_or_kept",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "eace1fc634892ae1f5dca21f976d29e8e06cef64c55d4e30e42c47bf6ac73276",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-NO-IMAGE-FILES-ON-RESUME",
+      "family": "transcript-pictures",
+      "obligation": "An image file drawn live or put back leaves nothing in the picture cache.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::tests::images::an_image_file_drawn_live_or_put_back_leaves_nothing_in_the_picture_cache",
+      "source": "src/cli/converse/tests/images.rs",
+      "body_sha256": "3698c9b82f9818f30b57c8f63cc98c639ec6ecfeca331816221287e1859dc3aa",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-RESUME-FROM-CACHE",
+      "family": "transcript-pictures",
+      "obligation": "A session put back draws its diagrams from what an earlier run kept and draws nothing afresh.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::tests::images::a_session_put_back_draws_its_diagrams_from_what_an_earlier_run_kept",
+      "source": "src/cli/converse/tests/images.rs",
+      "body_sha256": "6ec25d5155fef61d856934b490addeebf556480ea17eb1003d6d7b410191542e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-RESUME-EMPTY-CACHE",
+      "family": "transcript-pictures",
+      "obligation": "A session put back with nothing kept draws its diagrams as text and says nothing.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::tests::images::a_session_put_back_with_nothing_kept_draws_its_diagrams_as_text_and_says_nothing",
+      "source": "src/cli/converse/tests/images.rs",
+      "body_sha256": "b09ddc4729c75867e5fe0c294c3a42e2719eb1463ce39e60324e61f7b1d09e44",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-RESUME-MANY",
+      "family": "transcript-pictures",
+      "obligation": "A long session put back draws every kept diagram and its images within their time.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::tests::images::a_long_session_put_back_draws_every_kept_diagram_and_its_images_within_their_time",
+      "source": "src/cli/converse/tests/images.rs",
+      "body_sha256": "5cedf20a21502e526130f3acb9d2ad5195d6b24c59325be712c879737711f68a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-RESUME-COMMAND-IMAGES",
+      "family": "transcript-pictures",
+      "obligation": "A session picked up by /resume draws the images its turns named.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::tests::images::a_session_picked_up_by_resume_draws_the_images_its_turns_named",
+      "source": "src/cli/converse/tests/images.rs",
+      "body_sha256": "ddd1b758257ae64d8d292fdbf4d850bd2b76332c6e6f78d615497058d75ad5f8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-RESUME-NO-DRAWER",
+      "family": "transcript-pictures",
+      "obligation": "While a session is put back a block not kept is drawn as its text and no drawer runs.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::a_session_put_back_draws_what_the_cache_kept_and_the_rest_as_text_with_no_drawer",
+      "source": "crates/crucible-tui/src/record.rs",
+      "body_sha256": "ace76124f9278090d075488e0449590b34274cf273cbad3c3a7c5e4256558df3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
     }
   ]
 }

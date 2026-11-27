@@ -439,6 +439,12 @@ counts. These previews are private display data and are never sent to the model.
 Older logs without preview bodies still show their recorded change counts;
 resume does not reread files or rerun tools to invent missing history.
 
+A diagram or formula drawn as a picture comes back as that picture where
+crucible [kept it](transcript.md#pictures-kept-between-sessions), and as its
+text where it did not; the images its turns named are read again from their
+files. Picking a session up with `/resume` draws both as `--continue` and
+`--resume` do.
+
 Questions the agent [asked without
 waiting](../tools/asking.md#asking-without-waiting) and you had not answered
 are waiting again once the resumed session's first turn starts. What you had
@@ -661,6 +667,12 @@ which is what the welcome reads and where a title from <kbd>Ctrl+R</kbd> is
 kept. Its `recent.sessions.lock` is the claim taken while it is rewritten, and
 like a log's holds nothing.
 
+The pictures crucible keeps so a session picked up shows its diagrams as they
+were drawn are in `~/.crucible/pictures/`, at most 32 MiB and none older than
+14 days, as [Pictures kept between
+sessions](transcript.md#pictures-kept-between-sessions) says. Deleting the
+directory is how you clear it; nothing else needs it.
+
 One more file sits beside them: `prompt.history`, holding the lines the arrow
 keys walk back through. It is one file for every directory rather than one per
 directory, so it cannot grow with the number of checkouts you work in, and each
@@ -727,6 +739,13 @@ that profile hands Administrators and SYSTEM does not reach a transcript merely
 by sitting above it. An administrator can still take ownership and read it, which
 is the same escape by a longer route and the honest limit of what a file
 permission promises on either system.
+
+The [picture cache](transcript.md#pictures-kept-between-sessions) holds
+pictures of what the model wrote, and is kept the same way: on Unix `0700` on
+its directory and `0600` on each entry, and on Windows the same list naming
+your account alone. On Unix an entry or a directory another account could
+reach, or one not owned by your account, is never read, and nothing is read
+or written through a symbolic link there.
 
 Both are set on every start and every `--continue`, not only when they are
 created, because a directory made by an earlier build or by hand keeps whatever

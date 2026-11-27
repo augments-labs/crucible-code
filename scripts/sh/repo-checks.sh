@@ -1728,7 +1728,10 @@ section "shipping source boundary"
 # purpose since: `src/main.rs` settles where the sandbox broker is looked for
 # before anything else runs, because only then does the executable's path still
 # name the release the process was started from, and the application is built
-# after that.
+# after that. Another: `src/cli/picture_cache.rs` keeps the pictures the terminal
+# drew owner-only through `crucible_privacy`, as a session log is kept, because
+# they are pictures of what the model wrote and the drawing is the terminal's,
+# not the application's.
 #
 # Files that compile only under test are left out, because a fixture has to
 # build the thing it stands in for -- which is why a test module that names one
@@ -1789,6 +1792,7 @@ src/cli/converse/resuming.rs crucible_session
 src/cli/converse/typing.rs crucible_builtins
 src/cli/draw.rs crucible_builtins
 src/cli/draw/opening.rs crucible_session
+src/cli/picture_cache.rs crucible_privacy
 src/cli/standing.rs crucible_builtins
 src/main.rs crucible_sandbox_local'
 concrete=$(grep -E ' crucible_(auth|builtins|privacy|provider|sandbox_broker|sandbox_local|session)$' <<<"$named")
