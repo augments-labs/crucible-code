@@ -2601,6 +2601,90 @@ mod tests {
     }
 
     #[test]
+    fn a_write_after_every_held_picture_was_placed_again_looks_up_none_of_them() {
+        // Placed again in its new cells, a picture is where the terminal
+        // holds it: the writes after look nothing up until another changes.
+        let mut resized = picture_of(3, 1);
+        let mut sent = Sent::default();
+        sent.wants(1);
+        sent.write(|id| (id == 1).then_some(&resized), &mut String::new());
+        resized.shown_in(1);
+        sent.reshaped();
+        let mut placed = String::new();
+        sent.write(|id| (id == 1).then_some(&resized), &mut placed);
+        assert!(
+            placed.contains("\x1b_Ga=p,U=1,i=1,c=5,r=1,q=2\x1b\\"),
+            "{placed:?}"
+        );
+
+        let looked = std::cell::Cell::new(0);
+        let mut next = String::new();
+        sent.write(
+            |id| {
+                looked.set(looked.get() + 1);
+                (id == 1).then_some(&resized)
+            },
+            &mut next,
+        );
+        assert_eq!(next, "");
+        assert_eq!(looked.get(), 0, "held pictures looked up");
+    }
+
+    #[test]
+    fn a_held_picture_whose_new_cells_do_not_fit_the_frame_is_placed_by_the_next() {
+        // A transmission cut by the frame's budget is carried on by the
+        // next: fifteen whole chunks go in the first frame, and fifteen more
+        // and a last of 960 base64 groups end the second with less room
+        // than one delete and one placement take.
+        fn two<'a>(first: &'a Payload, second: &'a Payload) -> impl Fn(u32) -> Option<&'a Payload> {
+            move |id| match id {
+                1 => Some(first),
+                2 => Some(second),
+                _ => None,
+            }
+        }
+
+        let chunk = MOST_CHUNK / 4 * 3;
+        let carried = picture_of(30 * chunk + 960 * 3, 7);
+        let mut resized = picture_of(3, 1);
+        let mut sent = Sent::default();
+        sent.wants(1);
+        sent.wants(2);
+        let mut first = String::new();
+        sent.write(two(&resized, &carried), &mut first);
+        assert!(
+            first.contains("\x1b_Ga=p,U=1,i=1,c=10,r=2,q=2\x1b\\"),
+            "picture 1 not placed"
+        );
+        assert!(
+            !first.contains("\x1b_Ga=p,U=1,i=2,"),
+            "picture 2 sent whole"
+        );
+
+        resized.shown_in(1);
+        sent.reshaped();
+        let unplaced = "a=d,d=i,i=1,q=2";
+        let replaced = "a=p,U=1,i=1,c=5,r=1,q=2";
+        let mut cut = String::new();
+        sent.write(two(&resized, &carried), &mut cut);
+        assert!(cut.contains("\x1b_Ga=p,U=1,i=2,"), "picture 2 not placed");
+        assert!(
+            room(&cut, 0) < sent.cost(unplaced, None) + sent.cost(replaced, None),
+            "room left for picture 1: {}",
+            room(&cut, 0)
+        );
+        assert!(!cut.contains("i=1,"), "picture 1 placed past the budget");
+
+        // Owed still: the next frame places it at its new cells, and only it.
+        let mut next = String::new();
+        sent.write(two(&resized, &carried), &mut next);
+        assert_eq!(
+            next,
+            format!("\x1b_G{unplaced}\x1b\\\x1b_G{replaced}\x1b\\")
+        );
+    }
+
+    #[test]
     fn a_key_differing_in_any_one_thing_a_picture_depends_on_is_another_key() {
         // A picture kept under one key is never shown under another, so each
         // thing its bytes depend on parts two keys on its own.

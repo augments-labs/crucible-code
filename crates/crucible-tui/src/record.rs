@@ -4070,6 +4070,24 @@ mod tests {
     }
 
     #[test]
+    fn a_picture_shown_in_other_cells_is_told_once_and_none_laid_since_is_never_told() {
+        // A yes has the frame look every picture the terminal holds up
+        // again, a walk over every line, so no is the answer wherever no
+        // picture has been laid out in other cells since it last asked.
+        let (fake, _) = fake(100, 20, vec![]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+        record.windowed(8, false);
+        record.drawn(picturing::diagram("a"), Glyphs::Unicode, Theme::Dark);
+        assert!(picturing::shown(&record, 0));
+        record.pictures_reshaped();
+        assert!(!record.pictures_reshaped(), "told with none laid since");
+
+        assert!(record.cycles(0), "no picture to show larger");
+        assert!(record.pictures_reshaped(), "not told");
+        assert!(!record.pictures_reshaped(), "told twice");
+    }
+
+    #[test]
     fn a_diagram_refused_its_picture_is_not_drawn_again_at_another_width() {
         // A width change encodes again only the pictures kept: a block
         // refused one is laid out again as its text, and neither the cache,
