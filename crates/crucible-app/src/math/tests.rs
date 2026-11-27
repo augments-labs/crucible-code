@@ -615,6 +615,35 @@ mod reached {
         }
     }
 
+    // What `/settings` says of a refused feature: words a user reads, never
+    // the enum's name. Every feature a TeX run's policy asks the backend for.
+    #[test]
+    fn a_refused_feature_is_named_in_words_not_by_its_enum_name() {
+        use SandboxFeature as F;
+        for (feature, words) in [
+            (F::DiskLimit, "disk limit"),
+            (F::ProcessLimit, "process limit"),
+            (F::MemoryLimit, "memory limit"),
+            (F::CpuLimit, "CPU-time limit"),
+            (F::OpenFileLimit, "open-file limit"),
+            (F::CommandTimeLimit, "run-time limit"),
+            (F::OutputLimit, "output limit"),
+            (F::Filesystem, "filesystem confinement"),
+            (F::NetworkDeny, "closed network"),
+            (F::DescriptorIsolation, "descriptor isolation"),
+            (F::ProcessIsolation, "process isolation"),
+            (F::KernelSurface, "kernel restriction"),
+            (F::PrivilegeIsolation, "privilege isolation"),
+            (F::Audit, "audit record"),
+            (F::Usage, "usage report"),
+        ] {
+            assert_eq!(
+                Unavailable::Refused(feature).to_string(),
+                format!("the sandbox cannot hold the {words} a TeX run needs"),
+            );
+        }
+    }
+
     // Row: no backend, injected at `prepare`.
     #[test]
     fn no_backend_at_prepare_is_no_backend() {

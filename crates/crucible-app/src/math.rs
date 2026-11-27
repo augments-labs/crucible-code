@@ -237,12 +237,11 @@ impl fmt::Display for Unavailable {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoBackend => out.write_str("no sandbox runs on this machine"),
-            Self::Refused(feature) => {
-                write!(
-                    out,
-                    "the sandbox cannot hold the {feature:?} a TeX run needs"
-                )
-            }
+            Self::Refused(feature) => write!(
+                out,
+                "the sandbox cannot hold the {} a TeX run needs",
+                held(*feature)
+            ),
             Self::SandboxRefused => out.write_str("the sandbox refused the TeX run"),
             Self::Unconfined => out.write_str("the sandbox would run TeX unconfined"),
             Self::ProgramMissing => {
@@ -251,6 +250,40 @@ impl fmt::Display for Unavailable {
             Self::TimedOut => out.write_str("the TeX check did not finish in time"),
             Self::NotReached => out.write_str("not checked yet: the sandbox was busy"),
         }
+    }
+}
+
+/// A feature the sandbox refused, in the words `/settings` shows. Every
+/// feature has words, so a new one makes this match decide; those a TeX run's
+/// policy never asks for are named all the same.
+const fn held(feature: SandboxFeature) -> &'static str {
+    match feature {
+        SandboxFeature::Filesystem => "filesystem confinement",
+        SandboxFeature::NetworkDeny => "closed network",
+        SandboxFeature::NetworkAllowlist => "network allowlist",
+        SandboxFeature::DescriptorIsolation => "descriptor isolation",
+        SandboxFeature::ProcessIsolation => "process isolation",
+        SandboxFeature::KernelSurface => "kernel restriction",
+        SandboxFeature::PrivilegeIsolation => "privilege isolation",
+        SandboxFeature::Materialization => "file staging",
+        SandboxFeature::CpuLimit => "CPU-time limit",
+        SandboxFeature::MemoryLimit => "memory limit",
+        SandboxFeature::DiskLimit => "disk limit",
+        SandboxFeature::ProcessLimit => "process limit",
+        SandboxFeature::OpenFileLimit => "open-file limit",
+        SandboxFeature::CommandTimeLimit => "run-time limit",
+        SandboxFeature::SessionTimeLimit => "session-time limit",
+        SandboxFeature::OutboundByteLimit => "outbound-byte limit",
+        SandboxFeature::OutputLimit => "output limit",
+        SandboxFeature::ConcurrencyLimit => "concurrency limit",
+        SandboxFeature::CostLimit => "cost limit",
+        SandboxFeature::Pty => "terminal",
+        SandboxFeature::FileOperations => "file operations",
+        SandboxFeature::Persistence => "persistent session",
+        SandboxFeature::Snapshot => "snapshots",
+        SandboxFeature::Resume => "resumed session",
+        SandboxFeature::Audit => "audit record",
+        SandboxFeature::Usage => "usage report",
     }
 }
 
