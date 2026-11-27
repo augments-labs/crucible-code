@@ -22,7 +22,8 @@
 //!   character it was, as is a bang a backslash stood in front of. One whose
 //!   target is a path, written in prose, is also named, in order and up to
 //!   [`NAMED_CAP`], for the front end to ask the application for once the
-//!   turn ends; one at an address is a link alone.
+//!   turn ends; one at an address, or at a path that opens with two
+//!   separators and so names another host or a device, is a link alone.
 //! - A link in a table's cell is drawn as the paragraph around the table
 //!   would draw it, against the same forge, but with no quiet address after
 //!   it: a column has no room to spare, and the whole address stays in the
@@ -446,8 +447,11 @@ pub(super) fn target(between: &str) -> &str {
 }
 
 /// Whether `target` is written as a path rather than an address: not empty,
-/// and neither opening with a scheme -- letters, then a colon -- nor with
-/// `www.`. An image at an address is a link and is never fetched.
+/// and opening neither with a scheme -- letters, then a colon -- nor with
+/// `www.`, nor with two separators. An image at an address is a link and is
+/// never fetched, and two separators, `\\` or `//` in any mix, are another
+/// host's share or a device on Windows, which resolving the path would reach
+/// before anything could refuse it.
 fn local(target: &str) -> bool {
     let scheme = target.split_once(':').is_some_and(|(scheme, _)| {
         scheme.len() > 1
@@ -455,5 +459,8 @@ fn local(target: &str) -> bool {
                 .chars()
                 .all(|at| at.is_ascii_alphanumeric() || matches!(at, '+' | '-' | '.'))
     });
-    !target.is_empty() && !scheme && !target.starts_with(WWW)
+    let separator = |at: u8| matches!(at, b'/' | b'\\');
+    let host =
+        matches!(target.as_bytes(), [first, second, ..] if separator(*first) && separator(*second));
+    !target.is_empty() && !scheme && !host && !target.starts_with(WWW)
 }

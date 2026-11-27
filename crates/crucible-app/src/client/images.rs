@@ -6,9 +6,12 @@
 //! Everything about the file is hostile, the path first of all, so the order is
 //! fixed and each step refuses before the next one runs:
 //!
-//! 1. The path is resolved by [`Workspace::existing`], which is what the read
-//!    tool resolves it by. A path that leaves the workspace, a link that leads
-//!    out of it, and a file that is not there all stop here.
+//! 1. A path that opens with two separators, `\\` or `//` in any mix, is
+//!    refused from its words alone: on Windows it names another host's share
+//!    or a device, and resolving it would reach the host first. Every other
+//!    path is resolved by [`Workspace::existing`], which is what the read tool
+//!    resolves it by. A path that leaves the workspace, a link that leads out
+//!    of it, and a file that is not there all stop here.
 //! 2. The permission engine decides the call the read tool would make for that
 //!    path, with the sensitivity the read tool would give it. Whoever asks is
 //!    never put a question: an `ask` rule is answered `deny`, so a picture
@@ -28,9 +31,10 @@
 //!   are one refusal, [`ImageRefused::NotShown`], so a client cannot tell which
 //!   it was and learns nothing about a file it may not read. Every other reason
 //!   is told only about a file the engine allowed.
-//! - Nothing is fetched from the network, and nothing is remembered: a decision
-//!   is asked for each image with [`Remember::Never`], and the PNG is handed
-//!   back and kept nowhere here.
+//! - Nothing is fetched from the network, since no path that could name
+//!   another host is resolved, and nothing is remembered: a decision is asked
+//!   for each image with [`Remember::Never`], and the PNG is handed back and
+//!   kept nowhere here.
 //! - How many images a turn shows is the front end's to count, at most
 //!   [`PER_TURN`]; this answers one request at a time and counts nothing.
 
@@ -76,9 +80,9 @@ const CHUNK: usize = 64 * 1024;
 ///
 /// # Errors
 ///
-/// [`ImageRefused::NotShown`] for a path outside the workspace, one a rule
-/// refuses or puts a question about, and a file that is not there or cannot be
-/// read; for a file the engine allowed, [`ImageRefused::TooLarge`] past
+/// [`ImageRefused::NotShown`] for a path that opens with two separators, one
+/// outside the workspace, one a rule refuses or puts a question about, and a
+/// file that is not there or cannot be read; for a file the engine allowed, [`ImageRefused::TooLarge`] past
 /// [`MOST_INPUT`] bytes or past what the decoder or encoder hold,
 /// [`ImageRefused::NotAnImage`] for bytes no decoder reads,
 /// [`ImageRefused::NotInTime`] past [`DEADLINE`], and
@@ -91,6 +95,9 @@ pub async fn show(
 ) -> Result<Shown, ImageRefused> {
     let started = Instant::now();
     let requested = image.path().as_str();
+    if elsewhere(requested) {
+        return Err(ImageRefused::NotShown);
+    }
     let path = workspace
         .existing(requested)
         .map_err(|_| ImageRefused::NotShown)?;
@@ -113,6 +120,14 @@ pub async fn show(
         return Err(ImageRefused::Changed);
     }
     pictured(taken.bytes(), started)
+}
+
+/// Whether `requested` opens with two separators, in any mix of `\` and `/`:
+/// another host's share or a device on Windows, such as `\\host\share` or
+/// `\\?\UNC\host`, which only resolving it would tell from a local path.
+fn elsewhere(requested: &str) -> bool {
+    let separator = |at: u8| matches!(at, b'/' | b'\\');
+    matches!(requested.as_bytes(), [first, second, ..] if separator(*first) && separator(*second))
 }
 
 /// The file `approved` was settled about, read whole within [`MOST_INPUT`]

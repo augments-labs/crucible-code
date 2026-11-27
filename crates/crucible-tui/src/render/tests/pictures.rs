@@ -1528,6 +1528,24 @@ fn an_answer_names_its_images_by_path_in_order_and_never_an_address() {
 }
 
 #[test]
+fn an_image_written_at_another_host_or_a_device_is_never_named() {
+    // A path that opens with two separators, in any mix, is a host's share or
+    // a device on Windows, and resolving it reaches the network before any
+    // refusal could: the answer's words alone must ask for none of them.
+    let mut drawn = reading(100, 8);
+    drawn.answer(
+        "![a](\\\\host\\share\\a.png) ![b](//host/share/b.png) \
+         ![c](\\\\?\\UNC\\host\\share\\c.png) ![d](\\\\.\\pipe\\x) \
+         ![e](/\\host\\e.png) ![f](\\/host/f.png) ![kept](./kept.png)\n",
+    );
+
+    assert_eq!(
+        drawn.render.named_images(),
+        ["./kept.png".into()] as [Box<str>; 1]
+    );
+}
+
+#[test]
 fn the_images_an_answer_named_before_a_tool_call_are_kept_across_it() {
     // A tool call settles the reader the answer was read by, which is where
     // what it named is kept from.

@@ -151,6 +151,41 @@ fn outside_the_workspace_under_a_read_rule_and_missing_are_one_refusal_byte_for_
 }
 
 #[test]
+fn a_path_at_another_host_or_a_device_is_refused_before_anything_resolves_it() {
+    // On Windows each of these is a host's share or a device, and resolving it
+    // opens a session to the host before any refusal. Here each is a picture
+    // that would be shown -- a file of that very name, or the workspace's own
+    // file under a doubled slash -- so only a refusal made from the words
+    // alone, before the path is resolved, gives `NotShown`.
+    let (sample, workspace) = tree("images-hosts");
+    let root = sample.root();
+    let doubled = format!("/{}", root.join("a.png").to_string_lossy());
+    let named = [
+        r"\\host\share\a.png",
+        r"\\?\UNC\host\share\a.png",
+        r"\\.\pipe\x",
+    ];
+    if cfg!(unix) {
+        for name in named {
+            fs::write(root.join(name), picture()).expect("a picture by that name");
+        }
+        fs::create_dir_all(root.join(r"\").join("host")).expect("a directory");
+        fs::write(root.join(r"\").join("host").join("f.png"), picture()).expect("a picture");
+    }
+    let mut spelled = vec![doubled.as_str(), r"\/host/f.png", "//host/share/a.png"];
+    spelled.extend(named);
+    let answered: Vec<_> = spelled
+        .iter()
+        .map(|spelled| (*spelled, shown(&workspace, &[], &answer(spelled)).err()))
+        .collect();
+    let refused: Vec<_> = spelled
+        .iter()
+        .map(|spelled| (*spelled, Some(ImageRefused::NotShown)))
+        .collect();
+    assert_eq!(answered, refused);
+}
+
+#[test]
 fn an_ask_rule_is_answered_no_and_puts_no_question() {
     let (_sample, workspace) = tree("images-ask");
     let rules = [(Disposition::Ask, "read(secret/**)")];
