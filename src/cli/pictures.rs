@@ -184,7 +184,7 @@ const fn refusal(refused: Refused) -> Undrawn {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crucible_tui::drawing::{Bucket, Mode, Svg};
     use crucible_tui::graphics::{Capability, Cell, Protocol};
@@ -200,7 +200,7 @@ mod tests {
     /// Every test here takes the one decode slot in the process, and one of
     /// them holds it on purpose: they take turns, so none is refused for
     /// another's sake.
-    static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+    pub(crate) static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 
     /// The cell every test's window draws in.
     const CELL: Cell = Cell {

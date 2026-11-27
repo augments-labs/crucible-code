@@ -10,6 +10,11 @@
 //! file contents. Display history is streamed a message batch at a time so it
 //! does not create a second session-sized transcript in memory.
 //!
+//! The images the session's turns named are gathered as the walk meets them,
+//! the most recent of them only, and handed back to be read and drawn once the
+//! walk is over: reading one asks the application, which this walk does not
+//! hold, so they stand under the last turn rather than under their own.
+//!
 //! An installed agent's turn comes back with the steps the log kept beside its
 //! answer, and is drawn as the live turn drew it: its words up to each step,
 //! each call over what it came back with, its lookups counted into one line
@@ -28,7 +33,7 @@ use crucible_tui::{Recording, Renderer, Row, Slot, Terminal, clip};
 use crucible_types::{Diff, Message, RECAP, StopReason, ToolId};
 
 use crate::cli::Fatal;
-use crate::cli::converse::{Terms, settling};
+use crate::cli::converse::{Named, Naming, Terms, settling};
 use crate::cli::draw;
 use crate::cli::gathering::Gathering;
 use crate::cli::kept::{Kept, Log};
@@ -42,7 +47,8 @@ use crate::cli::style::Style;
 /// which would say the user wrote them.
 const NOTES: &str = "notes on everything before this";
 
-/// Puts what a session already said back on the screen.
+/// Puts what a session already said back on the screen, and hands back the
+/// most recent images its turns named, in the order they named them.
 ///
 /// Original log records are committed to scrollback through the live builders.
 /// The model transcript is only a fallback for sessions without a log.
@@ -56,8 +62,10 @@ pub(super) fn replayed<T: Terminal>(
     against: &Replay<'_>,
     session: &Arc<Session>,
     kept: &mut Kept,
-) -> Result<(), Fatal> {
+) -> Result<Vec<Named>, Fatal> {
     logging(kept, session);
+    let mut naming = Naming::recent();
+    let naming = &mut naming;
     if let Some(history) = session.display_history()? {
         let pruned = Pruned::default();
         let original = Replay {
@@ -65,15 +73,17 @@ pub(super) fn replayed<T: Terminal>(
             style: against.style,
             pruned: &pruned,
         };
-        return streamed(renderer, history, &original, session, kept);
+        streamed(renderer, history, &original, session, (kept, naming))?;
+    } else {
+        walked(
+            renderer,
+            against.settled.transcript().messages(),
+            &Previews::new(),
+            against,
+            (kept, naming),
+        )?;
     }
-    walked(
-        renderer,
-        against.settled.transcript().messages(),
-        &Previews::new(),
-        against,
-        kept,
-    )
+    Ok(naming.taken(renderer))
 }
 
 /// Sets where the rows of `session` read their results back from: its log,
@@ -142,7 +152,7 @@ fn streamed<T: Terminal>(
     mut history: DisplayHistory,
     against: &Replay<'_>,
     session: &Session,
-    kept: &mut Kept,
+    (kept, naming): (&mut Kept, &mut Naming),
 ) -> Result<(), Fatal> {
     let mut pending: Option<(Message, Previews)> = None;
     while let Some(item) = history.next() {
@@ -162,13 +172,13 @@ fn streamed<T: Terminal>(
                 ..
             } if !steps.is_empty() && calls.is_empty() => {
                 if let Some((earlier, previews)) = pending.take() {
-                    walked(renderer, &[earlier], &previews, against, kept)?;
+                    walked(renderer, &[earlier], &previews, against, (kept, naming))?;
                 }
                 acted(renderer, steps, (&text, stop), against.style, kept)?;
             }
             DisplayItem::Agent(steps) => {
                 if let Some((earlier, previews)) = pending.take() {
-                    walked(renderer, &[earlier], &previews, against, kept)?;
+                    walked(renderer, &[earlier], &previews, against, (kept, naming))?;
                 }
                 acted(renderer, steps, ("", None), against.style, kept)?;
             }
@@ -181,7 +191,7 @@ fn streamed<T: Terminal>(
                 // are drawn ahead of it, which is where they were taken.
                 if !steps.is_empty() {
                     if let Some((earlier, previews)) = pending.take() {
-                        walked(renderer, &[earlier], &previews, against, kept)?;
+                        walked(renderer, &[earlier], &previews, against, (kept, naming))?;
                     }
                     acted(renderer, steps, ("", None), against.style, kept)?;
                 }
@@ -202,16 +212,28 @@ fn streamed<T: Terminal>(
                         // batch, so the previews the results carry travel with
                         // it: only one of the two messages ever holds any.
                         kept_previews.extend(previews);
-                        walked(renderer, &[earlier, message], &kept_previews, against, kept)?;
+                        walked(
+                            renderer,
+                            &[earlier, message],
+                            &kept_previews,
+                            against,
+                            (kept, naming),
+                        )?;
                         continue;
                     }
-                    walked(renderer, &[earlier], &kept_previews, against, kept)?;
+                    walked(
+                        renderer,
+                        &[earlier],
+                        &kept_previews,
+                        against,
+                        (kept, naming),
+                    )?;
                 }
                 pending = Some((message, previews));
             }
             DisplayItem::Compacted(details) => {
                 if let Some((earlier, previews)) = pending.take() {
-                    walked(renderer, &[earlier], &previews, against, kept)?;
+                    walked(renderer, &[earlier], &previews, against, (kept, naming))?;
                 }
                 renderer.apart()?;
                 renderer.present(&draw::compacted_rows(
@@ -222,7 +244,7 @@ fn streamed<T: Terminal>(
             }
             DisplayItem::LegacyCompacted { replaced } => {
                 if let Some((earlier, previews)) = pending.take() {
-                    walked(renderer, &[earlier], &previews, against, kept)?;
+                    walked(renderer, &[earlier], &previews, against, (kept, naming))?;
                 }
                 renderer.apart()?;
                 let detail = if replaced == 0 {
@@ -236,13 +258,13 @@ fn streamed<T: Terminal>(
                 // Old /clear reset model context but left terminal scrollback
                 // and its result offers visible. Only message grouping ends.
                 if let Some((earlier, previews)) = pending.take() {
-                    walked(renderer, &[earlier], &previews, against, kept)?;
+                    walked(renderer, &[earlier], &previews, against, (kept, naming))?;
                 }
             }
         }
     }
     if let Some((earlier, previews)) = pending {
-        walked(renderer, &[earlier], &previews, against, kept)?;
+        walked(renderer, &[earlier], &previews, against, (kept, naming))?;
     }
     renderer.settle()?;
     Ok(())
@@ -295,7 +317,7 @@ pub(super) fn glimpsed(
         messages,
         &Previews::new(),
         against,
-        &mut Kept::default(),
+        (&mut Kept::default(), &mut Naming::default()),
     )?;
 
     Ok(renderer.tail(most))
@@ -307,7 +329,7 @@ fn walked<T: Terminal>(
     messages: &[Message],
     previews: &Previews,
     against: &Replay<'_>,
-    kept: &mut Kept,
+    (kept, naming): (&mut Kept, &mut Naming),
 ) -> Result<(), Fatal> {
     // Counted before a row goes down, because the first row of a run is the
     // one that says how long the run is.
@@ -317,7 +339,7 @@ fn walked<T: Terminal>(
     };
 
     for message in messages {
-        said(renderer, against, kept, &mut batch, message)?;
+        said(renderer, against, (kept, naming), &mut batch, message)?;
     }
 
     // A call the log never answered -- the session ended while it was out --
@@ -376,7 +398,7 @@ impl<'a> Replay<'a> {
 fn said<T: Terminal>(
     renderer: &mut Renderer<T>,
     against: &Replay<'_>,
-    kept: &mut Kept,
+    (kept, naming): (&mut Kept, &mut Naming),
     batch: &mut Batch<'_>,
     message: &Message,
 ) -> Result<(), Fatal> {
@@ -430,6 +452,7 @@ fn said<T: Terminal>(
             // presented, and a line still open is one the row under it would be
             // written into the middle of.
             renderer.settle()?;
+            naming.answered(renderer);
 
             // The line the footing was drawing while the tool was out, with the
             // motion gone — which is the line that joined the transcript when it
@@ -443,6 +466,7 @@ fn said<T: Terminal>(
                 // a result whose call was never named would open under a heading
                 // nobody wrote.
                 kept.calling(call.id.clone(), line.text().to_owned());
+                naming.calling(&call.id, &call.name);
 
                 // A call in a folded run has no row of its own: the line the
                 // run came to stands where the first of those rows would have,
@@ -477,6 +501,7 @@ fn said<T: Terminal>(
         // call did is already looking.
         Message::ToolResults(results) => {
             for result in results {
+                naming.came_back(renderer, &result.id, result.output.attachments());
                 // Through the door the turn drew it through, which is what makes
                 // the row that comes back the row that went down: lit where it
                 // was cut, and holding the lines it was cut from where the key

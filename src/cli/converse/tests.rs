@@ -1541,6 +1541,7 @@ mod cache;
 mod command;
 mod fast;
 mod held;
+mod images;
 mod login;
 mod plan_limit;
 mod question;
