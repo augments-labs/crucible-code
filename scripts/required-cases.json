@@ -15967,7 +15967,7 @@
     {
       "id": "CASE-TRANSCRIPT-PICTURE-SIZES-HELD-UNLOOKED",
       "family": "transcript-picture-sizes",
-      "obligation": "A frame after which no picture changed cells looks up none of the pictures the terminal holds, so what a frame costs does not grow with the session.",
+      "obligation": "A `Sent` holding a Kitty picture, and not told since it placed it that any picture changed cells, looks up none of the pictures it holds in its next write and writes nothing.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
@@ -15976,6 +15976,60 @@
       "case": "terminal::graphics::tests::a_frame_after_no_picture_changed_cells_looks_up_none_of_those_held",
       "source": "crates/crucible-tui/src/terminal/graphics.rs",
       "body_sha256": "c9296af44815cb7e9762ad8079a7b5035a6b61ced9aea17aac3b638aa98177c3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-PLACED-UNLOOKED",
+      "family": "transcript-picture-sizes",
+      "obligation": "After a `Sent` told a held Kitty picture changed cells places it at its new cells in one write, its next write looks up none of the pictures it holds and writes nothing.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::a_write_after_every_held_picture_was_placed_again_looks_up_none_of_them",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "357cae14806eed80d8f81c0982044cfce5e03432dccefe365ab91091b9baed76",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-BUDGET-RETRIED",
+      "family": "transcript-picture-sizes",
+      "obligation": "When a transmission carried over from the frame before leaves a write less room than one delete and one placement, a held Kitty picture told to have changed cells is not placed again in that write, and the next write deletes its placement and places it at its new cells, and writes nothing else.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::a_held_picture_whose_new_cells_do_not_fit_the_frame_is_placed_by_the_next",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "2f92a0d92a91db5e9434d8c16b02a0c8395f1a2050586cfac57c6a0b96dae2f3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-SIZES-RESHAPE-TOLD",
+      "family": "transcript-picture-sizes",
+      "obligation": "A record asked whether a picture it keeps was shown in other cells answers no when none has been laid out since it was last asked, yes once a kept Kitty picture's size is cycled, and no when asked again.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::a_picture_shown_in_other_cells_is_told_once_and_none_laid_since_is_never_told",
+      "source": "crates/crucible-tui/src/record.rs",
+      "body_sha256": "5c6e93879f16c608212c00dabbfa6f003aded9830d69d5e37ee911509cc50e95",
       "platforms": [
         "linux",
         "macos",
