@@ -37,7 +37,10 @@
 //! believe the rest of the time. `←→ result 2 of 7` is said only where there is
 //! both a window to move and another item to move it to, and counts the
 //! item at the top of the window, newest first: `←→ source 2 of 3` once that
-//! item is a source, counted among the sources and not among everything. Where the row is wider than
+//! item is a source, counted among the sources and not among everything.
+//! `enter to resize` is said only where the caller says Enter resizes the item
+//! at the top of the window, a picture's source in a full screen, and stands
+//! next to the way out, scrolling or not. Where the row is wider than
 //! the window it loses whole segments from the right, so what is left still
 //! says something true, and `esc to close` is the one it never loses. Its
 //! arrows and the mark parting its segments are the session's glyphs, so with
@@ -56,6 +59,9 @@ const CHROME: usize = 4;
 
 /// The one key always worth naming.
 const CLOSE: &str = "esc to close";
+
+/// The key that resizes a picture at the top of the window.
+const RESIZE: &str = "enter to resize";
 
 /// The keys that move the window, named where it did not reach the end, after
 /// the arrows that walk it.
@@ -173,12 +179,32 @@ impl Expanded<'_> {
     pub fn within_measured(
         &self,
         lengths: &[usize],
+        size: Size,
+        glyphs: Glyphs,
+        sources: usize,
+    ) -> Vec<Row> {
+        self.within_resizing(lengths, size, glyphs, sources, |_| false)
+    }
+
+    /// [`Expanded::within_measured`], for a caller whose Enter resizes some of
+    /// the items: `resizes` is asked once, of the item at the top of the
+    /// window, counted from nought in [`Expanded::shown`], and the footer
+    /// names `enter to resize` only where it answers yes.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    // The four `within_measured` takes and the one question only a caller
+    // whose Enter resizes can answer: a struct for the two last would exist
+    // only to satisfy the count.
+    pub fn within_resizing(
+        &self,
+        lengths: &[usize],
         Size {
             columns,
             rows: room,
         }: Size,
         glyphs: Glyphs,
         sources: usize,
+        resizes: impl FnOnce(usize) -> bool,
     ) -> Vec<Row> {
         let Some(held) = room.checked_sub(CHROME).filter(|held| *held > 0) else {
             return Vec::new();
@@ -236,6 +262,7 @@ impl Expanded<'_> {
             at: top,
             of: self.shown.len(),
             sources,
+            resizes: resizes(top.saturating_sub(1)),
         };
         let footer = footer(scrolls, at, columns, glyphs);
         rows.push(Row::new().then(Slot::Quiet, footer));
@@ -273,32 +300,43 @@ fn lay(at: usize, shown: &Shown<'_>, columns: usize, rows: &mut Vec<Row>) {
 }
 
 /// Which item is at the top of the window, counted from one with the newest as
-/// one, and of how many; the last `sources` of the items are sources.
+/// one, and of how many; the last `sources` of the items are sources; and
+/// whether Enter resizes it.
 #[derive(Clone, Copy)]
 struct Top {
     at: usize,
     of: usize,
     sources: usize,
+    resizes: bool,
 }
 
 /// The row under the window, saying only what is true of it: the way out, the
-/// keys that move the window where there is somewhere to move it, and which
-/// item is at its top where there is another to step to: a result among the
-/// results, or a source among the sources.
+/// key that resizes the item at its top where it is a picture, the keys that
+/// move the window where there is somewhere to move it, and which item is at
+/// its top where there is another to step to: a result among the results, or
+/// a source among the sources.
 fn footer(scrolls: bool, top: Top, columns: usize, glyphs: Glyphs) -> String {
     let Top {
         at: top,
         of,
         sources,
+        resizes,
     } = top;
     // A window too narrow even for the way out keeps as much of it as fits,
     // and nothing after it.
     let mut said = clip(CLOSE, columns).to_owned();
+    let parted = format!(" {} ", glyphs.dot());
+    // Whether or not the window moves: the picture is there to resize either
+    // way, and a key named only some of the time would read as one that
+    // works only some of the time.
+    if resizes && wide(&said) + wide(&parted) + wide(RESIZE) <= columns {
+        said.push_str(&parted);
+        said.push_str(RESIZE);
+    }
     if !scrolls {
         return said;
     }
 
-    let parted = format!(" {} ", glyphs.dot());
     let (up, down) = glyphs.walking();
     let (newer, older) = glyphs.stepping();
     let more = format!("{up}{down} {MORE}");

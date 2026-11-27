@@ -130,16 +130,23 @@ pub(super) fn stand<T: Terminal, S>(
 /// transcript drew reads their sources where the record keeps them, and the
 /// loop owns the renderer, so a closure that captured it could not be given
 /// it again to draw with. What `laid` lends from it ends when it answers.
+/// `while_waiting` is given it on each pass, as [`stand_while`]'s is, before
+/// the frame is drawn: the view resizes a picture there that a key asked for.
 ///
 /// # Errors
 ///
 /// [`Fatal::Terminal`] if the terminal could not be drawn on or read from.
+#[allow(clippy::too_many_arguments)]
+// The five `stand` takes and the drain `stand_while` takes, for the reason it
+// gives its six: each is a distinct thing the loop owns, and a struct for them
+// would exist only to satisfy the count.
 pub(super) fn stand_reading<T: Terminal, S>(
     renderer: &mut Renderer<T>,
     style: impl Fn(&S) -> Style,
     state: &mut S,
     laid: impl FnMut(&Renderer<T>, &mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
     keys: impl Fn(Pressed, &mut S) -> Moved,
+    while_waiting: impl FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<Ended, Fatal> {
     standing(
         renderer,
@@ -148,7 +155,7 @@ pub(super) fn stand_reading<T: Terminal, S>(
         state,
         laid,
         keys,
-        |_| Ok(()),
+        while_waiting,
         None::<(Duration, fn(&mut S) -> Moved)>,
     )
 }

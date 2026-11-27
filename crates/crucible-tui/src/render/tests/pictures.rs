@@ -53,6 +53,20 @@ pub(in crate::render) struct Printed {
     /// Whether each picture's bytes count up from the red of the ground it
     /// is laid over, rather than from how many came before it.
     worn: bool,
+    /// What a picture's `bytes` are for.
+    grows: Grows,
+}
+
+/// What each `bytes` of a [`Printed`] picture is for.
+#[derive(Clone, Copy)]
+enum Grows {
+    /// The whole picture.
+    Not,
+    /// Each row it covers.
+    ByRow,
+    /// Each row it covers and each column of the width it is fitted to, as a
+    /// bitmap drawn for a wider window is larger.
+    ByCell,
 }
 
 impl Printed {
@@ -64,6 +78,24 @@ impl Printed {
             made: 0,
             hostile: false,
             worn: false,
+            grows: Grows::Not,
+        }
+    }
+
+    /// Pictures whose bytes grow with the rows they cover, `bytes` a row.
+    pub(in crate::render) fn per_row(across: u16, down: u16, bytes: usize) -> Self {
+        Self {
+            grows: Grows::ByRow,
+            ..Self::new(across, down, bytes)
+        }
+    }
+
+    /// Pictures whose bytes grow with the rows they cover and the width they
+    /// are fitted to, `bytes` a row for each column.
+    pub(in crate::render) fn per_cell(across: u16, down: u16, bytes: usize) -> Self {
+        Self {
+            grows: Grows::ByCell,
+            ..Self::per_row(across, down, bytes)
         }
     }
 
@@ -90,24 +122,38 @@ impl Printed {
             self.made
         };
         self.made = self.made.wrapping_add(1);
+        // A Sixel bitmap is drawn for the rows it is shown in, as the
+        // session's own pictures are; Kitty's and iTerm2's are drawn once.
+        let (across, down) = match key.protocol {
+            graphics::Protocol::Sixel if self.down > key.rows => {
+                let rows = key.rows.max(1);
+                let across =
+                    (u32::from(self.across) * u32::from(rows)).div_ceil(u32::from(self.down));
+                (u16::try_from(across).unwrap_or(self.across).max(1), rows)
+            }
+            _ => (self.across, self.down),
+        };
+        let size = match self.grows {
+            Grows::Not => self.bytes,
+            Grows::ByRow => self.bytes * usize::from(down),
+            Grows::ByCell => self.bytes * usize::from(down) * key.bucket.columns(),
+        };
         let bytes = match key.protocol {
             graphics::Protocol::Sixel if self.hostile => {
-                let mut bytes = printed_sixel(start, self.bytes);
+                let mut bytes = printed_sixel(start, size);
                 let middle = bytes.len() / 2;
                 bytes.splice(middle..middle, b"\x1b\\\x1b]52;c;aGk=\x07".iter().copied());
                 bytes
             }
-            graphics::Protocol::Sixel => printed_sixel(start, self.bytes),
-            graphics::Protocol::Kitty | graphics::Protocol::Iterm2 => {
-                printed_bytes(start, self.bytes)
-            }
+            graphics::Protocol::Sixel => printed_sixel(start, size),
+            graphics::Protocol::Kitty | graphics::Protocol::Iterm2 => printed_bytes(start, size),
         };
         graphics::Payload::new(
             key.protocol,
             bytes,
             (
-                u32::from(self.across) * u32::from(key.cell.width),
-                u32::from(self.down) * u32::from(key.cell.height),
+                u32::from(across) * u32::from(key.cell.width),
+                u32::from(down) * u32::from(key.cell.height),
             ),
             key.cell,
         )
@@ -1116,4 +1162,352 @@ fn a_placeholder_a_model_wrote_never_reaches_the_terminal_beside_a_picture() {
     );
     assert_eq!(commands(&written).len(), 2, "{written:?}");
     assert!(rows.iter().any(|row| row.contains("a  b  c")), "{rows:#?}");
+}
+
+// ---------------------------------------------------------------------------
+// A picture's size: Fit, at most half the window tall; Large, at most the
+// window, or the band an iTerm2 or Sixel image must stand wholly inside;
+// Full, its own size. A click on its cells, or Enter on its source, goes on
+// to the next, and nothing but a full screen does.
+
+/// The line of the first picture `render`'s band shows, and the screen cell
+/// it starts at.
+fn picture_cell<T: Terminal>(render: &Renderer<T>) -> Option<(usize, (usize, usize))> {
+    let band = render.bands().transcript;
+    band.into_iter().find_map(|at| {
+        (0..render.size.columns)
+            .find_map(|column| render.pictured(at, column).map(|line| (line, (at, column))))
+    })
+}
+
+/// The cells the first picture `render` keeps is shown in.
+fn shown<T: Terminal>(render: &Renderer<T>) -> (u16, u16) {
+    let id = render.record.picture_ids().next().unwrap();
+    render.record.payload(id).unwrap().cells()
+}
+
+#[test]
+fn a_tall_kitty_picture_fits_half_the_window_and_a_click_on_it_goes_large_full_and_back() {
+    // Twenty cells across and forty down, in a window thirty rows tall.
+    let mut drawn = pictured(60, 30, Printed::new(20, 40, 300));
+    drawn.answer(DIAGRAM);
+    let first = drawn.take();
+    // Fit: fifteen rows, and as much narrower as keeps its shape.
+    assert!(
+        commands(&first).contains(&"a=p,U=1,i=1,c=8,r=15,q=2"),
+        "{first:?}"
+    );
+    assert_eq!(shown(&drawn.render), (8, 15));
+
+    // A cell beside the picture is no part of it: a click there lands where
+    // it always did.
+    let (line, (row, column)) = picture_cell(&drawn.render).unwrap();
+    assert_eq!(drawn.render.pictured(row, column + 8), None);
+
+    // Each click goes on to the next size: the same image, placed again in
+    // the cells that size gives it, and never sent again.
+    for (columns, rows) in [(15, 30), (20, 40), (8, 15)] {
+        assert!(drawn.render.resizes(line).unwrap());
+        let after = drawn.take();
+        let placed = format!("a=p,U=1,i=1,c={columns},r={rows},q=2");
+        assert_eq!(
+            commands(&after)
+                .into_iter()
+                .filter(|command| command.starts_with("a="))
+                .collect::<Vec<_>>(),
+            ["a=d,d=i,i=1,q=2", placed.as_str()],
+            "{after:?}"
+        );
+        assert_eq!(shown(&drawn.render), (columns, rows));
+        assert_eq!(drawn.render.record.picture_ids().collect::<Vec<_>>(), [1]);
+    }
+}
+
+#[test]
+fn a_right_press_on_a_picture_or_a_drag_from_it_leaves_its_size_until_let_go_where_it_went_down() {
+    // Either button going down is a press, so a right press is one and so is
+    // the start of a drag. The loop under the renderer asks for a picture a
+    // press lands on to be resized as soon as the press is handed back to it;
+    // the size waits for the button to come up on the cell it went down on.
+    let mut drawn = pictured(60, 30, Printed::new(20, 40, 300));
+    drawn.answer(DIAGRAM);
+    drawn.take();
+    let (line, (row, column)) = picture_cell(&drawn.render).unwrap();
+    let press = Pressed::Clicked { row, column };
+
+    // Pressed, and not let go: the size it was.
+    assert_eq!(
+        drawn.render.took(press.clone()).unwrap(),
+        Some(press.clone())
+    );
+    assert!(drawn.render.resizes_when_let_go(line));
+    assert_eq!(shown(&drawn.render), (8, 15));
+
+    // Dragged off it and let go there: a selection, and still the size it was.
+    let off = row + 1;
+    assert_eq!(
+        drawn
+            .render
+            .took(Pressed::Dragged { row: off, column })
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        drawn
+            .render
+            .took(Pressed::Released { row: off, column })
+            .unwrap(),
+        None
+    );
+    assert_eq!(shown(&drawn.render), (8, 15));
+
+    // Pressed and let go on the same cell: the next size.
+    drawn.render.took(press.clone()).unwrap();
+    assert!(drawn.render.resizes_when_let_go(line));
+    assert_eq!(shown(&drawn.render), (8, 15));
+    drawn
+        .render
+        .took(Pressed::Released { row, column })
+        .unwrap();
+    assert_eq!(shown(&drawn.render), (15, 30));
+
+    // A size asked for with no button held, as Enter on its source asks for
+    // one, is shown at once.
+    assert!(drawn.render.resizes(line).unwrap());
+    assert_eq!(shown(&drawn.render), (20, 40));
+}
+
+#[test]
+fn enter_on_a_picture_resizes_it_at_once_after_a_press_whose_release_never_came() {
+    // A terminal can lose a button coming up, and the press it ended is then
+    // still held. Enter on a picture's source is no press, so the size it asks
+    // for is shown at once all the same, each time it is asked.
+    let mut drawn = pictured(60, 30, Printed::new(20, 40, 300));
+    drawn.answer(DIAGRAM);
+    drawn.take();
+    let (line, (row, column)) = picture_cell(&drawn.render).unwrap();
+    let press = Pressed::Clicked { row, column };
+    assert_eq!(
+        drawn.render.took(press.clone()).unwrap(),
+        Some(press.clone())
+    );
+
+    for (columns, rows) in [(15, 30), (20, 40)] {
+        assert!(drawn.render.resizes(line).unwrap());
+        assert_eq!(shown(&drawn.render), (columns, rows));
+    }
+}
+
+#[test]
+fn a_window_of_another_height_fits_a_kitty_picture_in_half_of_it_without_sending_it_again() {
+    let mut drawn = pictured(60, 30, Printed::new(20, 40, 300));
+    drawn.answer(DIAGRAM);
+    drawn.take();
+    assert_eq!(shown(&drawn.render), (8, 15));
+
+    drawn.resize(60, 20);
+    let after = drawn.take();
+    assert_eq!(shown(&drawn.render), (5, 10));
+    assert!(
+        commands(&after).contains(&"a=p,U=1,i=1,c=5,r=10,q=2"),
+        "{after:?}"
+    );
+    assert!(!after.contains("a=t"), "sent again: {after:?}");
+}
+
+#[test]
+fn an_iterm2_picture_clicked_is_written_again_from_the_same_image_at_its_new_size() {
+    // Twenty cells square, in a window thirty rows tall: Fit is fifteen
+    // rows, and Large its own twenty, which the band holds.
+    let mut drawn = pictured_as(
+        60,
+        30,
+        graphics::Protocol::Iterm2,
+        Printed::new(20, 20, 300),
+    );
+    drawn.answer(DIAGRAM);
+    let first = drawn.take();
+    assert_eq!(
+        images(&first)
+            .iter()
+            .map(|(_, image)| *image)
+            .collect::<Vec<_>>(),
+        [printed_iterm2(0, 300, 15, 15)],
+        "{first:?}"
+    );
+
+    let (line, _) = picture_cell(&drawn.render).unwrap();
+    assert!(drawn.render.resizes(line).unwrap());
+    let after = drawn.take();
+    // The bytes it was made with, at the cells its new size gives it.
+    assert_eq!(
+        images(&after)
+            .iter()
+            .map(|(_, image)| *image)
+            .collect::<Vec<_>>(),
+        [printed_iterm2(0, 300, 20, 20)],
+        "{after:?}"
+    );
+    assert_eq!(drawn.render.record.picture_ids().collect::<Vec<_>>(), [1]);
+}
+
+#[test]
+fn a_sixel_picture_clicked_is_encoded_again_for_its_new_size_by_the_frame_that_shows_it() {
+    let mut drawn = pictured_as(60, 30, graphics::Protocol::Sixel, Printed::new(20, 20, 300));
+    drawn.answer(DIAGRAM);
+    drawn.take();
+    // Encoded for the fifteen rows Fit gives it.
+    assert_eq!(shown(&drawn.render), (15, 15));
+
+    let (line, _) = picture_cell(&drawn.render).unwrap();
+    assert!(drawn.render.resizes(line).unwrap());
+    let after = drawn.take();
+    // Encoded again, for its own twenty rows, under a new number.
+    assert_eq!(drawn.render.record.picture_ids().collect::<Vec<_>>(), [2]);
+    assert_eq!(shown(&drawn.render), (20, 20));
+    assert_eq!(
+        images(&after)
+            .iter()
+            .map(|(_, image)| *image)
+            .collect::<Vec<_>>(),
+        [first_image(graphics::Protocol::Sixel, 1, 300)],
+        "{after:?}"
+    );
+}
+
+#[test]
+fn a_sixel_picture_too_large_to_keep_at_a_larger_size_goes_on_to_the_next_and_is_never_text() {
+    // Eighty KiB a row: fifteen rows are kept, and the band's twenty-odd
+    // are more than every kept picture may come to together.
+    let mut drawn = pictured_as(
+        60,
+        30,
+        graphics::Protocol::Sixel,
+        Printed::per_row(20, 40, 80 * 1024),
+    );
+    drawn.answer(DIAGRAM);
+    drawn.take();
+    assert_eq!(shown(&drawn.render), (8, 15));
+
+    // Large and Full are both too large: it goes back to Fit as it was
+    // encoded, and stays a picture.
+    let (line, _) = picture_cell(&drawn.render).unwrap();
+    assert!(drawn.render.resizes(line).unwrap());
+    drawn.take();
+    assert_eq!(drawn.render.record.picture_ids().collect::<Vec<_>>(), [1]);
+    assert_eq!(shown(&drawn.render), (8, 15));
+    assert!(drawn.render.resizable(line), "drawn as text");
+
+    // And a click after that tries Large again.
+    assert!(drawn.render.resizes(line).unwrap());
+    assert_eq!(drawn.render.record.picture_ids().collect::<Vec<_>>(), [1]);
+}
+
+#[test]
+fn a_sixel_picture_cycled_to_a_size_that_needs_room_another_keeps_goes_on_and_the_other_stays() {
+    // Thirty-five KiB a row: two pictures at Fit's twenty rows are kept
+    // together, and one at the band's height is not kept beside the other.
+    let mut drawn = pictured_as(
+        60,
+        40,
+        graphics::Protocol::Sixel,
+        Printed::per_row(20, 30, 35 * 1024),
+    );
+    drawn.answer(DIAGRAM);
+    drawn.answer(DIAGRAM);
+    drawn.take();
+    let kept: Vec<u32> = drawn.render.record.picture_ids().collect();
+    assert_eq!(kept.len(), 2, "{kept:?}");
+
+    // Large and Full would turn the other to text: it goes back to Fit as it
+    // was encoded, and both stay pictures.
+    let (line, _) = picture_cell(&drawn.render).unwrap();
+    assert!(drawn.render.resizes(line).unwrap());
+    drawn.take();
+    assert_eq!(drawn.render.record.picture_ids().collect::<Vec<_>>(), kept);
+    assert!(drawn.render.resizable(line), "drawn as text");
+    let lines: Vec<usize> = drawn
+        .render
+        .record
+        .sources()
+        .map(|source| source.line)
+        .collect();
+    assert!(
+        lines.iter().all(|&line| drawn.render.resizable(line)),
+        "a picture drawn as text: {lines:?}"
+    );
+}
+
+#[test]
+fn a_sixel_picture_resized_and_made_again_too_large_for_a_wider_window_steps_on_to_fit() {
+    // Half a KiB a row for each column it is fitted to: at sixty columns the
+    // band's forty rows are kept, and at a hundred they are too large to keep
+    // while Fit's twenty are not. The picture the reader made Large is made
+    // again for the wider window once it is in view, and goes on past Large
+    // and Full, both forty rows there, to Fit rather than to text.
+    let mut drawn = pictured_as(
+        60,
+        40,
+        graphics::Protocol::Sixel,
+        Printed::per_cell(20, 100, 512),
+    );
+    drawn.answer(DIAGRAM);
+    drawn.take();
+    let (line, _) = picture_cell(&drawn.render).unwrap();
+    assert_eq!(shown(&drawn.render), (4, 20), "Fit");
+    assert!(drawn.render.resizes(line).unwrap());
+    drawn.take();
+    assert_eq!(shown(&drawn.render), (8, 40), "Large");
+    let large = drawn.render.record.picture_ids().collect::<Vec<_>>();
+
+    drawn.resize(100, 40);
+    drawn.take();
+
+    assert!(drawn.render.resizable(line), "drawn as text");
+    assert_ne!(
+        drawn.render.record.picture_ids().collect::<Vec<_>>(),
+        large,
+        "never made again"
+    );
+    assert_eq!(shown(&drawn.render), (4, 20), "at Fit");
+}
+
+#[test]
+fn a_label_is_what_a_click_opens_a_blocks_source_from_and_no_other_row_is() {
+    // Drawn as text: a diagram nothing here draws, written as its source
+    // under a label that says so, and a table, whose border is no label.
+    let mut drawn = reading(60, 30);
+    drawn.answer("```mermaid\ngraph\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n");
+    let rows = drawn.screen().rows();
+    let band = drawn.render.bands().transcript;
+    let labelled: Vec<(String, Option<usize>)> = band
+        .filter_map(|at| {
+            Some((
+                rows.get(at)?.trim_end().to_owned(),
+                drawn.render.labelled(at),
+            ))
+        })
+        .filter(|(row, _)| !row.is_empty())
+        .collect();
+    let opens: Vec<&str> = labelled
+        .iter()
+        .filter(|(_, line)| line.is_some())
+        .map(|(row, _)| row.as_str())
+        .collect();
+    assert!(
+        matches!(opens.as_slice(), [only] if only.starts_with("┌─ mermaid")),
+        "{labelled:#?}"
+    );
+    // The diagram's source is what that line has.
+    let line = labelled.iter().find_map(|(_, line)| *line).unwrap();
+    let source = drawn
+        .render
+        .record
+        .sources()
+        .find(|source| source.line == line);
+    assert_eq!(
+        source.map(|source| source.text),
+        Some("```mermaid\ngraph\n```\n"),
+        "{labelled:#?}"
+    );
 }

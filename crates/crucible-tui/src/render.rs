@@ -492,6 +492,15 @@ pub struct Renderer<T: Terminal> {
     /// just arrived under the pointer, and what a drag resting at an edge of
     /// the transcript scrolls towards.
     held: Option<(usize, usize)>,
+    /// The line whose picture a press on it asked to show at its next size
+    /// ([`Self::resizes_when_let_go`]), shown at it once the button comes up
+    /// on the cell it went down on.
+    ///
+    /// Held until then because a press is both ends of what the pointer can
+    /// do: either button going down is one, and so is the start of a drag,
+    /// which selects rather than resizes. Dropped by the next press and by
+    /// the pointer moving under the button.
+    sizing: Option<usize>,
     /// When a drag resting at an edge of the transcript next carries it a row.
     creeps: Option<Instant>,
     /// Which window row and column the pointer was last reported on.
@@ -602,6 +611,7 @@ impl<T: Terminal> Renderer<T> {
             notch: NOTCH,
             taken: None,
             held: None,
+            sizing: None,
             creeps: None,
             pointing: None,
             recall: None,
@@ -779,6 +789,7 @@ impl<T: Terminal> Renderer<T> {
                 let view = self.view(&bands);
                 self.taken = Some(Taken::opened(row, column, &view));
                 self.held = Some((row, column));
+                self.sizing = None;
                 self.creeps = None;
                 if had {
                     self.draw()?;
@@ -787,6 +798,7 @@ impl<T: Terminal> Renderer<T> {
             }
             Pressed::Dragged { row, column } => {
                 self.held = Some((row, column));
+                self.sizing = None;
                 if self.taken.is_some() {
                     // The band scrolls a row towards a pointer at its edge
                     // before the drag is placed, so the words that arrive
@@ -802,13 +814,18 @@ impl<T: Terminal> Renderer<T> {
             }
             // Copied where the drag covered something, and quietly dropped
             // where it did not: a button coming up after a plain click is not
-            // an empty clipboard, it is nothing at all.
-            Pressed::Released { .. } => {
-                self.held = None;
+            // an empty clipboard, it is nothing at all. Where the press asked
+            // for a picture's next size and the button comes up on the cell it
+            // went down on, that is the click the size waited for.
+            Pressed::Released { row, column } => {
+                let clicked = self.held.take() == Some((row, column));
+                let sizing = self.sizing.take();
                 self.creeps = None;
                 if self.taken.is_some_and(|taken| !taken.empty()) {
                     let said = self.selected();
                     self.copied(&said)?;
+                } else if let Some(line) = sizing.filter(|_| clicked) {
+                    self.resizes(line)?;
                 }
                 Ok(None)
             }
@@ -1513,6 +1530,7 @@ impl<T: Terminal> Renderer<T> {
     fn relaid(&mut self, glyphs: Glyphs) {
         self.record
             .pictured_as(self.images, self.palette.identity());
+        self.record.windowed(self.size.rows, self.native.is_some());
         self.record
             .relay(self.folds(), glyphs, self.palette.theme());
     }
@@ -2713,6 +2731,98 @@ impl<T: Terminal> Renderer<T> {
         None
     }
 
+    /// The line, counted from the first of the session, whose picture
+    /// stands in cell `column` of window row `at`: what a click there
+    /// resizes ([`Self::resizes_when_let_go`]).
+    ///
+    /// None for any other cell, so a click beside a picture or on a block
+    /// drawn as text lands where it always did; and none in native mode,
+    /// where no press arrives and a picture keeps its size.
+    #[must_use]
+    pub fn pictured(&self, at: usize, column: usize) -> Option<usize> {
+        if self.native.is_some() {
+            return None;
+        }
+        let bands = self.bands();
+        if !bands.transcript.contains(&at) {
+            return None;
+        }
+        let rows = self.record_rows(&bands);
+        let into = at - bands.transcript.start;
+        let top = self.record.top_row(rows);
+        self.record
+            .row_at(top + into)
+            .filter(|row| column < self.folds() && row.pictured_at(column))?;
+        self.record.at(into, rows)
+    }
+
+    /// Shows the picture of line `line`, counted from the first of the
+    /// session, at the size after the one it is at, round from Full to Fit,
+    /// now, and answers whether there was one to resize: what Enter on its
+    /// source in the view of what was cut asks, whatever button is held.
+    ///
+    /// Never in native mode, where every picture is shown at Fit. The frame
+    /// is drawn again where it was, so a Sixel picture is encoded for its new
+    /// size by the frame that shows it.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be redrawn.
+    pub fn resizes(&mut self, line: usize) -> Result<bool, TerminalError> {
+        if self.native.is_some() || !self.terminal.is_terminal() {
+            return Ok(false);
+        }
+        if !self.record.cycles(line) {
+            return Ok(false);
+        }
+        self.draw()?;
+        Ok(true)
+    }
+
+    /// Shows the picture of line `line` at its next size, as
+    /// [`Self::resizes`] does, once the button that went down on it comes up
+    /// on the cell it went down on, and answers whether there is one to
+    /// resize: what a press that landed on a picture asks.
+    ///
+    /// Held until then so a drag that starts on a picture selects and leaves
+    /// its size alone. Never in native mode, where no press arrives.
+    pub fn resizes_when_let_go(&mut self, line: usize) -> bool {
+        if self.native.is_some() || !self.terminal.is_terminal() {
+            return false;
+        }
+        let pictured = self.record.pictured(line);
+        self.sizing = pictured.then_some(line);
+        pictured
+    }
+
+    /// Whether [`Self::resizes`] would resize line `line`'s picture, for a
+    /// footer to name the key only where it does something.
+    #[must_use]
+    pub fn resizable(&self, line: usize) -> bool {
+        self.native.is_none() && self.record.pictured(line)
+    }
+
+    /// The line, counted from the first of the session, of the block whose
+    /// label window row `at` is: the top edge of a block drawn as text that
+    /// has a source to read, its kind's word and any refusal on it. What a
+    /// click there opens the block's source for.
+    ///
+    /// None for any other row, and in native mode.
+    #[must_use]
+    pub fn labelled(&self, at: usize) -> Option<usize> {
+        if self.native.is_some() {
+            return None;
+        }
+        let bands = self.bands();
+        if !bands.transcript.contains(&at) {
+            return None;
+        }
+        let rows = self.record_rows(&bands);
+        let into = at - bands.transcript.start;
+        let top = self.record.top_row(rows);
+        self.record.labelled(top + into)
+    }
+
     /// The cells of window row `at` that a click or a resting pointer counts
     /// on: from the first cell the row drew to its last, in terminal cells.
     ///
@@ -2975,9 +3085,8 @@ impl<T: Terminal> Renderer<T> {
         if self.record.let_pictures_go() {
             self.sent.keeps(self.record.picture_ids());
         }
-        self.commands.clear();
+        self.owed();
         let record = &self.record;
-        self.sent.write(|id| record.payload(id), &mut self.commands);
         // After every row, so each image is written over rows already blank
         // for it, and only where they or it changed.
         for image in &mut over {
@@ -3010,6 +3119,21 @@ impl<T: Terminal> Renderer<T> {
 
         self.terminal.write(self.painted.sealed())?;
         self.terminal.flush()
+    }
+
+    /// Sets the commands to what the terminal is owed of the pictures the
+    /// frame shows. Every picture held is looked up again, to be placed in
+    /// the cells it is shown in now, only after the record says one of them
+    /// changed: a look-up walks every line the record holds, and a frame
+    /// that did that for each picture held would cost what the session has
+    /// grown to.
+    fn owed(&mut self) {
+        if self.record.pictures_reshaped() {
+            self.sent.reshaped();
+        }
+        self.commands.clear();
+        let record = &self.record;
+        self.sent.write(|id| record.payload(id), &mut self.commands);
     }
 
     /// Every iTerm2 or Sixel image `showing` stands wholly in, its first

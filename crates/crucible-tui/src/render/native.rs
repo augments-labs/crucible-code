@@ -674,9 +674,7 @@ impl<T: Terminal> Renderer<T> {
 
         // After the rows, which a picture's cells are among: the commands
         // move no cursor, and nothing is drawn until a picture's are sent.
-        self.commands.clear();
-        let record = &self.record;
-        self.sent.write(|id| record.payload(id), &mut self.commands);
+        self.owed();
         out.push_str(&self.commands);
 
         // A frame that would leave the screen as it is costs nothing: a turn

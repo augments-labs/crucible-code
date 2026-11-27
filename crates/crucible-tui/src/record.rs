@@ -64,6 +64,20 @@
 //! random, since the terminal's numbers are shared with every other program
 //! writing to it: see [`MOST_PICTURE_ID`].
 //!
+//! A picture is shown at a [`PictureSize`]: at Fit it is never taller than
+//! half the window, and a click on it or Enter on its source goes on to
+//! Large and Full and back ([`Record::cycles`]), in a full screen only, for
+//! as long as the session holds it. Kitty and iTerm2 scale the one image
+//! they were sent into the cells a size gives it, so a new size or a window
+//! of another height lays it out again and sends nothing new; a Sixel bitmap
+//! is drawn cell for cell, so it is encoded again for them once the band
+//! shows it, as for a new width, and a size it is too large to keep at, or
+//! kept at only by drawing another picture as text, is passed over rather
+//! than drawn as text. A native session's picture keeps
+//! the rows it was first shown in, whatever the window's height becomes,
+//! since the cells in the terminal's scrollback were laid for them and
+//! nothing it sent is placed again ([`Record::windowed`]).
+//!
 //! The opening is responsive for the same reason. It is drawn from facts read
 //! once at launch and kept for the whole session, so what laid it is still here
 //! and a resize replaces those lines with the same card drawn for the window
@@ -77,7 +91,7 @@ use std::collections::hash_map::RandomState;
 use std::hash::BuildHasher as _;
 use std::ops::Range;
 
-use crate::chrome::Undrawn;
+use crate::chrome::{self, Undrawn};
 use crate::color::{PaletteIdentity, Slot, Theme};
 use crate::drawing::{Bucket, Drawers, Mode, Room};
 use crate::glyphs::Glyphs;
@@ -151,16 +165,61 @@ pub const MOST_PLACED: u16 = 64;
 /// terminal are unlikely to name pictures by the same numbers.
 const MOST_PICTURE_ID: u32 = 0x00FF_FFFF;
 
-/// How large a block's picture is shown.
+/// How large a block's picture is shown: never wider than the transcript,
+/// never larger than its own size, and always its own shape.
+///
+/// A full screen cycles one picture through them when the reader asks
+/// ([`PictureSize::next`]), and the picture keeps the one it is at for as
+/// long as the record keeps it; a native session shows every picture at
+/// [`PictureSize::Fit`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PictureSize {
-    /// No wider than the window, and never past the picture's own width.
+    /// At most half the window tall, so a diagram leaves room for the
+    /// answer around it.
     #[default]
     Fit,
-    /// Larger than the window holds, to be looked at on its own.
+    /// At most the window tall, to be looked at on its own.
     Large,
-    /// As large as the screen.
+    /// Its own size, at most [`MOST_PLACED`] rows.
     Full,
+}
+
+impl PictureSize {
+    /// The size a reader asking again goes on to, round from the largest to
+    /// the first.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Fit => Self::Large,
+            Self::Large => Self::Full,
+            Self::Full => Self::Fit,
+        }
+    }
+
+    /// The most rows a picture at this size is shown in, in a window
+    /// `window` rows tall whose transcript band was `band` rows when the
+    /// reader asked, by `protocol`; [`MOST_PLACED`] where the window's
+    /// height is not known.
+    ///
+    /// An iTerm2 or Sixel image is written only while the band shows every
+    /// row of it, so it is never taller than the band was; Kitty's cells
+    /// show whatever part of it the band does.
+    fn rows(self, protocol: Protocol, window: usize, band: usize) -> u16 {
+        let most = usize::from(MOST_PLACED);
+        if window == 0 {
+            return MOST_PLACED;
+        }
+        let band = if band == 0 { window } else { band };
+        let written_over = protocol != Protocol::Kitty;
+        let rows = match self {
+            Self::Fit => window / 2,
+            Self::Large if written_over => band.min(window),
+            Self::Large => window,
+            Self::Full if written_over => band,
+            Self::Full => most,
+        };
+        u16::try_from(rows.clamp(1, most)).unwrap_or(MOST_PLACED)
+    }
 }
 
 /// A block's picture as the record keeps it: its size in pixels, what it was
@@ -196,6 +255,31 @@ struct Pictured {
     id: u32,
     key: PictureKey,
     kept: KeptPicture,
+    /// How many rows the transcript band was when the reader last chose its
+    /// size; none until they do.
+    band: usize,
+    /// How many rows the window was when it was first shown, where it keeps
+    /// the rows it was shown in then, even none before the window said; no
+    /// count where it follows the window.
+    window: Option<usize>,
+}
+
+impl Pictured {
+    /// The most rows it is shown in, in a window `window` rows tall, or in
+    /// the one it was first shown in where it keeps that.
+    fn rows(&self, window: usize) -> u16 {
+        let window = self.window.unwrap_or(window);
+        self.kept.size.rows(self.key.protocol, window, self.band)
+    }
+}
+
+/// Whether a picture is shown in the cells it was before a layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum Shown {
+    #[default]
+    AsBefore,
+    /// In other cells, which the terminal holding it has to be told.
+    Reshaped,
 }
 
 /// What a block of an answer is shown as a picture by, and in.
@@ -212,9 +296,21 @@ struct Picturing {
     left: u32,
     /// Whether a picture kept was let go of since the drawing last asked.
     let_go: bool,
+    /// Whether a picture kept was shown in other cells since the drawing
+    /// last asked, which is what has every picture held looked up again to
+    /// be placed there.
+    shown: Shown,
     /// Whether a Sixel picture kept for another width is encoded for this
     /// one now, as it is where it is in view, rather than left until it is.
     now: bool,
+    /// How many rows the window is; none until the drawing says.
+    window: usize,
+    /// Whether a picture keeps the rows it was first shown in rather than
+    /// following the window's height: a native session's, whose scrollback
+    /// holds the cells it was placed in.
+    keeps: bool,
+    /// How many rows the transcript band was at the last frame.
+    band: usize,
 }
 
 impl fmt::Debug for Picturing {
@@ -226,7 +322,11 @@ impl fmt::Debug for Picturing {
             .field("next", &self.next)
             .field("left", &self.left)
             .field("let_go", &self.let_go)
+            .field("shown", &self.shown)
             .field("now", &self.now)
+            .field("window", &self.window)
+            .field("keeps", &self.keeps)
+            .field("band", &self.band)
             .finish()
     }
 }
@@ -240,12 +340,24 @@ impl Default for Picturing {
             next: Self::first_number(),
             left: MOST_PICTURE_ID,
             let_go: false,
+            shown: Shown::AsBefore,
             now: false,
+            window: 0,
+            keeps: false,
+            band: 0,
         }
     }
 }
 
 impl Picturing {
+    /// Remembers a picture kept shown in other cells, where `shown` says one
+    /// was, until the drawing asks.
+    fn saw(&mut self, shown: Shown) {
+        if shown == Shown::Reshaped {
+            self.shown = shown;
+        }
+    }
+
     /// A number at random from 1 to [`MOST_PICTURE_ID`], the first a record
     /// gives out.
     fn first_number() -> u32 {
@@ -328,6 +440,8 @@ struct By<'a> {
     drawers: &'a Drawers,
     modes: Modes,
     offers: Offers,
+    /// How many rows the window is, which bounds a picture's height.
+    window: usize,
 }
 
 /// The mode each kind of block a setting chooses the drawing of is drawn in.
@@ -410,8 +524,9 @@ impl Drawn {
     }
 
     /// Lays the block out again for `columns` in `glyphs`, by what `by`
-    /// holds, with every edit and the prefix it was given since.
-    fn lay(&mut self, columns: usize, glyphs: Glyphs, by: By<'_>) {
+    /// holds, with every edit and the prefix it was given since, and answers
+    /// whether its picture is shown in other cells than it was.
+    fn lay(&mut self, columns: usize, glyphs: Glyphs, by: By<'_>) -> Shown {
         let lay = match by.offers {
             Offers::Stand => markdown::lay,
             Offers::Withdrawn => markdown::lay_unoffered,
@@ -424,6 +539,15 @@ impl Drawn {
         } else {
             &none
         };
+        let mut shown = Shown::AsBefore;
+        if let Some(picture) = self.picture.as_mut() {
+            let rows = picture.rows(by.window);
+            let was = picture.kept.payload.cells();
+            picture.kept.payload.shown_in(rows);
+            if picture.kept.payload.cells() != was {
+                shown = Shown::Reshaped;
+            }
+        }
         let mut rows = self.pictured(columns).unwrap_or_else(|| {
             let laid = lay(&self.block, columns, glyphs, by.links, drawers);
             responsive_rows(
@@ -446,6 +570,34 @@ impl Drawn {
         self.laid.0 = columns;
         self.laid.1 = glyphs;
         self.modes = by.modes;
+        shown
+    }
+
+    /// Whether its first row is the label of a block drawn as text with a
+    /// source to read: the top edge of its frame, past any mark it hangs
+    /// under, and not the border of a table, which is no edge.
+    fn labelled(&self) -> bool {
+        if self.picture.is_some() || self.block.kind.named().is_none() {
+            return false;
+        }
+        let Some(first) = self.rows.first() else {
+            return false;
+        };
+        let text = first.text();
+        let hung = self
+            .prefix
+            .as_ref()
+            .filter(|prefix| !prefix.keeps_first)
+            .map(|prefix| {
+                let mut first = prefix.marks_first;
+                prefix.row(&mut first).text()
+            })
+            .unwrap_or_default();
+        let edge = text.strip_prefix(hung.as_str()).unwrap_or(&text).trim_end();
+        chrome::is_edge(edge)
+            && [Glyphs::Unicode, Glyphs::Ascii]
+                .into_iter()
+                .all(|glyphs| edge != chrome::bottom(glyphs))
     }
 
     /// The block's source as line `line`, where its kind has one to read.
@@ -950,6 +1102,7 @@ impl Record {
             drawers: &self.drawers,
             modes: self.modes,
             offers: self.offers,
+            window: self.picturing.window,
         };
         let mut drawn = Drawn::new(block, room, theme, by);
         if self.settle(&mut drawn, self.columns, glyphs) {
@@ -958,8 +1111,9 @@ impl Record {
                 drawers: &self.drawers,
                 modes: self.modes,
                 offers: self.offers,
+                window: self.picturing.window,
             };
-            drawn.lay(self.columns, glyphs, by);
+            self.picturing.saw(drawn.lay(self.columns, glyphs, by));
             self.remeasure_all();
         }
         if !drawn.rows.is_empty() {
@@ -1012,6 +1166,7 @@ impl Record {
             palette,
             protocol,
             cell,
+            rows: MOST_PLACED,
         })
     }
 
@@ -1039,6 +1194,10 @@ impl Record {
             None
         } else {
             self.picture_key(drawn.block.kind, columns)
+                .map(|key| PictureKey {
+                    rows: self.encoded_rows(drawn, key.protocol),
+                    ..key
+                })
         };
         let Some(key) = key else {
             let had = drawn.picture.take().is_some();
@@ -1050,6 +1209,7 @@ impl Record {
                 picture.key.protocol == Protocol::Sixel
                     && PictureKey {
                         bucket: picture.key.bucket,
+                        rows: picture.key.rows,
                         ..key
                     } == picture.key
             });
@@ -1073,13 +1233,42 @@ impl Record {
                 PictureKey {
                     bucket: key.bucket,
                     palette,
+                    rows: key.rows,
                     ..was
                 } == key
             })
         {
             return false;
         }
-        let made = self.make(drawn, &key, glyphs, columns);
+        let mut key = key;
+        let mut made = self.make(drawn, &key, glyphs, columns);
+        // A Sixel picture the reader made larger, too large to keep at that
+        // size or kept there only by drawing another as text: the size after
+        // it, and back to the first, rather than text. At the first it is
+        // what a picture nobody resized would be.
+        for _ in 0..2 {
+            let window = self.picturing.window;
+            let passed = match &made {
+                Err(Undrawn::TooLargeToKeep) => true,
+                Ok(kept) => !self.room_for(kept.bytes()),
+                Err(_) => false,
+            };
+            if !passed {
+                break;
+            }
+            let Some(picture) = drawn.picture.as_mut().filter(|picture| {
+                picture.key.protocol == Protocol::Sixel && picture.kept.size != PictureSize::Fit
+            }) else {
+                break;
+            };
+            picture.kept.size = picture.kept.size.next();
+            key.rows = picture.rows(window);
+            if key == picture.key {
+                return false;
+            }
+            made = self.make(drawn, &key, glyphs, columns);
+        }
+        let band = drawn.picture.as_ref().map_or(0, |picture| picture.band);
         let had = drawn.picture.take().is_some();
         self.picturing.let_go |= had;
         let kept = match made {
@@ -1091,12 +1280,29 @@ impl Record {
         };
         self.make_room(kept.bytes(), columns, glyphs);
         drawn.refused = None;
+        let window = self.picturing.keeps.then_some(self.picturing.window);
         drawn.picture = Some(Box::new(Pictured {
             id: self.picturing.number(),
             key,
             kept,
+            band,
+            window,
         }));
         true
+    }
+
+    /// The most rows `drawn`'s picture is encoded to cover by `protocol`: a
+    /// Sixel bitmap is drawn cell for cell, so it is encoded for the rows it
+    /// is shown in, and Kitty and iTerm2 scale one image into any cells, so
+    /// theirs is encoded once for the most there are.
+    fn encoded_rows(&self, drawn: &Drawn, protocol: Protocol) -> u16 {
+        match protocol {
+            Protocol::Kitty | Protocol::Iterm2 => MOST_PLACED,
+            Protocol::Sixel => drawn.picture.as_ref().map_or_else(
+                || PictureSize::Fit.rows(protocol, self.picturing.window, 0),
+                |picture| picture.rows(self.picturing.window),
+            ),
+        }
     }
 
     /// `drawn`'s picture under `key`, or why it is drawn as text.
@@ -1121,7 +1327,7 @@ impl Record {
                 pixels: payload.pixels(),
                 form: picture.kept.form.clone(),
                 payload,
-                size: PictureSize::Fit,
+                size: picture.kept.size,
             }
         } else if let Some((form, payload)) = pictures.cached(source, key) {
             KeptPicture {
@@ -1150,12 +1356,18 @@ impl Record {
         Ok(kept)
     }
 
+    /// Whether one more picture of `bytes` is kept beside every picture kept
+    /// now, under both caps, with none drawn as text for it.
+    fn room_for(&self, bytes: usize) -> bool {
+        let (count, held) = self.kept_pictures();
+        count < MOST_KEPT_IMAGES && held.saturating_add(bytes) <= MOST_KEPT_IMAGE_BYTES
+    }
+
     /// Draws the oldest kept pictures as text, each laid out again at
     /// `columns` in `glyphs`, until one more of `bytes` fits under both caps.
     fn make_room(&mut self, bytes: usize, columns: usize, glyphs: Glyphs) {
         loop {
-            let (count, held) = self.kept_pictures();
-            if count < MOST_KEPT_IMAGES && held.saturating_add(bytes) <= MOST_KEPT_IMAGE_BYTES {
+            if self.room_for(bytes) {
                 return;
             }
             let by = By {
@@ -1163,6 +1375,7 @@ impl Record {
                 drawers: &self.drawers,
                 modes: self.modes,
                 offers: self.offers,
+                window: self.picturing.window,
             };
             let oldest = self.lines.iter_mut().find_map(|line| match line {
                 Line::Drawn(drawn) if drawn.picture.is_some() => Some(drawn),
@@ -1175,7 +1388,7 @@ impl Record {
             oldest.fallen = true;
             self.picturing.let_go = true;
             let was = oldest.weight;
-            oldest.lay(columns, glyphs, by);
+            self.picturing.saw(oldest.lay(columns, glyphs, by));
             self.weight = self
                 .weight
                 .saturating_sub(was)
@@ -1192,6 +1405,7 @@ impl Record {
     /// and so what the band shows, so the band is looked at again after each;
     /// each is encoded at most once, so this ends within the pictures kept.
     pub(crate) fn freshens(&mut self, rows: usize) -> bool {
+        self.picturing.band = rows;
         let mut any = false;
         for _ in 0..=MOST_KEPT_IMAGES {
             let from = if self.following {
@@ -1245,13 +1459,16 @@ impl Record {
     }
 
     /// Whether line `at` of those held is a Sixel picture kept for a width
-    /// other than the one there is now.
+    /// other than the one there is now, or for other rows than its size
+    /// shows it in now.
     fn stale(&self, at: usize) -> bool {
         let bucket = Bucket::of(self.columns);
         matches!(
             self.lines.get(at),
             Some(Line::Drawn(Drawn { picture: Some(picture), .. }))
-                if picture.key.protocol == Protocol::Sixel && picture.key.bucket != bucket
+                if picture.key.protocol == Protocol::Sixel
+                    && (picture.key.bucket != bucket
+                        || picture.key.rows != picture.rows(self.picturing.window))
         )
     }
 
@@ -1275,9 +1492,10 @@ impl Record {
                 drawers: &self.drawers,
                 modes: self.modes,
                 offers: self.offers,
+                window: self.picturing.window,
             };
             let was = drawn.weight;
-            drawn.lay(columns, glyphs, by);
+            self.picturing.saw(drawn.lay(columns, glyphs, by));
             self.weight = self.weight.saturating_sub(was).saturating_add(drawn.weight);
         }
         if let Some(line) = self.lines.get_mut(at) {
@@ -1307,10 +1525,80 @@ impl Record {
         }
     }
 
+    /// Bounds the pictures by a window `rows` tall: said before each
+    /// [`Self::relay`], which shows each in the rows its size gives it there.
+    ///
+    /// Where `keeps`, as in a native session, a picture shown already keeps
+    /// the rows it was first shown in and only a picture made from now on is
+    /// bounded by this window: its cells in the terminal's scrollback were
+    /// laid for those rows, and placing its number in others would show
+    /// those cells broken.
+    pub(crate) fn windowed(&mut self, rows: usize, keeps: bool) {
+        self.picturing.window = rows;
+        self.picturing.keeps = keeps;
+    }
+
+    /// Shows the picture of line `line`, counted from the first of the
+    /// session, at the size after the one it is at, and answers whether it
+    /// has one to show.
+    ///
+    /// A Kitty or iTerm2 picture is the same image in other cells, laid out
+    /// again now; a Sixel one is encoded again for them by the frame it is
+    /// next in view in, as one kept for another width is.
+    pub(crate) fn cycles(&mut self, line: usize) -> bool {
+        let Some(at) = line.checked_sub(self.gone) else {
+            return false;
+        };
+        let by = By {
+            links: &self.links,
+            drawers: &self.drawers,
+            modes: self.modes,
+            offers: self.offers,
+            window: self.picturing.window,
+        };
+        let Some(Line::Drawn(drawn)) = self.lines.get_mut(at) else {
+            return false;
+        };
+        let Some(picture) = drawn.picture.as_mut() else {
+            return false;
+        };
+        picture.kept.size = picture.kept.size.next();
+        picture.band = self.picturing.band;
+        let was = drawn.weight;
+        let (columns, glyphs) = (drawn.laid.0, drawn.laid.1);
+        self.picturing.saw(drawn.lay(columns, glyphs, by));
+        self.weight = self.weight.saturating_sub(was).saturating_add(drawn.weight);
+        self.remeasure_at(at);
+        true
+    }
+
+    /// Whether line `line`, counted from the first of the session, is shown
+    /// as a picture.
+    pub(crate) fn pictured(&self, line: usize) -> bool {
+        line.checked_sub(self.gone)
+            .and_then(|at| self.lines.get(at))
+            .is_some_and(|line| {
+                matches!(
+                    line,
+                    Line::Drawn(Drawn {
+                        picture: Some(_),
+                        ..
+                    })
+                )
+            })
+    }
+
     /// Whether a picture the record kept has been let go since this was last
     /// asked: answered once.
     pub(crate) fn let_pictures_go(&mut self) -> bool {
         std::mem::take(&mut self.picturing.let_go)
+    }
+
+    /// Whether a picture the record keeps has been shown in other cells
+    /// since this was last asked, as one whose size the reader or the
+    /// window's height changed: answered once.
+    pub(crate) fn pictures_reshaped(&mut self) -> bool {
+        std::mem::take(&mut self.picturing.shown) == Shown::Reshaped
     }
 
     /// What the terminal is sent for picture `id`, while the record keeps it.
@@ -1392,8 +1680,15 @@ impl Record {
                 continue;
             };
             let kind = drawn.block.kind;
+            let window = self.picturing.window;
+            // A window of another height shows a picture in other rows.
+            let reshown = drawn.picture.as_ref().is_some_and(|picture| {
+                let payload = &picture.kept.payload;
+                payload.cells() != payload.shown_at(picture.rows(window))
+            });
             let unlaid = (drawn.laid.0, drawn.laid.1) != (columns, glyphs)
-                || drawn.modes.of(kind) != self.modes.of(kind);
+                || drawn.modes.of(kind) != self.modes.of(kind)
+                || reshown;
             let wants = drawn.picture.is_some()
                 || (!drawn.fallen && self.picture_key(kind, columns).is_some());
             if !unlaid && !wants {
@@ -1413,9 +1708,10 @@ impl Record {
                     drawers: &self.drawers,
                     modes: self.modes,
                     offers: self.offers,
+                    window: self.picturing.window,
                 };
                 let was = drawn.weight;
-                drawn.lay(columns, glyphs, by);
+                self.picturing.saw(drawn.lay(columns, glyphs, by));
                 self.weight = self.weight.saturating_sub(was).saturating_add(drawn.weight);
                 any = true;
             }
@@ -2010,6 +2306,23 @@ impl Record {
         let line = self.spot_at(row).line;
         match self.lines.get(line.checked_sub(self.gone)?)? {
             Line::Drawn(drawn) => drawn.source(line).map(|source| source.text),
+            _ => None,
+        }
+    }
+
+    /// The line, counted from the first of the session, of the block whose
+    /// label absolute display row `row` is: the first row of a block drawn
+    /// as text with a source to read, where it is the top edge of a frame.
+    pub(crate) fn labelled(&self, row: usize) -> Option<usize> {
+        if row < self.before || self.last_row().is_none_or(|last| row > last) {
+            return None;
+        }
+        let spot = self.spot_at(row);
+        if spot.into != 0 {
+            return None;
+        }
+        match self.lines.get(spot.line.checked_sub(self.gone)?)? {
+            Line::Drawn(drawn) if drawn.labelled() => Some(spot.line),
             _ => None,
         }
     }
@@ -3757,6 +4070,24 @@ mod tests {
     }
 
     #[test]
+    fn a_picture_shown_in_other_cells_is_told_once_and_none_laid_since_is_never_told() {
+        // A yes has the frame look every picture the terminal holds up
+        // again, a walk over every line, so no is the answer wherever no
+        // picture has been laid out in other cells since it last asked.
+        let (fake, _) = fake(100, 20, vec![]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+        record.windowed(8, false);
+        record.drawn(picturing::diagram("a"), Glyphs::Unicode, Theme::Dark);
+        assert!(picturing::shown(&record, 0));
+        record.pictures_reshaped();
+        assert!(!record.pictures_reshaped(), "told with none laid since");
+
+        assert!(record.cycles(0), "no picture to show larger");
+        assert!(record.pictures_reshaped(), "not told");
+        assert!(!record.pictures_reshaped(), "told twice");
+    }
+
+    #[test]
     fn a_diagram_refused_its_picture_is_not_drawn_again_at_another_width() {
         // A width change encodes again only the pictures kept: a block
         // refused one is laid out again as its text, and neither the cache,
@@ -3843,6 +4174,37 @@ mod tests {
             ["cached a", "picture a", "make a", "reencode"]
         );
         assert!(picturing::shown(&record, 0));
+    }
+
+    #[test]
+    fn a_kept_picture_first_shown_before_the_window_said_its_height_keeps_those_rows() {
+        // A native session keeps a picture in the rows it was first shown in,
+        // and a terminal that has not yet said how tall it is has shown it in
+        // rows all the same; the height it says next places nothing again.
+        let (fake, asked) = fake(100, 20, vec![]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+        let placed = |record: &Record| match record.lines.front() {
+            Some(Line::Drawn(Drawn {
+                picture: Some(picture),
+                ..
+            })) => Some((picture.id, picture.key.rows, picture.kept.payload.cells())),
+            _ => None,
+        };
+        record.windowed(0, true);
+        record.drawn(picturing::diagram("a"), Glyphs::Unicode, Theme::Dark);
+        let first = placed(&record);
+        let folded = record.folded(0);
+        assert!(first.is_some(), "the diagram is shown as a picture");
+
+        record.windowed(8, true);
+        record.relay(40, Glyphs::Unicode, Theme::Dark);
+
+        assert_eq!(placed(&record), first, "its number, rows and cells");
+        assert_eq!(record.folded(0), folded, "the rows it is laid in");
+        assert_eq!(
+            picturing::asked(&asked),
+            ["cached a", "picture a", "make a"]
+        );
     }
 
     #[test]

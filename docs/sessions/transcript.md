@@ -675,7 +675,8 @@ Where a session draws pictures, as [Where pictures are
 drawn](../configuration/configuration.md#where-pictures-are-drawn) says, a
 [diagram](#diagrams) drawn as text is shown as a picture of that drawing. It
 is drawn in the theme's colours, never wider than the window and never larger
-than the diagram's own size. A change of theme draws it again in the new
+than the diagram's own size, and at first at most half the window's height:
+see [Its size](#its-size). A change of theme draws it again in the new
 colours, and a resize draws it again to fit the new width; in native mode a
 picture already in the scrollback changes only when the scrollback is written
 again, once the window has been resized.
@@ -694,6 +695,30 @@ How it is drawn depends on the protocol and the
   view again.
 - **Sixel** is drawn by no terminal yet, so its place is always text.
 
+### Its size
+
+In the full screen a picture is shown at one of three sizes, and a click on
+its own cells, or <kbd>Enter</kbd> in the <kbd>Ctrl+O</kbd> view while its
+source is at the top, moves it to the next. The click moves it when you let
+go on the cell you pressed, so a drag that starts on a picture selects instead:
+
+- **Fit**, the size it is first shown at: at most the transcript's width and
+  at most half the window's height.
+- **Large**: the window's height.
+- **Full**: the picture's own size, at most 64 rows. After Full it goes back
+  to Fit.
+
+At every size the picture keeps its shape and is never wider than the
+transcript or larger than its own size. Each picture keeps the size it was
+given for the rest of the session, and a resize fits it again at that size. A
+picture Kitty's protocol draws is placed again in its new cells without being
+sent again. One iTerm2's protocol draws is written again from the same image,
+and at Large or Full it is at most the transcript's height when it is placed,
+since it is drawn only while every row of it is in view. In native mode every
+picture stays at Fit, and no click or key changes it; it keeps the rows it was
+first shown in when the window's height changes, since your terminal's
+scrollback holds the cells it was placed in.
+
 A diagram with a letter the picture's one font has none for keeps its text
 drawing. Everywhere else, and
 for every formula and image file, what the transcript shows in a picture's
@@ -704,7 +729,10 @@ the output is not a terminal.
 A session keeps at most 16 pictures, and at most 1.5 MiB of them, what each
 was drawn from and what the terminal was sent counted once each. Past either,
 the oldest is drawn as its text again, and in the full screen the transcript
-stays on the line you were reading. A diagram whose picture alone is more than
+stays on the line you were reading. A larger size you choose for a picture
+Sixel draws, when it could be kept only by going past either, is passed over
+for the next one, so resizing one picture never draws another as text. A
+diagram whose picture alone is more than
 1.5 MiB, or would take more than 64 cells across or down, is drawn as text,
 and stays text when the window is resized or the theme changes. In the full
 screen the terminal is told to let go of each picture the session stops

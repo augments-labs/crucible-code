@@ -10,7 +10,10 @@
 //! A picture is rasterised at the narrowest of its own width, the widest the
 //! raster's ceiling on decoded pixels holds, and the room it is placed in: the
 //! narrow edge of the window's width bucket, in cells of the window's pixels.
-//! It is never scaled up, so a small diagram stays its own size.
+//! It is never scaled up, so a small diagram stays its own size. A Sixel
+//! picture is also drawn no taller than the rows its key gives it, since the
+//! terminal shows its pixels as they are; a PNG is scaled into its cells by
+//! the terminal and is drawn once for any of them.
 //!
 //! The decode slot is the one place in the process a picture is drawn. The
 //! drawing thread waits [`WAIT`] for it and no longer; a picture it could not
@@ -76,7 +79,15 @@ fn encoded(form: &Form, key: &PictureKey) -> Result<Payload, Undrawn> {
     // points let the thread that holds the slot straight through.
     let _slot = Slot::take(WAIT).map_err(refusal)?;
     let width = raster_width(svg).map_err(refusal)?.min(room);
-    let pixels = rasterise(svg, width, &key.palette.inks()).map_err(refusal)?;
+    let mut pixels = rasterise(svg, width, &key.palette.inks()).map_err(refusal)?;
+    // A Sixel bitmap is shown pixel for pixel, so one taller than the rows
+    // it is shown in is drawn again as much narrower as brings it into them.
+    let tall = u32::from(key.rows.max(1)).saturating_mul(u32::from(key.cell.height));
+    if key.protocol == Protocol::Sixel && pixels.height() > tall {
+        let narrower = u64::from(width) * u64::from(tall) / u64::from(pixels.height());
+        let narrower = u32::try_from(narrower).unwrap_or(width).max(1);
+        pixels = rasterise(svg, narrower, &key.palette.inks()).map_err(refusal)?;
+    }
     let bytes = match key.protocol {
         Protocol::Kitty | Protocol::Iterm2 => png(&pixels).map_err(refusal)?,
         // Wider than Sixel is encoded at, it is text: drawn narrower it would
@@ -154,6 +165,7 @@ mod tests {
             palette: Palette::resolve(true, theme, ground, &truecolour).identity(),
             protocol,
             cell: CELL,
+            rows: crucible_tui::MOST_PLACED,
         }
     }
 
@@ -254,6 +266,30 @@ mod tests {
             )
             .unwrap();
         assert_eq!(payload.bytes(), kitty.bytes());
+    }
+
+    #[test]
+    fn a_sixel_picture_is_drawn_no_taller_than_the_rows_its_key_gives_it_and_a_png_is_not() {
+        let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
+        // Five rows of sixteen pixels: a picture twice as wide as it is
+        // tall is drawn eighty pixels tall, and as much narrower as keeps
+        // its shape, since a Sixel bitmap is drawn cell for cell.
+        let sixel = PictureKey {
+            rows: 5,
+            ..key_for(Protocol::Sixel, Theme::Dark, None, 80)
+        };
+        let short = Raster.make("graph", &sixel, &halves(400, 200)).unwrap();
+        assert_eq!(short.pixels(), (160, 80));
+        assert_eq!(short.cells(), (20, 5));
+
+        // A PNG is scaled by the terminal into whatever cells it is shown
+        // in, so it is drawn at its own size whatever the rows.
+        let png = PictureKey {
+            rows: 5,
+            ..key(Theme::Dark, None, 80)
+        };
+        let whole = Raster.make("graph", &png, &halves(400, 200)).unwrap();
+        assert_eq!(whole.pixels(), (400, 200));
     }
 
     #[test]
