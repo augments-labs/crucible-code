@@ -36,6 +36,14 @@
 //! worker must not tell such a path from the others. After approval it is
 //! [`ImageRefused::NotInTime`].
 //!
+//! The route has at most one job of its own on that worker. Its [`Lane`] is
+//! taken before an image's first job is handed over, carried into each job in
+//! turn, and given back only as the job holding it returns, including one left
+//! running past the deadline. An image asked for while the lane is held is
+//! [`ImageRefused::NotShown`] at once, and nothing is queued for it: answer
+//! text naming files on mounts that stopped answering, turn after turn, holds
+//! one of the worker's places at most, and the tools keep the others.
+//!
 //! Invariants:
 //!
 //! - Outside the workspace, under a rule that refuses the read, and missing
@@ -47,10 +55,12 @@
 //!   for each image with [`Remember::Never`], and the PNG is handed back and
 //!   kept nowhere here.
 //! - How many images a turn shows is the front end's to count, at most
-//!   [`PER_TURN`]; this answers one request at a time and counts nothing.
+//!   [`PER_TURN`]; this answers one request at a time and counts nothing but
+//!   whether its lane is held.
 
 use std::cell::Cell;
 use std::future::Future;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crucible_attachments::{AttachmentError, Opened, Taken};
@@ -62,6 +72,7 @@ use crucible_tools::{
 };
 use crucible_types::{ToolArgs, ToolCall, ToolId};
 use crucible_workspace::{PathError, Workspace, WorkspacePath};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 #[cfg(test)]
 mod tests;
@@ -89,8 +100,9 @@ const CHUNK: usize = 64 * 1024;
 /// The picture `image` names, or why it is not shown.
 ///
 /// `workspace` is where the path is resolved and `permission` the engine the
-/// read is decided by, the session's own rules and mode, and `worker` the one
-/// the read tool hands its blocking work to, all lent by the host. Resolving
+/// read is decided by, the session's own rules and mode, `worker` the one the
+/// read tool hands its blocking work to, and `lane` the route's one job on it,
+/// all lent by the host. Resolving
 /// the path, reading the file, waiting for the decode slot and decoding run
 /// there, so a mount that stops answering holds a worker's place rather than
 /// whoever asked; lent one, this answers within [`DEADLINE`] whether or not
@@ -102,7 +114,7 @@ const CHUNK: usize = 64 * 1024;
 /// [`ImageRefused::NotShown`] for a path that opens with two separators, one
 /// outside the workspace, one a rule refuses or puts a question about, a file
 /// that is not there or cannot be read, a worker that would not start the
-/// work, and [`DEADLINE`] passing before the engine allowed the read; for a
+/// work, a `lane` another image's job still holds, and [`DEADLINE`] passing before the engine allowed the read; for a
 /// file the engine allowed, [`ImageRefused::TooLarge`] past
 /// [`MOST_INPUT`] bytes or past what the decoder or encoder hold,
 /// [`ImageRefused::NotAnImage`] for bytes no decoder reads,
@@ -114,15 +126,40 @@ pub async fn show(
     workspace: &Workspace,
     permission: &mut Permission,
     worker: Option<&ToolWorker>,
+    lane: &Lane,
 ) -> Result<Shown, ImageRefused> {
     showing(
         image,
         workspace,
         permission,
-        worker,
+        (worker, lane),
         (Workspace::existing, read, crucible_raster::decode),
     )
     .await
+}
+
+/// The one job of its own the route may have on the worker, which a host
+/// keeps for as long as the worker it lends.
+///
+/// Taken before the first of an image's jobs is handed to the worker, carried
+/// into each job in turn, and given back only as the job holding it returns,
+/// even one nobody waits for any longer. An image asked for while it is held
+/// is not shown, at once: the worker's places are the tools', and a read stuck
+/// on a mount that stopped answering may hold one, never more.
+#[derive(Debug)]
+pub struct Lane(Arc<Semaphore>);
+
+impl Default for Lane {
+    fn default() -> Self {
+        Self(Arc::new(Semaphore::new(1)))
+    }
+}
+
+impl Lane {
+    /// The lane, where no job holds it.
+    fn taken(&self) -> Option<OwnedSemaphorePermit> {
+        Arc::clone(&self.0).try_acquire_owned().ok()
+    }
 }
 
 /// How a path is resolved, its file read and its bytes decoded:
@@ -139,7 +176,7 @@ async fn showing<R>(
     image: &ImageRef,
     workspace: &Workspace,
     permission: &mut Permission,
-    worker: Option<&ToolWorker>,
+    (worker, lane): (Option<&ToolWorker>, &Lane),
     (resolve, reader, decode): Steps<R>,
 ) -> Result<Shown, ImageRefused>
 where
@@ -156,17 +193,26 @@ where
         ImageRef::Tool { hash, .. } => Some(*hash),
         ImageRef::Answer { .. } => None,
     };
+    // Carried into each job the worker runs for this image, and given back as
+    // the job holding it returns, whoever still waits for it.
+    let held = match worker {
+        Some(_) => Some(lane.taken().ok_or(ImageRefused::NotShown)?),
+        None => None,
+    };
     // Until the engine has approved the read, every answer is the one a path
     // it would refuse gets, so running out of time or of room says nothing
     // about the file either.
-    let (path, approved) = within(started, worker, ImageRefused::NotShown, async {
+    let (path, approved, held) = within(started, worker, ImageRefused::NotShown, async {
         let (owned, asked) = (workspace.clone(), requested.to_owned());
-        let (path, sensitivity) = blocking(worker, move || {
-            let path = resolve(&owned, &asked).map_err(|_| ImageRefused::NotShown)?;
-            let target = Target::resolved(&owned, &path);
-            Ok((path, Sensitivity::ReadOnly { target }))
+        let (resolved, held) = blocking(worker, move || {
+            let resolved = resolve(&owned, &asked).map(|path| {
+                let target = Target::resolved(&owned, &path);
+                (path, Sensitivity::ReadOnly { target })
+            });
+            (resolved, held)
         })
-        .await??;
+        .await?;
+        let (path, sensitivity) = resolved.map_err(|_| ImageRefused::NotShown)?;
         let call = ToolCall {
             id: ToolId::new("show-image"),
             name: TOOL.into(),
@@ -177,12 +223,13 @@ where
         else {
             return Err(ImageRefused::NotShown);
         };
-        Ok((path, approved))
+        Ok((path, approved, held))
     })
     .await?;
     let owned = workspace.clone();
     within(started, worker, ImageRefused::NotInTime, async {
         blocking(worker, move || {
+            let _held = held;
             let taken = reader(&approved, &owned, &path, started)?;
             if hash.is_some_and(|hash| taken.hash() != hash) {
                 return Err(ImageRefused::Changed);

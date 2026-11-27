@@ -18,7 +18,7 @@ use crucible_tools::{
 use crucible_types::{ToolArgs, ToolCall, ToolId};
 use crucible_workspace::{Workspace, WorkspacePath};
 
-use super::{CHUNK, DEADLINE, Steps, Unasked, pictured, read, show, showing};
+use super::{CHUNK, DEADLINE, Lane, Steps, Unasked, pictured, read, show, showing};
 use crate::sample::Sample;
 
 /// A picture three pixels wide and two high, as a file a model could name.
@@ -65,7 +65,13 @@ fn unlocked(
     rules: &[(Disposition, &str)],
     image: &ImageRef,
 ) -> Result<Shown, ImageRefused> {
-    crucible_runtime::answered!(show(image, workspace, &mut engine(rules), None))
+    crucible_runtime::answered!(show(
+        image,
+        workspace,
+        &mut engine(rules),
+        None,
+        &Lane::default()
+    ))
 }
 
 /// A workspace holding the picture as `a.png`, a secret one under `secret/`,
@@ -387,9 +393,9 @@ fn sixteen_asked_at_once_are_decoded_one_at_a_time_and_each_is_shown() {
     let _shared = SLOT.read().unwrap_or_else(PoisonError::into_inner);
     let workspace = Arc::new(workspace);
     let decoded = |workspace: &Workspace| {
-        let (image, mut permission) = (answer("a.png"), engine(&[]));
+        let (image, mut permission, lane) = (answer("a.png"), engine(&[]), Lane::default());
         let steps: Steps<_> = (Workspace::existing, read, counted);
-        let showing = showing(&image, workspace, &mut permission, None, steps);
+        let showing = showing(&image, workspace, &mut permission, (None, &lane), steps);
         crucible_runtime::answered!(showing)
     };
     let asked: Vec<_> = (0..16)
@@ -429,7 +435,7 @@ fn a_read_that_never_returns_is_answered_not_in_time_within_the_deadline() {
         &answer("a.png"),
         &workspace,
         &mut engine(&[]),
-        Some(&worker),
+        (Some(&worker), &Lane::default()),
         (Workspace::existing, reader, crucible_raster::decode),
     ));
     let waited = started.elapsed();
@@ -535,17 +541,25 @@ fn a_path_never_approved_is_not_shown_while_the_worker_has_no_room() {
         let (workspace, worker) = (workspace.clone(), worker.clone());
         async move {
             let mut permission = engine(&rules);
-            let answered = show(&answer(spelled), &workspace, &mut permission, Some(&worker)).await;
+            let lane = Lane::default();
+            let answered = show(
+                &answer(spelled),
+                &workspace,
+                &mut permission,
+                Some(&worker),
+                &lane,
+            )
+            .await;
             (spelled, answered.err())
         }
     };
     let answered = runtime.block_on(async {
-        let (outside, ruled, missing) = tokio::join!(
+        let (outside, denied, missing) = tokio::join!(
             asked("../outside.png"),
             asked("secret/b.png"),
             asked("missing.png"),
         );
-        vec![outside, ruled, missing]
+        vec![outside, denied, missing]
     });
     drop(release);
     let refused: Vec<_> = ["../outside.png", "secret/b.png", "missing.png"]
@@ -553,4 +567,63 @@ fn a_path_never_approved_is_not_shown_while_the_worker_has_no_room() {
         .map(|spelled| (spelled, Some(ImageRefused::NotShown)))
         .collect();
     assert_eq!(answered, refused);
+}
+
+#[test]
+fn a_read_still_stuck_holds_the_route_s_one_job_and_the_next_image_is_not_shown_at_once() {
+    let (_sample, workspace) = tree("images-one-job");
+    let runtime = timed();
+    let worker = ToolWorker::new(runtime.handle().clone());
+    let lane = Lane::default();
+    let (release, stuck) = std::sync::mpsc::channel::<()>();
+    let reader = move |_: &Approved, _: &Workspace, _: &WorkspacePath, _: Instant| {
+        let _ = stuck.recv_timeout(Duration::from_secs(10));
+        Err::<Taken, _>(ImageRefused::NotShown)
+    };
+    let first = runtime.block_on(showing(
+        &answer("a.png"),
+        &workspace,
+        &mut engine(&[]),
+        (Some(&worker), &lane),
+        (Workspace::existing, reader, crucible_raster::decode),
+    ));
+    assert_eq!(first, Err(ImageRefused::NotInTime));
+
+    // The read is still stuck, and still holds the route's one job.
+    let asked = Instant::now();
+    let second = runtime.block_on(show(
+        &answer("a.png"),
+        &workspace,
+        &mut engine(&[]),
+        Some(&worker),
+        &lane,
+    ));
+    let waited = asked.elapsed();
+    let tool = runtime.block_on(worker.within(
+        Duration::from_secs(1),
+        worker.run(&crucible_runtime::Cancel::new(), |_| "a tool's job"),
+    ));
+    let _ = release.send(());
+    assert_eq!(second, Err(ImageRefused::NotShown));
+    assert!(waited < Duration::from_millis(500), "{waited:?}");
+    assert_eq!(tool.ok(), Some(Ok("a tool's job")), "a tool found no room");
+
+    // Given back as the stuck read returns, and not before.
+    let began = Instant::now();
+    while lane.0.available_permits() == 0 {
+        assert!(
+            began.elapsed() < Duration::from_secs(5),
+            "the lane never came back"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+    let _shared = SLOT.read().unwrap_or_else(PoisonError::into_inner);
+    let third = runtime.block_on(show(
+        &answer("a.png"),
+        &workspace,
+        &mut engine(&[]),
+        Some(&worker),
+        &lane,
+    ));
+    assert!(third.is_ok(), "{third:?}");
 }
