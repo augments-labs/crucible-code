@@ -822,7 +822,7 @@ pub(crate) mod tests {
             panic!("told {told:?}");
         };
         assert!(made.kept().is_none(), "a live formula is made");
-        // Sized in bare numbers, as the raster reads a size.
+        // Sized in bare numbers, which the raster reads as pixels.
         let svg = inked(&crucible_app::math::Svg::new(
             &b"<svg xmlns='http://www.w3.org/2000/svg' width='16' height='8'><path d='M0 0H16V8H0Z'/></svg>"[..],
         ))
