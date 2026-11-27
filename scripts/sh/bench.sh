@@ -12,6 +12,29 @@
 #     scripts/sh/bench.sh stream       rendered frames under a token burst
 #     scripts/sh/bench.sh live         turn-band redraws while a command prints
 #     scripts/sh/bench.sh drawing      a drawer laying out the worst block it takes
+#     scripts/sh/bench.sh picture-wait the drawing thread while a formula's picture is made
+#     scripts/sh/bench.sh tex-slab     the host's kernel memory under TeX writing files
+#
+# A budget that needs the host's TeX is measured only when its mode is named,
+# and there an absent TeX is a failure, not a skip. `tex-slab` is that mode: no
+# argument leaves it out, so a runner without TeX measures every other budget,
+# and naming it also builds `crucible-sandbox-broker` in release, where the
+# probe's sandbox looks for it beside the probe.
+#
+# The colour-on memory probe runs a copy of `crucible` built with the root
+# package's `bench-math-stand-in` feature, whose engine answers every display
+# formula with one kept picture without TeX or the sandbox, so the session it
+# measures keeps sixteen math pictures on any runner. That copy and the probe
+# are built with the feature in the shared `target/`, copied into
+# `target/bench-math-stand-in/release/`, and the probe runs from there. The
+# default build follows at once, before any probe runs, so every run that
+# completes leaves `target/release/crucible`, which every other probe and a
+# release use, as the default build, and no probe runs it as the stand-in.
+# Both builds share every dependency, so the second costs one build and link
+# of the root package. A run stopped between the two, killed or failed (under
+# `set -e` a failed default build also leaves it), leaves the stand-in at
+# `target/release/crucible` until the next run, whose default build replaces
+# it.
 #
 # Output is split by stream, so one run serves a human and a pipeline at once:
 #
@@ -70,9 +93,19 @@ readonly BUDGETS=(
     "stream|bench-render-burst|rendered frames >= 30/s and sustained/opening pace >= 0.5"
     "live|bench-live-burst|turn-band redraws >= 30/s and sustained/opening pace >= 0.5"
     "drawing|bench-drawing|a drawer's text layout at its caps <= 2 ms p95 and its picture <= 30 ms p95"
+    "picture-wait|bench-picture-wait|the drawing thread's longest call while a formula's picture is pending <= 20 ms"
+    "tex-slab|bench-tex-slab|kernel slab under TeX writing files, net of idle: each pair <= 128 MiB, median >= 8 MiB"
 )
 
-readonly MODES=(startup tools mem grep stream live drawing)
+readonly MODES=(startup tools mem grep stream live drawing picture-wait tex-slab)
+
+# Modes measured only when named, because they need what a runner may lack.
+readonly NAMED_ONLY=(tex-slab)
+
+# The probe run from the copy built with the stand-in engine, and where that
+# copy is put, beside its own `crucible`.
+readonly STAND_IN_PROBE=bench-session-rss-colour
+readonly STAND_IN_DIR=target/bench-math-stand-in/release
 
 # A probe's value and limit go into the JSON unquoted, so both must be numbers.
 readonly NUMERIC='^-?[0-9]+(\.[0-9]+)?$'
@@ -90,10 +123,18 @@ if [[ "$mode" != all ]]; then
     fi
 fi
 
+named_only() {
+    local m
+    for m in "${NAMED_ONLY[@]}"; do
+        [[ "$m" == "$1" ]] && return 0
+    done
+    return 1
+}
+
 selected=()
 for entry in "${BUDGETS[@]}"; do
     IFS='|' read -r m _ _ <<<"$entry"
-    if [[ "$mode" == all || "$mode" == "$m" ]]; then
+    if [[ "$mode" == "$m" ]] || { [[ "$mode" == all ]] && ! named_only "$m"; }; then
         selected+=("$entry")
     fi
 done
@@ -101,16 +142,41 @@ done
 # One cargo invocation for every probe that exists, rather than one per probe:
 # the second build would be a no-op that still pays for cargo's startup.
 build=()
+stand_in=0
+broker=0
 for entry in "${selected[@]}"; do
-    IFS='|' read -r _ probe _ <<<"$entry"
+    IFS='|' read -r m probe _ <<<"$entry"
     [[ -f "src/bin/$probe.rs" ]] && build+=("--bin=$probe")
+    [[ "$probe" == "$STAND_IN_PROBE" && -f "src/bin/$probe.rs" ]] && stand_in=1
+    [[ "$m" == tex-slab ]] && broker=1
 done
 
-if ((${#build[@]})); then
+if ((stand_in)); then
+    # In the shared target, so it reuses every dependency the default build
+    # compiles, then copied out of the default build's way: the default build
+    # below replaces what it left in `target/release/`.
+    echo "==> building the colour probe on the stand-in engine (release)" >&2
+    cargo build --release --quiet --features bench-math-stand-in \
+        "--bin=$STAND_IN_PROBE" --bin=crucible
+    # Removed first, so a copy never writes through a link into what cargo
+    # keeps.
+    mkdir -p "$STAND_IN_DIR"
+    rm -f "$STAND_IN_DIR/$STAND_IN_PROBE" "$STAND_IN_DIR/crucible"
+    cp "target/release/$STAND_IN_PROBE" target/release/crucible "$STAND_IN_DIR/"
+fi
+
+# Unconditional once the stand-in was built, and before any probe runs, so
+# `target/release/crucible` is the default build again whatever is measured.
+if ((stand_in || ${#build[@]})); then
     # Release profile — fat LTO, one codegen unit, stripped. Measuring a debug
     # build answers a question nobody asked.
     echo "==> building probes (release)" >&2
     cargo build --release --quiet "${build[@]}" --bin=crucible
+fi
+
+if ((broker)); then
+    echo "==> building the sandbox broker (release)" >&2
+    cargo build --release --quiet -p crucible-sandbox-broker
 fi
 
 failed=0
@@ -140,8 +206,10 @@ for entry in "${selected[@]}"; do
 
     printf '==> %-20s %s\n' "$probe" "$budget" >&2
 
+    built=target/release
+    [[ "$probe" == "$STAND_IN_PROBE" ]] && built=$STAND_IN_DIR
     status=pass
-    if ! reading=$("target/release/$probe"); then
+    if ! reading=$("$built/$probe"); then
         status=over
         failed=1
     fi

@@ -272,21 +272,20 @@ pub fn rasterise(svg: &[u8], width_px: u32, inks: &[(&str, [u8; 3])]) -> Result<
     })
 }
 
-/// The width `svg` is rasterised at, in pixels: its own, since a picture is
-/// never scaled up, unless that is more pixels than [`MOST_DECODED`] holds, and
-/// then the most it holds at its proportions, with the height rounded up as
-/// [`rasterise`] rounds it.
+/// The width and height of `svg`'s outermost element, in pixels: what a
+/// picture is when it is not scaled, as [`rasterise`] reads it.
 ///
-/// Its own is the `width` and `height` of its outermost element, read by the
-/// parser [`rasterise`] reads it with: plain numbers, without a unit. A caller
-/// that places the picture in a room narrower than this rasterises it at the
-/// room's width instead.
+/// Each is a plain number of pixels, or a number in one of the SVG's absolute
+/// units at its CSS value, 96 pixels to the inch: `px`, `pt` (72 to the inch),
+/// `pc` (6), `in`, `cm` (2.54) and `mm` (25.4). A relative unit has nothing
+/// here to be relative to, and is refused with any other.
 ///
 /// # Errors
 /// [`Refused::TooLarge`] for an SVG past [`MOST_INPUT`];
 /// [`Refused::NotAnImage`] for bytes that are not an SVG, or one whose width
-/// or height is missing, not a number, or not above nought.
-pub fn raster_width(svg: &[u8]) -> Result<u32, Refused> {
+/// or height is missing, not a number in one of those units, or not above
+/// nought.
+pub fn own_size(svg: &[u8]) -> Result<(f64, f64), Refused> {
     if svg.len() > MOST_INPUT {
         return Err(Refused::TooLarge);
     }
@@ -297,7 +296,7 @@ pub fn raster_width(svg: &[u8]) -> Result<u32, Refused> {
     }
     let side = |name: &str| {
         root.attribute(name)
-            .and_then(|value| value.parse::<f64>().ok())
+            .and_then(pixels)
             // The tree keeps a size as an `f32`, and the rasteriser's height is
             // worked out from that.
             .map(|value| {
@@ -307,7 +306,40 @@ pub fn raster_width(svg: &[u8]) -> Result<u32, Refused> {
             .filter(|value| value.is_finite() && *value > 0.0)
             .ok_or(Refused::NotAnImage)
     };
-    let (width, height) = (side("width")?, side("height")?);
+    Ok((side("width")?, side("height")?))
+}
+
+/// The pixels a length on the outermost element stands for, at 96 to the inch,
+/// or `None` where it is not a number in an absolute unit.
+fn pixels(length: &str) -> Option<f64> {
+    const PER_INCH: f64 = 96.0;
+    let units = [
+        ("px", 1.0),
+        ("pt", PER_INCH / 72.0),
+        ("pc", PER_INCH / 6.0),
+        ("in", PER_INCH),
+        ("cm", PER_INCH / 2.54),
+        ("mm", PER_INCH / 25.4),
+    ];
+    let (number, scale) = units
+        .iter()
+        .find_map(|(unit, scale)| Some((length.strip_suffix(unit)?, *scale)))
+        .unwrap_or((length, 1.0));
+    number.parse::<f64>().ok().map(|number| number * scale)
+}
+
+/// The width `svg` is rasterised at, in pixels: its own, since a picture is
+/// never scaled up, unless that is more pixels than [`MOST_DECODED`] holds, and
+/// then the most it holds at its proportions, with the height rounded up as
+/// [`rasterise`] rounds it.
+///
+/// Its own is [`own_size`]'s width. A caller that places the picture in a
+/// room narrower than this rasterises it at the room's width instead.
+///
+/// # Errors
+/// As [`own_size`].
+pub fn raster_width(svg: &[u8]) -> Result<u32, Refused> {
+    let (width, height) = own_size(svg)?;
     let most = u64::try_from(MOST_DECODED / 4).unwrap_or(u64::MAX);
     #[allow(clippy::cast_precision_loss, reason = "a width under the ceiling")]
     let held = |across: u64| across.saturating_mul(rows(height, across as f64, width)) <= most;

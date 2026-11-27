@@ -11,7 +11,10 @@
 //! A picture is rasterised at the narrowest of its own width, the widest the
 //! raster's ceiling on decoded pixels holds, and the room it is placed in: the
 //! narrow edge of the window's width bucket, in cells of the window's pixels.
-//! It is never scaled up, so a small diagram stays its own size. A Sixel
+//! It is never scaled up, so a small diagram stays its own size. A display
+//! formula's picture is instead drawn at the scale at which TeX's ten-point
+//! text is one cell tall, or as much smaller as brings it into its room, and
+//! is text where that would be under half that scale. A Sixel
 //! picture is also drawn no taller than the rows its key gives it, since the
 //! terminal shows its pixels as they are; a PNG is scaled into its cells by
 //! the terminal and is drawn once for any of them.
@@ -31,6 +34,14 @@
 //! frame never reads the disk. An image is never handed to it, since it is
 //! read again from its file.
 //!
+//! A display formula's picture is kept and read under the toolchain the
+//! session's check found, and is neither while the check has not passed: a
+//! picture another TeX made is never shown as this one's, and a session put
+//! back runs no TeX. In native mode a formula put back is read as a diagram
+//! is, so one sent into the scrollback before the check passed stays its
+//! text. On a full screen it is read by [`kept_formulas`], on the math task's
+//! thread, for the formulas the renderer tells out once the walk is over.
+//!
 //! An image arrives as the PNG the application read it into, already within
 //! its ceilings and made by this process, and is decoded again here in the
 //! slot only to learn its size and, for Sixel, its pixels. Kitty and iTerm2
@@ -45,14 +56,18 @@
 //! new payload; a picture wider than Sixel is encoded at is drawn as text, as
 //! too wide, rather than narrowed.
 
-use super::picture_cache::{Cache, Queue};
+use super::math_engine::{Outcome, Read};
+use super::picture_cache::{Cache, Entry, Queue};
 use crucible_client_api::ImageRefused;
 use crucible_raster::{
-    MOST_SIXEL_WIDTH, Refused, SixelPalette, Slot, decode, png, raster_width, rasterise, sixel,
+    MOST_SIXEL_WIDTH, Refused, SixelPalette, Slot, decode, own_size, png, raster_width, rasterise,
+    sixel,
 };
 use crucible_tui::KeptPicture;
 use crucible_tui::chrome::Undrawn;
-use crucible_tui::graphics::{Form, Payload, PictureKey, Pictures, Protocol};
+use crucible_tui::graphics::{Form, Formula, Payload, PictureKey, Pictures, Protocol};
+use crucible_tui::markdown::Kind;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// The longest the drawing thread waits for the decode slot before it draws
@@ -89,15 +104,20 @@ pub(crate) struct Caching {
     cache: Cache,
     queue: Queue,
     resuming: bool,
+    /// What the session's check found, which names the toolchain a
+    /// formula's picture is kept and read under.
+    math: Outcome,
 }
 
 impl Caching {
-    /// Pictures read from `cache` on resume and written through `queue`.
-    pub(crate) const fn new(cache: Cache, queue: Queue) -> Self {
+    /// Pictures read from `cache` on resume and written through `queue`, a
+    /// formula's under the toolchain `math` names.
+    pub(crate) const fn new(cache: Cache, queue: Queue, math: Outcome) -> Self {
         Self {
             cache,
             queue,
             resuming: false,
+            math,
         }
     }
 }
@@ -106,13 +126,32 @@ impl Pictures for Caching {
     fn cached(&mut self, source: &str, key: &PictureKey) -> Option<(Form, Payload)> {
         // Asked live, it would read the disk inside a frame; live, the
         // drawer runs instead, and only a session put back reads it.
-        self.resuming.then(|| self.cache.get(source, key)).flatten()
+        if !self.resuming {
+            return None;
+        }
+        if key.kind == Kind::DisplayMath {
+            // Read only under the toolchain this session's check found, so a
+            // picture another TeX made is never shown as this one's; before
+            // the check has passed, the formula stays its text.
+            let toolchain = self.math.toolchain()?;
+            return self.cache.get_made_by(source, key, &toolchain);
+        }
+        self.cache.get(source, key)
     }
 
     fn make(&mut self, source: &str, key: &PictureKey, form: &Form) -> Result<Payload, Undrawn> {
         let payload = encoded(form, key)?;
-        // A full queue drops the write: the picture is drawn either way.
-        let _ = self.queue.put(source, key, form, &payload);
+        // A full queue drops the write: the picture is drawn either way. A
+        // formula's is kept under the toolchain that made it, and not at all
+        // where none is named.
+        let _ = if key.kind == Kind::DisplayMath {
+            self.math
+                .toolchain()
+                .and_then(|toolchain| Entry::made_by(source, key, &toolchain, form, &payload))
+                .is_some_and(|entry| self.queue.sent(entry))
+        } else {
+            self.queue.put(source, key, form, &payload)
+        };
         Ok(payload)
     }
 
@@ -123,6 +162,20 @@ impl Pictures for Caching {
     fn resuming(&mut self, resuming: bool) {
         self.resuming = resuming;
     }
+}
+
+/// What reads, from `cache`, the picture an earlier session kept of a formula
+/// put back on a full screen, under the toolchain this session's check found:
+/// asked on the math task's thread, never the drawing thread's.
+pub(crate) fn kept_formulas(cache: Cache) -> Read<Formula> {
+    Arc::new(move |formula: &Formula, toolchain: &str| {
+        let key = formula.kept()?;
+        match cache.get_made_by(formula.source(), key, toolchain)? {
+            (Form::Svg(svg), _) => Some(svg),
+            // A formula is kept as the picture TeX made of it, never a PNG.
+            (Form::Png(_), _) => None,
+        }
+    })
 }
 
 /// `form` drawn in `key`'s palette at the width its room allows, and encoded
@@ -137,7 +190,11 @@ fn encoded(form: &Form, key: &PictureKey) -> Result<Payload, Undrawn> {
     // picture; and so not waited for again inside: the raster's own entry
     // points let the thread that holds the slot straight through.
     let _slot = Slot::take(WAIT).map_err(refusal)?;
-    let width = raster_width(svg).map_err(refusal)?.min(room);
+    let width = if key.kind == Kind::DisplayMath {
+        formula_width(svg, key, room)?
+    } else {
+        raster_width(svg).map_err(refusal)?.min(room)
+    };
     let mut pixels = rasterise(svg, width, &key.palette.inks()).map_err(refusal)?;
     // A Sixel bitmap is shown pixel for pixel, so one taller than the rows
     // it is shown in is drawn again as much narrower as brings it into them.
@@ -167,6 +224,36 @@ fn encoded(form: &Form, key: &PictureKey) -> Result<Payload, Undrawn> {
         (pixels.width(), pixels.height()),
         key.cell,
     ))
+}
+
+/// The points of TeX's text drawn one cell tall: the size `latex` sets a
+/// formula's text in, so a formula's letters stand as tall as the
+/// transcript's around it.
+const TEXT_POINTS: f64 = 10.0;
+
+/// How many pixels wide a formula's picture `svg` is drawn under `key`: at the
+/// scale at which [`TEXT_POINTS`] of TeX's text is one cell tall, or the
+/// largest smaller one at which it fits its `room`.
+///
+/// One that would be drawn at less than half that scale is refused as too
+/// wide, since its text would stand under half the height of the
+/// transcript's. Its height follows at its proportions, and a picture with
+/// more pixels than the raster draws is refused there.
+fn formula_width(svg: &[u8], key: &PictureKey, room: u32) -> Result<u32, Undrawn> {
+    // `dvisvgm` sizes a picture in points, which the raster reads at 96
+    // pixels to the inch, and so 72 points to 96 of its pixels.
+    let (width, _) = own_size(svg).map_err(refusal)?;
+    let scaled = width * 72.0 / 96.0 * f64::from(key.cell.height) / TEXT_POINTS;
+    let fitted = scaled.min(f64::from(room));
+    if fitted * 2.0 < scaled {
+        return Err(Undrawn::TooWide);
+    }
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "no wider than the room, which is a u32"
+    )]
+    Ok(fitted.round() as u32)
 }
 
 /// How many pixels wide a picture under `key` has room for: the narrow edge
@@ -224,6 +311,31 @@ pub(crate) const fn refused(refused: ImageRefused) -> Undrawn {
     }
 }
 
+/// A formula's picture as `dvisvgm` made it, worn in the transcript's own
+/// colour: or `None`, where it is not text with a root to wear one on.
+///
+/// `dvisvgm` names no colour, so every glyph would be drawn black on any
+/// ground. The root is given the class plain text is inked by and a fill of
+/// `currentColor`, which every glyph inherits, so the raster draws it in the
+/// palette's ink for that slot, and in the new one when the theme changes.
+/// Everything else in the picture is left as it came, for the raster to take
+/// or refuse.
+pub(super) fn inked(made: &crucible_app::math::Svg) -> Option<crucible_tui::drawing::Svg> {
+    let text = std::str::from_utf8(made.bytes()).ok()?;
+    let root = text.match_indices("<svg").find_map(|(at, _)| {
+        let after = at + "<svg".len();
+        text.get(after..)?
+            .starts_with(|next: char| next.is_ascii_whitespace() || next == '>' || next == '/')
+            .then_some(after)
+    })?;
+    let (head, tail) = text.split_at_checked(root)?;
+    let class = crucible_tui::Slot::Plain.class();
+    crucible_tui::drawing::Svg::new(format!(
+        "{head} class=\"{class}\" fill=\"currentColor\"{tail}"
+    ))
+    .ok()
+}
+
 /// Why a picture the raster refused is drawn as text.
 ///
 /// Written out case by case so a new refusal is a decision here.
@@ -247,6 +359,28 @@ pub(crate) mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex, PoisonError, mpsc};
     use std::time::Instant;
+
+    /// A picture as `dvisvgm` writes one: its header, and a root naming no
+    /// colour, so everything in it is drawn in the default black.
+    const MADE: &str = "<?xml version='1.0' encoding='UTF-8'?>\n<!-- This file was generated by dvisvgm 3.6 -->\n<svg version='1.1' xmlns='http://www.w3.org/2000/svg' width='8pt' height='8pt' viewBox='0 0 8 8'>\n<path d='M0 0H8V8H0Z'/>\n</svg>";
+
+    #[test]
+    fn a_formula_picture_is_worn_in_the_ink_of_plain_text() {
+        let _one = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
+        let made = crucible_app::math::Svg::new(MADE.as_bytes());
+        let svg = inked(&made).expect("a picture with a root");
+        let inks = [(crucible_tui::Slot::Plain.class(), [200, 10, 20])];
+        let pixels = rasterise(svg.as_str().as_bytes(), 8, &inks).unwrap();
+        let rgba = pixels.rgba();
+        assert_eq!(rgba.get(..4), Some(&[200, 10, 20, 255][..]));
+    }
+
+    #[test]
+    fn a_formula_picture_that_is_not_text_or_has_no_root_is_none() {
+        assert!(inked(&crucible_app::math::Svg::new(&b"<svg \xff/>"[..])).is_none());
+        assert!(inked(&crucible_app::math::Svg::new(&b"<g/>"[..])).is_none());
+        assert!(inked(&crucible_app::math::Svg::new(&b"<svgx/>"[..])).is_none());
+    }
 
     /// Every test here takes the one decode slot in the process, and one of
     /// them holds it on purpose: they take turns, so none is refused for
@@ -347,6 +481,53 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(wide.pixels(), (64, 32));
         assert_eq!(wide.cells(), (8, 2));
+    }
+
+    /// A display formula's key, `columns` wide, on the same terminal as
+    /// [`key`]'s, whose cells are sixteen pixels tall.
+    fn formula_key(columns: usize) -> PictureKey {
+        PictureKey {
+            kind: Kind::DisplayMath,
+            ..key(Theme::Dark, None, columns)
+        }
+    }
+
+    /// The picture `dvisvgm` made of a formula, as committed beside the math
+    /// engine and worn as the engine's answer is: sized in points, 88.065533pt
+    /// by 29.888224pt.
+    fn display_cases() -> Form {
+        let made =
+            crucible_app::math::Svg::new(&include_bytes!("math_engine/display-cases.svg")[..]);
+        Form::Svg(inked(&made).unwrap())
+    }
+
+    #[test]
+    fn a_formula_tex_made_is_drawn_with_its_ten_point_text_one_cell_tall() {
+        let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
+        // Ten points to a cell sixteen pixels tall: 88.07pt is 141 pixels,
+        // and its height follows at its proportions.
+        let payload = Raster
+            .make("cases", &formula_key(80), &display_cases())
+            .unwrap();
+        assert_eq!(payload.pixels(), (141, 48));
+    }
+
+    #[test]
+    fn a_formula_wider_than_its_room_is_drawn_at_the_rooms_width_down_to_half_its_scale() {
+        let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
+        // Twelve cells of eight leave 96 pixels, more than half of 141.
+        let narrowed = Raster
+            .make("cases", &formula_key(12), &display_cases())
+            .unwrap();
+        assert_eq!(narrowed.pixels().0, 96);
+        // Eight leave 64, under half: it would be drawn smaller than half the
+        // size of the text around it, so it is text.
+        assert_eq!(
+            Raster
+                .make("cases", &formula_key(8), &display_cases())
+                .err(),
+            Some(Undrawn::TooWide)
+        );
     }
 
     /// A picture `width` by `height` with nothing on it, so every pixel is
@@ -597,6 +778,98 @@ pub(crate) mod tests {
             written.contains("\x1b_Ga=t,f=100,i=") && written.contains("\x1b_Ga=p,U=1,i="),
             "no picture was sent: {written:?}"
         );
+    }
+
+    /// A session on a truecolour Kitty terminal 80 by 40 on `screen`, whose
+    /// display formulas are pictures drawn by `pictures`.
+    fn math_session(screen: ScreenMode, pictures: Box<dyn Pictures>) -> Renderer<Recording> {
+        let truecolour = |name: &str| (name == "COLORTERM").then(|| "truecolor".to_owned());
+        let mut renderer = Renderer::drawing(Recording::new(80, 40), screen);
+        renderer.drawers(crate::cli::draw::drawers());
+        renderer.pictures(pictures);
+        renderer.wears(Palette::resolve(true, Theme::Dark, None, &truecolour));
+        renderer.images(Capability::Graphics {
+            protocol: Protocol::Kitty,
+            cell: CELL,
+        });
+        renderer.math(Mode::Image);
+        renderer
+    }
+
+    /// Whether `renderer` has sent its terminal a Kitty picture.
+    fn sent_a_picture(renderer: &Renderer<Recording>) -> bool {
+        renderer.terminal().written().contains("\x1b_Ga=t,f=100,i=")
+    }
+
+    #[test]
+    fn a_formula_a_session_put_back_shows_is_read_from_what_was_kept_under_the_toolchain_found() {
+        use crate::cli::math_engine::Said;
+        use crate::cli::picture_cache::{Cache, writing};
+        let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
+        let sample = crate::cli::sample::Sample::new("pictures-kept-formula");
+        let cache = Cache::open(&sample.root());
+        let found = || Outcome::of(Said::Available("stand-in".into()));
+        let formula = "$$\nx^2\n$$\n";
+
+        // Shown live, its picture is kept under the toolchain that made it.
+        let (queue, writer) = writing(cache.clone());
+        let caching = Caching::new(cache.clone(), queue, found());
+        let mut live = math_session(ScreenMode::Fullscreen, Box::new(caching));
+        live.stream(formula).unwrap();
+        live.settle().unwrap();
+        let told = live.formulas();
+        let [made] = told.as_slice() else {
+            panic!("told {told:?}");
+        };
+        assert!(made.kept().is_none(), "a live formula is made");
+        // Sized in bare numbers, which the raster reads as pixels.
+        let svg = inked(&crucible_app::math::Svg::new(
+            &b"<svg xmlns='http://www.w3.org/2000/svg' width='16' height='8'><path d='M0 0H16V8H0Z'/></svg>"[..],
+        ))
+        .unwrap();
+        live.formula_made(made, svg).unwrap();
+        assert!(sent_a_picture(&live), "not shown live");
+        writer.drain();
+
+        // Put back on a full screen, it is told out to be read, and what is
+        // read for it under the toolchain found is shown; under another,
+        // nothing is.
+        let (queue, _writer) = writing(cache.clone());
+        let caching = Caching::new(cache.clone(), queue, found());
+        let mut put_back = math_session(ScreenMode::Fullscreen, Box::new(caching));
+        put_back.resuming(true);
+        put_back.stream(formula).unwrap();
+        put_back.resuming(false);
+        put_back.settle().unwrap();
+        assert!(!sent_a_picture(&put_back), "read on the drawing thread");
+        let told = put_back.formulas();
+        let [kept] = told.as_slice() else {
+            panic!("told {told:?}");
+        };
+        assert!(kept.kept().is_some(), "put back to be read: {kept:?}");
+        let read = kept_formulas(cache.clone());
+        assert!(read(kept, "TeX Live 2024").is_none(), "read under another");
+        put_back
+            .formula_made(kept, read(kept, "stand-in").expect("what was kept"))
+            .unwrap();
+        assert!(sent_a_picture(&put_back), "not shown");
+
+        // In native mode, put back once the check has passed, it is read as
+        // it goes into the scrollback; before, it stays its text.
+        for (said, shown) in [
+            (Said::Available("stand-in".into()), true),
+            (Said::Asking, false),
+        ] {
+            let (queue, _writer) = writing(cache.clone());
+            let caching = Caching::new(cache.clone(), queue, Outcome::of(said.clone()));
+            let mut native = math_session(ScreenMode::Native, Box::new(caching));
+            native.resuming(true);
+            native.stream(formula).unwrap();
+            native.settle().unwrap();
+            native.resuming(false);
+            assert_eq!(sent_a_picture(&native), shown, "{said:?}");
+            assert!(native.formulas().is_empty(), "{said:?} was told out");
+        }
     }
 
     /// The longest a width change may take, built optimised as the binary

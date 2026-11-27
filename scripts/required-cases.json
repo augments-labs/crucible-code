@@ -12819,7 +12819,7 @@
     {
       "id": "CASE-TRANSCRIPT-MATH-SETTING-BARE",
       "family": "transcript-blocks",
-      "obligation": "The Math row shows written, text and image bare, since each is in force at once, and the style a preview is drawn from holds the same way the renderer draws math.",
+      "obligation": "The Math row shows written, text and image with no refusal after them, only what the check has said of math pictures, since each is in force at once, and the style a preview is drawn from holds the same way the renderer draws math.",
       "package": "crucible-code",
       "target": {
         "kind": "bin",
@@ -12827,7 +12827,7 @@
       },
       "case": "cli::converse::command::settings::tests::the_math_row_shows_each_answer_bare_since_each_is_drawn_at_once",
       "source": "src/cli/converse/command/settings/tests.rs",
-      "body_sha256": "1983a04dccb38390b5647dd481aa2e613951625bf734115351f149df9ff6b793",
+      "body_sha256": "2d3b35801e1949ff3204fd9c6b679fb52086d8e0e6d13805df8193d2de4a2819",
       "platforms": [
         "linux",
         "macos",
@@ -14679,7 +14679,7 @@
     {
       "id": "CASE-TRANSCRIPT-PICTURES-KITTY-COLOUR-GANTTS",
       "family": "transcript-pictures",
-      "obligation": "The colour session's last measured answer ends in MOST_KEPT_IMAGES + 1 distinct gantt fences, each one section and TASKS tasks, within the gantt caps' bytes and nodes.",
+      "obligation": "The colour session's last measured answer ends in MOST_KEPT_IMAGES + 1 distinct gantt fences, each one section and TASKS tasks, within the gantt caps' bytes and nodes and with no $ among them, and then FORMULAS distinct display formulas, as many as the record keeps pictures of, so the probe, which is refused unless the last FORMULAS pictures it reads are the stand-in's, weighs pictures of formulas.",
       "package": "crucible-code",
       "target": {
         "kind": "bin",
@@ -14687,7 +14687,7 @@
       },
       "case": "tests::the_last_measured_answer_ends_in_one_more_gantt_than_the_record_keeps_pictures_of",
       "source": "src/bin/bench-session-rss-colour.rs",
-      "body_sha256": "70cf6363ad29a2c3efe750eafbc91fa6e887b3d22204021e3b7dbe26fde19c72",
+      "body_sha256": "d1bddf8500729d312f7a92b30987271cb53b34bbea6ff916f3bc325f165cb6c9",
       "platforms": [
         "linux"
       ]
@@ -16853,7 +16853,7 @@
       },
       "case": "cli::picture_cache::tests::an_entry_larger_than_the_queue_takes_is_refused_before_it_is_read",
       "source": "src/cli/picture_cache/tests.rs",
-      "body_sha256": "2e036dc82dec5477f5452cee8d74a575e31ee9906c73c6175efec27bb4321681",
+      "body_sha256": "6ab3783149b14448fa13540992c1b77a8aa58b9885b6c7b1c3f5b3ccdba54f13",
       "platforms": [
         "linux",
         "macos",
@@ -16871,7 +16871,7 @@
       },
       "case": "cli::picture_cache::tests::a_payload_that_is_not_what_its_protocol_says_is_a_miss",
       "source": "src/cli/picture_cache/tests.rs",
-      "body_sha256": "0e8d6d1ae302af328c3d6239c80aa01e870ef2f8ba9cb582c58f668508f7b9b8",
+      "body_sha256": "9674d7ce77cff71bc0e70df7e505c3826c91be4241e690b46771df7287c822b2",
       "platforms": [
         "linux",
         "macos",
@@ -16940,7 +16940,7 @@
       },
       "case": "cli::picture_cache::tests::a_cache_that_cannot_be_written_draws_as_before_and_frees_its_queue",
       "source": "src/cli/picture_cache/tests.rs",
-      "body_sha256": "6d2beefd3513a4a59cdfa364148fcaf1f5272b7d61cd6890a6b912966b4b4840",
+      "body_sha256": "ad013cb492d08d36b4f4426f32b78001ede7553292b015ee1cf635315d154007",
       "platforms": [
         "linux",
         "macos",
@@ -17318,6 +17318,1361 @@
       "case": "cli::picture_cache::tests::a_write_holds_no_more_names_than_its_bound_and_takes_the_oldest_of_them_out",
       "source": "src/cli/picture_cache/tests.rs",
       "body_sha256": "7570cff834c5ec21ec55406abbe232209e9cdffe4416e5290a633226b2a70b8b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-CHECK-TEX-TREE-MISSING",
+      "family": "transcript-math-pictures",
+      "obligation": "The math check reads a missing /etc/texmf or /var/lib/texmf as ProgramMissing and prepares nothing.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::a_missing_tex_tree_is_program_missing_and_nothing_is_prepared",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "600f4980aa02ce892d3892bcbc7119d7a5f03f8b2ea5792365f1dd2f25846ca8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-CHECK-LIMIT-REFUSED",
+      "family": "transcript-math-pictures",
+      "obligation": "A sandbox that cannot hold the disk or process limit a TeX run needs is Refused with that feature.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::reached::an_unsupported_limit_at_prepare_is_refused_with_that_feature",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "453fb45299f82567f42c7c4ccccbc2264b9c1f17e0f9dac33e6be1e4f02e894d",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-CHECK-NO-BACKEND",
+      "family": "transcript-math-pictures",
+      "obligation": "No sandbox backend at prepare is NoBackend.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::reached::no_backend_at_prepare_is_no_backend",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "682636cba32dc2c8aa25be5968c53d93888a5c6e7d1b779beae6184a6cfe3de8",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-CHECK-SANDBOX-REFUSED",
+      "family": "transcript-math-pictures",
+      "obligation": "A refusal at materialize, stage or release is SandboxRefused.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::reached::a_refusal_after_prepare_is_sandbox_refused",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "497bf207b1ad5f8123460b200bb5cf908d28f2c69eb1eeea6e25676f3ec1e404",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-CHECK-UNCONFINED",
+      "family": "transcript-math-pictures",
+      "obligation": "An unconfined session is Unconfined and is never staged, so TeX never runs unconfined.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::reached::an_unconfined_session_is_unconfined_and_never_staged",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "ee40981420107a290962889c0120dc64e5c476d2a40ccac85b4abfd081ee5d39",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-CHECK-VERSION-PROGRAM-MISSING",
+      "family": "transcript-math-pictures",
+      "obligation": "A version run that exits 127 or prints no version line is ProgramMissing.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::reached::a_version_run_without_its_program_is_program_missing",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "db8a8dc9c5a07a26e05d7cf5f9b766b9741a0784dee23997df2570ab6f70967b",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-CHECK-OUTPUT-VIOLATION",
+      "family": "transcript-math-pictures",
+      "obligation": "A version run ended by its output limit is SandboxRefused.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::reached::an_output_violation_is_sandbox_refused",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "806c734e34c5f94affd2f3a0ac358588b742f1752acce8ec9a914ebd99b1a7dc",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-CHECK-COMMAND-TIME",
+      "family": "transcript-math-pictures",
+      "obligation": "A version run ended by its command time is TimedOut well before the second deadline.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::reached::a_command_time_violation_is_timed_out_well_before_the_second_deadline",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "a87a030a48df7fc5c30bb8162d91c542ed5fd8e0b387d0f23efbcc7284d0aa7d",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-CHECK-THREAD-NEVER-FINISHES",
+      "family": "transcript-math-pictures",
+      "obligation": "A check whose run thread never answers times out at the second deadline and no run starts until it returns.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::reached::a_thread_that_never_finishes_times_out_at_the_second_deadline_and_holds_the_service",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "121382094027702a8db9e7efa4487910bfc1f92a7051c7b8af249ce0efd1f79b",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-CHECK-UNWIND-IN-RELEASE",
+      "family": "transcript-math-pictures",
+      "obligation": "A run thread that unwinds in release after staging is TimedOut well before the second deadline.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::reached::a_thread_that_unwinds_in_release_times_out_well_before_the_second_deadline",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "7566c7da80b2049a486e72702c44e49e200fa3b7e9586573209dda0f1e1a17cb",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-CHECK-FIRST-RUN-FLOOR",
+      "family": "transcript-math-pictures",
+      "obligation": "A first version run that leaves under a second times out and prepares no second run.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::reached::a_first_run_leaving_under_a_second_times_out_and_prepares_no_second",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "0c6d3c39185bfdf553c3b3f0e50349cd3569450594a4e994c8a2ad5660cd9fb7",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-CHECK-KILL-BEFORE-READY",
+      "family": "transcript-math-pictures",
+      "obligation": "A kill before READY is SandboxRefused, not NotReached.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::reached::a_kill_before_ready_is_sandbox_refused",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "156178d2a819efa00377da9a4513ed7ea39edfc51eb38545739043b91d826918",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-CHECK-RELEASE-HOLDS",
+      "family": "transcript-math-pictures",
+      "obligation": "A release that blocks times out at the second deadline from staged, with the asker responsive.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::reached::a_release_that_holds_times_out_at_the_second_deadline_with_the_asker_responsive",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "e23807358091ca1d972c92344a9e35630cfe947a9d664bf083482c92a62dcd7f",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-CHECK-NOT-REACHED",
+      "family": "transcript-math-pictures",
+      "obligation": "A check that never reaches a version run is NotReached.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::reached::what_never_reaches_a_version_run_is_not_reached",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "837956e5767b56a61e890e892a4aa32235dfdf5d44eb283b67c49e8b5de16747",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-CHECK-STAGING-HOLDS",
+      "family": "transcript-math-pictures",
+      "obligation": "A prepare or stage that blocks past the first deadline is NotReached at it, and later formulas start no check until it returns.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::reached::a_step_that_holds_before_staged_is_not_reached_at_the_first_deadline",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "b98883d558fdbcd1d5ce4e032f92084e406198e17c6b830f9c19192e21f0c03e",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-CHECK-SLOW-IN-TIME",
+      "family": "transcript-math-pictures",
+      "obligation": "A slow check that finishes within its deadlines yields the engine.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::reached::a_slow_check_in_time_is_the_engine",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "0ba9db3831314274ff23474ca0a4fd0b137b250344ffb55f754d483a5119ead6",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-CHECK-BUSY-RECHECKED",
+      "family": "transcript-math-pictures",
+      "obligation": "A check refused as busy is NotReached, made again before the next formula, and yields the engine once it passes.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::reached::a_check_refused_as_busy_is_made_again_and_yields_the_engine",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "dca31aec558b9bfa9f8eb07a4f0decdf2e2f84ee4a23d07161b77fd1e2f52984",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-MARGIN-AGREES-WITH-BACKEND",
+      "family": "transcript-math-pictures",
+      "obligation": "The engine's second margin equals the Linux backend's stop bounds plus 750 ms.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::the_margin_is_the_backends_stop_bounds_and_750_ms",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "11c2083453e7bede50c86ec45de3c3c6f2673f9641424822d3fce0280b047153",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-ENVIRONMENT-PARANOID",
+      "family": "transcript-math-pictures",
+      "obligation": "A formula's run is sent exactly openin_any=p and openout_any=p, so TeX opens and writes files only beneath its working directory whatever the host's texmf.cnf says.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::a_run_tells_tex_to_open_and_write_files_only_beneath_its_directory",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "2135f4d9eb96e5c5e1ed4bad9b8f6d57caa9265a487f1817b7f44a254a53fc21",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RUN-ENDS-AS-FORMULA",
+      "family": "transcript-math-pictures",
+      "obligation": "Each way a formula run ends gives that formula's outcome, and only what TeX could not make is remembered.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::made::what_a_run_ends_in_is_what_the_formula_is",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "2949011fb008e12c329bbd38b0d296468f64d29fbc93b81204de599196b99995",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RUN-COMMAND-TIME-BESIDE-ERROR",
+      "family": "transcript-math-pictures",
+      "obligation": "A run's wait or read error beside a command-time violation is a Timeout well before the second deadline.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::made::a_command_time_violation_beside_an_error_is_a_timeout_well_before_the_second_deadline",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "50bf68b4b9d1137b4cb2fe16a32dc010315384fae4f1e39e6732e2a83b1e812c",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RUN-UNWINDING-THREAD",
+      "family": "transcript-math-pictures",
+      "obligation": "A formula run thread that unwinds is answered from its closed channel, not at a deadline.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::made::an_unwinding_thread_is_answered_from_its_closed_channel",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "fdd39ff530bf326eda05cd936a4b63d2bab326e728a24e9176ce886020ceed26",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RUN-NOT-ENDED-HOLDS-SERVICE",
+      "family": "transcript-math-pictures",
+      "obligation": "A formula run not ended past its time is a Timeout at the second deadline and holds the service until it returns.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::made::a_run_not_ended_past_its_time_is_a_timeout_at_the_second_deadline_and_holds_the_service",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "01624452a1bb7cdc8c32b46511e5b4a0ff2183f4362f6f1e2703b572bc221b47",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RUN-DROPPED-BEFORE-OUTCOME",
+      "family": "transcript-math-pictures",
+      "obligation": "No formula outcome is sent before the run has dropped what it held.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::made::no_outcome_comes_before_the_run_has_dropped_what_it_held",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "da3e24d6fb90561feed0077d0f4abab618d5418166f9f6e68c423375ea7f1522",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RUN-QUARANTINE-KEEPS-SLOT",
+      "family": "transcript-math-pictures",
+      "obligation": "A run whose cleanup is unconfirmed keeps its slot, so the next formula is NotReached and not remembered.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::made::a_run_whose_cleanup_is_unconfirmed_keeps_its_slot_and_the_next_is_not_reached",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "a4b6ee0d15ad1e64e3d7b2f60a9d1cf12221dfd9402be91b192ba8415b788517",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-SANDBOXED-CHECK-IS-HOSTS",
+      "family": "transcript-math-pictures",
+      "obligation": "The real check on this host gives the engine or the Unavailable the host's own reading predicts, and the formula stays text without it.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "test",
+        "name": "math_sandboxed"
+      },
+      "case": "the_check_on_this_host_is_what_the_hosts_own_reading_says",
+      "source": "crates/crucible-app/tests/math_sandboxed.rs",
+      "body_sha256": "665c50efbb6d2690a95dcaecbd0cf7229dbaac35e6193fff75511b4fe79abdcc",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-SANDBOXED-ESCAPES",
+      "family": "transcript-math-pictures",
+      "obligation": "Every escape input through the real engine leaves its sentinels and the host unchanged; each read escape and each write above TeX's directory comes to its one recorded answer and every other input to one its row records as safe, none of them a limit or never reached; every read escape stays text, and no picture holds a sentinel or a line of /etc/passwd.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "test",
+        "name": "math_sandboxed"
+      },
+      "case": "every_escape_input_leaves_its_sentinels_and_the_host_unchanged",
+      "source": "crates/crucible-app/tests/math_sandboxed.rs",
+      "body_sha256": "203a5b710b8e2bbefddfa15729b39a62f1af9fc303085e68c0e206f45f1f477e",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-SANDBOXED-FILE-BOUND",
+      "family": "transcript-math-pictures",
+      "obligation": "A file past the per-file bound ends the TeX run.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "test",
+        "name": "math_sandboxed"
+      },
+      "case": "a_file_past_the_file_size_bound_ends_the_run",
+      "source": "crates/crucible-app/tests/math_sandboxed.rs",
+      "body_sha256": "a48e66d5eb87b28289c4519f940019760dcf73e1d2356fa466d121de63be5597",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-SANDBOXED-DISK-BOUND",
+      "family": "transcript-math-pictures",
+      "obligation": "Many files under the file bound stop at the disk bound, and writes to /dev are refused; the host's /written-root.txt is never written.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "test",
+        "name": "math_sandboxed"
+      },
+      "case": "many_files_under_the_file_bound_stop_at_the_disk_bound_and_dev_is_refused",
+      "source": "crates/crucible-app/tests/math_sandboxed.rs",
+      "body_sha256": "68ef9b87895de93ae920dd45f3d39a3df50dd6057d6b4e91c0f455b3e5e510bb",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-SANDBOXED-LOOP-KILLED",
+      "family": "transcript-math-pictures",
+      "obligation": "A looping formula is killed at its deadline and stays text.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "test",
+        "name": "math_sandboxed"
+      },
+      "case": "a_loop_is_killed_at_its_deadline_and_stays_text",
+      "source": "crates/crucible-app/tests/math_sandboxed.rs",
+      "body_sha256": "6b9920b29ffa7da1cdad7c72d1f927417d0b61cae0baecd2e3c75f9b2d90f6a8",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-SANDBOXED-OUTPUT-BOUND",
+      "family": "transcript-math-pictures",
+      "obligation": "Output past what is read of a picture stops the run as incomplete.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "test",
+        "name": "math_sandboxed"
+      },
+      "case": "a_picture_past_what_is_read_of_it_stops_the_run_as_incomplete",
+      "source": "crates/crucible-app/tests/math_sandboxed.rs",
+      "body_sha256": "f7a935836efc7c7a6a763488e095ac4398d4871617544fa72251db063c3dedbb",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-SANDBOXED-SHELL-WORDS",
+      "family": "transcript-math-pictures",
+      "obligation": "Shell words and a leading dash reach TeX only as the formula, never the wrapper or the arguments.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "test",
+        "name": "math_sandboxed"
+      },
+      "case": "shell_words_and_a_leading_dash_reach_tex_as_the_formula",
+      "source": "crates/crucible-app/tests/math_sandboxed.rs",
+      "body_sha256": "f59dcd3e371476a815cf2e2a32467c9af8c8b8a05985c0e03bdb402a91b872c6",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-SANDBOXED-OWN-OUTPUT-SILENT",
+      "family": "transcript-math-pictures",
+      "obligation": "The engine writes nothing to crucible's own stdout or stderr.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "test",
+        "name": "math_sandboxed"
+      },
+      "case": "the_engine_writes_nothing_to_crucibles_own_output",
+      "source": "crates/crucible-app/tests/math_sandboxed.rs",
+      "body_sha256": "33a8b0d911acc07b94eab24bf9a091a85fa5ca7ff5731c2c89a0ff1697341970",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-QUEUE-ONE-CHECK-IN-ORDER",
+      "family": "transcript-math-pictures",
+      "obligation": "Formulas told while a check runs start one check and are made in closing order once it passes.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::math_engine::tests::two_formulas_told_while_a_check_runs_start_one_check_and_are_made_in_order_once_it_passes",
+      "source": "src/cli/math_engine/tests.rs",
+      "body_sha256": "7d89040c359c2e93979d4a3ed261e2c13a83e08dcdf8db01721756798caa9b3b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-QUEUE-UNDECIDED-CHECK-TEXT",
+      "family": "transcript-math-pictures",
+      "obligation": "Formulas told while a check that decides nothing runs stay text, start no check of their own, and the next formula asks again; those told while that check runs start none of their own either.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::math_engine::tests::formulas_told_while_a_check_that_decides_nothing_runs_stay_text_and_the_next_asks_again",
+      "source": "src/cli/math_engine/tests.rs",
+      "body_sha256": "ce92dc72ffbe760a0d29ca318e7d74aa9aafdd6083a708524361cb5efb955f7b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-QUEUE-NEW-TURN-DROPS-UNSTARTED",
+      "family": "transcript-math-pictures",
+      "obligation": "When a turn starts, an earlier turn's unstarted formulas stay text.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::math_engine::tests::when_a_turn_starts_an_earlier_turns_unstarted_formulas_stay_text",
+      "source": "src/cli/math_engine/tests.rs",
+      "body_sha256": "311cc40248785c603bf3a33468459a7cfdad7195cef764acc8ee8be692b0eeb7",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-QUEUE-SIXTEEN-PER-TURN",
+      "family": "transcript-math-pictures",
+      "obligation": "In a turn of seventeen display formulas the seventeenth stays text.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::math_engine::tests::in_a_turn_of_seventeen_formulas_the_seventeenth_stays_text",
+      "source": "src/cli/math_engine/tests.rs",
+      "body_sha256": "dd80e864412b469d7b597fc0544fd937bb1306210c7077c6266e1bd554b61837",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-QUEUE-FAILURE-REMEMBERED",
+      "family": "transcript-math-pictures",
+      "obligation": "A formula TeX could not make is not run again, and one that never reached TeX is tried again.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::math_engine::tests::a_formula_tex_could_not_make_is_not_run_again_and_one_that_never_reached_it_is",
+      "source": "src/cli/math_engine/tests.rs",
+      "body_sha256": "873a4ab4d7fb27449f4c1c07a3b1df86aeb61f3fc488516281cabb3081c9b885",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-QUEUE-MEMORY-OLDEST-OUT",
+      "family": "transcript-math-pictures",
+      "obligation": "The failure memory drops its oldest formula first.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::math_engine::tests::the_failure_memory_drops_its_oldest_formula_first",
+      "source": "src/cli/math_engine/tests.rs",
+      "body_sha256": "fda51153d932a57e2347e08f1d2f7b754ae36d024407f5b2dfdcff66332a32a2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RESUME-READ-UNDER-TOOLCHAIN",
+      "family": "transcript-math-pictures",
+      "obligation": "A formula a resumed session puts back is read under the toolchain the check found and never made.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::math_engine::tests::a_formula_put_back_is_read_under_the_toolchain_the_check_found_and_never_made",
+      "source": "src/cli/math_engine/tests.rs",
+      "body_sha256": "8299d9c8cdeaa55501b3333e72e6a262a2c63333e5cc0fcd23e814e10e164666",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RESUME-NO-ENGINE-UNREAD",
+      "family": "transcript-math-pictures",
+      "obligation": "A formula put back where no engine is found stays text and nothing is read.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::math_engine::tests::a_formula_put_back_where_no_engine_is_found_stays_text_and_nothing_is_read",
+      "source": "src/cli/math_engine/tests.rs",
+      "body_sha256": "fbeb2d4879e8597f3b02ccb652b7ca24c82cefc598e03c9ad19358beb8600c4d",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RESUME-READS-SURVIVE-TURN",
+      "family": "transcript-math-pictures",
+      "obligation": "A turn starting keeps the formulas put back, and no more wait than a session shows.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::math_engine::tests::a_turn_starting_keeps_the_formulas_put_back_and_no_more_wait_than_a_session_shows",
+      "source": "src/cli/math_engine/tests.rs",
+      "body_sha256": "c876daef3968cf26582ac13468cb3e73adac6a7aae8e1f30933b75633e74a645",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-CACHE-TOOLCHAIN-MISS",
+      "family": "transcript-math-pictures",
+      "obligation": "A formula's picture kept under one toolchain is a miss under another.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::a_formula_kept_under_one_toolchain_is_a_miss_under_another",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "d2578a409f2f98ce660b42d8d7db357e274521a91c68e62e69380c2b20049df2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-CACHE-READ-UNDER-CHECK",
+      "family": "transcript-math-pictures",
+      "obligation": "A formula's picture is kept and read back only under the toolchain this session's check found.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::a_formula_is_kept_and_read_back_only_under_the_toolchain_this_sessions_check_found",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "8a1855ac7f2c74e87177835d7033fc8a36fa02205e14981f024761a1a93e84d7",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RESUME-NATIVE-READ-KEPT",
+      "family": "transcript-math-pictures",
+      "obligation": "A formula a resumed session shows is read from what was kept under the toolchain found, and from nothing else.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::pictures::tests::a_formula_a_session_put_back_shows_is_read_from_what_was_kept_under_the_toolchain_found",
+      "source": "src/cli/pictures.rs",
+      "body_sha256": "1ff59cb007db9e47f58441fac02da59e87117876f8d25e0538b4e744f1142b90",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-SETTINGS-ROW-SAYS-CHECK",
+      "family": "transcript-math-pictures",
+      "obligation": "The /settings Math row says what the check found of math pictures, each time it is drawn.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::command::settings::tests::the_math_row_says_what_the_check_found_of_math_pictures_each_time_it_is_drawn",
+      "source": "src/cli/converse/command/settings/tests.rs",
+      "body_sha256": "c8c90e144fee84bd35fc86f8c86c0bc8f8a5d6036c64fcc4c5a25b01902c4710",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RECORD-NON-CONVERTING-UNASKED",
+      "family": "transcript-math-pictures",
+      "obligation": "A display formula that does not convert is never told out nor asked for.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::formulas::a_display_formula_that_does_not_convert_is_never_told_out_nor_asked_for",
+      "source": "crates/crucible-tui/src/record/tests/formulas.rs",
+      "body_sha256": "34a6af55627c25c9a023dda3ac9789d7a70db463e2ffe8fc392df999392fcd0c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RECORD-RESUME-TOLD-NOT-MADE",
+      "family": "transcript-math-pictures",
+      "obligation": "A formula put back on a full screen is told out to be read, and the record reads and makes nothing.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::formulas::a_formula_put_back_on_a_full_screen_is_told_out_to_be_read_and_nothing_is_read_or_made_here",
+      "source": "crates/crucible-tui/src/record/tests/formulas.rs",
+      "body_sha256": "7fff774644bf5cf8867683f504030f52716b95f3eabe05cb40dbaffb8f1466b0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RECORD-RESUME-BOUNDED",
+      "family": "transcript-math-pictures",
+      "obligation": "No more formulas put back are told out to be read than the record keeps pictures of.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::formulas::no_more_formulas_put_back_are_told_out_to_be_read_than_the_record_keeps_pictures_of",
+      "source": "crates/crucible-tui/src/record/tests/formulas.rs",
+      "body_sha256": "a4013921c7d54d9e926164a2ba579486103939a01c0e06cb371c617b767bd735",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RECORD-TALLER-THAN-WINDOW",
+      "family": "transcript-math-pictures",
+      "obligation": "A math picture one row taller than the window is text, and one its height is shown.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::formulas::a_math_picture_one_row_taller_than_the_window_is_text_and_one_its_height_is_shown",
+      "source": "crates/crucible-tui/src/record/tests/formulas.rs",
+      "body_sha256": "88a3e4a2ff0498b69b30ce0e4c809e68fa92daff43308d93a5230d160ba93873",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RECORD-LATE-PICTURE-DROPPED",
+      "family": "transcript-math-pictures",
+      "obligation": "A math picture arriving after its block left changes nothing.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::formulas::a_math_picture_arriving_after_its_block_left_changes_nothing",
+      "source": "crates/crucible-tui/src/record/tests/formulas.rs",
+      "body_sha256": "fac8279c38f4dcf265bef27f77277dfd51bc5f8ad646985c85f1e4a8713539ae",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-NATIVE-LIVE-REPLACED",
+      "family": "transcript-math-pictures",
+      "obligation": "In native mode a formula picture that comes while its text is live replaces it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::pictures::a_native_formula_picture_that_comes_while_its_text_is_live_replaces_it",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "d3ce2de54ba8574d1537eccf8cb22308497f706c047acef7736683c342a72010",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-NATIVE-SEALED-NEXT-REWRITE",
+      "family": "transcript-math-pictures",
+      "obligation": "In native mode a formula picture that comes after the seal is drawn by the next rewrite.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::pictures::a_native_formula_picture_that_comes_after_the_seal_is_drawn_by_the_next_rewrite",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "efd43f827685b171d54307d5bd1d5003f8e3fad011595c561a7536535bc63ad9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-NATIVE-SEALED-NEW-THEME",
+      "family": "transcript-math-pictures",
+      "obligation": "In native mode a formula picture that comes after the seal is drawn by a new theme.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::pictures::a_native_formula_picture_that_comes_after_the_seal_is_drawn_by_a_new_theme",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "611e21ba491ae07aa7b5352a1fa8ea7a4990893129577da35909a5a1e347643c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-FULLSCREEN-REPLACES-TEXT",
+      "family": "transcript-math-pictures",
+      "obligation": "On a full screen a formula is its text until its picture comes, and then its picture.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_formula_is_its_text_until_its_picture_comes_and_then_its_picture_on_a_full_screen",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "3ee72574267bed47f85222f1d7c3e846da360143240cc4324f77d5573232200a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-CUT-NEVER-ANSWERS",
+      "family": "transcript-math-pictures",
+      "obligation": "Formulas are told, and the window drawn once their answers are in, the same however the answer is cut, to a maker that never answers.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::formulas_are_told_the_same_however_the_answer_is_cut_to_a_maker_that_never_answers",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "51a24861156324f2c9c71662d13ba7654872fb1feb412b5db844967636d3c572",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-CUT-ANSWERS-AT-ONCE",
+      "family": "transcript-math-pictures",
+      "obligation": "Formulas are told, and the window drawn once their answers are in, the same however the answer is cut, to a maker that answers at once.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::formulas_are_told_the_same_however_the_answer_is_cut_to_a_maker_that_answers_at_once",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "fbb1a915cf479c29cd6434a662afc2e35780e1283b71c271af480109bdae155a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-LATE-PICTURE-OFF-SCREEN",
+      "family": "transcript-math-pictures",
+      "obligation": "A formula picture handed back after its block went changes nothing on screen.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_formula_picture_handed_back_after_its_block_went_changes_nothing_on_screen",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "c905364bc3e999fea43da399fdacad344c7b778bc34373d41473286c8187d409",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RASTER-FRAGMENT-USE-DRAWS",
+      "family": "transcript-math-pictures",
+      "obligation": "A glyph drawn by a use naming it by same-document fragment draws.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_glyph_drawn_by_a_use_naming_it_by_fragment_draws",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "f4b30627f669cc781df8f51cacf245e4ebaa436666faf67e22463810630b2249",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RASTER-OTHER-USE-REFUSED",
+      "family": "transcript-math-pictures",
+      "obligation": "A use naming anything but an element of the picture is refused.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_use_naming_anything_but_an_element_of_the_picture_is_refused",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "d8125f0ed5d387a6d06580988ad11aee210b2ce8e503ff17e10d35412f1e8c3b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-ENGINE-UNFORGED",
+      "family": "transcript-math-pictures",
+      "obligation": "Code outside the crate cannot construct a TexEngine, so no TeX run starts without the check.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "doc",
+        "name": "crucible_app"
+      },
+      "case": "math::TexEngine",
+      "source": "crates/crucible-app/src/math.rs",
+      "body_sha256": "be52d472e08fdbe0cc53f74ac3aab346c0edd7129ba9f1054bf994e9fd70711e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-COLOUR-READ-BACK",
+      "family": "transcript-pictures",
+      "obligation": "The colour probe reads back the last FORMULAS Kitty pictures sent whole, as base64 across the chunks and pieces they arrive in, apart from an older picture, placements and colour between them.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-session-rss-colour"
+      },
+      "case": "tests::the_last_pictures_sent_whole_are_read_back_across_their_chunks",
+      "source": "src/bin/bench-session-rss-colour.rs",
+      "body_sha256": "8cfed522ba0c2eb7380dcd81dfa4bb141b1d2a18b0c467423b6315e3b109c3bd",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-COLOUR-UNMATHED",
+      "family": "transcript-pictures",
+      "obligation": "The colour probe's reading is refused as Unmathed when the last picture sent is another picture, the stand-in's cut short by a byte, one ended without its last chunk's data, or none.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-session-rss-colour"
+      },
+      "case": "tests::a_picture_other_than_the_stand_ins_refuses_the_reading",
+      "source": "src/bin/bench-session-rss-colour.rs",
+      "body_sha256": "3e4359773fc869f286cd74e5da66612e2ea987e3d777314b48ec90cf64c20c96",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RECORD-TOLD-ONLY-LIVE-PICTURING",
+      "family": "transcript-math-pictures",
+      "obligation": "Display math is told out only where a live record draws it as a picture: not as text or as written, not without colour, and not while a native session is put back.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::formulas::display_math_is_told_out_only_as_a_live_picture_capable_record_draws_it",
+      "source": "crates/crucible-tui/src/record/tests/formulas.rs",
+      "body_sha256": "7d7db9b685b5e64277acb87e58442e692a9e880099d582ea4ee30e0b0cfb78d0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-WAIT-SHOWS-ANSWER",
+      "family": "transcript-math-pictures",
+      "obligation": "A formula told to what makes pictures is shown as its answer once the input wait rests, and nothing is owed after it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_formula_told_to_what_makes_pictures_is_shown_as_its_answer_once_a_wait_rests",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "89b15f9dd05773717529f390967e3cd9bd108338c1640c7a897e204a6614f733",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-NO-PICTURE-OWED-NO-MORE",
+      "family": "transcript-math-pictures",
+      "obligation": "A formula answered with no picture stays its text and is owed no more.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::pictures::a_formula_answered_with_no_picture_stays_its_text_and_is_owed_no_more",
+      "source": "crates/crucible-tui/src/render/tests/pictures.rs",
+      "body_sha256": "626f459281715004b6753c2260d4becc703ba1a793993fe152f2e5bbb7e07bd4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-QUEUE-NO-ENGINE-FINAL",
+      "family": "transcript-math-pictures",
+      "obligation": "A check that finds no engine leaves every formula text and is not made again.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::math_engine::tests::a_check_that_finds_no_engine_leaves_every_formula_text_and_is_not_made_again",
+      "source": "src/cli/math_engine/tests.rs",
+      "body_sha256": "c3b691f636f8e99d3da77217444c266949829fecda54aaa6b8881e70f33702b0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RECORD-TOO-WIDE-TOLD",
+      "family": "transcript-math-pictures",
+      "obligation": "A display formula too wide as text is told out, says why it is its source while it waits and after no picture comes, and is replaced by its picture when one does.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::formulas::a_display_formula_too_wide_as_text_is_told_out_and_replaced_by_its_picture",
+      "source": "crates/crucible-tui/src/record/tests/formulas.rs",
+      "body_sha256": "17e047689e7a35746dde4ddd23bfe368dd532f3250894abdb2a7b5734d058949",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-STEER-KEEPS-TURN",
+      "family": "transcript-math-pictures",
+      "obligation": "A line steered into a running turn keeps that turn's queued formulas and its count of sixteen.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::draw::tests::steered::a_line_steered_into_a_turn_keeps_its_formulas_queued_and_its_sixteen_counted",
+      "source": "src/cli/draw/tests/steered.rs",
+      "body_sha256": "1feb5984acad823a49e213863566afa4f6542c0b3f61120c07aaf35a9676494f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RESUME-NATIVE-LARGE-IN-WINDOW",
+      "family": "transcript-math-pictures",
+      "obligation": "A formula put back natively is shown at Large where the window holds it, and as its text where it does not.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::formulas::a_formula_put_back_natively_is_shown_large_where_the_window_holds_it_and_text_where_not",
+      "source": "crates/crucible-tui/src/record/tests/formulas.rs",
+      "body_sha256": "f76057ef6432f6cc4335fe59b9d6eb775803ff58c9972eb47c9af2420dc2a3e3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-REENCODE-KEPT-IN-SHORTER-WINDOW",
+      "family": "transcript-math-pictures",
+      "obligation": "A math picture already shown, encoded again in a window shorter than it, stays shown at the size it was given, with no refusal recorded.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::formulas::a_math_picture_encoded_again_in_a_shorter_window_is_kept",
+      "source": "crates/crucible-tui/src/record/tests/formulas.rs",
+      "body_sha256": "e57ea5839776c80953c3c26debb331603ce79471dcf98fb5833fddad5c12055f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-QUEUE-RECHECK-UNDECIDED-TEXT",
+      "family": "transcript-math-pictures",
+      "obligation": "Formulas told while a check asked again decides nothing stay text and start no check of their own, and the next formula asks a third time.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::math_engine::tests::formulas_told_while_a_check_asked_again_decides_nothing_stay_text_and_the_next_asks_a_third_time",
+      "source": "src/cli/math_engine/tests.rs",
+      "body_sha256": "ee28affe958d5fe421e2d7a415d769bf714126adc342dd3313c3ad61deb0fa02",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RUN-REFUSAL-NOT-REACHED",
+      "family": "transcript-math-pictures",
+      "obligation": "A Spawn at prepare, a refusal at release (lifecycle, launch or audit), or a wait or read error with no violation beside it, leaves the formula NotReached, never a timeout.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::made::a_refusal_or_an_error_with_no_violation_is_not_reached",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "7d4dbbecc26ae49bf8ff0b43e1b772343f56606a2573adc86714f7bb602d35d1",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-RUN-STAGE-HOLDS-SERVICE",
+      "family": "transcript-math-pictures",
+      "obligation": "A stage held past the first deadline is NotReached at that deadline, holds the service so the next formula prepares nothing, and the service is free again once the stage returns.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::made::a_stage_held_past_the_first_deadline_holds_the_service_until_it_returns",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "95c7b66f75731235f17659af491476180d89d3f6525fd703155cb2e36497fcef",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-CHECK-FEATURE-WORDS",
+      "family": "transcript-math-pictures",
+      "obligation": "/settings names a sandbox feature a TeX run needs and the backend refused in words, never by the enum name.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_app"
+      },
+      "case": "math::tests::reached::a_refused_feature_is_named_in_words_not_by_its_enum_name",
+      "source": "crates/crucible-app/src/math/tests.rs",
+      "body_sha256": "6f767d42793b6588681ff58d34423af0bea3de7b1d36d62abd744095ffdd27ef",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-SANDBOXED-TEX-GUARDS",
+      "family": "transcript-math-pictures",
+      "obligation": "In the real sandbox TeX cannot \\openin /etc/passwd or /proc/self/status, writes beside itself but not above its directory, and dvisvgm draws no raw special.",
+      "package": "crucible-app",
+      "target": {
+        "kind": "test",
+        "name": "math_sandboxed"
+      },
+      "case": "tex_reads_nothing_of_the_host_and_writes_nothing_above_its_directory",
+      "source": "crates/crucible-app/tests/math_sandboxed.rs",
+      "body_sha256": "8e72e9ca8e414422a21ddefce5fa00631fb10e6da6cebf4ea5fdd5e542a46ea6",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-FULLSCREEN-SHOWN-AGAIN-AFTER-SHRINK",
+      "family": "transcript-math-pictures",
+      "obligation": "A formula shown on a full screen, encoded again through a shorter window and back, is never refused for the window and is shown at its own size once the window holds it, encoded again and not made anew.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::formulas::a_formula_shown_on_a_full_screen_is_shown_again_once_a_shorter_window_grows_back",
+      "source": "crates/crucible-tui/src/record/tests/formulas.rs",
+      "body_sha256": "7a03e6979848e173bc8b9af13bf90dd1a4deda0e8ad3281417844e5f0f8e8ad7",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-MATH-PICTURES-NATIVE-KEEPS-FIRST-ROWS",
+      "family": "transcript-math-pictures",
+      "obligation": "A formula shown natively stays shown in the rows it was first shown in at every new palette, through a shorter window and back, encoded again and not made anew.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::formulas::a_formula_shown_natively_keeps_its_first_rows_through_a_shorter_window_and_back",
+      "source": "crates/crucible-tui/src/record/tests/formulas.rs",
+      "body_sha256": "b6b728988d1ab8e636405a5e78d8503de5d789ba69a47c29220cb5642a628ca2",
       "platforms": [
         "linux",
         "macos",

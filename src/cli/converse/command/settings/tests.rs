@@ -1185,17 +1185,28 @@ fn the_math_row_shows_each_answer_bare_since_each_is_drawn_at_once() {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut panel = Panel::new(&terms, &counted);
     // An image falls back to text where none can be shown, which is no
-    // refusal: the row says nothing after it.
+    // refusal: the row says nothing after it but what the check has said of
+    // math pictures.
+    let bare = |word: &str| {
+        format!(
+            "{word} {} math pictures not checked yet",
+            Glyphs::Unicode.dot()
+        )
+    };
     let rows = drawn(&mut panel, 100, 40);
-    assert!(row_of(&rows, "Math").ends_with("image"), "{rows:#?}");
+    assert!(row_of(&rows, "Math").ends_with(&bare("image")), "{rows:#?}");
     let at = math_at(&panel);
     for word in ["written", "text", "image"] {
         panel.asked = Some((at, word.to_owned()));
         settle(&mut renderer, &terms, &mut panel);
         let rows = drawn(&mut panel, 100, 40);
         let row = row_of(&rows, "Math");
-        assert!(row.ends_with(word), "{word}: {rows:#?}");
-        assert!(!row.contains(Glyphs::Unicode.dot()), "{word}: {rows:#?}");
+        assert!(row.ends_with(&bare(word)), "{word}: {rows:#?}");
+        assert_eq!(
+            row.matches(Glyphs::Unicode.dot()).count(),
+            1,
+            "{word}: {rows:#?}"
+        );
         // A preview draws on a renderer of its own, from the style: the two
         // say the same.
         assert_eq!(terms.style().math(), renderer.math_mode(), "{word}");
@@ -1287,5 +1298,55 @@ fn the_diagrams_row_shows_each_answer_bare_since_each_is_drawn_at_once() {
         // A preview draws on a renderer of its own, from the style: the two
         // say the same.
         assert_eq!(terms.style().diagrams(), renderer.diagrams_mode(), "{word}");
+    }
+}
+
+#[test]
+fn the_math_row_says_what_the_check_found_of_math_pictures_each_time_it_is_drawn() {
+    use crate::cli::math_engine::Said;
+    use crucible_app::math::Unavailable;
+    let sample = Sample::new("settings-math-pictures");
+    let terms = keeping(&sample);
+    let counted = counted();
+    // Opened once, and drawn again as the check moves on.
+    let mut panel = Panel::new(&terms, &counted);
+    let found = "pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025/Debian); dvisvgm 3.6";
+    let mut told = vec![
+        (Said::NotAsked, "math pictures not checked yet".to_owned()),
+        (Said::Asking, "checking for math pictures".to_owned()),
+        (
+            Said::Available(found.into()),
+            format!("math pictures by {found}"),
+        ),
+    ];
+    for reason in [
+        Unavailable::NoBackend,
+        Unavailable::Refused(crucible_storage::sandbox::SandboxFeature::Filesystem),
+        Unavailable::SandboxRefused,
+        Unavailable::Unconfined,
+        Unavailable::ProgramMissing,
+        Unavailable::TimedOut,
+        Unavailable::NotReached,
+    ] {
+        told.push((
+            Said::Unavailable(reason),
+            format!("no math pictures: {reason}"),
+        ));
+    }
+    for (said, words) in told {
+        terms.math.now_says(said.clone());
+        // Wide enough that nothing is cut.
+        let rows = drawn(&mut panel, 200, 40);
+        let row = row_of(&rows, "Math");
+        assert!(
+            row.ends_with(&format!("image {} {words}", Glyphs::Unicode.dot())),
+            "{said:?}: {row:?}"
+        );
+        // No other row says it.
+        assert_eq!(
+            rows.iter().filter(|row| row.contains(&words)).count(),
+            1,
+            "{said:?}: {rows:#?}"
+        );
     }
 }

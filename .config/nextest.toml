@@ -3,9 +3,9 @@
 # share one state directory, coordinate inside a single process, and take it
 # from under any other test for a moment. The bash tool's tests take a turn in
 # memory so that confined commands of this user never launch at once, and the
-# hosted-server test starts confined commands of its own. Under `cargo test`
-# none of these binaries ever ran beside another. Here they run one test at a
-# time in one group, while every other test runs beside them.
+# hosted-server and math-picture tests start confined commands of their own.
+# Under `cargo test` none of these binaries ever ran beside another. Here they
+# run one test at a time in one group, while every other test runs beside them.
 [test-groups]
 confined = { max-threads = 1 }
 
@@ -14,6 +14,7 @@ filter = '''
 package(crucible-sandbox-local)
 | (package(crucible-builtins) & test(/^bash::tests::/))
 | (package(crucible-app) & binary(hosted_server))
+| (package(crucible-app) & binary(math_sandboxed))
 '''
 test-group = 'confined'
 
@@ -24,7 +25,11 @@ test-group = 'confined'
 # terminal rather than compute, so each of their tests holds one slot and they
 # fill the time the busy tests leave idle. A package not named here holds as
 # many slots as a busy test, so its tests run at most one per processor, as
-# before this profile, beside the waiting ones.
+# before this profile, beside the waiting ones. Every binary in the confined
+# group is named here, the math-picture tests too, since they mostly wait on a
+# confined child: a test of that group asking for three slots keeps the rest of
+# the group waiting until the busy tests free three, and the gate has ended
+# with the group's tests never run.
 [profile.gate]
 threads-required = 3
 
@@ -32,7 +37,7 @@ threads-required = 3
 filter = '''
 package(crucible-builtins) | package(crucible-mcp) | package(crucible-sandbox-local) | package(crucible-auth)
 | package(crucible-provider) | package(crucible-runner) | package(crucible-extension) | package(crucible-update)
-| binary_id(crucible-app) | binary_id(crucible-app::hosted_server)
+| binary_id(crucible-app) | binary_id(crucible-app::hosted_server) | binary_id(crucible-app::math_sandboxed)
 | binary_id(crucible-external-harnesses::host) | binary_id(crucible-external-harnesses::antigravity)
 | binary_id(crucible-external-harnesses::claude) | binary_id(crucible-code::whole_screen)
 '''

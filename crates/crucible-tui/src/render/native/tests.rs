@@ -4073,8 +4073,8 @@ fn a_native_hostile_path_or_line_in_a_drawn_fence_writes_no_escape() {
 mod pictures {
     use super::*;
     use crate::render::tests::pictures::{
-        DIAGRAM, Printed, commands, graphics_bytes, images, pictured_by, pictured_in, placeholders,
-        printed_bytes, printed_iterm2, printed_sixel, transmitted,
+        DIAGRAM, FORMULA, Printed, commands, formula_picture, graphics_bytes, images, pictured_by,
+        pictured_in, placeholders, printed_bytes, printed_iterm2, printed_sixel, transmitted,
     };
     use crate::terminal::graphics;
 
@@ -4172,6 +4172,111 @@ mod pictures {
         let written = window.written();
         assert!(commands(&written).is_empty(), "{written:?}");
         assert!(window.scrollback().iter().any(|row| row.contains("graph")));
+    }
+
+    /// A formula answered and told out, and the formula it was told as.
+    fn formula_answered(render: &mut Renderer<Window>) -> crate::terminal::graphics::Formula {
+        render.stream(FORMULA).unwrap();
+        render.settle().unwrap();
+        let told = render.formulas();
+        assert_eq!(told.len(), 1, "{told:?}");
+        told.into_iter().next().expect("one formula")
+    }
+
+    /// Enough lines after the formula to carry it into the scrollback.
+    fn sealed(render: &mut Renderer<Window>) {
+        for line in 0..12 {
+            render.commit(&format!("line {line}")).unwrap();
+        }
+        render.seal().unwrap();
+        stands(render);
+    }
+
+    #[test]
+    fn a_native_formula_picture_that_comes_while_its_text_is_live_replaces_it() {
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, 300));
+        let formula = formula_answered(&mut render);
+        window.take();
+
+        render.formula_made(&formula, formula_picture()).unwrap();
+        sealed(&mut render);
+
+        let written = window.written();
+        assert_eq!(
+            transmitted(&commands(&written)),
+            [(1, printed_bytes(0, 300))]
+        );
+        let back = window.scrollback();
+        assert!(!back.iter().any(|row| row.contains("x^2")), "{back:#?}");
+        assert_eq!(
+            back.iter()
+                .filter(|row| row.contains("\u{10EEEE}\u{10EEEE}\u{10EEEE}"))
+                .count(),
+            2,
+            "{back:#?}"
+        );
+    }
+
+    #[test]
+    fn a_native_formula_picture_that_comes_after_the_seal_is_drawn_by_the_next_rewrite() {
+        // The text went into the scrollback, where it stays: the picture is
+        // kept with its block, and the next settled resize draws it.
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::new(3, 2, 300));
+        let formula = formula_answered(&mut render);
+        sealed(&mut render);
+        window.take();
+
+        render.formula_made(&formula, formula_picture()).unwrap();
+        let after = window.take();
+        assert!(commands(&after).is_empty(), "{after:?}");
+        assert!(
+            window.scrollback().iter().any(|row| row.contains("x^2")),
+            "{:#?}",
+            window.scrollback()
+        );
+
+        // Made when it came, and encoded again for the new width.
+        settles_at(&window, &mut render, 100, 8);
+        let rewritten = window.take();
+        assert_eq!(
+            transmitted(&commands(&rewritten)),
+            [(2, printed_bytes(1, 300))]
+        );
+        assert!(rewritten.contains(&placeholders(2, 0, 3)), "{rewritten:?}");
+        assert!(rewritten.contains(&placeholders(2, 1, 3)), "{rewritten:?}");
+        assert!(!window.scrollback().iter().any(|row| row.contains("x^2")));
+    }
+
+    #[test]
+    fn a_native_formula_picture_that_comes_after_the_seal_is_drawn_by_a_new_theme() {
+        let window = Window::new(40, 8);
+        let mut render = pictured(&window, Printed::worn(3, 2, 300));
+        let formula = formula_answered(&mut render);
+        sealed(&mut render);
+        render.formula_made(&formula, formula_picture()).unwrap();
+        window.take();
+
+        // A new theme is worn by the rewrite that gives the scrollback
+        // back, as an image already there is: encoded over its ground.
+        let light = Palette::resolve(true, Theme::Light, None, &|name| {
+            (name == "COLORTERM").then(|| "truecolor".to_owned())
+        });
+        render.wears(light);
+        settles_at(&window, &mut render, 100, 8);
+        let rewritten = window.take();
+        let [ground, _, _] = light.identity().ground();
+        let sent = transmitted(&commands(&rewritten));
+        let [(id, bytes)] = sent.as_slice() else {
+            panic!("one picture sent: {sent:?}");
+        };
+        assert_eq!(*bytes, printed_bytes(ground, 300));
+        assert!(
+            rewritten.contains(&placeholders(*id, 0, 3)),
+            "{rewritten:?}"
+        );
+        assert!(!window.scrollback().iter().any(|row| row.contains("x^2")));
     }
 
     #[test]

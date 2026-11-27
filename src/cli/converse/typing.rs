@@ -2466,7 +2466,7 @@ fn sent<T: Terminal>(
     // parted afterwards would end on a blank row under the final answer, and the
     // shell's own prompt would come back one row lower than it left.
     renderer.apart()?;
-    renderer.landmark();
+    renderer.starts_turn();
     let responsive = said.line.clone();
     renderer.responsive(
         responsive.len(),

@@ -527,6 +527,7 @@ fn on_the_program_over(
         },
         agents,
     )
+    .map(|(conversation, _)| conversation)
 }
 
 #[test]
@@ -649,7 +650,8 @@ fn after_logging_in(
             subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
         },
         &crate::backends::REGISTRY,
-    );
+    )
+    .map(|(conversation, _)| conversation);
     (written, next)
 }
 
@@ -861,6 +863,7 @@ fn resuming_over(
         },
         &crate::backends::REGISTRY,
     )
+    .map(|(conversation, _)| conversation)
 }
 
 #[test]
@@ -1522,6 +1525,49 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
         "",
         "an unnamed model is the empty name"
     );
+}
+
+#[test]
+fn the_sandbox_service_handed_out_is_the_one_the_conversation_runs_commands_on() {
+    // The math check starts on what is handed out: a service of its own would
+    // count its confined runs apart from the commands', and watch on no
+    // runtime.
+    let sample = Sample::new("sharing");
+    let (logs, workspace) = (sample.logs(), sample.workspace());
+
+    let (conversation, service) = assemble_sharing(&Startup {
+        questions: None,
+        providers: &catalogue(),
+        provider: None,
+        unasked: NOTHING_TO_ASK,
+        model: None,
+        effort: None,
+        resuming: Resuming::No,
+        mode: Mode::Ask,
+        leaving: &crucible_builtins::Background::new(),
+        services: &Services::new(),
+        settings: &Settings::default(),
+        sessions: &logs,
+        state: &sample.state(),
+        workspace: &workspace,
+        ledger: &Ledger::new(),
+        revealed: &Revealed::new(),
+        plan: &Plan::new(),
+        asking: Arc::new(Nobody),
+        hosting: &[],
+        terminal: true,
+        from: &|_| None,
+        stored: &StoredCredentials::default(),
+        subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
+    })
+    .expect("a session with nothing set up still starts");
+
+    assert!(
+        Arc::strong_count(&service) > 1,
+        "the service handed out is held by the conversation's tools too"
+    );
+    drop(conversation);
+    assert_eq!(Arc::strong_count(&service), 1);
 }
 
 #[test]

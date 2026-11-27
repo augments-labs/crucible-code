@@ -52,9 +52,16 @@
 //! encodes that again, and one refused or drawn as text to make room for a
 //! newer picture stays its edge alone.
 //!
-//! A drawn block may be shown as a picture instead of its rows: a diagram
-//! drawn as an image, on a terminal that confirmed a picture protocol, where
-//! colour is written. It is then laid out as rows of cells the picture is
+//! A drawn block may be shown as a picture instead of its rows: a diagram or
+//! a display formula drawn as an image, on a terminal that confirmed a
+//! picture protocol, where colour is written. A diagram's drawer draws its
+//! picture as it closes. A formula's is made elsewhere, off the drawing
+//! thread: a live record tells each display formula its drawer converts out
+//! as it closes ([`Record::formulas`]), shows it as its text meanwhile, and
+//! shows the picture handed back for it ([`Record::formula_made`]) as any
+//! other, at its own size and only where the window is as tall as it is. A
+//! session put back tells nothing out, and a formula it kept no picture of
+//! stays its text. It is then laid out as rows of cells the picture is
 //! placed in, by Kitty, or held blank for an iTerm2 or Sixel image written
 //! over them, and keeps what it was drawn from beside what the terminal is
 //! sent, so a new width or a new palette encodes it again without asking its
@@ -73,8 +80,9 @@
 //! random, since the terminal's numbers are shared with every other program
 //! writing to it: see [`MOST_PICTURE_ID`].
 //!
-//! A picture is shown at a [`PictureSize`]: at Fit it is never taller than
-//! half the window, and a click on it or Enter on its source goes on to
+//! A picture is shown at a [`PictureSize`]: at Fit, where a diagram starts,
+//! it is never taller than half the window, and at Large, where a formula
+//! does, never taller than the window; and a click on it or Enter on its source goes on to
 //! Large and Full and back ([`Record::cycles`]), in a full screen only, for
 //! as long as the session holds it. Kitty and iTerm2 scale the one image
 //! they were sent into the cells a size gives it, so a new size or a window
@@ -93,6 +101,8 @@
 //! there is now, in the glyph set in force now: a reader who changed it since
 //! launch is not handed the card back in the characters they turned away from.
 
+mod formulas;
+
 use std::fmt;
 
 use std::collections::VecDeque;
@@ -102,13 +112,15 @@ use std::ops::Range;
 
 use crate::chrome::{self, Undrawn};
 use crate::color::{PaletteIdentity, Slot, Theme};
-use crate::drawing::{Bucket, Drawers, Mode, Room};
+use crate::drawing::{Bucket, Drawers, Mode, Room, Svg};
 use crate::glyphs::Glyphs;
 use crate::markdown::{self, Block, Kind, Links, Offers};
 use crate::render::ScreenMode;
 use crate::row::Row;
 use crate::scroll_rail::Place;
-use crate::terminal::graphics::{Capability, Form, Payload, PictureKey, Pictures, Protocol};
+use crate::terminal::graphics::{
+    Capability, Form, Formula, Payload, PictureKey, Pictures, Protocol,
+};
 
 /// The most retained units the record keeps.
 ///
@@ -158,6 +170,13 @@ pub const MOST_KEPT_IMAGES: usize = 16;
 /// more than this is never kept: see [`Undrawn::TooLargeToKeep`].
 pub(crate) const MOST_KEPT_IMAGE_BYTES: usize = 1536 * 1024;
 
+/// The most display formulas told out and not yet taken.
+///
+/// What draws the record takes them as each block closes, and no more than
+/// this many of a turn are queued for a picture, so one past it stays text
+/// as one past a turn's queue does.
+const MOST_TOLD: usize = 16;
+
 /// The most cells a picture may cover across or down: the placeholder cells
 /// that stand for one name their row and column by one of 64 marks, and a
 /// picture past them is drawn as text.
@@ -180,8 +199,9 @@ const MOST_PICTURE_ID: u32 = 0x00FF_FFFF;
 ///
 /// A full screen cycles one picture through them when the reader asks
 /// ([`PictureSize::next`]), and the picture keeps the one it is at for as
-/// long as the record keeps it; a native session shows every picture at
-/// [`PictureSize::Fit`].
+/// long as the record keeps it; a native session shows every picture at the
+/// size it is first shown at, [`PictureSize::Fit`] for a diagram and
+/// [`PictureSize::Large`] for a formula.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PictureSize {
     /// At most half the window tall, so a diagram leaves room for the
@@ -324,6 +344,10 @@ struct Picturing {
     /// What is being drawn: a live session, or one put back, when only a
     /// kept picture is shown, and only once the walk is over.
     drawing: Drawing,
+    /// The display formulas told out and not yet taken, oldest first.
+    told: Vec<Formula>,
+    /// A formula's picture handed back, while its block is settled with it.
+    arrived: Option<Svg>,
 }
 
 /// What blocks are being drawn for, which decides whether a drawer may run.
@@ -357,6 +381,8 @@ impl fmt::Debug for Picturing {
             .field("keeps", &self.keeps)
             .field("band", &self.band)
             .field("drawing", &self.drawing)
+            .field("told", &self.told.len())
+            .field("arrived", &self.arrived.is_some())
             .finish()
     }
 }
@@ -376,6 +402,8 @@ impl Default for Picturing {
             keeps: false,
             band: 0,
             drawing: Drawing::Live,
+            told: Vec::new(),
+            arrived: None,
         }
     }
 }
@@ -504,6 +532,18 @@ const fn imaged(why: Undrawn) -> Undrawn {
         Undrawn::ChangedSinceRead => Undrawn::ChangedSinceRead,
         Undrawn::PastTurnImages => Undrawn::PastTurnImages,
         Undrawn::NotRedrawnOnResume => Undrawn::NotRedrawnOnResume,
+    }
+}
+
+/// The size a block of `kind` is first shown as a picture at: a diagram at
+/// most half the window tall, leaving room for the answer around it, and a
+/// formula at most the window tall, since it is shown at its own size.
+const fn first_size(kind: Kind) -> PictureSize {
+    match kind {
+        Kind::DisplayMath => PictureSize::Large,
+        Kind::Mermaid | Kind::Image | Kind::Table | Kind::Rule | Kind::Heading(_) | Kind::Diff => {
+            PictureSize::Fit
+        }
     }
 }
 
@@ -1251,7 +1291,18 @@ impl Record {
             self.remeasure_all();
         }
         if !drawn.rows.is_empty() {
+            let formula = self.waits_for_picture(&drawn, room);
+            let line = self.gone + self.lines.len();
             self.put(Line::Drawn(drawn));
+            if let Some(source) = formula
+                && self.picturing.told.len() < MOST_TOLD
+            {
+                self.picturing.told.push(Formula {
+                    line,
+                    source,
+                    kept: None,
+                });
+            }
         }
     }
 
@@ -1369,7 +1420,10 @@ impl Record {
     /// many as [`MOST_KEPT_IMAGES`], are given the pictures their pictures
     /// kept from an earlier session, and one they did not keep stays its
     /// text, as one not drawn here is: putting a session back runs no
-    /// drawer, and reads no more pictures than the record keeps.
+    /// drawer, and reads no more pictures than the record keeps. A display
+    /// formula among them is not read here: it is told out, with the key its
+    /// picture was kept under, for what makes formulas to read off this
+    /// thread, and stays its text until a picture is answered for it.
     ///
     /// In a native session each block is given its kept picture as it is
     /// drawn, since one that goes into the scrollback goes once and stays as
@@ -1395,7 +1449,8 @@ impl Record {
 
     /// Gives the newest blocks put back that are still to go out, as many as
     /// [`MOST_KEPT_IMAGES`], the pictures kept of them, oldest first so the
-    /// newest is the last to make room.
+    /// newest is the last to make room; a display formula among them is told
+    /// out to be read, as many as the record tells, and is not read here.
     ///
     /// Only a block the walk put off: one wanting a picture, with none, not
     /// fallen back to text, and refused as not drawn here. A line already
@@ -1431,6 +1486,9 @@ impl Record {
         }
         let columns = self.columns;
         for at in put_off.into_iter().rev() {
+            if self.tells_kept(at, columns) {
+                continue;
+            }
             // Out of the lines while its picture is settled, since keeping
             // one may draw an older picture as text.
             let Some(Line::Drawn(mut drawn)) = self
@@ -1492,9 +1550,9 @@ impl Record {
     /// where it is shown as one at all.
     fn picture_key(&self, kind: Kind, columns: usize) -> Option<PictureKey> {
         let wanted = match kind {
-            Kind::Mermaid => self.modes.of(kind) == Some(Mode::Image),
+            Kind::Mermaid | Kind::DisplayMath => self.modes.of(kind) == Some(Mode::Image),
             Kind::Image => true,
-            Kind::DisplayMath | Kind::Table | Kind::Rule | Kind::Heading(_) | Kind::Diff => false,
+            Kind::Table | Kind::Rule | Kind::Heading(_) | Kind::Diff => false,
         };
         if !wanted {
             return None;
@@ -1532,22 +1590,26 @@ impl Record {
     /// that is also what a picture refused for want of time is told. A Sixel
     /// picture kept under a key that differs from this one by its width alone
     /// is kept as it is, unless it is wanted now.
+    /// The key `drawn`'s picture is made and kept under at `columns`, where
+    /// one is wanted of it and it is not fallen back to its text.
+    fn key_of(&self, drawn: &Drawn, columns: usize) -> Option<PictureKey> {
+        if drawn.fallen || !drawn.block.closed {
+            return None;
+        }
+        self.picture_key(drawn.block.kind, columns)
+            .map(|key| PictureKey {
+                rows: self.encoded_rows(drawn, key.protocol),
+                ..key
+            })
+    }
+
     fn settle(&mut self, drawn: &mut Drawn, columns: usize, glyphs: Glyphs) -> bool {
         // An image's picture is made once, from what the application read;
         // with none, there is nothing to make one from again.
         if drawn.image.is_some() && drawn.picture.is_none() {
             return false;
         }
-        let key = if drawn.fallen || !drawn.block.closed {
-            None
-        } else {
-            self.picture_key(drawn.block.kind, columns)
-                .map(|key| PictureKey {
-                    rows: self.encoded_rows(drawn, key.protocol),
-                    ..key
-                })
-        };
-        let Some(key) = key else {
+        let Some(key) = self.key_of(drawn, columns) else {
             let had = drawn.picture.take().is_some();
             self.picturing.let_go |= had;
             return had;
@@ -1623,7 +1685,10 @@ impl Record {
             }
             made = self.make(drawn, &key, glyphs, columns);
         }
-        let band = drawn.picture.as_ref().map_or(0, |picture| picture.band);
+        let (band, first) = drawn
+            .picture
+            .as_ref()
+            .map_or((0, None), |picture| (picture.band, picture.window));
         let had = drawn.picture.take().is_some();
         self.picturing.let_go |= had;
         let kept = match made {
@@ -1635,7 +1700,11 @@ impl Record {
         };
         self.make_room(kept.bytes(), columns, glyphs);
         drawn.refused = None;
-        let window = self.picturing.keeps.then_some(self.picturing.window);
+        // Encoded again, a picture keeps the window it was first shown in.
+        let window = self
+            .picturing
+            .keeps
+            .then(|| first.unwrap_or(self.picturing.window));
         drawn.picture = Some(Box::new(Pictured {
             id: self.picturing.number(),
             key,
@@ -1654,10 +1723,38 @@ impl Record {
         match protocol {
             Protocol::Kitty | Protocol::Iterm2 => MOST_PLACED,
             Protocol::Sixel => drawn.picture.as_ref().map_or_else(
-                || PictureSize::Fit.rows(protocol, self.picturing.window, 0),
+                || first_size(drawn.block.kind).rows(protocol, self.picturing.window, 0),
                 |picture| picture.rows(self.picturing.window),
             ),
         }
+    }
+
+    /// Tells out the display formula at `at`, put back, to be read from
+    /// what an earlier session kept of it; answers whether it is one.
+    ///
+    /// A formula's kept picture is named by the toolchain that made it, which
+    /// only the check made off the drawing thread knows, so it is read there
+    /// too, and the formula is its text until [`Self::formula_made`] is handed
+    /// what was read. Nothing makes it: one with nothing kept stays its text.
+    fn tells_kept(&mut self, at: usize, columns: usize) -> bool {
+        let Some(Line::Drawn(drawn)) = self.lines.get(at) else {
+            return false;
+        };
+        if drawn.block.kind != Kind::DisplayMath {
+            return false;
+        }
+        let key = self.key_of(drawn, columns);
+        let source = markdown::taken(&drawn.block, &self.drawers).map(|(_, source)| source);
+        if let (Some(key), Some(source)) = (key, source)
+            && self.picturing.told.len() < MOST_TOLD
+        {
+            self.picturing.told.push(Formula {
+                line: self.gone + at,
+                source: source.into(),
+                kept: Some(key),
+            });
+        }
+        true
     }
 
     /// `drawn`'s picture under `key`, or why it is drawn as text.
@@ -1704,10 +1801,22 @@ impl Record {
                 pixels: payload.pixels(),
                 form,
                 payload,
-                size: PictureSize::Fit,
+                size: first_size(drawn.block.kind),
             }
         } else if self.picturing.drawing == Drawing::Restoring {
             return Err(Undrawn::NotHere);
+        } else if drawn.block.kind == Kind::DisplayMath {
+            // Made elsewhere, off the drawing thread, and handed back; until
+            // it is, the formula is its text.
+            let form = Form::Svg(self.picturing.arrived.take().ok_or(Undrawn::NotHere)?);
+            let payload = pictures.make(source, key, &form)?;
+            let kept = KeptPicture {
+                pixels: payload.pixels(),
+                form,
+                payload,
+                size: first_size(Kind::DisplayMath),
+            };
+            return self.fits_window(held(kept, columns)?);
         } else {
             let form = Form::Svg(drawer.picture(source, &Room { columns, glyphs })?);
             let payload = pictures.make(source, key, &form)?;
@@ -1718,7 +1827,27 @@ impl Record {
                 size: PictureSize::Fit,
             }
         };
-        held(kept, columns)
+        let kept = held(kept, columns)?;
+        // A formula read from the cache is held to the window as one just
+        // made is; one shown already keeps the size it was given.
+        if drawn.block.kind == Kind::DisplayMath && drawn.picture.is_none() {
+            return self.fits_window(kept);
+        }
+        Ok(kept)
+    }
+
+    /// `kept`, a formula's picture, where the window is as tall as it is: a
+    /// formula is first shown at its own size or not at all, since one made
+    /// smaller to fit is not the formula its text says. Only that first size
+    /// is judged, of a picture just made or read back from the cache; one
+    /// shown already keeps the size it was given, as any picture does.
+    fn fits_window(&self, kept: KeptPicture) -> Result<KeptPicture, Undrawn> {
+        let window = self.picturing.window;
+        let (_, down) = kept.payload.cells();
+        if window > 0 && usize::from(down) > window {
+            return Err(Undrawn::TooWide);
+        }
+        Ok(kept)
     }
 
     /// Whether one more picture of `bytes` is kept beside every picture kept
@@ -4069,6 +4198,56 @@ mod tests {
             }
         }
 
+        /// A drawer for display math that lays each formula as one row of
+        /// text: one holding `bad` does not convert, and one holding `wide`
+        /// converts and is wider than any room. It draws no picture of its
+        /// own; a formula's picture is made elsewhere and handed back.
+        pub(super) struct Math;
+
+        impl Draws for Math {
+            fn names(&self) -> &'static [&'static str] {
+                &["math"]
+            }
+
+            fn block(&self, source: &str, _: &Room) -> Result<Laid, Undrawn> {
+                if source.contains("bad") {
+                    return Err(Undrawn::NotText);
+                }
+                if source.contains("wide") {
+                    return Err(Undrawn::TooWide);
+                }
+                let rows: Vec<Row> = source.trim().lines().map(Row::plain).collect();
+                Ok(Laid {
+                    natural: (8, rows.len()),
+                    rows,
+                    narrow: None,
+                })
+            }
+        }
+
+        /// A closed display formula, between `$$`, saying `formula`.
+        pub(super) fn formula(formula: &str) -> Block {
+            Block {
+                kind: Kind::DisplayMath,
+                source: format!("$$\n{formula}\n$$\n"),
+                closed: true,
+            }
+        }
+
+        /// The picture the engine hands back for a formula.
+        pub(super) fn svg(formula: &str) -> Svg {
+            Svg::new(format!("<svg>{formula}</svg>")).expect("a picture")
+        }
+
+        /// What each formula told out since last asked says.
+        pub(super) fn told(record: &mut Record) -> Vec<String> {
+            record
+                .formulas()
+                .iter()
+                .map(|formula| formula.source().trim().to_owned())
+                .collect()
+        }
+
         /// Pictures `rows` cells down and two across, each payload `bytes`
         /// long, with what the cache holds by source, and why it refuses to
         /// make one, where it does.
@@ -4133,7 +4312,9 @@ mod tests {
         pub(super) fn record(columns: usize, fake: Fake, palette: &Palette) -> Record {
             let mut record = Record::new(columns);
             record.draws_with(
-                Drawers::default().with(Arc::new(Diagrams(Arc::clone(&fake.asked)))),
+                Drawers::default()
+                    .with(Arc::new(Diagrams(Arc::clone(&fake.asked))))
+                    .with(Arc::new(Math)),
                 Offers::Stand,
             );
             record.pictures(Box::new(fake));
@@ -4210,6 +4391,8 @@ mod tests {
         (fake, asked)
     }
 
+    mod formulas;
+
     #[test]
     fn a_diagram_is_shown_as_its_picture_where_the_terminal_confirmed_kitty() {
         let (fake, _) = fake(100, 3, vec![]);
@@ -4238,122 +4421,9 @@ mod tests {
         assert!(picturing::shown(&record, 1));
     }
 
-    #[test]
-    fn a_session_put_back_draws_what_the_cache_kept_and_the_rest_as_text_with_no_drawer() {
-        let (fake, asked) = fake(100, 3, vec!["kept"]);
-        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+    mod sources;
 
-        record.resuming(true, ScreenMode::Fullscreen);
-        record.drawn(picturing::diagram("kept"), Glyphs::Unicode, Theme::Dark);
-        record.drawn(picturing::diagram("missed"), Glyphs::Unicode, Theme::Dark);
-        record.resuming(false, ScreenMode::Fullscreen);
-
-        assert!(picturing::shown(&record, 0), "the cache's picture");
-        assert!(!picturing::shown(&record, 1), "a miss was drawn");
-        // As a picture not drawn here: its text, with nothing said of it.
-        assert_eq!(picturing::refused(&record, 1), Some(Undrawn::NotHere));
-        assert_eq!(
-            picturing::asked(&asked),
-            [
-                "resuming true",
-                "cached kept",
-                "cached missed",
-                "resuming false"
-            ]
-        );
-
-        // Once it is put back, a new block is drawn as live ones are.
-        record.drawn(picturing::diagram("live"), Glyphs::Unicode, Theme::Dark);
-        assert!(picturing::shown(&record, 2));
-        assert_eq!(
-            picturing::asked(&asked).get(4..),
-            Some(&["cached live", "picture live", "make live"].map(str::to_owned)[..])
-        );
-    }
-
-    #[test]
-    fn a_session_put_back_reads_the_cache_only_for_the_pictures_it_keeps() {
-        let names: Vec<String> = (0..MOST_KEPT_IMAGES + 4)
-            .map(|at| format!("d{at}"))
-            .collect();
-        let cached: Vec<&'static str> = names
-            .iter()
-            .map(|name| &*Box::leak(name.clone().into_boxed_str()))
-            .collect();
-        let (fake, asked) = fake(100, 3, cached);
-        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
-
-        record.resuming(true, ScreenMode::Fullscreen);
-        for name in &names {
-            record.drawn(picturing::diagram(name), Glyphs::Unicode, Theme::Dark);
-        }
-        assert_eq!(
-            picturing::asked(&asked),
-            ["resuming true"],
-            "the walk read the cache"
-        );
-        record.resuming(false, ScreenMode::Fullscreen);
-
-        let asked = picturing::asked(&asked);
-        let read = asked
-            .iter()
-            .filter(|said| said.starts_with("cached "))
-            .count();
-        assert_eq!(read, MOST_KEPT_IMAGES, "{asked:?}");
-        assert!(
-            !asked
-                .iter()
-                .any(|said| said.starts_with("picture ") || said.starts_with("make ")),
-            "{asked:?}"
-        );
-        assert_eq!(asked.last().map(String::as_str), Some("resuming false"));
-        // The newest are the ones shown, and the oldest are their text.
-        assert!((0..4).all(|line| !picturing::shown(&record, line)));
-        assert!((4..MOST_KEPT_IMAGES + 4).all(|line| picturing::shown(&record, line)));
-    }
-
-    #[test]
-    fn a_new_palette_after_a_session_put_back_asks_nothing_for_the_diagrams_it_did_not_keep() {
-        // The older diagrams the put back did not reach are text for as long
-        // as they are held, as those a live session drew past the cap are: a
-        // new palette encodes the kept pictures again and asks for no other.
-        let older = 10;
-        let names: Vec<String> = (0..MOST_KEPT_IMAGES + older)
-            .map(|at| format!("d{at}"))
-            .collect();
-        let cached: Vec<&'static str> = names
-            .iter()
-            .map(|name| &*Box::leak(name.clone().into_boxed_str()))
-            .collect();
-        let (fake, asked) = fake(100, 3, cached);
-        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
-        record.resuming(true, ScreenMode::Fullscreen);
-        for name in &names {
-            record.drawn(picturing::diagram(name), Glyphs::Unicode, Theme::Dark);
-        }
-        record.resuming(false, ScreenMode::Fullscreen);
-        let before = picturing::asked(&asked).len();
-
-        let light = picturing::coloured(Theme::Light);
-        record.pictured_as(
-            Capability::Graphics {
-                protocol: Protocol::Kitty,
-                cell: picturing::CELL,
-            },
-            light.identity(),
-        );
-        record.relay(40, Glyphs::Unicode, Theme::Light);
-
-        let after = picturing::asked(&asked);
-        let since = after.get(before..).unwrap_or_default();
-        assert!(
-            since.iter().all(|said| said == "reencode"),
-            "asked for a diagram not kept: {since:?}"
-        );
-        assert_eq!(since.len(), MOST_KEPT_IMAGES, "{since:?}");
-        assert!((0..older).all(|line| !picturing::shown(&record, line)));
-        assert!((older..MOST_KEPT_IMAGES + older).all(|line| picturing::shown(&record, line)));
-    }
+    mod images;
 
     #[test]
     fn a_diagram_drawn_as_text_is_never_shown_as_a_picture() {
@@ -4746,122 +4816,100 @@ mod tests {
     }
 
     #[test]
-    fn every_row_of_a_drawn_block_gives_its_source_and_prose_rows_give_none() {
-        let mut record = Record::new(60);
-        record.write(Slot::Plain, "before\n", None);
-        record.drawn(table("alpha"), Glyphs::Unicode, Theme::Dark);
-        record.write(Slot::Plain, "after\n", None);
+    fn a_session_put_back_draws_what_the_cache_kept_and_the_rest_as_text_with_no_drawer() {
+        let (fake, asked) = fake(100, 3, vec!["kept"]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
 
-        let rows = rows_of(&record, 1);
-        assert!(rows.len() > 1, "a table draws more than a row: {rows:?}");
-        for row in rows {
-            assert_eq!(
-                record.source_of(row),
-                Some(table("alpha").source.as_str()),
-                "row {row}"
-            );
-        }
-        assert_eq!(record.source_of(0), None);
-        assert_eq!(record.source_of(rows_of(&record, 2).start), None);
-        assert_eq!(record.source_of(9_999), None);
-    }
+        record.resuming(true, ScreenMode::Fullscreen);
+        record.drawn(picturing::diagram("kept"), Glyphs::Unicode, Theme::Dark);
+        record.drawn(picturing::diagram("missed"), Glyphs::Unicode, Theme::Dark);
+        record.resuming(false, ScreenMode::Fullscreen);
 
-    #[test]
-    fn a_rule_has_no_source_to_give() {
-        let mut record = Record::new(40);
-        record.drawn(
-            block(markdown::Kind::Rule, "---\n"),
-            Glyphs::Unicode,
-            Theme::Dark,
-        );
-
-        assert_eq!(record.lines(), 1);
-        assert_eq!(record.source_of(0), None);
-        assert_eq!(record.sources().count(), 0);
-    }
-
-    #[test]
-    fn the_sources_are_walked_newest_first_by_the_word_they_are_called() {
-        let mut record = Record::new(60);
-        record.drawn(table("alpha"), Glyphs::Unicode, Theme::Dark);
-        record.write(Slot::Plain, "between\n", None);
-        record.drawn(
-            block(markdown::Kind::DisplayMath, "$$\nx^2\n$$\n"),
-            Glyphs::Unicode,
-            Theme::Dark,
-        );
-        record.drawn(
-            block(markdown::Kind::Diff, "```diff\n-a\n+b\n```\n"),
-            Glyphs::Unicode,
-            Theme::Dark,
-        );
-
-        let walked: Vec<(usize, &str, &str)> = record
-            .sources()
-            .map(|source| (source.line, source.word, source.text))
-            .collect();
-
+        assert!(picturing::shown(&record, 0), "the cache's picture");
+        assert!(!picturing::shown(&record, 1), "a miss was drawn");
+        // As a picture not drawn here: its text, with nothing said of it.
+        assert_eq!(picturing::refused(&record, 1), Some(Undrawn::NotHere));
         assert_eq!(
-            walked,
+            picturing::asked(&asked),
             [
-                (3, "diff", "```diff\n-a\n+b\n```\n"),
-                (2, "math", "$$\nx^2\n$$\n"),
-                (0, "table", table("alpha").source.as_str()),
+                "resuming true",
+                "cached kept",
+                "cached missed",
+                "resuming false"
             ]
         );
-    }
 
-    /// An image named by `path`, read by `by`.
-    fn named<'a>(path: &'a str, by: Option<&'a str>) -> Named<'a> {
-        Named { path, by }
+        // Once it is put back, a new block is drawn as live ones are.
+        record.drawn(picturing::diagram("live"), Glyphs::Unicode, Theme::Dark);
+        assert!(picturing::shown(&record, 2));
+        assert_eq!(
+            picturing::asked(&asked).get(4..),
+            Some(&["cached live", "picture live", "make live"].map(str::to_owned)[..])
+        );
     }
 
     #[test]
-    fn an_image_is_listed_by_its_path_under_the_word_image() {
-        let (fake, _) = fake(100, 3, vec![]);
-        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
-        record.image(
-            named("out/plot.png", None),
-            Ok(vec![1]),
-            Glyphs::Unicode,
-            Theme::Dark,
-        );
-        record.image(
-            named("gone.png", Some("read")),
-            Err(Undrawn::ImageNotShown),
-            Glyphs::Unicode,
-            Theme::Dark,
-        );
-
-        let walked: Vec<(usize, &str, &str)> = record
-            .sources()
-            .map(|source| (source.line, source.word, source.text))
+    fn a_session_put_back_reads_the_cache_only_for_the_pictures_it_keeps() {
+        let names: Vec<String> = (0..MOST_KEPT_IMAGES + 4)
+            .map(|at| format!("d{at}"))
             .collect();
+        let cached: Vec<&'static str> = names
+            .iter()
+            .map(|name| &*Box::leak(name.clone().into_boxed_str()))
+            .collect();
+        let (fake, asked) = fake(100, 3, cached);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
 
+        record.resuming(true, ScreenMode::Fullscreen);
+        for name in &names {
+            record.drawn(picturing::diagram(name), Glyphs::Unicode, Theme::Dark);
+        }
         assert_eq!(
-            walked,
-            [(1, "image", "gone.png"), (0, "image", "out/plot.png")]
+            picturing::asked(&asked),
+            ["resuming true"],
+            "the walk read the cache"
         );
+        record.resuming(false, ScreenMode::Fullscreen);
+
+        let asked = picturing::asked(&asked);
+        let read = asked
+            .iter()
+            .filter(|said| said.starts_with("cached "))
+            .count();
+        assert_eq!(read, MOST_KEPT_IMAGES, "{asked:?}");
+        assert!(
+            !asked
+                .iter()
+                .any(|said| said.starts_with("picture ") || said.starts_with("make ")),
+            "{asked:?}"
+        );
+        assert_eq!(asked.last().map(String::as_str), Some("resuming false"));
+        // The newest are the ones shown, and the oldest are their text.
+        assert!((0..4).all(|line| !picturing::shown(&record, line)));
+        assert!((4..MOST_KEPT_IMAGES + 4).all(|line| picturing::shown(&record, line)));
     }
 
     #[test]
-    fn an_image_is_made_once_and_encoded_again_from_its_png_for_a_new_theme_or_size() {
-        let (fake, asked) = fake(100, 20, vec![]);
+    fn a_new_palette_after_a_session_put_back_asks_nothing_for_the_diagrams_it_did_not_keep() {
+        // The older diagrams the put back did not reach are text for as long
+        // as they are held, as those a live session drew past the cap are: a
+        // new palette encodes the kept pictures again and asks for no other.
+        let older = 10;
+        let names: Vec<String> = (0..MOST_KEPT_IMAGES + older)
+            .map(|at| format!("d{at}"))
+            .collect();
+        let cached: Vec<&'static str> = names
+            .iter()
+            .map(|name| &*Box::leak(name.clone().into_boxed_str()))
+            .collect();
+        let (fake, asked) = fake(100, 3, cached);
         let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
-        record.windowed(8, false);
-        record.image(
-            named("out/plot.png", None),
-            Ok(vec![1]),
-            Glyphs::Unicode,
-            Theme::Dark,
-        );
-        assert!(picturing::shown(&record, 0));
-        let folded = record.folded(0);
-        assert_eq!(
-            folded.first().map(Row::text).as_deref(),
-            Some("┌─ image · out/plot.png")
-        );
-        assert!(folded.len() > 1, "{folded:?}");
+        record.resuming(true, ScreenMode::Fullscreen);
+        for name in &names {
+            record.drawn(picturing::diagram(name), Glyphs::Unicode, Theme::Dark);
+        }
+        record.resuming(false, ScreenMode::Fullscreen);
+        let before = picturing::asked(&asked).len();
 
         let light = picturing::coloured(Theme::Light);
         record.pictured_as(
@@ -4871,85 +4919,17 @@ mod tests {
             },
             light.identity(),
         );
-        record.relay(30, Glyphs::Unicode, Theme::Light);
-        assert_eq!(picturing::asked(&asked), ["make out/plot.png", "reencode"]);
-        assert!(picturing::shown(&record, 0));
-
-        record.pictures_reshaped();
-        assert!(record.cycles(0), "an image has no larger size");
-        assert!(record.pictures_reshaped(), "shown larger and not told");
-    }
-
-    #[test]
-    fn an_image_refused_or_let_go_keeps_its_edge_and_is_never_made_again() {
-        let (mut fake, asked) = fake(100, 3, vec![]);
-        fake.refuses = Some(Undrawn::TooWide);
-        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
-        record.image(
-            named("big.png", None),
-            Ok(vec![1]),
-            Glyphs::Unicode,
-            Theme::Dark,
-        );
-
-        assert!(!picturing::shown(&record, 0));
-        assert_eq!(
-            record.folded(0).iter().map(Row::text).collect::<Vec<_>>(),
-            ["┌─ image · big.png · too large"]
-        );
-        record.relay(60, Glyphs::Ascii, Theme::Dark);
-        assert_eq!(picturing::asked(&asked), ["make big.png"]);
-        assert_eq!(
-            record.folded(0).iter().map(Row::text).collect::<Vec<_>>(),
-            ["+- image - big.png - too large"]
-        );
-    }
-
-    /// Every row the record holds, as plain text.
-    fn all(record: &Record) -> Vec<String> {
-        (0..record.lines())
-            .flat_map(|line| record.folded(line))
-            .map(|row| row.text())
-            .collect()
-    }
-
-    #[test]
-    fn a_drawn_table_is_laid_out_again_for_a_new_width_and_a_new_glyph_set() {
-        let fresh = |columns, glyphs| {
-            let mut record = Record::new(columns);
-            record.drawn(table("alpha"), glyphs, Theme::Dark);
-            all(&record)
-        };
-        let mut record = Record::new(60);
-        record.drawn(table("alpha"), Glyphs::Unicode, Theme::Dark);
-        assert_eq!(all(&record), fresh(60, Glyphs::Unicode));
-
-        record.relay(20, Glyphs::Unicode, Theme::Dark);
-        assert_eq!(all(&record), fresh(20, Glyphs::Unicode));
-        assert_ne!(fresh(20, Glyphs::Unicode), fresh(60, Glyphs::Unicode));
-
-        record.relay(20, Glyphs::Ascii, Theme::Dark);
-        assert_eq!(all(&record), fresh(20, Glyphs::Ascii));
-        assert_ne!(fresh(20, Glyphs::Ascii), fresh(20, Glyphs::Unicode));
-        assert_eq!(record.rows, counted(&record));
-    }
-
-    #[test]
-    fn a_new_theme_paints_a_drawn_block_without_laying_it_out_again() {
-        let mut record = Record::new(40);
-        record.drawn(table("alpha"), Glyphs::Unicode, Theme::Dark);
-        let Some(Line::Drawn(before)) = record.lines.back() else {
-            panic!("the table is not a drawn block: {:?}", record.lines);
-        };
-        let rows = before.rows.clone();
-
         record.relay(40, Glyphs::Unicode, Theme::Light);
 
-        let Some(Line::Drawn(after)) = record.lines.back() else {
-            panic!("the table is not a drawn block: {:?}", record.lines);
-        };
-        assert_eq!(after.rows, rows);
-        assert_eq!(after.laid, (40, Glyphs::Unicode, Theme::Light));
+        let after = picturing::asked(&asked);
+        let since = after.get(before..).unwrap_or_default();
+        assert!(
+            since.iter().all(|said| said == "reencode"),
+            "asked for a diagram not kept: {since:?}"
+        );
+        assert_eq!(since.len(), MOST_KEPT_IMAGES, "{since:?}");
+        assert!((0..older).all(|line| !picturing::shown(&record, line)));
+        assert!((older..MOST_KEPT_IMAGES + older).all(|line| picturing::shown(&record, line)));
     }
 
     #[test]

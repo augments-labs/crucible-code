@@ -679,7 +679,7 @@ fn an_entry_larger_than_the_queue_takes_is_refused_before_it_is_read() {
     let mut padded = payload.bytes().to_vec();
     padded.resize(MOST_QUEUED + 1, 0);
     let Form::Svg(svg) = &form else { panic!() };
-    let digest = keyed(SOURCE, &key());
+    let digest = keyed(SOURCE, &key(), None);
     let bytes = sealed(
         &digest,
         Protocol::Kitty,
@@ -716,7 +716,7 @@ fn a_payload_that_is_not_what_its_protocol_says_is_a_miss() {
         (sixel_key, kitty.bytes().to_vec()),
         (sixel_key, b"\x1bPq#0~\x1b]52;c;x\x07~\x1b\\".to_vec()),
     ] {
-        let digest = keyed(SOURCE, &key);
+        let digest = keyed(SOURCE, &key, None);
         let bytes = sealed(
             &digest,
             key.protocol,
@@ -734,7 +734,7 @@ fn a_payload_that_is_not_what_its_protocol_says_is_a_miss() {
         );
     }
     // Pixels other than the picture's are another picture's.
-    let digest = keyed(SOURCE, &key());
+    let digest = keyed(SOURCE, &key(), None);
     let bytes = sealed(
         &digest,
         Protocol::Kitty,
@@ -758,7 +758,7 @@ fn sixel_sealed(cache: &Cache, form: &Form, pixels: (u32, u32), payload: &[u8]) 
         protocol: Protocol::Sixel,
         ..key()
     };
-    let digest = keyed(SOURCE, &key);
+    let digest = keyed(SOURCE, &key, None);
     let bytes = sealed(
         &digest,
         key.protocol,
@@ -1054,7 +1054,11 @@ fn a_cache_that_cannot_be_written_draws_as_before_and_frees_its_queue() {
     fs::write(&home, b"").unwrap();
     let cache = Cache::open(&home);
     let (queue, writer) = writing(cache.clone());
-    let mut pictures = crate::cli::pictures::Caching::new(cache.clone(), queue);
+    let mut pictures = crate::cli::pictures::Caching::new(
+        cache.clone(),
+        queue,
+        crate::cli::math_engine::Outcome::default(),
+    );
     let form = form(40, 20);
 
     for at in 0..3 {
@@ -1149,4 +1153,84 @@ fn the_writer_thread_trims_first_and_then_writes_what_it_is_handed() {
     thread.join().unwrap();
     assert!(!draft.exists(), "not trimmed at start");
     assert!(cache.get(SOURCE, &key()).is_some(), "not written");
+}
+
+#[test]
+fn a_formula_kept_under_one_toolchain_is_a_miss_under_another() {
+    let _turn = turn();
+    let (_sample, home) = home("toolchain");
+    let cache = Cache::open(&home);
+    let formula = "\\frac{a}{b}";
+    let key = PictureKey {
+        kind: Kind::DisplayMath,
+        ..key()
+    };
+    let form = form(40, 20);
+    let payload = drawn(&key, &form);
+    cache.put(&Entry::made_by(formula, &key, "TeX Live 2025", &form, &payload).unwrap());
+
+    assert!(cache.get_made_by(formula, &key, "TeX Live 2025").is_some());
+    assert!(
+        cache.get_made_by(formula, &key, "TeX Live 2024").is_none(),
+        "read under another toolchain"
+    );
+    assert!(
+        cache.get(formula, &key).is_none(),
+        "read as a picture drawn in this build"
+    );
+    // Nor is a picture this build drew one any toolchain made.
+    let (_sample, home) = self::home("toolchain-none");
+    let cache = Cache::open(&home);
+    cache.put(&Entry::of(formula, &key, &form, &payload).unwrap());
+    assert!(cache.get(formula, &key).is_some());
+    assert!(cache.get_made_by(formula, &key, "TeX Live 2025").is_none());
+}
+
+#[test]
+fn a_formula_is_kept_and_read_back_only_under_the_toolchain_this_sessions_check_found() {
+    use crate::cli::math_engine::{Outcome, Said};
+    use crate::cli::pictures::Caching;
+    let _turn = turn();
+    let (_sample, home) = home("toolchain-caching");
+    let cache = Cache::open(&home);
+    let (queue, writer) = writing(cache.clone());
+    let found = Outcome::of(Said::Available("TeX Live 2025".into()));
+    let mut pictures = Caching::new(cache.clone(), queue, found);
+    let formula = "\\frac{a}{b}";
+    let math = PictureKey {
+        kind: Kind::DisplayMath,
+        ..key()
+    };
+    let form = form(40, 20);
+
+    pictures.make(formula, &math, &form).unwrap();
+    pictures.make(SOURCE, &key(), &form).unwrap();
+    writer.drain();
+    assert!(cache.get_made_by(formula, &math, "TeX Live 2025").is_some());
+    assert!(cache.get(formula, &math).is_none(), "kept as drawn here");
+    pictures.resuming(true);
+    assert!(pictures.cached(formula, &math).is_some(), "not read back");
+    assert!(pictures.cached(SOURCE, &key()).is_some(), "a diagram");
+
+    for said in [
+        Said::NotAsked,
+        Said::Asking,
+        Said::Available("TeX Live 2024".into()),
+        Said::Unavailable(crucible_app::math::Unavailable::ProgramMissing),
+    ] {
+        let (queue, writer) = writing(cache.clone());
+        let mut other = Caching::new(cache.clone(), queue, Outcome::of(said.clone()));
+        other.resuming(true);
+        assert!(other.cached(formula, &math).is_none(), "{said:?}");
+        assert!(other.cached(SOURCE, &key()).is_some(), "{said:?}");
+        // Made with no toolchain found it is shown and not kept, and under
+        // another it is kept as that one's.
+        other.make("x^2", &math, &form).unwrap();
+        writer.drain();
+        assert!(cache.get("x^2", &math).is_none(), "{said:?}");
+        assert!(
+            cache.get_made_by("x^2", &math, "TeX Live 2025").is_none(),
+            "{said:?}"
+        );
+    }
 }

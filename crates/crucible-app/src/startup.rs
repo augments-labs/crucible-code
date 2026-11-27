@@ -229,6 +229,22 @@ impl fmt::Debug for Startup<'_> {
 /// its environment asks for under a name it has no registry for, and a
 /// catalog it names in a way it does not take.
 pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
+    assemble_sharing(startup).map(|(conversation, _)| conversation)
+}
+
+/// [`assemble`], and the sandbox service the conversation's commands run on.
+///
+/// The one service, watching on the conversation's runtime, so what checks
+/// whether display math can be drawn as a picture, and draws it, runs under
+/// the same backend and the same count of confined runs as every command,
+/// and no second service is built for it.
+///
+/// # Errors
+///
+/// As [`assemble`].
+pub fn assemble_sharing(
+    startup: &Startup<'_>,
+) -> Result<(Conversation, Arc<dyn crucible_sandbox::SandboxService>), AppError> {
     // A test build starts the agents its environment names, so a test of the
     // whole program can run it over agents this release does not ship; a
     // build that ships has no reader of that name.
@@ -244,10 +260,13 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     assembled(startup, agents)
 }
 
-/// [`assemble`], with `agents` the installed agents the run can be started
-/// on: the ones its start is settled against, which the conversation it
-/// returns records.
-fn assembled(startup: &Startup<'_>, agents: &'static Registry) -> Result<Conversation, AppError> {
+/// [`assemble_sharing`], with `agents` the installed agents the run can be
+/// started on: the ones its start is settled against, which the conversation
+/// it returns records.
+fn assembled(
+    startup: &Startup<'_>,
+    agents: &'static Registry,
+) -> Result<(Conversation, Arc<dyn crucible_sandbox::SandboxService>), AppError> {
     let Startup {
         settings,
         sessions,
@@ -355,6 +374,7 @@ fn assembled(startup: &Startup<'_>, agents: &'static Registry) -> Result<Convers
     let offering = tools(startup, settings, &following, Arc::clone(&sandbox))?;
     let agents_sandbox = Arc::clone(&sandbox);
     let steps_sandbox = Arc::clone(&sandbox);
+    let math_sandbox = Arc::clone(&sandbox);
 
     // Operator-authored instructions are the stable request prefix. Everything
     // that can move within the session is read by context assembly instead.
@@ -473,11 +493,12 @@ fn assembled(startup: &Startup<'_>, agents: &'static Registry) -> Result<Convers
     if let Some(steps) = steps {
         conversation = conversation.stepping(steps);
     }
-    Ok(conversation
+    let conversation = conversation
         .consenting(startup.services.consent().clone())
         .registry(agents)
         .credited(source)
-        .following(following))
+        .following(following);
+    Ok((conversation, math_sandbox))
 }
 
 /// A run on an installed agent's route, asked of a provider whose access

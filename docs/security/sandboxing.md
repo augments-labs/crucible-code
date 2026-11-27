@@ -14,6 +14,11 @@ Configure filesystem grants and restrictions, domain mediation, local sockets
 and command limits in the same block. Project settings can require confinement
 and narrow inherited authority. See [configuration](../configuration/configuration.md#sandbox).
 
+The TeX that makes display math into pictures runs in the same service, and
+always confined, whatever `enabled` says: where this machine cannot confine it,
+math is drawn as text. See
+[Math as a picture](../sessions/transcript.md#math-as-a-picture).
+
 ## Turning it on
 
 1. **Give the platform what it needs.** Confinement runs only where this

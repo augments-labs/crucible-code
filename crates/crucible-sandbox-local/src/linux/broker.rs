@@ -324,7 +324,12 @@ fn none_trusted(refused: &[(Place, &'static str)]) -> SandboxError {
 /// stop meanwhile kills and reaps the launcher itself, which ends this wait at
 /// its next look. Reading the broker's report, which includes its scan of the
 /// projection, is bounded separately by the protocol's own ceilings.
-const CANCEL_GRACE: Duration = Duration::from_secs(5);
+///
+/// Public because the TeX engine that makes math pictures waits for a run's
+/// last word a fixed margin past its command time, and that margin is derived
+/// from this, [`REAP`](crate::REAP) and [`CANCELLED`](crate::CANCELLED): a
+/// test there compares them, so a change here is a change it sees.
+pub const CANCEL_GRACE: Duration = Duration::from_secs(5);
 /// How often the cancel looks for the launcher's exit.
 const CANCEL_POLL: Duration = Duration::from_millis(5);
 

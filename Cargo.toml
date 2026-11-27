@@ -722,18 +722,26 @@ insta.workspace = true
 # standing where the application's own runtime stands for a conversation.
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 
+[features]
+# The colour-on memory probe's build: every display formula is answered with one
+# kept picture, made without TeX or the sandbox, so the probe measures sixteen
+# math pictures kept on any runner. In no `default` and turned on by nothing
+# else; `scripts/sh/bench.sh` alone asks for it, for a copy of `crucible` that
+# never ships, and `scripts/sh/repo-checks.sh` holds it there.
+bench-math-stand-in = []
+
 # The Linux benchmark probes run the shipped binary behind a controlling pseudo
 # terminal and render into a bounded kernel pipe, and the one test that runs
 # crucible the way a person does drives it through a pty the same way. `std`
 # can spawn the process and read the descriptors but cannot open the pty pair,
-# put its far side in raw mode, set its window size, bound a pipe or say how
-# long the clock tick is that `/proc` counts a process's CPU time in. `rustix`
-# and its version are already in the runtime graph, so this turns features on
-# rather than adding a crate; only the safe system-call wrappers the probes and
-# that test name become reachable, and no pty or pipe code is reached by
-# crucible itself.
+# put its far side in raw mode, set its window size, make it a probe's own
+# standard input, bound a pipe or say how long the clock tick is that `/proc`
+# counts a process's CPU time in. `rustix` and its version are already in the
+# runtime graph, so this turns features on rather than adding a crate; only the
+# safe system-call wrappers the probes and that test name become reachable, and
+# no pty or pipe code is reached by crucible itself.
 [target.'cfg(target_os = "linux")'.dependencies]
-rustix = { workspace = true, features = ["param", "pipe", "pty", "termios"] }
+rustix = { workspace = true, features = ["param", "pipe", "pty", "stdio", "termios"] }
 
 # What hears a hang-up or a termination while a turn is running, so the turn is
 # stopped and written down instead of lost, and a resize, so the next frame is

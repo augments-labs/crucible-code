@@ -1,5 +1,7 @@
-//! Pictures of diagrams, kept on disk so a session put back shows them again
-//! without drawing them. Display math is drawn as its text and has no key.
+//! Pictures of diagrams and display formulas, kept on disk so a session put
+//! back shows them again without drawing or making them. A formula's picture
+//! is named by the toolchain that made it as well, so one kept under another
+//! TeX is never read as this one's.
 
 use std::collections::BinaryHeap;
 use std::fs;
@@ -84,7 +86,25 @@ impl Cache {
     /// The form and payload kept for `source` under `key`, where an entry
     /// for them is here and reads back whole; anything else is a miss.
     pub(crate) fn get(&self, source: &str, key: &PictureKey) -> Option<(Form, Payload)> {
-        let digest = keyed(source, key);
+        self.read_entry(&keyed(source, key, None), key)
+    }
+
+    /// The form and payload `toolchain` made for `source` under `key`, as
+    /// [`Self::get`] reads them: a picture another toolchain made of it, or
+    /// this build drew, is a miss.
+    pub(crate) fn get_made_by(
+        &self,
+        source: &str,
+        key: &PictureKey,
+        toolchain: &str,
+    ) -> Option<(Form, Payload)> {
+        self.read_entry(&keyed(source, key, Some(toolchain)), key)
+    }
+
+    /// The entry named by `digest`, where it reads back whole as a picture
+    /// under `key`.
+    fn read_entry(&self, digest: &[u8; 32], key: &PictureKey) -> Option<(Form, Payload)> {
+        let digest = *digest;
         let bytes = self.read(&named(&digest))?;
         let (magic, rest) = bytes.split_first_chunk::<8>()?;
         let (named_by, rest) = rest.split_first_chunk::<32>()?;
@@ -466,6 +486,23 @@ impl Entry {
     /// The entry for `source`'s picture under `key`, or nothing where it
     /// would be larger than the queue takes.
     fn of(source: &str, key: &PictureKey, form: &Form, payload: &Payload) -> Option<Self> {
+        Self::named_by(&keyed(source, key, None), form, payload)
+    }
+
+    /// The entry for the picture `toolchain` made of `source` under `key`,
+    /// as [`Self::of`] makes one.
+    pub(crate) fn made_by(
+        source: &str,
+        key: &PictureKey,
+        toolchain: &str,
+        form: &Form,
+        payload: &Payload,
+    ) -> Option<Self> {
+        Self::named_by(&keyed(source, key, Some(toolchain)), form, payload)
+    }
+
+    /// The entry named by `digest`, or nothing where it is not kept.
+    fn named_by(digest: &[u8; 32], form: &Form, payload: &Payload) -> Option<Self> {
         // An image is a file a turn named: what it shows is the file's, and
         // it is read again from the file rather than kept here.
         let svg: &[u8] = match form {
@@ -475,16 +512,15 @@ impl Entry {
         if HEADER + BODY + svg.len() + payload.bytes().len() > MOST_QUEUED {
             return None;
         }
-        let digest = keyed(source, key);
         let bytes = sealed(
-            &digest,
+            digest,
             payload.protocol(),
             payload.pixels(),
             svg,
             payload.bytes(),
         )?;
         Some(Self {
-            name: named(&digest),
+            name: named(digest),
             bytes,
         })
     }
@@ -495,12 +531,23 @@ impl Entry {
     }
 }
 
-/// The digest an entry for `source` under `key` is named by.
-fn keyed(source: &str, key: &PictureKey) -> [u8; 32] {
+/// The digest an entry for `source` under `key` is named by: one this build
+/// drew, or, where `toolchain` names it, one that toolchain made.
+///
+/// A diagram is drawn in this process, so the build's version names what drew
+/// it. A display formula is made by the installed TeX, which a build does not
+/// name, so it is named by the toolchain the session's check found as well,
+/// and a TeX upgraded since it was kept reads it as a miss.
+fn keyed(source: &str, key: &PictureKey, toolchain: Option<&str>) -> [u8; 32] {
     let mut digest = Sha256::new();
     digest.update(b"crucible picture\0");
     digest.update(env!("CARGO_PKG_VERSION").as_bytes());
     digest.update([0]);
+    if let Some(toolchain) = toolchain {
+        digest.update(b"made by\0");
+        digest.update(toolchain.as_bytes());
+        digest.update([0]);
+    }
     digest.update(format!("{key:?}").as_bytes());
     digest.update([0]);
     digest.update(Sha256::digest(source.as_bytes()));
@@ -573,9 +620,12 @@ impl Queue {
         form: &Form,
         payload: &Payload,
     ) -> bool {
-        let Some(entry) = Entry::of(source, key, form, payload) else {
-            return false;
-        };
+        Entry::of(source, key, form, payload).is_some_and(|entry| self.sent(entry))
+    }
+
+    /// Hands `entry` to the writer, or drops it where the queue has no room
+    /// for it; never waits.
+    pub(crate) fn sent(&self, entry: Entry) -> bool {
         let length = entry.bytes.len();
         let reserved = self
             .queued

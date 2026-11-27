@@ -771,6 +771,69 @@ impl fmt::Debug for Form {
     }
 }
 
+/// A display formula that closed in a block shown as its text until a
+/// picture is made of it: the line it is on and the formula it holds.
+///
+/// The renderer hands one out for each formula it would show as a picture,
+/// and takes it back with the picture made of it; nothing outside this crate
+/// makes one, so a picture handed back names a block the renderer told of.
+/// The line is a block's pending picture key: it names that block for as
+/// long as the transcript holds it, and nothing once it has gone.
+///
+/// One a session put back on a full screen tells out carries the key its
+/// picture would have been kept under, and is only to be read from what an
+/// earlier session kept: putting a session back makes nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Formula {
+    /// The record line the block is, counted from the first of the session.
+    pub(crate) line: usize,
+    /// The formula, as the block's drawer was handed it.
+    pub(crate) source: Box<str>,
+    /// Where the block was put back, the key its kept picture is under.
+    pub(crate) kept: Option<PictureKey>,
+}
+
+impl Formula {
+    /// The formula, as the block's drawer was handed it.
+    #[must_use]
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    /// Where the block was put back, the key the picture an earlier session
+    /// kept of it is under: it is answered with that picture or stays its
+    /// text, and is never made.
+    #[must_use]
+    pub const fn kept(&self) -> Option<&PictureKey> {
+        self.kept.as_ref()
+    }
+}
+
+/// What makes the display formulas a renderer tells of into pictures, away
+/// from the drawing thread, and hands each picture back.
+///
+/// The renderer is its only caller, on the drawing thread: it tells each
+/// formula as its block closes, says when a new turn starts, and, while any
+/// formula told has no answer, looks for one each time an input wait rests,
+/// so a picture made while nothing else is drawn is still shown. Nothing here
+/// may wait: what makes a picture does it elsewhere.
+pub trait Formulas: fmt::Debug {
+    /// Takes `formula`, to be made into a picture and answered; or, where it
+    /// was [`Formula::kept`], read and answered, and never made.
+    fn told(&mut self, formula: Formula);
+
+    /// Says a new turn started: what an earlier turn told and has not begun
+    /// to make stays its text.
+    fn turns(&mut self);
+
+    /// The next formula answered, with its picture, or `None` where it stays
+    /// its text; nothing when no answer has come.
+    fn answered(&mut self) -> Option<(Formula, Option<Svg>)>;
+
+    /// Whether a formula told has not been answered yet.
+    fn pending(&self) -> bool;
+}
+
 /// Everything a picture's bytes depend on besides its source: what kind of
 /// block it is, the window's width bucket, the palette it is worn in, the
 /// protocol it is encoded for and the cell it is fitted to.
