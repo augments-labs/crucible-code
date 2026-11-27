@@ -17102,7 +17102,7 @@
       },
       "case": "record::tests::a_session_put_back_draws_what_the_cache_kept_and_the_rest_as_text_with_no_drawer",
       "source": "crates/crucible-tui/src/record.rs",
-      "body_sha256": "ace76124f9278090d075488e0449590b34274cf273cbad3c3a7c5e4256558df3",
+      "body_sha256": "95caf6e67ec167aca021fbf725797bfde8ee02b2f458161af0fa3d7ee5ebb438",
       "platforms": [
         "linux",
         "macos",
@@ -17156,7 +17156,43 @@
       },
       "case": "record::tests::a_session_put_back_reads_the_cache_only_for_the_pictures_it_keeps",
       "source": "crates/crucible-tui/src/record.rs",
-      "body_sha256": "b597f1b63496a63b1e5f7c649574ba219e567abd8593c64ca472a90b7b123088",
+      "body_sha256": "beca1b2d02b2136468165c1687698427d78a2db4694e347954ccfd96dbfe7115",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-RESUME-PALETTE-ASKS-NO-OLDER",
+      "family": "transcript-pictures",
+      "obligation": "After a session put back more cached diagrams than it keeps pictures of, a new palette asks nothing for the older ones, which stay text, and encodes again each of the 16 it kept.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::a_new_palette_after_a_session_put_back_asks_nothing_for_the_diagrams_it_did_not_keep",
+      "source": "crates/crucible-tui/src/record.rs",
+      "body_sha256": "3960cf600fd47d0e5aa34f3abae8a2826771169ca7ae483b63514d131c01f81c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-RESUME-NATIVE-FROM-CACHE",
+      "family": "transcript-pictures",
+      "obligation": "A native session put back reads each diagram from the cache as it goes into the scrollback and sends every one kept as its picture, and with nothing kept sends no picture and writes the diagram as text.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::pictures::a_native_session_put_back_sends_each_kept_diagram_into_the_scrollback_as_its_picture",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "7bfa8421264fa9bd567f3ec9051ed40ecb4b491548e714ff790c86cd0a87e1e0",
       "platforms": [
         "linux",
         "macos",
@@ -17174,7 +17210,43 @@
       },
       "case": "cli::picture_cache::tests::a_sixel_payload_the_terminal_would_not_be_sent_or_that_paints_past_its_pixels_is_a_miss",
       "source": "src/cli/picture_cache/tests.rs",
-      "body_sha256": "f073637b4f0e296fe5643d2efd4e96b88052506a8bc7459cda4353dfce51c9fa",
+      "body_sha256": "430c8496654abe749bfa57a54622a88a515903dc3a917ea325e257d750e60e29",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-SIXEL-OPENING",
+      "family": "transcript-pictures",
+      "obligation": "A Sixel entry is read back only when it opens as the live encoder opens one: raster attributes other than square pixels, a P1 other than 9, or a P2 or P3 other than 1 and 0 are misses; the encoder's own opening, with or without its P1, and its own payload are hits.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::a_sixel_payload_that_opens_other_than_the_live_encoder_opens_is_a_miss",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "19b62548f9423619058c816accada7f31f6322e564bf4cb6c642027db4ca6113",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CACHE-SIXEL-LAST-BAND",
+      "family": "transcript-pictures",
+      "obligation": "A Sixel entry whose last band sets a row below the picture's last row, painted or repeated, is a miss; one setting only the rows it has is a hit, as is the live encoder's payload at heights six does not divide.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::picture_cache::tests::a_sixel_payload_that_paints_below_its_last_row_is_a_miss",
+      "source": "src/cli/picture_cache/tests.rs",
+      "body_sha256": "6ee6b7558fec6422e0857e6b02e2de6219d6fbffe5268d1d74be7a0bee96c132",
       "platforms": [
         "linux",
         "macos",
