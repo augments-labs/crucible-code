@@ -1669,7 +1669,10 @@ impl<T: Terminal> Renderer<T> {
     /// text and nothing is read or drawn for it. Once it is, the newest
     /// diagrams, no more than the record keeps pictures for, are shown as
     /// what the pictures kept from an earlier run, and any other stays its
-    /// text, as one not drawn here is. In native mode each diagram is shown
+    /// text, as one not drawn here is; a display formula among them is told
+    /// to what [`Renderer::makes_formulas`] was handed, to be read off this
+    /// thread, and shown once its picture is answered. In native mode each
+    /// diagram or formula is shown
     /// as what was kept of it as it is drawn, since it goes into the
     /// scrollback as it is then, and one with nothing kept is its text. Said
     /// around the walk that puts a session back, so the walk runs no drawer

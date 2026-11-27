@@ -779,12 +779,18 @@ impl fmt::Debug for Form {
 /// makes one, so a picture handed back names a block the renderer told of.
 /// The line is a block's pending picture key: it names that block for as
 /// long as the transcript holds it, and nothing once it has gone.
+///
+/// One a session put back on a full screen tells out carries the key its
+/// picture would have been kept under, and is only to be read from what an
+/// earlier session kept: putting a session back makes nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Formula {
     /// The record line the block is, counted from the first of the session.
     pub(crate) line: usize,
     /// The formula, as the block's drawer was handed it.
     pub(crate) source: Box<str>,
+    /// Where the block was put back, the key its kept picture is under.
+    pub(crate) kept: Option<PictureKey>,
 }
 
 impl Formula {
@@ -792,6 +798,14 @@ impl Formula {
     #[must_use]
     pub fn source(&self) -> &str {
         &self.source
+    }
+
+    /// Where the block was put back, the key the picture an earlier session
+    /// kept of it is under: it is answered with that picture or stays its
+    /// text, and is never made.
+    #[must_use]
+    pub const fn kept(&self) -> Option<&PictureKey> {
+        self.kept.as_ref()
     }
 }
 
@@ -804,7 +818,8 @@ impl Formula {
 /// so a picture made while nothing else is drawn is still shown. Nothing here
 /// may wait: what makes a picture does it elsewhere.
 pub trait Formulas: fmt::Debug {
-    /// Takes `formula`, to be made into a picture and answered.
+    /// Takes `formula`, to be made into a picture and answered; or, where it
+    /// was [`Formula::kept`], read and answered, and never made.
     fn told(&mut self, formula: Formula);
 
     /// Says a new turn started: what an earlier turn told and has not begun

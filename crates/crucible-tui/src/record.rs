@@ -1294,7 +1294,11 @@ impl Record {
             if let Some(source) = formula
                 && self.picturing.told.len() < MOST_TOLD
             {
-                self.picturing.told.push(Formula { line, source });
+                self.picturing.told.push(Formula {
+                    line,
+                    source,
+                    kept: None,
+                });
             }
         }
     }
@@ -1506,7 +1510,10 @@ impl Record {
     /// many as [`MOST_KEPT_IMAGES`], are given the pictures their pictures
     /// kept from an earlier session, and one they did not keep stays its
     /// text, as one not drawn here is: putting a session back runs no
-    /// drawer, and reads no more pictures than the record keeps.
+    /// drawer, and reads no more pictures than the record keeps. A display
+    /// formula among them is not read here: it is told out, with the key its
+    /// picture was kept under, for what makes formulas to read off this
+    /// thread, and stays its text until a picture is answered for it.
     ///
     /// In a native session each block is given its kept picture as it is
     /// drawn, since one that goes into the scrollback goes once and stays as
@@ -1532,7 +1539,8 @@ impl Record {
 
     /// Gives the newest blocks put back that are still to go out, as many as
     /// [`MOST_KEPT_IMAGES`], the pictures kept of them, oldest first so the
-    /// newest is the last to make room.
+    /// newest is the last to make room; a display formula among them is told
+    /// out to be read, as many as the record tells, and is not read here.
     ///
     /// Only a block the walk put off: one wanting a picture, with none, not
     /// fallen back to text, and refused as not drawn here. A line already
@@ -1568,6 +1576,9 @@ impl Record {
         }
         let columns = self.columns;
         for at in put_off.into_iter().rev() {
+            if self.tells_kept(at, columns) {
+                continue;
+            }
             // Out of the lines while its picture is settled, since keeping
             // one may draw an older picture as text.
             let Some(Line::Drawn(mut drawn)) = self
@@ -1669,22 +1680,26 @@ impl Record {
     /// that is also what a picture refused for want of time is told. A Sixel
     /// picture kept under a key that differs from this one by its width alone
     /// is kept as it is, unless it is wanted now.
+    /// The key `drawn`'s picture is made and kept under at `columns`, where
+    /// one is wanted of it and it is not fallen back to its text.
+    fn key_of(&self, drawn: &Drawn, columns: usize) -> Option<PictureKey> {
+        if drawn.fallen || !drawn.block.closed {
+            return None;
+        }
+        self.picture_key(drawn.block.kind, columns)
+            .map(|key| PictureKey {
+                rows: self.encoded_rows(drawn, key.protocol),
+                ..key
+            })
+    }
+
     fn settle(&mut self, drawn: &mut Drawn, columns: usize, glyphs: Glyphs) -> bool {
         // An image's picture is made once, from what the application read;
         // with none, there is nothing to make one from again.
         if drawn.image.is_some() && drawn.picture.is_none() {
             return false;
         }
-        let key = if drawn.fallen || !drawn.block.closed {
-            None
-        } else {
-            self.picture_key(drawn.block.kind, columns)
-                .map(|key| PictureKey {
-                    rows: self.encoded_rows(drawn, key.protocol),
-                    ..key
-                })
-        };
-        let Some(key) = key else {
+        let Some(key) = self.key_of(drawn, columns) else {
             let had = drawn.picture.take().is_some();
             self.picturing.let_go |= had;
             return had;
@@ -1795,6 +1810,34 @@ impl Record {
                 |picture| picture.rows(self.picturing.window),
             ),
         }
+    }
+
+    /// Tells out the display formula at `at`, put back, to be read from
+    /// what an earlier session kept of it; answers whether it is one.
+    ///
+    /// A formula's kept picture is named by the toolchain that made it, which
+    /// only the check made off the drawing thread knows, so it is read there
+    /// too, and the formula is its text until [`Self::formula_made`] is handed
+    /// what was read. Nothing makes it: one with nothing kept stays its text.
+    fn tells_kept(&mut self, at: usize, columns: usize) -> bool {
+        let Some(Line::Drawn(drawn)) = self.lines.get(at) else {
+            return false;
+        };
+        if drawn.block.kind != Kind::DisplayMath {
+            return false;
+        }
+        let key = self.key_of(drawn, columns);
+        let source = markdown::taken(&drawn.block, &self.drawers).map(|(_, source)| source);
+        if let (Some(key), Some(source)) = (key, source)
+            && self.picturing.told.len() < MOST_TOLD
+        {
+            self.picturing.told.push(Formula {
+                line: self.gone + at,
+                source: source.into(),
+                kept: Some(key),
+            });
+        }
+        true
     }
 
     /// `drawn`'s picture under `key`, or why it is drawn as text.
@@ -4516,28 +4559,81 @@ mod tests {
         record.drawn(picturing::formula("x^2"), Glyphs::Unicode, Theme::Dark);
         assert!(picturing::told(&mut record).is_empty(), "no colour");
 
-        // While a session is put back, a miss stays text and nothing is made.
-        for screen in [ScreenMode::Fullscreen, ScreenMode::Native] {
-            let (fake, asked) = fake(100, 3, vec!["kept"]);
-            let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
-            record.resuming(true, screen);
-            record.drawn(picturing::formula("kept"), Glyphs::Unicode, Theme::Dark);
-            record.drawn(picturing::formula("missed"), Glyphs::Unicode, Theme::Dark);
-            record.resuming(false, screen);
-            assert!(picturing::told(&mut record).is_empty(), "{screen:?}");
-            assert!(
-                picturing::shown(&record, 0),
-                "{screen:?}: the cache's picture"
-            );
-            assert!(!picturing::shown(&record, 1), "{screen:?}");
-            assert!(
-                picturing::asked(&asked)
-                    .iter()
-                    .all(|asked| !asked.starts_with("make")),
-                "{screen:?}: {:?}",
-                picturing::asked(&asked)
+        // While a session is put back in the terminal's own buffer, a miss
+        // stays text and nothing is made.
+        let screen = ScreenMode::Native;
+        let (fake, asked) = fake(100, 3, vec!["kept"]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+        record.resuming(true, screen);
+        record.drawn(picturing::formula("kept"), Glyphs::Unicode, Theme::Dark);
+        record.drawn(picturing::formula("missed"), Glyphs::Unicode, Theme::Dark);
+        record.resuming(false, screen);
+        assert!(picturing::told(&mut record).is_empty(), "{screen:?}");
+        assert!(
+            picturing::shown(&record, 0),
+            "{screen:?}: the cache's picture"
+        );
+        assert!(!picturing::shown(&record, 1), "{screen:?}");
+        assert!(
+            picturing::asked(&asked)
+                .iter()
+                .all(|asked| !asked.starts_with("make")),
+            "{screen:?}: {:?}",
+            picturing::asked(&asked)
+        );
+    }
+
+    #[test]
+    fn a_formula_put_back_on_a_full_screen_is_told_out_to_be_read_and_nothing_is_read_or_made_here()
+    {
+        let (fake, asked) = fake(100, 3, vec!["kept", "missed"]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+        record.resuming(true, ScreenMode::Fullscreen);
+        record.drawn(picturing::formula("kept"), Glyphs::Unicode, Theme::Dark);
+        record.drawn(picturing::formula("missed"), Glyphs::Unicode, Theme::Dark);
+        record.resuming(false, ScreenMode::Fullscreen);
+
+        let told = record.formulas();
+        let sources: Vec<&str> = told.iter().map(|told| told.source().trim()).collect();
+        assert_eq!(sources, ["kept", "missed"]);
+        assert!(
+            told.iter()
+                .all(|told| told.kept().is_some_and(|key| key.kind == Kind::DisplayMath)),
+            "{told:?}"
+        );
+        assert!(!picturing::shown(&record, 0) && !picturing::shown(&record, 1));
+        let asked = picturing::asked(&asked);
+        assert!(
+            asked
+                .iter()
+                .all(|asked| !asked.starts_with("make") && !asked.starts_with("cached")),
+            "read or made on the drawing thread: {asked:?}"
+        );
+
+        // What was read for it is shown as a picture made of it is.
+        let kept = told.first().expect("the kept formula");
+        assert!(record.formula_made(kept, picturing::svg("kept")));
+        assert!(picturing::shown(&record, 0));
+        assert!(!picturing::shown(&record, 1));
+    }
+
+    #[test]
+    fn no_more_formulas_put_back_are_told_out_to_be_read_than_the_record_keeps_pictures_of() {
+        let (fake, _) = fake(100, 3, vec![]);
+        let mut record = picturing::record(40, fake, &picturing::coloured(Theme::Dark));
+        record.resuming(true, ScreenMode::Fullscreen);
+        for at in 0..=MOST_KEPT_IMAGES {
+            record.drawn(
+                picturing::formula(&format!("f{at}")),
+                Glyphs::Unicode,
+                Theme::Dark,
             );
         }
+        record.resuming(false, ScreenMode::Fullscreen);
+
+        let told = picturing::told(&mut record);
+        let newest: Vec<String> = (1..=MOST_KEPT_IMAGES).map(|at| format!("f{at}")).collect();
+        assert_eq!(told, newest, "the newest, oldest first");
     }
 
     #[test]
