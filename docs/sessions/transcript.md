@@ -853,7 +853,10 @@ a link's words. One in code or a fence is
 drawn as written.
 A path is read the way `read` reads it, inside the workspace, and only where
 the [permission rules](../permissions/rules.md#images-in-the-transcript) let
-`read` read it; nothing is ever asked about it. Where the session draws no
+`read` read it; nothing is ever asked about it. A path whose words lead
+outside the workspace, such as `/net/host/plot.png` or `../../plot.png`, is
+not looked up at all, so a directory that would reach another computer is
+never opened. Where the session draws no
 pictures nothing is read, and the answer's link is all there is.
 
 A turn shows at most eight images, and reads them for as long as two seconds
@@ -864,7 +867,7 @@ any other reason, with the reason after its path:
 
 | The edge says | Because |
 | --- | --- |
-| `not shown` | The path leads outside the workspace, a rule refuses reading it, or there is no file there. The three are told apart nowhere, so the screen says no more about a file than the session may read of it. |
+| `not shown` | The path leads outside the workspace, a rule refuses reading it, or there is no file there. The three are told apart nowhere, so the screen says no more about a file than the session may read of it. So is an image that could not be checked within its two seconds, and one asked for while an earlier image's read has still not returned: images are read one at a time, beside the tools, and a disk that stopped answering holds up at most that one. |
 | `too large` | The file is larger than 1 MiB, or its picture larger than a picture may be: see the bounds above. |
 | `not an image` | The file is not a PNG, JPEG, GIF or WebP picture. |
 | `not read in time` | Reading and decoding it took more than two seconds, or the turn's two seconds for its images were spent before it was asked for. Each image has its own two seconds, and it is not tried again. |
