@@ -12827,7 +12827,7 @@
       },
       "case": "cli::converse::command::settings::tests::the_math_row_shows_each_answer_bare_since_each_is_drawn_at_once",
       "source": "src/cli/converse/command/settings/tests.rs",
-      "body_sha256": "1983a04dccb38390b5647dd481aa2e613951625bf734115351f149df9ff6b793",
+      "body_sha256": "2d3b35801e1949ff3204fd9c6b679fb52086d8e0e6d13805df8193d2de4a2819",
       "platforms": [
         "linux",
         "macos",
@@ -14679,7 +14679,7 @@
     {
       "id": "CASE-TRANSCRIPT-PICTURES-KITTY-COLOUR-GANTTS",
       "family": "transcript-pictures",
-      "obligation": "The colour session's last measured answer ends in MOST_KEPT_IMAGES + 1 distinct gantt fences, each one section and TASKS tasks, within the gantt caps' bytes and nodes.",
+      "obligation": "The colour session's last measured answer ends in MOST_KEPT_IMAGES + 1 distinct gantt fences, each one section and TASKS tasks, within the gantt caps' bytes and nodes and with no $ among them, and then FORMULAS distinct display formulas, as many as the record keeps pictures of, so the probe, which is refused unless the last FORMULAS pictures it reads are the stand-in's, weighs pictures of formulas.",
       "package": "crucible-code",
       "target": {
         "kind": "bin",
@@ -14687,7 +14687,7 @@
       },
       "case": "tests::the_last_measured_answer_ends_in_one_more_gantt_than_the_record_keeps_pictures_of",
       "source": "src/bin/bench-session-rss-colour.rs",
-      "body_sha256": "70cf6363ad29a2c3efe750eafbc91fa6e887b3d22204021e3b7dbe26fde19c72",
+      "body_sha256": "d1bddf8500729d312f7a92b30987271cb53b34bbea6ff916f3bc325f165cb6c9",
       "platforms": [
         "linux"
       ]
@@ -16853,7 +16853,7 @@
       },
       "case": "cli::picture_cache::tests::an_entry_larger_than_the_queue_takes_is_refused_before_it_is_read",
       "source": "src/cli/picture_cache/tests.rs",
-      "body_sha256": "2e036dc82dec5477f5452cee8d74a575e31ee9906c73c6175efec27bb4321681",
+      "body_sha256": "6ab3783149b14448fa13540992c1b77a8aa58b9885b6c7b1c3f5b3ccdba54f13",
       "platforms": [
         "linux",
         "macos",
@@ -16871,7 +16871,7 @@
       },
       "case": "cli::picture_cache::tests::a_payload_that_is_not_what_its_protocol_says_is_a_miss",
       "source": "src/cli/picture_cache/tests.rs",
-      "body_sha256": "0e8d6d1ae302af328c3d6239c80aa01e870ef2f8ba9cb582c58f668508f7b9b8",
+      "body_sha256": "9674d7ce77cff71bc0e70df7e505c3826c91be4241e690b46771df7287c822b2",
       "platforms": [
         "linux",
         "macos",
@@ -16940,7 +16940,7 @@
       },
       "case": "cli::picture_cache::tests::a_cache_that_cannot_be_written_draws_as_before_and_frees_its_queue",
       "source": "src/cli/picture_cache/tests.rs",
-      "body_sha256": "6d2beefd3513a4a59cdfa364148fcaf1f5272b7d61cd6890a6b912966b4b4840",
+      "body_sha256": "ad013cb492d08d36b4f4426f32b78001ede7553292b015ee1cf635315d154007",
       "platforms": [
         "linux",
         "macos",
@@ -18069,7 +18069,7 @@
       },
       "case": "cli::pictures::tests::a_formula_a_session_put_back_shows_is_read_from_what_was_kept_under_the_toolchain_found",
       "source": "src/cli/pictures.rs",
-      "body_sha256": "94ac54d3b7478f88f918b7052e96bcc194205a24e5e13409cd50f94a2b5c07f1",
+      "body_sha256": "1ff59cb007db9e47f58441fac02da59e87117876f8d25e0538b4e744f1142b90",
       "platforms": [
         "linux",
         "macos",
@@ -18103,9 +18103,9 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "record::tests::a_display_formula_that_does_not_convert_is_never_told_out_nor_asked_for",
-      "source": "crates/crucible-tui/src/record.rs",
-      "body_sha256": "fb82cb6d23ca3ea9cdb590b211519095cb1379eda231e5032aaed267fffef412",
+      "case": "record::tests::formulas::a_display_formula_that_does_not_convert_is_never_told_out_nor_asked_for",
+      "source": "crates/crucible-tui/src/record/tests/formulas.rs",
+      "body_sha256": "34a6af55627c25c9a023dda3ac9789d7a70db463e2ffe8fc392df999392fcd0c",
       "platforms": [
         "linux",
         "macos",
@@ -18121,9 +18121,9 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "record::tests::a_formula_put_back_on_a_full_screen_is_told_out_to_be_read_and_nothing_is_read_or_made_here",
-      "source": "crates/crucible-tui/src/record.rs",
-      "body_sha256": "c7127cca09024f0882812ae7a457c1c411727310d787b26100218e43bcdd8c3e",
+      "case": "record::tests::formulas::a_formula_put_back_on_a_full_screen_is_told_out_to_be_read_and_nothing_is_read_or_made_here",
+      "source": "crates/crucible-tui/src/record/tests/formulas.rs",
+      "body_sha256": "7fff774644bf5cf8867683f504030f52716b95f3eabe05cb40dbaffb8f1466b0",
       "platforms": [
         "linux",
         "macos",
@@ -18139,9 +18139,9 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "record::tests::no_more_formulas_put_back_are_told_out_to_be_read_than_the_record_keeps_pictures_of",
-      "source": "crates/crucible-tui/src/record.rs",
-      "body_sha256": "66f8255dd0b854d2d89d0424aad34cba24d47c1c8794ffd326a08441a6bd6aa1",
+      "case": "record::tests::formulas::no_more_formulas_put_back_are_told_out_to_be_read_than_the_record_keeps_pictures_of",
+      "source": "crates/crucible-tui/src/record/tests/formulas.rs",
+      "body_sha256": "a4013921c7d54d9e926164a2ba579486103939a01c0e06cb371c617b767bd735",
       "platforms": [
         "linux",
         "macos",
@@ -18157,9 +18157,9 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "record::tests::a_math_picture_one_row_taller_than_the_window_is_text_and_one_its_height_is_shown",
-      "source": "crates/crucible-tui/src/record.rs",
-      "body_sha256": "c774d0b68e526a772899f5c21a5ab0fad9613ed83115eecd1481a21cba027119",
+      "case": "record::tests::formulas::a_math_picture_one_row_taller_than_the_window_is_text_and_one_its_height_is_shown",
+      "source": "crates/crucible-tui/src/record/tests/formulas.rs",
+      "body_sha256": "88a3e4a2ff0498b69b30ce0e4c809e68fa92daff43308d93a5230d160ba93873",
       "platforms": [
         "linux",
         "macos",
@@ -18175,9 +18175,9 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "record::tests::a_math_picture_arriving_after_its_block_left_changes_nothing",
-      "source": "crates/crucible-tui/src/record.rs",
-      "body_sha256": "bb5704a7edc10f4ff72db64cb74d9c3fafb5880ac040942935f417767317f176",
+      "case": "record::tests::formulas::a_math_picture_arriving_after_its_block_left_changes_nothing",
+      "source": "crates/crucible-tui/src/record/tests/formulas.rs",
+      "body_sha256": "fac8279c38f4dcf265bef27f77277dfd51bc5f8ad646985c85f1e4a8713539ae",
       "platforms": [
         "linux",
         "macos",
@@ -18362,6 +18362,38 @@
         "linux",
         "macos",
         "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-COLOUR-READ-BACK",
+      "family": "transcript-pictures",
+      "obligation": "The colour probe reads back the last FORMULAS Kitty pictures sent whole, as base64 across the chunks and pieces they arrive in, apart from an older picture, placements and colour between them.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-session-rss-colour"
+      },
+      "case": "tests::the_last_pictures_sent_whole_are_read_back_across_their_chunks",
+      "source": "src/bin/bench-session-rss-colour.rs",
+      "body_sha256": "8cfed522ba0c2eb7380dcd81dfa4bb141b1d2a18b0c467423b6315e3b109c3bd",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-KITTY-COLOUR-UNMATHED",
+      "family": "transcript-pictures",
+      "obligation": "The colour probe's reading is refused as Unmathed when the last picture sent is another picture, the stand-in's cut short by a byte, one ended without its last chunk's data, or none.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-session-rss-colour"
+      },
+      "case": "tests::a_picture_other_than_the_stand_ins_refuses_the_reading",
+      "source": "src/bin/bench-session-rss-colour.rs",
+      "body_sha256": "3e4359773fc869f286cd74e5da66612e2ea987e3d777314b48ec90cf64c20c96",
+      "platforms": [
+        "linux"
       ]
     }
   ]
