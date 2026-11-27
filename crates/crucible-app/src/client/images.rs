@@ -16,10 +16,15 @@
 //!    under the written spelling of a root the workspace grants, or on the way
 //!    to one, and where the walk ends has to lie under one. One that opens
 //!    with two separators is walked only towards a root whose spelling does
-//!    too, a workspace on a share. Only then is it resolved, by
-//!    [`Workspace::existing`], which is what the read tool resolves it by. A
-//!    link that leads out of the workspace and a file that is not there stop
-//!    there.
+//!    too, a workspace on a share. A root is spelled as the workspace keeps
+//!    it, the directory it resolved to, so an absolute path written through a
+//!    link, a short name or a drive letter in another case is not shown,
+//!    though the read tool would reach it: telling such a spelling from
+//!    another host's would take a lookup of the very names in question. A
+//!    path relative to the root is the spelling that is. Only then is it
+//!    resolved, by [`Workspace::existing`], which is what the read tool
+//!    resolves it by. A link that leads out of the workspace and a file that
+//!    is not there stop there.
 //! 2. The permission engine decides the call the read tool would make for that
 //!    path, with the sensitivity the read tool would give it. Whoever asks is
 //!    never put a question: an `ask` rule is answered `deny`, so a picture

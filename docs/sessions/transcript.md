@@ -853,10 +853,15 @@ a link's words. One in code or a fence is
 drawn as written.
 A path is read the way `read` reads it, inside the workspace, and only where
 the [permission rules](../permissions/rules.md#images-in-the-transcript) let
-`read` read it; nothing is ever asked about it. A path whose words lead
-outside the workspace, such as `/net/host/plot.png` or `../../plot.png`, is
-not looked up at all, so a directory that would reach another computer is
-never opened. Where the session draws no
+`read` read it; nothing is ever asked about it. A path relative to the
+workspace is the safe way to name one. An absolute path is shown only when it
+is written under the workspace's directory as it resolves, with no link in
+it: one through a symbolic link, a short name or a drive letter in another
+case stays a link, though `read` would reach it. A path any of whose names
+lies outside the workspace, such as `/net/host/plot.png`, `../../plot.png` or
+`/net/host/../../home/you/project/plot.png`, is not looked up at all, even
+where a `..` after it comes back, so a directory that would reach another
+computer is never opened. Where the session draws no
 pictures nothing is read, and the answer's link is all there is.
 
 A turn shows at most eight images, and reads them for as long as two seconds
