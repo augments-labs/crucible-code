@@ -7,8 +7,8 @@
 //! the no-colour probe never does, and a memory budget that left it out would
 //! bound a session nobody sees.
 //!
-//! The measured process is `target/release/crucible`, not a runner assembled
-//! inside this probe. It starts behind a controlling pseudo terminal, reads its
+//! The measured process is the release `crucible` copied beside this probe,
+//! not a runner assembled inside this probe. It starts behind a controlling pseudo terminal, reads its
 //! normal configuration, draws through its normal terminal, writes normal
 //! session logs and sends HTTP through its normal provider adapter. The server
 //! is a deterministic loopback fixture in this parent process; no request can
