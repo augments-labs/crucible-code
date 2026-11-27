@@ -349,38 +349,88 @@ const READS: [&str; 9] = [
     "20-pdfximage-read.tex",
 ];
 
-/// What each escape input comes to on this engine, as the retained run of
-/// the TeX-present half observed it: `None` for a picture, else the reason
-/// it stays text.
-const ANSWERS: [(&str, Option<Unmade>); 27] = [
-    ("01-read-abs-visible.tex", Some(Unmade::Rejected)),
-    ("02-read-abs-outside.tex", Some(Unmade::Rejected)),
-    ("03-read-dotdot.tex", Some(Unmade::Rejected)),
-    ("04-read-dotfile.tex", Some(Unmade::Rejected)),
-    ("05-read-csname-string.tex", Some(Unmade::Rejected)),
-    ("06-read-expandafter-built.tex", Some(Unmade::Rejected)),
-    ("07-read-openin-built.tex", Some(Unmade::Rejected)),
-    ("08-write-abs.tex", Some(Unmade::Empty)),
-    ("09-write-dotdot.tex", Some(Unmade::Rejected)),
-    ("10-write-dotfile.tex", Some(Unmade::Rejected)),
-    ("11-shell-write18.tex", Some(Unmade::Empty)),
-    ("12-shell-pipe-input.tex", Some(Unmade::Rejected)),
-    ("13-network-wget.tex", Some(Unmade::Empty)),
-    ("14-loop-forever.tex", Some(Unmade::Timeout)),
-    ("15-memory-typeset-growth.tex", Some(Unmade::Rejected)),
-    ("16-log-bomb.tex", Some(Unmade::Rejected)),
-    ("17-size-bomb-rule.tex", None),
-    ("18-ps-special-pipe.tex", Some(Unmade::Rejected)),
-    ("19-ps-special-read.tex", Some(Unmade::Empty)),
-    ("20-pdfximage-read.tex", Some(Unmade::Rejected)),
-    ("21-size-bomb-moderate.tex", None),
-    ("22-memory-pixel-bomb.tex", None),
-    ("23-memory-pixel-bomb-large.tex", None),
-    ("24-size-bomb-glyph.tex", None),
-    ("25-tall-formula.tex", None),
-    ("loopback-write18", Some(Unmade::Empty)),
-    ("loopback-pipe", Some(Unmade::Rejected)),
+/// What each escape input may come to on this engine: `None` for a picture,
+/// else the reason it stays text. The retained run of the TeX-present half
+/// prints which one it was.
+///
+/// Exact, because any other answer may be the escape the row tries:
+///
+/// - the reads, `01` to `07`, `19` and `20`, and the writes above TeX's
+///   directory, `09` and `10`;
+/// - `12` and `loopback-pipe`, where `Empty` could be a piped command's
+///   output read back as the formula;
+/// - `14`, whose deadline is the bound it tests, and `16`, stopped when its
+///   log reaches the `ulimit -f` bound: a `Timeout` would be that bound not
+///   holding;
+/// - `18`, whose `%` starts a comment in every TeX, so its special never
+///   closes; `Empty` would be a special that reached `dvisvgm`.
+///
+/// The rest accept what a TeX build may differ in, none of it a way out:
+///
+/// - `08` writes into the sandbox's own `/tmp`, which `TEXMFOUTPUT` names. A
+///   kpathsea that lets it through sets nothing, one that refuses an absolute
+///   path stops, and [`HOST_WRITES`] holds the host's `/tmp` to never seeing
+///   it.
+/// - `11`, `13` and `loopback-write18` ask for `\write18`, which with shell
+///   escape off goes to the log and sets nothing, or stops a TeX that treats
+///   it as an error. The restricted pipe after them, the loopback listener
+///   and the sentinels show that nothing ran.
+/// - `15` grows until TeX's main memory, a size the build's `texmf.cnf` sets,
+///   runs out, or until the deadline; either stops it.
+/// - `17` and `21` to `25` are large rules, a large glyph and a tall formula,
+///   drawn here. A TeX or `dvisvgm` that refuses one, or draws nothing of it
+///   for want of a font's outlines, leaves it as text, which is where every
+///   formula falls back to; [`holds_no_secret`] reads every picture drawn.
+///
+/// No row accepts a `Limit`, the output bound standing in for what the row
+/// tests, or `NotReached`, a formula no TeX read, which shows nothing.
+const ANSWERS: [(&str, &[Option<Unmade>]); 27] = [
+    ("01-read-abs-visible.tex", &[Some(Unmade::Rejected)]),
+    ("02-read-abs-outside.tex", &[Some(Unmade::Rejected)]),
+    ("03-read-dotdot.tex", &[Some(Unmade::Rejected)]),
+    ("04-read-dotfile.tex", &[Some(Unmade::Rejected)]),
+    ("05-read-csname-string.tex", &[Some(Unmade::Rejected)]),
+    ("06-read-expandafter-built.tex", &[Some(Unmade::Rejected)]),
+    ("07-read-openin-built.tex", &[Some(Unmade::Rejected)]),
+    (
+        "08-write-abs.tex",
+        &[Some(Unmade::Empty), Some(Unmade::Rejected)],
+    ),
+    ("09-write-dotdot.tex", &[Some(Unmade::Rejected)]),
+    ("10-write-dotfile.tex", &[Some(Unmade::Rejected)]),
+    (
+        "11-shell-write18.tex",
+        &[Some(Unmade::Empty), Some(Unmade::Rejected)],
+    ),
+    ("12-shell-pipe-input.tex", &[Some(Unmade::Rejected)]),
+    (
+        "13-network-wget.tex",
+        &[Some(Unmade::Empty), Some(Unmade::Rejected)],
+    ),
+    ("14-loop-forever.tex", &[Some(Unmade::Timeout)]),
+    (
+        "15-memory-typeset-growth.tex",
+        &[Some(Unmade::Rejected), Some(Unmade::Timeout)],
+    ),
+    ("16-log-bomb.tex", &[Some(Unmade::Rejected)]),
+    ("17-size-bomb-rule.tex", DRAWN_OR_TEXT),
+    ("18-ps-special-pipe.tex", &[Some(Unmade::Rejected)]),
+    ("19-ps-special-read.tex", &[Some(Unmade::Empty)]),
+    ("20-pdfximage-read.tex", &[Some(Unmade::Rejected)]),
+    ("21-size-bomb-moderate.tex", DRAWN_OR_TEXT),
+    ("22-memory-pixel-bomb.tex", DRAWN_OR_TEXT),
+    ("23-memory-pixel-bomb-large.tex", DRAWN_OR_TEXT),
+    ("24-size-bomb-glyph.tex", DRAWN_OR_TEXT),
+    ("25-tall-formula.tex", DRAWN_OR_TEXT),
+    (
+        "loopback-write18",
+        &[Some(Unmade::Empty), Some(Unmade::Rejected)],
+    ),
+    ("loopback-pipe", &[Some(Unmade::Rejected)]),
 ];
+
+/// A large but harmless formula: drawn, or refused, or drawn as nothing.
+const DRAWN_OR_TEXT: &[Option<Unmade>] = &[None, Some(Unmade::Rejected), Some(Unmade::Empty)];
 
 // ---------------------------------------------------------------------------
 // The check.
@@ -447,7 +497,7 @@ fn every_escape_input_leaves_its_sentinels_and_the_host_unchanged() {
             if READS.contains(&name.as_str()) {
                 assert!(made.is_err(), "the read {name} was drawn");
             }
-            if made.as_ref().err() != expected.as_ref() {
+            if !expected.contains(&made.as_ref().err().copied()) {
                 wrong.push((name.clone(), answer(&made), expected));
             }
             assert!(
@@ -596,8 +646,9 @@ fn tex_reads_nothing_of_the_host_and_writes_nothing_above_its_directory() {
             answer(&above)
         );
 
-        // `dvisvgm` is told to pass no special through, so SVG a formula
-        // writes for it is never in the picture.
+        // A raw special alone makes no picture whether specials pass or not:
+        // `-b min` sizes the picture by what TeX set, and a special sets
+        // nothing.
         let raw = here.made(
             engine,
             r#"\special{dvisvgm:raw <rect width="50" height="50"/>}"#,
@@ -609,6 +660,9 @@ fn tex_reads_nothing_of_the_host_and_writes_nothing_above_its_directory() {
             "a raw rectangle alone: {}",
             answer(&raw)
         );
+        // `dvisvgm` is told to pass no special through, so SVG a formula
+        // writes for it is never in the picture: beside `x`, which is drawn,
+        // this group would be.
         let injected = here.made(engine, r#"x\special{dvisvgm:raw <g id="injected"/>}"#);
         println!("  a raw group beside x: {}", answer(&injected));
         let Ok(picture) = injected else {

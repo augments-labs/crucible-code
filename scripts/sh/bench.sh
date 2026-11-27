@@ -25,11 +25,15 @@
 # package's `bench-math-stand-in` feature, whose engine answers every display
 # formula with one kept picture without TeX or the sandbox, so the session it
 # measures keeps sixteen math pictures on any runner. That copy and the probe
-# are built with the feature into a target directory of their own,
-# `target/bench-math-stand-in/`, so `target/release/crucible`, which every other
-# probe and a release use, is never the stand-in, even when a build stops
-# halfway. The price is a second release build of the whole graph the first
-# time; later runs rebuild only what changed.
+# are built with the feature in the shared `target/`, copied into
+# `target/bench-math-stand-in/release/`, and the probe runs from there. The
+# default build follows at once, before any probe runs, so every run that
+# completes leaves `target/release/crucible`, which every other probe and a
+# release use, as the default build, and no probe runs it as the stand-in.
+# Both builds share every dependency, so the second costs one build and link
+# of the root package. A run killed between the two leaves the stand-in at
+# `target/release/crucible` until the next run, whose default build replaces
+# it.
 #
 # Output is split by stream, so one run serves a human and a pipeline at once:
 #
@@ -97,10 +101,10 @@ readonly MODES=(startup tools mem grep stream live drawing picture-wait tex-slab
 # Modes measured only when named, because they need what a runner may lack.
 readonly NAMED_ONLY=(tex-slab)
 
-# The probe run from the copy built with the stand-in engine, and where it is.
+# The probe run from the copy built with the stand-in engine, and where that
+# copy is put, beside its own `crucible`.
 readonly STAND_IN_PROBE=bench-session-rss-colour
-readonly STAND_IN_TARGET=target/bench-math-stand-in
-readonly STAND_IN_DIR=$STAND_IN_TARGET/release
+readonly STAND_IN_DIR=target/bench-math-stand-in/release
 
 # A probe's value and limit go into the JSON unquoted, so both must be numbers.
 readonly NUMERIC='^-?[0-9]+(\.[0-9]+)?$'
@@ -147,14 +151,22 @@ for entry in "${selected[@]}"; do
 done
 
 if ((stand_in)); then
-    # In a target directory of its own, so nothing it builds can stand where
-    # the default build's `crucible` does.
+    # In the shared target, so it reuses every dependency the default build
+    # compiles, then copied out of the default build's way: the default build
+    # below replaces what it left in `target/release/`.
     echo "==> building the colour probe on the stand-in engine (release)" >&2
     cargo build --release --quiet --features bench-math-stand-in \
-        "--target-dir=$STAND_IN_TARGET" "--bin=$STAND_IN_PROBE" --bin=crucible
+        "--bin=$STAND_IN_PROBE" --bin=crucible
+    # Removed first, so a copy never writes through a link into what cargo
+    # keeps.
+    mkdir -p "$STAND_IN_DIR"
+    rm -f "$STAND_IN_DIR/$STAND_IN_PROBE" "$STAND_IN_DIR/crucible"
+    cp "target/release/$STAND_IN_PROBE" target/release/crucible "$STAND_IN_DIR/"
 fi
 
-if ((${#build[@]})); then
+# Unconditional once the stand-in was built, and before any probe runs, so
+# `target/release/crucible` is the default build again whatever is measured.
+if ((stand_in || ${#build[@]})); then
     # Release profile — fat LTO, one codegen unit, stripped. Measuring a debug
     # build answers a question nobody asked.
     echo "==> building probes (release)" >&2

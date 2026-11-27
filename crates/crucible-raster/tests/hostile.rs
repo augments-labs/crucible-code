@@ -1075,7 +1075,7 @@ fn this_crate(_: &Sentinels, svg: &str) -> Result<Pixels, Refused> {
 /// names is a sentinel, and must record nothing.
 fn what_a_drawer_does_with_the_references(sentinels: &Sentinels, drawer: &Drawer) -> Vec<String> {
     let mut wrong = Vec::new();
-    let mut judged = 0;
+    let mut judged = Vec::new();
     for (name, template) in templates() {
         let Some(filled) = sentinels.fill(&template) else {
             continue;
@@ -1093,12 +1093,32 @@ fn what_a_drawer_does_with_the_references(sentinels: &Sentinels, drawer: &Drawer
                 "{name}: drew {with:?} where the reference removed draws {without:?}"
             )),
         }
-        judged += 1;
+        judged.push(name);
     }
-    // The four `href-*.svg` and the two or three `use-*.svg` templates each
-    // platform fills (`use-fifo.svg` has no sentinel on Windows); the two that
-    // hold a style sheet are refused.
-    assert!(judged >= 6, "only {judged} templates judged");
+    // The four `href-*.svg` and the `use-*.svg` templates each platform fills:
+    // a FIFO is a sentinel only on Unix and a named pipe only on Windows. The
+    // two that hold a style sheet are refused with and without it.
+    let expected: &[&str] = if cfg!(windows) {
+        &[
+            "href-file-url.svg",
+            "href-file.svg",
+            "href-http.svg",
+            "href-pipe.svg",
+            "use-file.svg",
+            "use-http.svg",
+        ]
+    } else {
+        &[
+            "href-fifo.svg",
+            "href-file-url.svg",
+            "href-file.svg",
+            "href-http.svg",
+            "use-fifo.svg",
+            "use-file.svg",
+            "use-http.svg",
+        ]
+    };
+    assert_eq!(judged, expected, "the templates judged");
     wrong
 }
 

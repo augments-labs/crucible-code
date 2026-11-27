@@ -1355,3 +1355,19 @@ fn the_margin_is_the_backends_stop_bounds_and_750_ms() {
         CANCEL_GRACE + REAP + CANCELLED + Duration::from_millis(750)
     );
 }
+
+// On a host whose own `texmf.cnf` already says `p`, the sandboxed escape
+// tests pass with either of these lost or loosened, so what a run is sent is
+// pinned here, where no host's TeX answers for it.
+#[test]
+fn a_run_tells_tex_to_open_and_write_files_only_beneath_its_directory() {
+    let sent = environment().expect("a run's environment");
+    for (name, value) in [("openin_any", "p"), ("openout_any", "p")] {
+        let given: Vec<&std::ffi::OsStr> = sent
+            .iter()
+            .filter(|(each, _)| *each == name)
+            .map(|(_, each)| each)
+            .collect();
+        assert_eq!(given, [std::ffi::OsStr::new(value)], "{name}");
+    }
+}
