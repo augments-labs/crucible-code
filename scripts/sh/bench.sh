@@ -25,11 +25,11 @@
 # package's `bench-math-stand-in` feature, whose engine answers every display
 # formula with one kept picture without TeX or the sandbox, so the session it
 # measures keeps sixteen math pictures on any runner. That copy and the probe
-# are built first, with the feature, and copied into
-# `target/bench-math-stand-in/`; the default build follows, so
-# `target/release/crucible`, which every other probe and a release use, is the
-# one that ships. The feature changes the root package alone, so the second
-# build costs one root-package compile and link.
+# are built with the feature into a target directory of their own,
+# `target/bench-math-stand-in/`, so `target/release/crucible`, which every other
+# probe and a release use, is never the stand-in, even when a build stops
+# halfway. The price is a second release build of the whole graph the first
+# time; later runs rebuild only what changed.
 #
 # Output is split by stream, so one run serves a human and a pipeline at once:
 #
@@ -99,7 +99,8 @@ readonly NAMED_ONLY=(tex-slab)
 
 # The probe run from the copy built with the stand-in engine, and where it is.
 readonly STAND_IN_PROBE=bench-session-rss-colour
-readonly STAND_IN_DIR=target/bench-math-stand-in
+readonly STAND_IN_TARGET=target/bench-math-stand-in
+readonly STAND_IN_DIR=$STAND_IN_TARGET/release
 
 # A probe's value and limit go into the JSON unquoted, so both must be numbers.
 readonly NUMERIC='^-?[0-9]+(\.[0-9]+)?$'
@@ -146,13 +147,11 @@ for entry in "${selected[@]}"; do
 done
 
 if ((stand_in)); then
-    # Built before the default build, so that one is what `target/release/`
-    # holds when every other probe runs.
+    # In a target directory of its own, so nothing it builds can stand where
+    # the default build's `crucible` does.
     echo "==> building the colour probe on the stand-in engine (release)" >&2
     cargo build --release --quiet --features bench-math-stand-in \
-        "--bin=$STAND_IN_PROBE" --bin=crucible
-    mkdir -p "$STAND_IN_DIR"
-    cp "target/release/$STAND_IN_PROBE" target/release/crucible "$STAND_IN_DIR/"
+        "--target-dir=$STAND_IN_TARGET" "--bin=$STAND_IN_PROBE" --bin=crucible
 fi
 
 if ((${#build[@]})); then

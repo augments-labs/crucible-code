@@ -396,10 +396,10 @@ argument to run one family:
 - `mem`'s colour probe measures a `crucible` built with the
   `bench-math-stand-in` feature, which answers every display formula with one
   kept picture without TeX or the sandbox. The script builds that probe and
-  `crucible` with the feature, copies them into
-  `target/bench-math-stand-in/`, then makes the default build, so
-  `target/release/crucible` stays the one that ships; the second build costs
-  one root-package compile and link. No other build names the feature, and a
+  `crucible` with the feature in a target directory of their own,
+  `target/bench-math-stand-in/`, so `target/release/crucible` is never the
+  stand-in, even when a build stops halfway; the first run pays for a second
+  release build of the whole graph. No other build names the feature, and a
   build that ships must not.
 
 Shared CI runners provide a trend; release measurements are taken on a quiet
