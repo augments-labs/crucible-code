@@ -31,6 +31,8 @@
 use std::cell::Cell;
 use std::fmt;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use crucible_types::shown::Escaping;
 use serde_core::Serialize as _;
 use serde_core::de::{DeserializeSeed, Error as _, IgnoredAny, MapAccess, SeqAccess, Visitor};
@@ -105,6 +107,23 @@ impl Fields {
             .transpose()
     }
 
+    /// A field of bytes, written as standard base64, refused as
+    /// [`ErrorCode::TooLarge`] where its length says it holds more than
+    /// `most` before any of it is decoded.
+    pub(crate) fn bytes(&mut self, key: &str, most: usize) -> Result<Vec<u8>, Refusal> {
+        let written = self.string(key)?;
+        if written.len() > most.div_ceil(3).saturating_mul(4) {
+            return Err(ErrorCode::TooLarge.into());
+        }
+        let bytes = STANDARD
+            .decode(written)
+            .map_err(|_| Refusal::from(ErrorCode::Malformed))?;
+        if bytes.len() > most {
+            return Err(ErrorCode::TooLarge.into());
+        }
+        Ok(bytes)
+    }
+
     /// A yes-or-no field.
     pub(crate) fn flag(&mut self, key: &str) -> Result<bool, Refusal> {
         self.take(key)?.as_bool().ok_or(ErrorCode::Malformed.into())
@@ -167,6 +186,11 @@ impl Writing {
             Some(value) => self.with(key, value),
             None => self,
         }
+    }
+
+    /// With `key` holding `bytes` as standard base64.
+    pub(crate) fn bytes(self, key: &str, bytes: &[u8]) -> Self {
+        self.with(key, STANDARD.encode(bytes))
     }
 
     /// With `key` holding `text`.

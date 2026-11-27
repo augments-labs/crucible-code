@@ -234,6 +234,7 @@ pub async fn turn(
         | Command::Context
         | Command::Usage
         | Command::AskLimits
+        | Command::ShowImage(_)
         | Command::Exit => Ended::Refused(ErrorCode::Busy.into()),
     }
 }
@@ -347,6 +348,7 @@ pub fn interrupt(request: &Request, cancel: &Cancel) -> Outcome {
         | Command::Context
         | Command::Usage
         | Command::AskLimits
+        | Command::ShowImage(_)
         | Command::Exit => Outcome::Refused(ErrorCode::Busy.into()),
     }
 }

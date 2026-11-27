@@ -6,9 +6,9 @@ use std::time::Instant;
 
 use crucible_client_api::{
     CacheOutcome, CleanOutcome, ClearOutcome, Command, EffortOutcome, ErrorCode, Forced,
-    LoginOutcome, LogoutOutcome, ModelOutcome, Name, NotesOutcome, Outcome, Palette, Problem,
-    Refusal, Request, Resource, Response, ResumeOutcome, SandboxOutcome, SettingOutcome,
-    SpeedOutcome, Standing, Theme, ThemeOutcome, Usage,
+    ImageRefused, LoginOutcome, LogoutOutcome, ModelOutcome, Name, NotesOutcome, Outcome, Palette,
+    Problem, Refusal, Request, Resource, Response, ResumeOutcome, SandboxOutcome, SettingOutcome,
+    Shown, SpeedOutcome, Standing, Theme, ThemeOutcome, Usage,
 };
 use crucible_runner::{Breakdown, PromptCacheCleanup};
 use crucible_runtime::Cancel;
@@ -17,7 +17,7 @@ use crucible_tools::Mode;
 use crucible_types::{PromptCacheResourceError, PromptCacheResourceRecord, SessionId};
 use crucible_workspace::Workspace;
 
-use super::{asking, reading};
+use super::{asking, images, reading};
 use crate::providers::{CredentialSource, Served, offered};
 use crate::remember::{self, RememberError};
 use crate::speed::Hastened;
@@ -165,6 +165,8 @@ pub enum Performed {
     /// runner holds them once it was asked. Only [`Command::AskLimits`] asks
     /// a vendor anything, and only as [`asking`](fn@super::asking) allows.
     Usage(Box<Usage>),
+    /// An image a turn named, as [`images::show`] answered it.
+    Image(Result<Shown, ImageRefused>),
     /// `/exit`.
     Leaving,
 }
@@ -294,6 +296,16 @@ pub async fn perform(
             }
             None => asking::usage(conversation),
         },
+        // Decided as the read tool's call would be, by an engine of the
+        // session's mode and rules: what was allowed for the session alone is
+        // the runner's, so a file only such an allow reaches is not shown.
+        Command::ShowImage(image) => {
+            let mut permission = desk
+                .switching
+                .settings
+                .permission(conversation.settled().mode());
+            Performed::Image(images::show(image, desk.workspace, &mut permission).await)
+        }
         Command::Exit => Performed::Leaving,
     }
 }
@@ -373,6 +385,7 @@ pub fn keep(request: &Request, desk: &Desk<'_>) -> Performed {
         | Command::Context
         | Command::Usage
         | Command::AskLimits
+        | Command::ShowImage(_)
         | Command::Exit => Performed::Refused(ErrorCode::Busy.into()),
     }
 }
@@ -542,6 +555,9 @@ impl Performed {
                 ..reading::context(model, breakdown)
             }),
             Self::Usage(usage) => Outcome::Usage(usage.as_ref().clone()),
+            // Already the contract's values: the route answers in them, so
+            // there is nothing of the application's to cut down.
+            Self::Image(image) => Outcome::Image(image.clone()),
             Self::Leaving => Outcome::Leaving,
         }
     }

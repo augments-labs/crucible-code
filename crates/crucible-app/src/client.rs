@@ -47,6 +47,7 @@ pub mod agents;
 pub(crate) mod answering;
 pub(crate) mod asking;
 pub mod deciding;
+pub mod images;
 mod performing;
 mod reading;
 #[cfg(test)]
