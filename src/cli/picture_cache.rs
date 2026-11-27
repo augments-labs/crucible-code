@@ -21,9 +21,9 @@ pub(crate) const MOST_HELD: u64 = 32 << 20;
 pub(crate) const MOST_AGE: Duration = Duration::from_hours(14 * 24);
 
 /// The most entries one write holds the names of while it chooses which to
-/// take out: the oldest of them, so a directory of any number of names costs
-/// a write no more than these, and what they free short of the bound the
-/// next write goes on freeing.
+/// take out: the oldest of them. A write still reads every name in the
+/// directory, but however many there are it holds no more than these, and
+/// what they free short of the bound the next write goes on freeing.
 const MOST_LISTED: usize = 4096;
 
 /// How far ahead of now an entry may say it was written and still be kept: a

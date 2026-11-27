@@ -758,10 +758,11 @@ screen, only the 16 newest diagrams are read from the cache, the most a session
 keeps pictures of, once the whole session is back; the older ones come back as
 their text, and stay text when the theme changes. In native mode each diagram
 is read from the cache as it goes back into the scrollback, so every one the
-cache kept comes back as its picture, as it did live. It is kept for the theme, `transcriptColours`, colour depth, background,
-protocol, cell size and window width it was drawn in, so a picture drawn in
-another of them is another entry, and one drawn in a terminal the session no
-longer runs in is simply not found.
+cache kept comes back as its picture, as it did live. It is kept for the
+theme, `transcriptColours`, colour depth, background, protocol, cell size and
+window width it was drawn in, so a picture drawn in another of them is another
+entry, and one drawn in a terminal the session no longer runs in is simply not
+found.
 
 A picture is kept in the form it was first drawn in. One drawn again after the
 window is resized or the theme changes is not kept, so a session picked up
@@ -773,10 +774,12 @@ which [`CRUCIBLE_CODE_HOME`](sessions.md#where-they-are-kept) moves with the
 rest. It holds at most 32 MiB, and nothing older than 14 days: each write takes
 out the oldest entries until the new one fits, and each start takes it back
 within both bounds. An entry past 14 days, or dated more than a day ahead of
-the clock, is passed over and taken out. A write looks at the oldest 4 096
-entries at most, so a directory holding many more is brought back within
-32 MiB over the writes that follow rather than all at once. A picture larger than 0.5 MiB is not kept. Two crucibles
-writing at once may each leave it one entry past 32 MiB until the next write.
+the clock, is passed over and taken out. A write still reads every name in
+the directory, but holds on to the oldest 4 096 at most while it chooses
+which to take out, so a directory holding many more is brought back within
+32 MiB over the writes that follow rather than all at once. A picture larger
+than 0.5 MiB is not kept. Two crucibles writing at once may each leave it one
+entry past 32 MiB until the next write.
 It is [yours alone](sessions.md#who-can-read-them), as session logs are.
 
 Nothing in it is needed: deleting the directory, or any file in it, only means
