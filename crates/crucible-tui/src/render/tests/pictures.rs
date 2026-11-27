@@ -1684,12 +1684,31 @@ fn ctrl_o_lists_each_image_a_turn_named_by_its_path_newest_first_shown_or_not() 
 fn every_cut_of_an_answer_naming_images_names_and_draws_what_the_whole_answer_does() {
     // Each image's read is faked to settle at once, so what is compared is the
     // naming and the drawing alone, and every cut gives the same of both.
-    let corpus = [
-        "see ![plot](out/plot.png) and ![b](./b.png)\n",
-        "a line long enough that its image has to wrap onto the next row ![wide](docs/wide.png) end\n",
-        "- ![listed](a.png)\n> ![quoted](b.png)\n\n![web](https://example.com/c.png) ![d](d.png)\n",
-        "`![code](not.png)` and \\![escaped](no.png) and ![kept](yes.png)\n",
-        "```\n![fenced](no.png)\n```\n![after](after.png)\n",
+    let corpus: [(&str, &[&str]); 6] = [
+        (
+            "see ![plot](out/plot.png) and ![b](./b.png)\n",
+            &["out/plot.png", "./b.png"],
+        ),
+        (
+            "a line long enough that its image has to wrap onto the next row ![wide](docs/wide.png) end\n",
+            &["docs/wide.png"],
+        ),
+        (
+            "- ![listed](a.png)\n> ![quoted](b.png)\n\n![web](https://example.com/c.png) ![d](d.png)\n",
+            &["a.png", "b.png", "d.png"],
+        ),
+        (
+            "`![code](not.png)` and \\![escaped](no.png) and ![kept](yes.png)\n",
+            &["yes.png"],
+        ),
+        (
+            "```\n![fenced](no.png)\n```\n![after](after.png)\n",
+            &["after.png"],
+        ),
+        (
+            "| a |\n|---|\n| ![cell](c.png) |\n\n![r][x] [![inside](l.png)](x.md)\n\n[x]: r.png\n",
+            &[],
+        ),
     ];
     let shown = |answer: &str, cuts: &[usize]| {
         let mut drawn = pictured(60, 40, Printed::new(3, 2, 300));
@@ -1701,9 +1720,10 @@ fn every_cut_of_an_answer_naming_images_names_and_draws_what_the_whole_answer_do
         (named, drawn.rows())
     };
 
-    for answer in corpus {
+    for (answer, named) in corpus {
         let whole = shown(answer, &[]);
-        assert!(!whole.0.is_empty(), "{answer:?} named no image");
+        let named: Vec<Box<str>> = named.iter().map(|&path| path.into()).collect();
+        assert_eq!(whole.0, named, "{answer:?}");
         for cut in 1..answer.len() {
             assert_eq!(shown(answer, &[cut]), whole, "cut at {cut} of {answer:?}");
         }
