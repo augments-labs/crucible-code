@@ -615,6 +615,35 @@ mod reached {
         }
     }
 
+    // What `/settings` says of a refused feature: words a user reads, never
+    // the enum's name. Every feature a TeX run's policy asks the backend for.
+    #[test]
+    fn a_refused_feature_is_named_in_words_not_by_its_enum_name() {
+        use SandboxFeature as F;
+        for (feature, words) in [
+            (F::DiskLimit, "disk limit"),
+            (F::ProcessLimit, "process limit"),
+            (F::MemoryLimit, "memory limit"),
+            (F::CpuLimit, "CPU-time limit"),
+            (F::OpenFileLimit, "open-file limit"),
+            (F::CommandTimeLimit, "run-time limit"),
+            (F::OutputLimit, "output limit"),
+            (F::Filesystem, "filesystem confinement"),
+            (F::NetworkDeny, "closed network"),
+            (F::DescriptorIsolation, "descriptor isolation"),
+            (F::ProcessIsolation, "process isolation"),
+            (F::KernelSurface, "kernel restriction"),
+            (F::PrivilegeIsolation, "privilege isolation"),
+            (F::Audit, "audit record"),
+            (F::Usage, "usage report"),
+        ] {
+            assert_eq!(
+                Unavailable::Refused(feature).to_string(),
+                format!("the sandbox cannot hold the {words} a TeX run needs"),
+            );
+        }
+    }
+
     // Row: no backend, injected at `prepare`.
     #[test]
     fn no_backend_at_prepare_is_no_backend() {
@@ -1078,6 +1107,90 @@ mod made {
                 "{row}"
             );
         }
+    }
+
+    // Test 22's engine half: a refusal before TeX has the formula, or an
+    // error waiting on the run or reading it with no violation reported,
+    // decides nothing about the formula, so the queue does not remember it.
+    #[test]
+    fn a_refusal_or_an_error_with_no_violation_is_not_reached() {
+        let rows = [
+            (
+                "Spawn at prepare",
+                Act::refusing(At::Prepare, Refusal::Spawn),
+            ),
+            (
+                "Lifecycle at release",
+                Act::refusing(At::Release, Refusal::Lifecycle),
+            ),
+            (
+                "LaunchRefused at release",
+                Act::refusing(At::Release, Refusal::LaunchRefused),
+            ),
+            (
+                "Audit at release",
+                Act::refusing(At::Release, Refusal::Audit),
+            ),
+            (
+                "a wait error alone",
+                Act {
+                    wait_error: true,
+                    ..Act::version(PICTURE)
+                },
+            ),
+            (
+                "a read error alone",
+                Act {
+                    read_error: true,
+                    ..Act::version(PICTURE)
+                },
+            ),
+        ];
+        let wrong: Vec<(&str, Unmade)> = rows
+            .into_iter()
+            .filter_map(|(row, act)| {
+                let (service, _) = Stand::serving([act]);
+                let why = on(async { unmade(engine(&service).make("x").await) });
+                (why != Unmade::NotReached).then_some((row, why))
+            })
+            .collect();
+        assert!(wrong.is_empty(), "not NotReached: {wrong:?}");
+    }
+
+    // Test 22's engine half: a `stage` held past the first deadline leaves
+    // its formula unreached, the next formula is unreached and unprepared
+    // while the thread lives, and the one after it returns is made.
+    #[test]
+    fn a_stage_held_past_the_first_deadline_holds_the_service_until_it_returns() {
+        let (service, log) = Stand::serving([
+            Act {
+                block: Some(At::Stage),
+                ..Act::version(PICTURE)
+            },
+            Act::version(PICTURE),
+        ]);
+        on(async {
+            let engine = engine(&service);
+            let started = Instant::now();
+            assert_eq!(unmade(engine.make("x").await), Unmade::NotReached);
+            let waited = started.elapsed();
+            assert!(waited >= STAGING, "waited {waited:?}");
+            assert!(
+                waited < STAGING + Duration::from_millis(500),
+                "waited {waited:?}"
+            );
+
+            assert_eq!(unmade(engine.make("y").await), Unmade::NotReached);
+            assert_eq!(
+                log.prepared(),
+                1,
+                "nothing is prepared while the thread lives"
+            );
+
+            log.release();
+            returned(&service).await;
+            engine.make("z").await.expect("the next formula is made");
+        });
     }
 
     #[test]

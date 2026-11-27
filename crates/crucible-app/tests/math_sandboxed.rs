@@ -308,6 +308,80 @@ fn escapes(outside: &Path) -> Vec<(String, String)> {
 /// not exist after them. None may exist before.
 const HOST_WRITES: [&str; 1] = ["/tmp/t34-escape-written.txt"];
 
+/// What no picture may hold: each sentinel's text, and the first line of the
+/// host's `/etc/passwd`.
+const SECRETS: [&str; 4] = [
+    "SENTINEL-OUTSIDE-9b4e",
+    "SENTINEL-IN-ROOT-71c2",
+    "SENTINEL-DOT-55d0",
+    "root:x:0:0",
+];
+
+/// Holds `picture`, if one was drawn, to holding nothing of [`SECRETS`].
+fn holds_no_secret(name: &str, made: &Result<Svg, Unmade>) {
+    let Ok(picture) = made else {
+        return;
+    };
+    let text = String::from_utf8_lossy(picture.bytes());
+    for secret in SECRETS {
+        assert!(!text.contains(secret), "{name}'s picture holds {secret}");
+    }
+}
+
+/// The escape inputs that try to read, each of which must stay text.
+///
+/// Three of them, `03` and `06` reading `../secret-in-root.txt` and `04`
+/// reading `.dotsecret`, name paths relative to the run's working directory,
+/// the sandbox's own `/tmp`. That directory and the root above it are a
+/// fresh scratch each run, which no host path reaches, so no sentinel can be
+/// planted where they read; they are kept as T34 wrote them, and what holds
+/// TeX's reads to its own tree is asserted by the `\openin` formulas of
+/// `tex_reads_nothing_of_the_host_and_writes_nothing_above_its_directory`.
+const READS: [&str; 9] = [
+    "01-read-abs-visible.tex",
+    "02-read-abs-outside.tex",
+    "03-read-dotdot.tex",
+    "04-read-dotfile.tex",
+    "05-read-csname-string.tex",
+    "06-read-expandafter-built.tex",
+    "07-read-openin-built.tex",
+    "19-ps-special-read.tex",
+    "20-pdfximage-read.tex",
+];
+
+/// What each escape input comes to on this engine, as the retained run of
+/// the TeX-present half observed it: `None` for a picture, else the reason
+/// it stays text.
+const ANSWERS: [(&str, Option<Unmade>); 27] = [
+    ("01-read-abs-visible.tex", Some(Unmade::Rejected)),
+    ("02-read-abs-outside.tex", Some(Unmade::Rejected)),
+    ("03-read-dotdot.tex", Some(Unmade::Rejected)),
+    ("04-read-dotfile.tex", Some(Unmade::Rejected)),
+    ("05-read-csname-string.tex", Some(Unmade::Rejected)),
+    ("06-read-expandafter-built.tex", Some(Unmade::Rejected)),
+    ("07-read-openin-built.tex", Some(Unmade::Rejected)),
+    ("08-write-abs.tex", Some(Unmade::Empty)),
+    ("09-write-dotdot.tex", Some(Unmade::Rejected)),
+    ("10-write-dotfile.tex", Some(Unmade::Rejected)),
+    ("11-shell-write18.tex", Some(Unmade::Empty)),
+    ("12-shell-pipe-input.tex", Some(Unmade::Rejected)),
+    ("13-network-wget.tex", Some(Unmade::Empty)),
+    ("14-loop-forever.tex", Some(Unmade::Timeout)),
+    ("15-memory-typeset-growth.tex", Some(Unmade::Rejected)),
+    ("16-log-bomb.tex", Some(Unmade::Rejected)),
+    ("17-size-bomb-rule.tex", None),
+    ("18-ps-special-pipe.tex", Some(Unmade::Rejected)),
+    ("19-ps-special-read.tex", Some(Unmade::Empty)),
+    ("20-pdfximage-read.tex", Some(Unmade::Rejected)),
+    ("21-size-bomb-moderate.tex", None),
+    ("22-memory-pixel-bomb.tex", None),
+    ("23-memory-pixel-bomb-large.tex", None),
+    ("24-size-bomb-glyph.tex", None),
+    ("25-tall-formula.tex", None),
+    ("loopback-write18", Some(Unmade::Empty)),
+    ("loopback-pipe", Some(Unmade::Rejected)),
+];
+
 // ---------------------------------------------------------------------------
 // The check.
 
@@ -360,11 +434,22 @@ fn every_escape_input_leaves_its_sentinels_and_the_host_unchanged() {
                 format!(r#"\csname input\endcsname|"/usr/bin/wget -T 3 -t 1 -O- http://127.0.0.1:{port}/""#),
             ),
         ]);
-        for (name, formula) in &inputs {
+        let names: Vec<&str> = inputs.iter().map(|(name, _)| name.as_str()).collect();
+        let listed: Vec<&str> = ANSWERS.iter().map(|(name, _)| *name).collect();
+        assert_eq!(names, listed, "an input has no expected answer");
+        let mut wrong = Vec::new();
+        for ((name, formula), (_, expected)) in inputs.iter().zip(ANSWERS) {
             let start = Instant::now();
             let made = here.made(engine, formula);
             let took = start.elapsed();
             println!("  {name}: {} in {took:?}", answer(&made));
+            holds_no_secret(name, &made);
+            if READS.contains(&name.as_str()) {
+                assert!(made.is_err(), "the read {name} was drawn");
+            }
+            if made.as_ref().err() != expected.as_ref() {
+                wrong.push((name.clone(), answer(&made), expected));
+            }
             assert!(
                 took < STAGING + COMMAND_TIME + MARGIN,
                 "{name} took {took:?}, past every deadline"
@@ -374,6 +459,10 @@ fn every_escape_input_leaves_its_sentinels_and_the_host_unchanged() {
                 assert!(!Path::new(path).exists(), "{name} wrote {path} on the host");
             }
         }
+        assert!(
+            wrong.is_empty(),
+            "answered otherwise than expected: {wrong:#?}"
+        );
         match listener.accept() {
             Err(error) if error.kind() == ErrorKind::WouldBlock => {}
             accepted => panic!("the loopback listener was reached: {accepted:?}"),
@@ -462,7 +551,73 @@ fn many_files_under_the_file_bound_stop_at_the_disk_bound_and_dev_is_refused() {
                 "a write reached the host's {}",
                 host_shm.display()
             );
+            assert!(
+                !Path::new("/written-root.txt").exists(),
+                "a write reached the host's /written-root.txt"
+            );
         }
+    });
+}
+
+#[test]
+fn tex_reads_nothing_of_the_host_and_writes_nothing_above_its_directory() {
+    halves("guards", |here, engine| {
+        // TeX is told to open files only beneath its working directory, so
+        // an absolute path is never opened: the file reads as at its end and
+        // the formula is drawn. Opened, it would stop the formula.
+        for host in ["/etc/passwd", "/proc/self/status"] {
+            let made = here.made(
+                engine,
+                &format!(r"\newread\f \openin\f={host} \ifeof\f x\else\errmessage{{read}}\fi"),
+            );
+            println!("  an \\openin of {host}: {}", answer(&made));
+            assert!(made.is_ok(), "TeX opened {host}: {}", answer(&made));
+            holds_no_secret(host, &made);
+        }
+
+        // It is told to write only beneath its working directory: a file
+        // there is written and read back, and one above it is refused.
+        let within = here.made(
+            engine,
+            &format!("{}{}", writing("w.txt", 1, HELD), read_back("w.txt")),
+        );
+        println!("  a write to w.txt: {}", answer(&within));
+        assert!(
+            within.is_ok(),
+            "a write beneath TeX's directory: {}",
+            answer(&within)
+        );
+        let above = here.made(engine, &writing("../w.txt", 1, "x"));
+        println!("  a write to ../w.txt: {}", answer(&above));
+        assert_eq!(
+            above.as_ref().err(),
+            Some(&Unmade::Rejected),
+            "a write above TeX's directory: {}",
+            answer(&above)
+        );
+
+        // `dvisvgm` is told to pass no special through, so SVG a formula
+        // writes for it is never in the picture.
+        let raw = here.made(
+            engine,
+            r#"\special{dvisvgm:raw <rect width="50" height="50"/>}"#,
+        );
+        println!("  a raw rectangle alone: {}", answer(&raw));
+        assert_eq!(
+            raw.as_ref().err(),
+            Some(&Unmade::Empty),
+            "a raw rectangle alone: {}",
+            answer(&raw)
+        );
+        let injected = here.made(engine, r#"x\special{dvisvgm:raw <g id="injected"/>}"#);
+        println!("  a raw group beside x: {}", answer(&injected));
+        let Ok(picture) = injected else {
+            panic!("x beside a raw group is not drawn: {}", answer(&injected));
+        };
+        assert!(
+            !String::from_utf8_lossy(picture.bytes()).contains("injected"),
+            "a raw group reached the picture"
+        );
     });
 }
 

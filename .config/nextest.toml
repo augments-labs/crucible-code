@@ -4,8 +4,8 @@
 # from under any other test for a moment. The bash tool's tests take a turn in
 # memory so that confined commands of this user never launch at once, and the
 # hosted-server and math-picture tests start confined commands of their own.
-# Under `cargo test` none of these binaries ever ran beside another. Here they run one test at a
-# time in one group, while every other test runs beside them.
+# Under `cargo test` none of these binaries ever ran beside another. Here they
+# run one test at a time in one group, while every other test runs beside them.
 [test-groups]
 confined = { max-threads = 1 }
 

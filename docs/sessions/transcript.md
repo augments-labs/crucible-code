@@ -314,10 +314,10 @@ The Math row of `/settings` says what the check found, after the value and a
   - `latex, dvisvgm, /etc/texmf or /var/lib/texmf is missing`;
   - `no sandbox runs on this machine`, where no Bubblewrap the sandbox
     accepts or no `crucible-sandbox-broker` beside `crucible` is found;
-  - `the sandbox cannot hold the DiskLimit a TeX run needs`, where Bubblewrap
-    does not list `--size`, and `the sandbox cannot hold the ProcessLimit a
-    TeX run needs`, where the kernel is older than 5.14; off Linux, the limit
-    named is the first that system's sandbox cannot hold;
+  - `the sandbox cannot hold the disk limit a TeX run needs`, where Bubblewrap
+    does not list `--size`, and `the sandbox cannot hold the process limit a
+    TeX run needs`, where the kernel is older than 5.14; off Linux, what is
+    named is the first thing that system's sandbox cannot hold;
   - `the sandbox refused the TeX run`;
   - `the sandbox would run TeX unconfined`;
   - `the TeX check did not finish in time`;
