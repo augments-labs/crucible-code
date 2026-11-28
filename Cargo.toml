@@ -350,7 +350,7 @@ zip = { version = "=9.3.0", default-features = false, features = ["deflate-flate
 # a buffer rather than to a string.
 ignore = "=0.4.34"
 globset = "=0.4.21"
-grep-searcher = "=0.1.17"
+grep-searcher = "=0.1.18"
 grep-regex = "=0.1.14"
 
 # JSON. Every wire protocol here speaks it, and context snapshots use its value
