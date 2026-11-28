@@ -164,7 +164,7 @@ terminal-trx = "=0.2.6"
 # `std` has no timed read on a file descriptor. Already in the graph under
 # `terminal-colorsaurus` and `tokio`; `os-ext` alone, for polling a descriptor
 # this process did not open through it.
-mio = { version = "=1.2.4", default-features = false, features = ["os-ext"] }
+mio = { version = "=1.2.5", default-features = false, features = ["os-ext"] }
 
 # Parses fenced code so it can be drawn in more than one colour, and reads the
 # `.tmTheme` files that say what those colours are — which is the format every
